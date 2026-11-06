@@ -18,6 +18,7 @@ class ActionDefinition(ModelBase, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),
         UniqueConstraint("user_id", "source_key", name="uq_action_definitions_source"),
+        UniqueConstraint("user_id", "request_key", name="uq_action_definitions_request"),
         CheckConstraint("performance_role IN ('idle', 'sustained', 'reaction')", name="action_performance_role"),
         CheckConstraint("motion_intensity IN ('subtle', 'normal', 'expressive')", name="action_motion_intensity"),
     )
@@ -25,6 +26,8 @@ class ActionDefinition(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     # 动作素材的业务来源键：素材包导入按它去重，撤销导入按它校验归属。
     source_key: Mapped[str] = mapped_column(String(36), default=lambda: uuid4().hex)
+    # 用户确认提交的幂等键：同一次确认重试返回同一动作，不重复登记与评审。
+    request_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # 名称只用于展示和检索，不承担跨来源唯一身份；内容不同但名称相同的动作各自独立。
     name: Mapped[str] = mapped_column(String(64))
     normalized_name: Mapped[str] = mapped_column(String(128), index=True)

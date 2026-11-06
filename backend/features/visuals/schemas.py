@@ -7,13 +7,14 @@
 
 import hashlib
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.action_library.schemas import ActionAssetDesign
 from features.life.schemas import FactType
+from features.media.described import DescribedDetail
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.review_contracts import HumanReviewApproval, ReviewEvidence, ReviewVerdict, VisualReview
 from features.media.video_queue.contracts import VideoQueueInfo
@@ -926,42 +927,6 @@ class VisualRegenerateRequest(BaseModel):
     video_feedback: str | None = Field(default=None, max_length=2000)
 
 
-class CinematicRequest(BaseModel):
-    """用户选择现有素材制作完整图片或视频。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=128)
-    outfit_id: ResourceId = Field(gt=0)
-    scene_id: ResourceId = Field(gt=0)
-    action_id: ResourceId = Field(gt=0)
-    media_kind: VisualMediaKind = "image"
-    requirements: str = Field(default="", max_length=2000)
-
-
-class ActorClipRequest(BaseModel):
-    """制作透明主体动画：造型与动作即可，不绑定环境。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=128)
-    outfit_id: ResourceId = Field(gt=0)
-    action_id: ResourceId = Field(gt=0)
-    requirements: str = Field(default="", max_length=2000)
-
-
-class SceneMediaRequest(BaseModel):
-    """制作环境循环视频：单张已就绪的环境素材。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=128)
-    scene_id: ResourceId = Field(gt=0)
-    # 可选适用时段：为同一环境制作特定光线版本；空表示不限时段的普通版本。
-    day_phase: DayPhase | None = None
-    requirements: str = Field(default="", max_length=2000)
-
-
 class ActualPresentationSnapshot(BaseModel):
     """实际呈现快照：窗口读取静态造型与环境资料，桌面与出镜媒体读取成品画面描述。
 
@@ -1109,3 +1074,65 @@ class ActionMediaListResponse(BaseModel):
     has_more: bool
     next_cursor: str | None = None
     limit: int
+
+
+VisualIntent = Literal["photo", "video", "motion", "scenery"]
+VisualNextStep = Literal["create_action", "create_outfit", "create_scene"]
+
+
+class VisualInterpretRequest(BaseModel):
+    """用户用一句日常描述表达想看到的画面；场景动态由环境详情发起。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    description: str = Field(min_length=1, max_length=1000)
+    intent: VisualIntent
+    # scenery 必须指定环境；其余意向忽略。
+    scene_id: ResourceId | None = None
+    day_phase: DayPhase | None = None
+
+
+class VisualPlanDraft(BaseModel):
+    """一次制作的冻结计划；客户端不解析字段，原样回传。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_kind: VisualAssetKind
+    media_kind: VisualMediaKind
+    outfit_id: ResourceId | None = None
+    scene_id: ResourceId | None = None
+    action_id: ResourceId | None = None
+    day_phase: DayPhase | None = None
+    requirements: str = Field(default="", max_length=2000)
+
+
+class VisualMaterialView(BaseModel):
+    """整理结果里被选中的素材，仅用于预览。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["outfit", "scene", "action"]
+    id: ResourceId
+    name: str
+    preview_url: str | None = None
+
+
+class VisualInterpretation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feasible: bool
+    reason: str = ""
+    draft: dict[str, Any] | None = None
+    summary: str = ""
+    details: list[DescribedDetail] = Field(default_factory=list)
+    materials: list[VisualMaterialView] = Field(default_factory=list)
+    next_step: VisualNextStep | None = None
+
+
+class VisualCreateRequest(BaseModel):
+    """统一创建入口：幂等键加整理出的草稿。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    draft: dict[str, Any]

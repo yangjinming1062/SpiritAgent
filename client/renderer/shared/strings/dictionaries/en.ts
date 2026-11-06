@@ -899,14 +899,11 @@ export const dict: Dictionary = {
       settingsLabel: 'Settings',
       sections: {
         companionship: 'Companionship',
-        voice: 'Voice interaction',
+        appearance: 'Appearance and display',
         sources: 'News sources',
-        theme: 'Interface theme',
-        display: 'Companion display',
         devices: 'Mobile access',
         capabilities: 'Capabilities',
-        application: 'App settings',
-        advanced: 'Advanced settings'
+        advanced: 'Application and advanced'
       }
     },
 
@@ -1354,12 +1351,44 @@ export const dict: Dictionary = {
     }
   },
 
+  studio: {
+    intents: {
+      photo: 'A photo',
+      photoHint: 'Capture a single moment',
+      video: 'A video',
+      videoHint: 'Let the scene move',
+      motion: 'Make it move',
+      motionHint: 'Animate the current outfit'
+    },
+    descriptionLabel: 'Describe the scene',
+    descriptionPlaceholder: 'For example: reading quietly by the window in comfortable clothes',
+    describe: 'Interpret',
+    describing: 'Interpreting…',
+    interpretFailed: "That description couldn't be interpreted. Try again.",
+    previewTitle: 'Does this look right',
+    confirm: 'Start creating',
+    refineLabel: 'Anything to add',
+    refinePlaceholder: 'For example: softer light',
+    refine: 'Add a sentence',
+    infeasible: 'Not possible yet',
+    stepAction: 'Create an action first',
+    stepOutfit: 'Prepare an outfit first',
+    stepScene: 'Create an environment first',
+    invalidated: 'Materials changed. Interpret the description again before confirming.',
+    activityTitle: 'In progress',
+    actionCreate: 'When does it happen, and how does it move',
+    actionEditTitle: 'What should change',
+    actionSave: 'Save and review',
+    createFailed: 'The request was not accepted. Try again.'
+  },
+
   living: {
     rail: {
       chat: 'Companion',
       posts: 'Posts',
       diary: 'Diary',
       life: 'Life',
+      creation: 'Creation',
       unread: 'Unread content',
       wardrobe: 'Wardrobe',
       remote: 'Remote',
@@ -1729,6 +1758,7 @@ export const dict: Dictionary = {
     posts: 'Posts',
     diary: 'Diary',
     life: 'Life',
+    creation: 'Creation',
     remote: 'Remote',
     settings: 'Settings',
     windowMode: 'Return to window mode',

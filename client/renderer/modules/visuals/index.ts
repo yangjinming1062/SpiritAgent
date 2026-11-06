@@ -3,6 +3,7 @@ export {
   actionGroups,
   createAction,
   deleteAction,
+  interpretAction,
   loadMoreActions,
   refreshActionGroups,
   refreshActions,

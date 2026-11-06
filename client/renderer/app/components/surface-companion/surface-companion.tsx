@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
+import { SceneBackdrop } from '@/app/features/creation/environment/scene-backdrop'
 import { $companionLifecycle, ensureCompanionHydrated } from '@/modules/character'
 import { CharacterStage } from '@/modules/character/rendering'
 import { log } from '@/shared/lib/log'

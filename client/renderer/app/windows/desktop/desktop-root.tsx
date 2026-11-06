@@ -5,7 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppContentPage } from '@/app/components/app-content-page'
 import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { $appNavigationRevision, $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
+import { $creationBusy } from '@/app/features/creation/creation-activity'
+import {
+  $appNavigationRevision,
+  $appPage,
+  applyAppNavigation,
+  openCreation,
+  setAppPage
+} from '@/app/navigation/app-navigation'
 import { $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
   $chatSessionId,
@@ -61,6 +68,7 @@ export function DesktopRoot(): React.JSX.Element {
   const { hasUnread: companionUnread, firstUnheard } = useConversationUnread(companionSessionId)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
+  const creationBusy = useStore($creationBusy)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
   const beginAsync = useAsyncGuard()
   const revealRequest = useRef(0)
@@ -256,8 +264,8 @@ export function DesktopRoot(): React.JSX.Element {
         const isLive = beginAsync()
         void applyAppNavigation(payload)
           .then(() => {
-            if (isLive() && payload.messageKey) {
-              setUnreadReveal({ key: payload.messageKey, request: ++revealRequest.current })
+            if (isLive() && payload.focus.page === 'chat' && payload.focus.messageKey) {
+              setUnreadReveal({ key: payload.focus.messageKey, request: ++revealRequest.current })
             }
           })
           .catch(error => {
@@ -390,7 +398,6 @@ export function DesktopRoot(): React.JSX.Element {
         foreground={reading}
         mediaViewId="desktop-posts"
         page={id}
-        standaloneLife
         visible={visible && desktopVisible && uiStateReady && auth.kind === 'authenticated'}
       />
     )
@@ -518,13 +525,13 @@ export function DesktopRoot(): React.JSX.Element {
         navigation={
           <DesktopProductNav
             activeWindow={activeWindow}
-            diaryUnread={diaryUnread}
+            creationBusy={creationBusy}
+            lifeUnread={postsUnread || diaryUnread}
             onActivate={activatePanel}
             onBeforeOpen={() => setOverlay('product')}
             onClose={close}
             onMenuOpenChange={productOpenChange}
             overlayActive={overlay === 'product'}
-            postsUnread={postsUnread}
             windows={layout.windows}
           />
         }
@@ -535,7 +542,7 @@ export function DesktopRoot(): React.JSX.Element {
       />
       <DesktopControls
         onOpenChange={controlsOpenChange}
-        onOpenVisuals={() => void applyAppNavigation({ page: 'companion', companionSection: 'visuals' })}
+        onOpenVisuals={() => void openCreation('visuals')}
         open={overlay === 'controls'}
         wallpaperError={Boolean(videoError)}
         wallpaperStatus={wallpaperStatus}

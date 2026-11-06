@@ -89,7 +89,9 @@ export async function reportCompanionVisibility(authSessionId: string, visible: 
   applySurfaceState(await shellApi().surface.companionVisibility({ authSessionId, visible }))
 }
 
-export async function requestOpenSurface(target: DesktopSurfaceOpenPayload = {}): Promise<void> {
+export async function requestOpenSurface(
+  target: DesktopSurfaceOpenPayload = { location: { page: 'chat' }, focus: { page: 'chat' } }
+): Promise<void> {
   await shellApi().surface.open(target)
 }
 

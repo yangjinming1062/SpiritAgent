@@ -1,6 +1,6 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
-import { type DesktopSurfaceOpenPayload, IPC, normalizeAppNavigation } from '@ipc/contracts'
+import { type DesktopSurfaceOpenPayload, IPC, navigationHash, normalizeAppNavigation } from '@ipc/contracts'
 import { clamp, errorMessage } from '@runtime'
 
 import { sendToWindow } from '../shared/utils'
@@ -31,35 +31,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
 } {
   function surfaceLoadUrl(payload?: DesktopSurfaceOpenPayload): string {
     const url = new URL(deps.rendererUrlFor('main', deps.seedTheme()))
-    const target = normalizeAppNavigation(payload)
-
-    if (target.page === 'settings' && target.section) {
-      url.hash = `#/settings/${target.section}`
-
-      if (target.settingsTab) {
-        url.hash += `?subtab=${target.settingsTab}`
-      }
-    } else if (target.page === 'companion' && target.companionSection) {
-      url.hash = `#/companion/${target.companionSection}`
-    } else if (target.page) {
-      url.hash = `#/${target.page}`
-    }
-
-    for (const key of ['sessionId', 'messageKey'] as const) {
-      const value = target[key]
-
-      if (value) {
-        url.searchParams.set(key, value)
-      }
-    }
-
-    for (const key of ['pursuitId', 'outfitId', 'sceneId', 'visualId'] as const) {
-      const value = target[key]
-
-      if (value) {
-        url.searchParams.set(key, value)
-      }
-    }
+    url.hash = navigationHash(normalizeAppNavigation(payload))
 
     return url.toString()
   }

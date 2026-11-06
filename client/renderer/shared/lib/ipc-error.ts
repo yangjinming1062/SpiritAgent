@@ -6,6 +6,10 @@ export function ipcErrorStatus(error: unknown): number | null {
   return error instanceof ApiError ? error.status : null
 }
 
+export function ipcErrorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.code : null
+}
+
 export function isClientErrorIpc(error: unknown): boolean {
   const status = ipcErrorStatus(error)
 

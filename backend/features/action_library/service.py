@@ -36,10 +36,19 @@ async def create_action(
     review_source_json: dict,
     life_step: LifeStepRequest | None = None,
     import_key: str | None = None,
+    request_key: str | None = None,
 ) -> ActionAssetView:
     """登记一份新的动作素材；评审由 review 模块异步执行。"""
 
     await lock_domain(db, user_id, "actions")
+    if request_key is not None:
+        confirmed = await db.scalar(
+            select(ActionDefinition).where(
+                ActionDefinition.user_id == user_id, ActionDefinition.request_key == request_key
+            )
+        )
+        if confirmed is not None:
+            return definition_view(confirmed)
     if import_key is not None:
         original_import = await db.scalar(
             select(ActionDefinition).where(
@@ -84,6 +93,7 @@ async def create_action(
             return definition_view(item)
     row = ActionDefinition(
         user_id=user_id,
+        request_key=request_key,
         **({"source_key": import_key} if import_key is not None else {}),
         name=design.name,
         normalized_name=normalize_action_name(design.name),

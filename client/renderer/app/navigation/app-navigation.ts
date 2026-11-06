@@ -6,58 +6,65 @@ import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearH
 import { $gatewayState } from '@/shared/store/gateway'
 import {
   APP_PAGES,
+  type AppLocation,
   type AppNavigationTarget,
   type AppPage,
   COMPANION_SECTIONS,
   type CompanionSection,
+  composeNavigation,
+  CREATION_SECTIONS,
+  type CreationSection,
+  DEFAULT_NAVIGATION,
+  DEFAULT_SECTION,
+  LIFE_SECTIONS,
+  type LifeSection,
+  navigationHash,
   normalizeAppNavigation,
+  type PageFocus,
+  parseNavigationHash,
   SETTINGS_SECTIONS,
   SETTINGS_TABS,
-  type SettingsSection
+  type SettingsSection,
+  type SettingsTab
 } from '@ipc/contracts'
 
 export { APP_PAGES, SETTINGS_SECTIONS }
 
-const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation.v2')
+const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation')
 
-const navigation = definePersistedAtom<AppNavigationTarget>({
+const isLocation = (value: unknown): value is AppLocation =>
+  typeof value === 'object' && value !== null && APP_PAGES.some(page => page === (value as { page?: unknown }).page)
+
+/** 持久化只落位置：分区与页签随账户保存，切换模式时交接。 */
+const location = definePersistedAtom<AppLocation>({
   key: NAVIGATION_KEY,
-  fallback: { page: 'chat', section: 'companionship', companionSection: 'profile' },
-  isPersistable: (value): value is AppNavigationTarget => {
-    if (!value || typeof value !== 'object') {
-      return false
-    }
-
-    const candidate = value as Record<string, unknown>
-
-    return (
-      APP_PAGES.some(page => page === candidate.page) &&
-      SETTINGS_SECTIONS.some(section => section === candidate.section) &&
-      COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
-      (candidate.settingsTab === undefined ||
-        Object.values(SETTINGS_TABS).some(tabs => tabs.some(tab => tab === candidate.settingsTab)))
-    )
-  }
+  fallback: { page: 'chat' },
+  isPersistable: isLocation
 })
 
-/** 瞬时导航字段：会话、消息定位与详情直达不落盘。 */
-const transientNavigation = atom<{
-  messageKey?: string
-  sessionId?: string
-  pursuitId?: string
-  outfitId?: string
-  sceneId?: string
-  visualId?: string
-}>({})
+/** 定位细节只在本窗口有效，不落盘。 */
+const pageFocus = atom<PageFocus>({ page: 'chat' })
 
-export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
-export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
-export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'profile')
-// 导航只有一个真源：持久字段与瞬时字段合成同一视图，两侧读到的是同一个页面与分区。
-export const $appNavigationTarget = computed([navigation.$atom, transientNavigation], (durable, transient) => ({
-  ...durable,
-  ...transient
-}))
+export const $appLocation = location.$atom
+export const $appPage = computed($appLocation, value => value.page)
+export const $lifeSection = computed($appLocation, value =>
+  value.page === 'life' ? value.section : DEFAULT_SECTION.life
+)
+export const $creationSection = computed($appLocation, value =>
+  value.page === 'creation' ? value.section : DEFAULT_SECTION.creation
+)
+export const $companionSection = computed($appLocation, value =>
+  value.page === 'companion' ? value.section : DEFAULT_SECTION.companion
+)
+export const $settingsSection = computed($appLocation, value =>
+  value.page === 'settings' ? value.section : DEFAULT_SECTION.settings
+)
+export const $settingsTab = computed($appLocation, value =>
+  value.page === 'settings' && value.section ? ('tab' in value ? value.tab : undefined) : undefined
+)
+export const $appNavigationTarget = computed([$appLocation, pageFocus], (current, focus) =>
+  composeNavigation(current, focus)
+)
 export const $appNavigationRevision = atom(0)
 let writingHash = false
 
@@ -73,64 +80,11 @@ function replaceHash(next: string): void {
 }
 
 export function readAppNavigationHash(): AppNavigationTarget | null {
-  const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?')
-  const [page, detail] = path.split('/')
-
-  if (!APP_PAGES.some(candidate => candidate === page)) {
-    return null
-  }
-
-  const params = new URLSearchParams(query)
-
-  return normalizeAppNavigation({
-    page,
-    section: page === 'settings' ? detail : undefined,
-    companionSection: page === 'companion' ? detail : undefined,
-    settingsTab: params.get('subtab'),
-    sessionId: params.get('sessionId'),
-    messageKey: params.get('messageKey'),
-    pursuitId: params.get('pursuitId') ?? undefined,
-    outfitId: params.get('outfitId') ?? undefined,
-    sceneId: params.get('sceneId') ?? undefined,
-    visualId: params.get('visualId') ?? undefined
-  })
+  return parseNavigationHash(window.location.hash)
 }
 
 function writeHash(target: AppNavigationTarget): void {
-  const query = new URLSearchParams()
-
-  if (target.page === 'settings' && target.settingsTab) {
-    query.set('subtab', target.settingsTab)
-  }
-
-  if (target.sessionId) {
-    query.set('sessionId', target.sessionId)
-  }
-
-  if (target.messageKey) {
-    query.set('messageKey', target.messageKey)
-  }
-
-  if (target.page === 'life' && target.pursuitId) {
-    query.set('pursuitId', String(target.pursuitId))
-  }
-
-  if (target.page === 'companion' && target.companionSection === 'wardrobe' && target.outfitId) {
-    query.set('outfitId', target.outfitId)
-  }
-
-  if (target.page === 'companion' && target.companionSection === 'environment' && target.sceneId) {
-    query.set('sceneId', target.sceneId)
-  }
-
-  if (target.page === 'companion' && target.companionSection === 'visuals' && target.visualId) {
-    query.set('visualId', target.visualId)
-  }
-
-  const detail =
-    target.page === 'settings' ? target.section : target.page === 'companion' ? target.companionSection : undefined
-
-  const next = `#/${target.page}${detail ? `/${detail}` : ''}${query.size ? `?${query}` : ''}`
+  const next = `#${navigationHash(target)}`
 
   if (window.location.hash !== next) {
     replaceHash(next)
@@ -138,67 +92,80 @@ function writeHash(target: AppNavigationTarget): void {
 }
 
 export function getAppNavigation(): AppNavigationTarget {
-  return { ...navigation.$atom.get() }
+  return composeNavigation(location.$atom.get(), pageFocus.get())
 }
 
-export async function applyAppNavigation(target: AppNavigationTarget, updateHash = true): Promise<void> {
+async function apply(target: AppNavigationTarget, updateHash = true): Promise<void> {
   const next = normalizeAppNavigation(target)
-  const previous = navigation.$atom.get()
-  navigation.set({
-    ...previous,
-    page: next.page ?? (next.sessionId ? 'chat' : previous.page),
-    section: next.section ?? previous.section,
-    companionSection: next.companionSection ?? previous.companionSection,
-    settingsTab: next.section ? next.settingsTab : previous.settingsTab
-  })
-
-  if (next.sessionId) {
-    setChatSession(next.sessionId)
-  }
-
-  transientNavigation.set({
-    messageKey: next.messageKey,
-    sessionId: next.sessionId,
-    pursuitId: next.pursuitId,
-    outfitId: next.outfitId,
-    sceneId: next.sceneId,
-    visualId: next.visualId
-  })
+  location.set(next.location)
+  pageFocus.set(next.focus)
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
   if (updateHash) {
-    writeHash({
-      ...getAppNavigation(),
-      sessionId: next.sessionId,
-      messageKey: next.messageKey,
-      pursuitId: next.pursuitId,
-      outfitId: next.outfitId,
-      sceneId: next.sceneId,
-      visualId: next.visualId
-    })
+    writeHash(next)
   }
 
-  if (next.sessionId && $gatewayState.get() === 'open') {
-    await switchSession(next.sessionId)
+  const sessionId = next.focus.page === 'chat' ? next.focus.sessionId : undefined
+
+  if (sessionId) {
+    setChatSession(sessionId)
+
+    if ($gatewayState.get() === 'open') {
+      await switchSession(sessionId)
+    }
   }
+}
+
+export function applyAppNavigation(target: AppNavigationTarget, updateHash = true): Promise<void> {
+  return apply(target, updateHash)
+}
+
+export function openChat(focus: Omit<Extract<PageFocus, { page: 'chat' }>, 'page'> = {}): Promise<void> {
+  return apply(composeNavigation({ page: 'chat' }, { page: 'chat', ...focus }))
+}
+
+export function openLife(
+  section: LifeSection = DEFAULT_SECTION.life,
+  focus: Omit<Extract<PageFocus, { page: 'life' }>, 'page'> = {}
+): Promise<void> {
+  return apply(composeNavigation({ page: 'life', section }, { page: 'life', ...focus }))
+}
+
+export function openCreation(
+  section: CreationSection = DEFAULT_SECTION.creation,
+  focus: Omit<Extract<PageFocus, { page: 'creation' }>, 'page'> = {}
+): Promise<void> {
+  return apply(composeNavigation({ page: 'creation', section }, { page: 'creation', ...focus }))
+}
+
+export function openCompanion(section: CompanionSection = DEFAULT_SECTION.companion): Promise<void> {
+  return apply(composeNavigation({ page: 'companion', section }, { page: 'companion' }))
+}
+
+export function openSettings(section: SettingsSection = DEFAULT_SECTION.settings, tab?: SettingsTab): Promise<void> {
+  const next = tab ? { page: 'settings' as const, section, tab } : { page: 'settings' as const, section }
+
+  return apply(composeNavigation(next, { page: 'settings' }))
 }
 
 export function setAppPage(page: AppPage): void {
-  void applyAppNavigation({ page })
-}
-
-export function setSettingsSection(section: SettingsSection): void {
-  void applyAppNavigation({ page: 'settings', section })
-}
-
-export function setCompanionSection(companionSection: CompanionSection): void {
-  void applyAppNavigation({ page: 'companion', companionSection })
+  if (page === 'chat') {
+    void openChat()
+  } else if (page === 'life') {
+    void openLife()
+  } else if (page === 'creation') {
+    void openCreation()
+  } else if (page === 'companion') {
+    void openCompanion()
+  } else {
+    void openSettings()
+  }
 }
 
 registerStorageClearHandler(() => {
-  transientNavigation.set({})
+  pageFocus.set({ page: 'chat' })
   $appNavigationRevision.set(0)
-  replaceHash('#/chat')
+  replaceHash(`#${navigationHash(DEFAULT_NAVIGATION)}`)
 })
 
 let stopNavigation: (() => void) | undefined
@@ -216,7 +183,7 @@ export function initAppNavigation(): () => void {
     const target = readAppNavigationHash()
 
     if (target) {
-      void applyAppNavigation(target, false).catch(error => log.warn('app-navigation', 'navigation failed', error))
+      void apply(target, false).catch(error => log.warn('app-navigation', 'navigation failed', error))
     }
   }
 
@@ -232,3 +199,6 @@ export function initAppNavigation(): () => void {
 
   return stopNavigation
 }
+
+export { COMPANION_SECTIONS, CREATION_SECTIONS, DEFAULT_SECTION, LIFE_SECTIONS, SETTINGS_TABS }
+export type { AppLocation, AppPage, CompanionSection, CreationSection, LifeSection, PageFocus, SettingsSection }

@@ -1,41 +1,31 @@
 import type React from 'react'
 
 import { CompanionHub } from '@/app/features/companion/companion-page'
-import { DiaryPage } from '@/app/features/diary/diary-page'
+import { CreationPage } from '@/app/features/creation/creation-page'
 import { LifePage } from '@/app/features/life/life-page'
-import { PostsPage } from '@/app/features/posts/posts-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
 import type { AppPage } from '@ipc/contracts'
 
-export function AppContentPage({
-  page,
-  containerRef,
-  foreground,
-  visible,
-  mediaViewId,
-  standaloneLife = false
-}: {
-  page: Exclude<AppPage, 'chat'>
+export interface AppPageProps {
   containerRef: React.RefObject<HTMLElement | null>
   foreground: boolean
   visible: boolean
   mediaViewId: string
-  standaloneLife?: boolean
-}): React.JSX.Element {
-  switch (page) {
-    case 'posts':
-      return <PostsPage containerRef={containerRef} foreground={foreground} mediaViewId={mediaViewId} />
+}
 
-    case 'diary':
-      return <DiaryPage foreground={foreground} />
+// 页面与一级入口一一对应；新增页面在这里登记，不在一处 switch 里散落分支。
+const PAGE_VIEWS = {
+  life: LifePage,
+  creation: CreationPage,
+  companion: CompanionHub,
+  settings: AppSettings
+} satisfies Record<Exclude<AppPage, 'chat'>, React.ComponentType<AppPageProps>>
 
-    case 'life':
-      return <LifePage standalone={standaloneLife} visible={visible} />
+export function AppContentPage({
+  page,
+  ...props
+}: AppPageProps & { page: Exclude<AppPage, 'chat'> }): React.JSX.Element {
+  const View = PAGE_VIEWS[page]
 
-    case 'companion':
-      return <CompanionHub />
-
-    case 'settings':
-      return <AppSettings />
-  }
+  return <View {...props} />
 }

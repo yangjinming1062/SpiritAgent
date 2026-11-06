@@ -1,19 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactElement } from 'react'
 
-import type { VisualDetail } from '@protocol'
+import type { VisualDetail, VisualInterpretation } from '@protocol'
 
-import {
-  emptyVisualCreation,
-  type VisualCreationDraft,
-  visualCreationReady,
-  type VisualMaterialOptions
-} from '../shared/visuals'
+import { composeDescribedInput } from '../shared/described-input'
+import { isStaleDraftError } from '../shared/visuals'
 
-import type { RemoteApi } from './api'
-import { useMaterialOptions } from './material-options'
+import { ApiError, type RemoteApi } from './api'
 import { Notice, useAlive, usePageState, useTask } from './ui'
 
+type Intent = 'photo' | 'video' | 'motion'
+
+const INTENTS = [
+  { id: 'photo' as const, title: '一张照片', hint: '记录此刻的画面' },
+  { id: 'video' as const, title: '一段视频', hint: '让画面动起来' },
+  { id: 'motion' as const, title: '让它动起来', hint: '用当前造型演一段动作' }
+]
+
+interface Studio {
+  description: string
+  intent: Intent
+  preview: VisualInterpretation | null
+  refinement: string
+  requestId: string | null
+  title: string
+  uploadDescription: string
+}
+
+const EMPTY_STUDIO: Studio = {
+  description: '',
+  intent: 'photo',
+  preview: null,
+  refinement: '',
+  requestId: null,
+  title: '',
+  uploadDescription: ''
+}
+
+const STEP_LABEL: Record<string, string> = {
+  create_action: '先创建一个动作',
+  create_outfit: '先准备一套造型',
+  create_scene: '先创建一个环境'
+}
+
+/** 创作影像：描述 → 预览 → 确认；确认后才受理制作。上传原件是独立入口。 */
 export function VisualCreate({
   api,
   onDone
@@ -22,227 +52,279 @@ export function VisualCreate({
   onDone: (created?: VisualDetail) => Promise<void>
 }): ReactElement {
   const alive = useAlive()
-  const [draft, setDraft] = usePageState('visuals.creation', emptyVisualCreation)
-  const [requests, setRequests] = usePageState<Record<string, string>>('visuals.creationRequests', {})
+  const [mode, setMode] = usePageState<'idle' | 'describe' | 'upload'>('visuals.creationMode', 'idle')
+  const [studio, setStudio] = usePageState<Studio>('visuals.studio', EMPTY_STUDIO)
   const [file, setFile] = usePageState<File | null>('visuals.uploadFile', null, false)
-  const [preview, setPreview] = useState('')
-  const { materials, error: materialError } = useMaterialOptions(api, draft.mode === 'create', draft.mode)
+  const [previewUrl, setPreviewUrl] = useState('')
   const { run, busy, error } = useTask()
-  const upload = draft.mode === 'upload'
-  const patch = (value: Partial<VisualCreationDraft>): void => setDraft(previous => ({ ...previous, ...value }))
+  const patch = (value: Partial<Studio>): void => setStudio(previous => ({ ...previous, ...value }))
 
-  useEffect(() => {
-    if (!file) {
+  const describe = async (): Promise<void> => {
+    const description = composeDescribedInput(studio.description, studio.refinement)
+
+    if (!description) {
       return
     }
-    const url = URL.createObjectURL(file)
-    setPreview(url)
-    return () => {
-      URL.revokeObjectURL(url)
-      setPreview('')
-    }
-  }, [file])
 
-  const submit = async (): Promise<void> => {
-    if (upload && file) {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      if (!alive()) {
-        return
-      }
-      const result = await api.invoke('companion_visuals.upload_visual', {
-        body: bytes,
-        query: {
-          filename: file.name,
-          title: draft.title,
-          description: draft.description
-        }
-      })
-      if (alive()) {
-        setFile(null)
-        patch({ mode: null })
-        await onDone(result)
-      }
-      return
-    }
-    const key = JSON.stringify(draft)
-    const request_id = requests[key] ?? crypto.randomUUID()
-    setRequests(previous => ({ ...previous, [key]: request_id }))
-    const requirements = draft.requirements.trim()
-    if (draft.assetKind === 'actor') {
-      await api.invoke('companion_visuals.create_actor_clip', {
-        body: { request_id, outfit_id: draft.outfitId, action_id: draft.actionId, requirements }
-      })
-    } else if (draft.assetKind === 'scene') {
-      await api.invoke('companion_visuals.create_scene_media', {
-        body: { request_id, scene_id: draft.sceneId, requirements }
-      })
-    } else {
-      await api.invoke('companion_visuals.create_cinematic', {
-        body: {
-          request_id,
-          outfit_id: draft.outfitId,
-          scene_id: draft.sceneId,
-          action_id: draft.actionId,
-          media_kind: draft.mediaKind,
-          requirements
-        }
-      })
-    }
+    const result: VisualInterpretation = await api.invoke('companion_visuals.interpret_visual', {
+      body: { description, intent: studio.intent }
+    })
+
     if (alive()) {
-      setRequests(previous => {
-        const pending = { ...previous }
-        delete pending[key]
-        return pending
-      })
-      patch({ mode: null })
+      patch({ description, preview: result, refinement: '', requestId: null })
+    }
+  }
+
+  const confirm = async (): Promise<void> => {
+    const plan = studio.preview
+
+    if (!plan?.draft) {
+      return
+    }
+
+    const request_id = studio.requestId ?? crypto.randomUUID()
+    patch({ requestId: request_id })
+
+    try {
+      await api.invoke('companion_visuals.create_visual', { body: { request_id, draft: plan.draft } })
+    } catch (failure) {
+      if (alive() && failure instanceof ApiError && isStaleDraftError(failure.code)) {
+        patch({ preview: null })
+      }
+
+      throw failure
+    }
+
+    if (alive()) {
+      setStudio(EMPTY_STUDIO)
+      setMode('idle')
       await onDone()
     }
   }
 
-  const selectMaterial = (
-    label: string,
-    key: 'outfitId' | 'sceneId' | 'actionId',
-    options: VisualMaterialOptions['outfits']
-  ): ReactElement => (
-    <label>
-      {label}
-      <select disabled={busy} onChange={event => patch({ [key]: event.target.value })} value={draft[key]}>
-        <option value="">请选择</option>
-        {options.map(option => (
-          <option key={option.id} value={option.id}>
-            {option.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
+  const upload = async (): Promise<void> => {
+    if (!file) {
+      return
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer())
+
+    if (!alive()) {
+      return
+    }
+
+    const result = await api.invoke('companion_visuals.upload_visual', {
+      body: bytes,
+      query: { filename: file.name, title: studio.title, description: studio.uploadDescription }
+    })
+
+    if (alive()) {
+      setFile(null)
+      setPreviewUrl(previous => {
+        if (previous) {
+          URL.revokeObjectURL(previous)
+        }
+
+        return ''
+      })
+      patch({ title: '', uploadDescription: '' })
+      setMode('idle')
+      await onDone(result)
+    }
+  }
+
+  const plan = studio.preview
 
   return (
     <>
       <div className="button-row">
-        <button disabled={busy} onClick={() => patch({ mode: 'create' })} type="button">
+        <button disabled={busy} onClick={() => setMode('describe')} type="button">
           创建影像
         </button>
-        <button disabled={busy} onClick={() => patch({ mode: 'upload' })} type="button">
+        <button disabled={busy} onClick={() => setMode('upload')} type="button">
           上传影像
         </button>
       </div>
-      {draft.mode && (
+      {mode === 'upload' && (
         <form
           className="card"
           onSubmit={event => {
             event.preventDefault()
-            void run(submit)
+            void run(upload)
           }}
         >
           <div className="card-title">
-            <h2>{upload ? '上传影像' : '创建影像'}</h2>
-            <button disabled={busy} onClick={() => patch({ mode: null })} type="button">
+            <h2>上传影像</h2>
+            <button disabled={busy} onClick={() => setMode('idle')} type="button">
               收起
             </button>
           </div>
-          <p className="muted">
-            {upload
-              ? '保留原始文件，自动分析内容并优先关联已有素材。符合要求的新素材可整理入库；存在歧义时再由你确认。'
-              : '选择已有素材制作，提交后可在制作工作项中查看进度。'}
-          </p>
-          {!upload && (
-            <label>
-              影像类型
-              <select
-                disabled={busy}
-                onChange={event => {
-                  const assetKind = event.target.value
-                  if (assetKind === 'actor' || assetKind === 'scene' || assetKind === 'cinematic') {
-                    patch({ assetKind })
+          <p className="muted">保留原始文件，自动分析内容并优先关联已有素材。存在歧义时再由你确认。</p>
+          <label>
+            选择图片或视频
+            <input
+              accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.mov"
+              disabled={busy}
+              onChange={event => {
+                const next = event.target.files?.[0] ?? null
+                setFile(next)
+                setPreviewUrl(previous => {
+                  if (previous) {
+                    URL.revokeObjectURL(previous)
                   }
-                }}
-                value={draft.assetKind}
-              >
-                <option value="cinematic">完整场景</option>
-                <option value="scene">环境影像</option>
-                <option value="actor">透明主体动画</option>
-              </select>
-            </label>
-          )}
-          {upload ? (
-            <>
-              <label>
-                选择图片或视频
-                <input
-                  accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.mov"
-                  disabled={busy}
-                  onChange={event => setFile(event.target.files?.[0] ?? null)}
-                  type="file"
-                />
-              </label>
-              {file && <p className="muted">{file.name}</p>}
-              {file &&
-                preview &&
-                (file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name) ? (
-                  <video controls src={preview} style={{ maxHeight: 300, width: '100%' }} />
-                ) : (
-                  <img
-                    alt={file.name}
-                    src={preview}
-                    style={{ maxHeight: 300, maxWidth: '100%', objectFit: 'contain' }}
-                  />
-                ))}
-              <label>
-                标题
-                <input
-                  disabled={busy}
-                  maxLength={160}
-                  onChange={event => patch({ title: event.target.value })}
-                  value={draft.title}
-                />
-              </label>
-              <label>
-                描述
-                <textarea
-                  disabled={busy}
-                  maxLength={1500}
-                  onChange={event => patch({ description: event.target.value })}
-                  value={draft.description}
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              {draft.assetKind !== 'scene' && selectMaterial('着装', 'outfitId', materials.outfits)}
-              {draft.assetKind !== 'actor' && selectMaterial('环境', 'sceneId', materials.scenes)}
-              {draft.assetKind !== 'scene' && selectMaterial('动作', 'actionId', materials.actions)}
-              {draft.assetKind === 'cinematic' && (
-                <label>
-                  媒体类型
-                  <select
-                    disabled={busy}
-                    onChange={event => patch({ mediaKind: event.target.value === 'video' ? 'video' : 'image' })}
-                    value={draft.mediaKind}
-                  >
-                    <option value="image">图片</option>
-                    <option value="video">视频</option>
-                  </select>
-                </label>
-              )}
-              <label>
-                创作要求
-                <textarea
-                  disabled={busy}
-                  maxLength={2000}
-                  onChange={event => patch({ requirements: event.target.value })}
-                  value={draft.requirements}
-                />
-              </label>
-              {!visualCreationReady(draft) && <p className="muted">请先准备所需的着装、环境与已入库动作。</p>}
-            </>
-          )}
-          {materialError && !upload ? <Notice error={materialError} /> : null}
+
+                  return next ? URL.createObjectURL(next) : ''
+                })
+              }}
+              type="file"
+            />
+          </label>
+          {file && <p className="muted">{file.name}</p>}
+          <label>
+            标题
+            <input
+              disabled={busy}
+              maxLength={160}
+              onChange={event => patch({ title: event.target.value })}
+              value={studio.title}
+            />
+          </label>
+          <label>
+            描述
+            <textarea
+              disabled={busy}
+              maxLength={1500}
+              onChange={event => patch({ uploadDescription: event.target.value })}
+              rows={3}
+              value={studio.uploadDescription}
+            />
+          </label>
+          {previewUrl &&
+            (file?.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file?.name ?? '') ? (
+              <video controls src={previewUrl} style={{ maxHeight: 300, width: '100%' }} />
+            ) : (
+              <img
+                alt={file?.name}
+                src={previewUrl}
+                style={{ maxHeight: 300, maxWidth: '100%', objectFit: 'contain' }}
+              />
+            ))}
           {error ? <Notice error={error} /> : null}
           <div className="button-row">
-            <button disabled={busy || (upload ? !file : !visualCreationReady(draft))} type="submit">
-              {busy ? (upload ? '保存原件中…' : '提交制作中…') : upload ? '加入影像库' : '开始制作'}
+            <button disabled={busy || !file || !studio.title.trim()} type="submit">
+              {busy ? '保存原件中…' : '加入影像库'}
             </button>
+          </div>
+        </form>
+      )}
+      {mode === 'describe' && (
+        <form
+          className="card"
+          onSubmit={event => {
+            event.preventDefault()
+            void run(plan?.draft ? confirm : describe)
+          }}
+        >
+          <div className="card-title">
+            <h2>创建影像</h2>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setStudio(EMPTY_STUDIO)
+                setMode('idle')
+              }}
+              type="button"
+            >
+              收起
+            </button>
+          </div>
+          <p className="muted">描述你想要的画面，确认后再开始制作。</p>
+          {!plan && (
+            <>
+              <fieldset className="intent-row">
+                <legend>想做什么</legend>
+                {INTENTS.map(item => (
+                  <label key={item.id}>
+                    <input
+                      checked={studio.intent === item.id}
+                      disabled={busy}
+                      name="visual-intent"
+                      onChange={() => patch({ intent: item.id })}
+                      type="radio"
+                    />
+                    {item.title}
+                    <span className="muted">（{item.hint}）</span>
+                  </label>
+                ))}
+              </fieldset>
+              <label>
+                描述你想要的画面
+                <textarea
+                  disabled={busy}
+                  onChange={event => patch({ description: event.target.value })}
+                  placeholder="例如：穿着舒适的家居服，在窗边安静地读书"
+                  rows={3}
+                  value={studio.description}
+                />
+              </label>
+            </>
+          )}
+          {plan && (
+            <div aria-live="polite">
+              <h3>{plan.feasible ? '这样理解对吗' : '暂时做不了'}</h3>
+              {plan.feasible ? (
+                <>
+                  <p>
+                    <strong>{plan.summary}</strong>
+                  </p>
+                  <dl>
+                    {plan.details.map(item => (
+                      <div key={`${item.label}:${item.value}`}>
+                        <dt>{item.label}</dt>
+                        <dd>{item.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {plan.materials.some(material => material.preview_url) ? (
+                    <div className="material-previews">
+                      {plan.materials
+                        .filter(material => material.preview_url)
+                        .map(material => (
+                          <figure key={material.id}>
+                            <img alt={material.name} src={material.preview_url ?? ''} />
+                            <figcaption>{material.name}</figcaption>
+                          </figure>
+                        ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <p>{plan.reason}</p>
+                  {plan.next_step ? <p className="muted">{STEP_LABEL[plan.next_step]}</p> : null}
+                </>
+              )}
+              <label>
+                还需要补充什么
+                <input
+                  disabled={busy}
+                  onChange={event => patch({ refinement: event.target.value })}
+                  placeholder="例如：光线再柔和一些"
+                  value={studio.refinement}
+                />
+              </label>
+            </div>
+          )}
+          {error ? <Notice error={error} /> : null}
+          <div className="button-row">
+            <button disabled={busy || (!plan && !studio.description.trim())} type="submit">
+              {busy ? '整理中…' : plan ? (plan.draft ? '开始制作' : '再说一句') : '整理描述'}
+            </button>
+            {plan && (
+              <button disabled={busy} onClick={() => void run(describe)} type="button">
+                再说一句
+              </button>
+            )}
           </div>
         </form>
       )}

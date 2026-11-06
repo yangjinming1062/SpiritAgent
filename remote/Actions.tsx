@@ -4,14 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ActionClipKind, ActionDefinition, ActionLibraryGroup, ActionReviewStatus } from '@protocol'
 
-import {
-  ACTION_MOTION_INTENSITIES,
-  ACTION_PERFORMANCE_ROLES,
-  ACTION_SEMANTIC_TAGS,
-  type ActionSemanticTag,
-  isActionDesignValid,
-  parseActionConditions
-} from '../shared/actions'
+import { composeDescribedInput } from '../shared/described-input'
 
 import { errorText, type RemoteApi } from './api'
 import { saveWithReadback } from './save-result'
@@ -42,76 +35,23 @@ const CLIP_KIND_TEXT: Record<ActionClipKind, string> = {
   once: '短动作'
 }
 
-const ROLE_TEXT = { idle: '常驻待机', sustained: '持续状态', reaction: '即时反应' } as const
-const INTENSITY_TEXT = { subtle: '轻微', normal: '日常', expressive: '明显' } as const
-const TAG_TEXT: Record<ActionSemanticTag, string> = {
-  idle: '安静相伴',
-  attention: '注意用户',
-  interaction: '互动回应',
-  reading: '阅读',
-  working: '专注做事',
-  creating: '创作',
-  thinking: '思考',
-  resting: '休息',
-  organizing: '整理',
-  socializing: '社交',
-  stretching: '舒展',
-  grooming: '整理仪容',
-  drinking: '饮水',
-  dancing: '舞蹈'
+interface ActionComposer {
+  description: string
+  refinement: string
+  preview: { draft: Record<string, unknown>; summary: string; details: { label: string; value: string }[] } | null
+  expectedUpdatedAt: string | null
+  requestId: string | null
 }
 
-interface ActionDraft {
-  avoidWhen: string
-  clipKind: ActionClipKind
-  duration: number
-  motion: string
-  name: string
-  useWhen: string
-  semanticTags: ActionSemanticTag[]
-  performanceRole: ActionDefinition['performance_role'] | null
-  motionIntensity: ActionDefinition['motion_intensity']
-  interruptible: boolean
-  allowedTriggers: ActionDefinition['allowed_triggers']
-  reason: string
-  expectedUpdatedAt?: string
+const EMPTY_COMPOSER: ActionComposer = {
+  description: '',
+  refinement: '',
+  preview: null,
+  expectedUpdatedAt: null,
+  requestId: null
 }
 
-function toDraft(action: ActionDefinition | null): ActionDraft {
-  return {
-    avoidWhen: (action?.avoid_when ?? []).join('\n'),
-    clipKind: action?.clip_kind ?? 'once',
-    duration: action?.duration_seconds ?? 4,
-    motion: action?.motion_description ?? '',
-    name: action?.name ?? '',
-    useWhen: (action?.use_when ?? []).join('\n'),
-    semanticTags: [...(action?.semantic_tags ?? [])],
-    performanceRole: action?.performance_role ?? null,
-    motionIntensity: action?.motion_intensity ?? 'normal',
-    interruptible: action?.interruptible ?? true,
-    allowedTriggers: action?.allowed_triggers ?? ['chat', 'manual'],
-    reason: action?.reason ?? '',
-    expectedUpdatedAt: action?.updated_at
-  }
-}
-
-function actionBody(draft: ActionDraft) {
-  return {
-    avoid_when: parseActionConditions(draft.avoidWhen),
-    clip_kind: draft.clipKind,
-    duration_seconds: draft.duration,
-    motion_description: draft.motion.trim(),
-    name: draft.name.trim(),
-    use_when: parseActionConditions(draft.useWhen),
-    semantic_tags: draft.semanticTags,
-    performance_role: draft.performanceRole ?? (draft.clipKind === 'loop' ? 'sustained' : 'reaction'),
-    motion_intensity: draft.motionIntensity,
-    interruptible: draft.interruptible,
-    allowed_triggers: draft.allowedTriggers,
-    reason: draft.reason
-  }
-}
-
+/** 动作编辑：新建与修改都从一句描述开始，先看整理结果再保存并评审。 */
 function ActionEditor({
   action,
   api,
@@ -127,18 +67,70 @@ function ActionEditor({
 }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
-  const [draft, setDraft] = usePageState<ActionDraft>(`action.${action?.id ?? 'new'}.draft`, toDraft(action))
-  const patch = (values: Partial<ActionDraft>) => setDraft(previous => ({ ...previous, ...values }))
-  const body = actionBody(draft)
-  const valid = isActionDesignValid(body)
+  const [composer, setComposer] = usePageState<ActionComposer>(`action.${action?.id ?? 'new'}.composer`, EMPTY_COMPOSER)
+  const patch = (values: Partial<ActionComposer>): void => setComposer(previous => ({ ...previous, ...values }))
   const readonly = action?.source === 'preset' || action?.status === 'pending' || action?.status === 'reviewing'
-  const changed = JSON.stringify(body) !== JSON.stringify(actionBody(toDraft(action)))
+  const description = composeDescribedInput(composer.description, composer.refinement)
 
-  useEffect(() => {
-    if (action && !changed && draft.expectedUpdatedAt !== action.updated_at) {
-      setDraft(previous => ({ ...previous, expectedUpdatedAt: action.updated_at }))
-    }
-  }, [action, changed, draft.expectedUpdatedAt, setDraft])
+  const interpret = (): Promise<void> =>
+    run(async () => {
+      if (!description) {
+        return
+      }
+
+      const result = await api.invoke('companion_actions.interpret_action', {
+        body: { description, action_id: action?.id ?? null }
+      })
+
+      if (alive()) {
+        patch({
+          description,
+          refinement: '',
+          requestId: null,
+          preview: { draft: result.draft, summary: result.summary, details: result.details },
+          expectedUpdatedAt: result.expected_updated_at ?? composer.expectedUpdatedAt
+        })
+      }
+    })
+
+  const save = (): Promise<void> =>
+    run(async () => {
+      const plan = composer.preview
+
+      if (!plan) {
+        return
+      }
+
+      const request_id = composer.requestId ?? crypto.randomUUID()
+      patch({ requestId: request_id })
+      const saved: ActionDefinition = action
+        ? await saveWithReadback({
+            write: () =>
+              api.invoke('companion_actions.update_action', {
+                path: { action_id: action.id },
+                body: { design: plan.draft, expected_updated_at: composer.expectedUpdatedAt ?? action.updated_at }
+              }),
+            read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
+            matches: latest =>
+              latest.name === String(plan.draft.name ?? '') &&
+              latest.motion_description === String(plan.draft.motion_description ?? ''),
+            isCurrent: alive,
+            onUnconfirmed: latest => {
+              if (latest) {
+                onReload(latest)
+              }
+            }
+          })
+        : await api.invoke('companion_actions.create_action', {
+            body: { request_id, design: plan.draft }
+          })
+
+      if (alive()) {
+        patch({ requestId: null })
+        onClose()
+        await onChanged(saved)
+      }
+    })
 
   return (
     <section className="asset-detail">
@@ -154,185 +146,63 @@ function ActionEditor({
           {action.review_reason ? ` · ${action.review_reason}` : ''}
         </p>
       ) : null}
-      <fieldset disabled={busy || readonly}>
+      {!composer.preview ? (
         <label>
-          名称
-          <input onChange={event => patch({ name: event.target.value })} value={draft.name} />
-        </label>
-        <label>
-          动作内容
+          {action ? '想改哪里' : '它会在什么时候、大概怎么动'}
           <textarea
-            onChange={event => patch({ motion: event.target.value })}
-            placeholder="描述动作的样子，例如：坐在窗边慢慢晃动双腿，偶尔抬头看向窗外"
+            disabled={busy || readonly}
+            onChange={event => patch({ description: event.target.value })}
+            placeholder="例如：阳光很好的午后，坐在窗边慢慢晃动双腿，偶尔抬头看向窗外"
             rows={4}
-            value={draft.motion}
+            value={composer.description}
           />
         </label>
-        <label>
-          适合的情境（每行一条）
-          <textarea
-            maxLength={2000}
-            onChange={event => patch({ useWhen: event.target.value })}
-            placeholder="例如：阳光很好的午后"
-            rows={3}
-            value={draft.useWhen}
-          />
-        </label>
-        <label>
-          避免的情境（每行一条）
-          <textarea
-            maxLength={2000}
-            onChange={event => patch({ avoidWhen: event.target.value })}
-            placeholder="例如：正在认真聊天的时候"
-            rows={3}
-            value={draft.avoidWhen}
-          />
-        </label>
-        <p className="muted">每项最多 8 条，每条最多 120 字；留空表示不限。</p>
-        <fieldset>
-          <legend>播放类型</legend>
-          {(['loop', 'once'] as const).map(kind => (
-            <label key={kind}>
-              <input
-                checked={draft.clipKind === kind}
-                name="action-clip-kind"
-                onChange={() => patch({ clipKind: kind, performanceRole: null })}
-                type="radio"
-              />
-              {CLIP_KIND_TEXT[kind]}
-              {kind === 'loop' ? '（循环播放）' : '（播完回到持续画面）'}
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          时长（秒）
-          <input
-            max={15}
-            min={1}
-            onChange={event => patch({ duration: Number(event.target.value) })}
-            type="number"
-            value={draft.duration}
-          />
-        </label>
-        <fieldset>
-          <legend>语义标签（描述动作本身含义，最多 8 个）</legend>
-          <div className="tag-row">
-            {ACTION_SEMANTIC_TAGS.map(tag => {
-              const active = draft.semanticTags.includes(tag)
-
-              return (
-                <label key={tag}>
-                  <input
-                    checked={active}
-                    onChange={() =>
-                      patch({
-                        semanticTags: active
-                          ? draft.semanticTags.filter(item => item !== tag)
-                          : draft.semanticTags.length >= 8
-                            ? draft.semanticTags
-                            : [...draft.semanticTags, tag]
-                      })
-                    }
-                    type="checkbox"
-                  />
-                  {TAG_TEXT[tag]}
-                </label>
-              )
-            })}
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>表现角色（省略按播放类型判断）</legend>
+      ) : (
+        <div aria-live="polite">
+          <h2>这样理解对吗</h2>
+          <p>
+            <strong>{composer.preview.summary}</strong>
+          </p>
+          <dl>
+            {composer.preview.details.map(item => (
+              <div key={`${item.label}:${item.value}`}>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
+              </div>
+            ))}
+          </dl>
           <label>
+            还需要补充什么
             <input
-              checked={draft.performanceRole === null}
-              name="action-role"
-              onChange={() => patch({ performanceRole: null })}
-              type="radio"
+              disabled={busy || readonly}
+              onChange={event => patch({ refinement: event.target.value })}
+              placeholder="例如：幅度再小一些"
+              value={composer.refinement}
             />
-            自动
           </label>
-          {ACTION_PERFORMANCE_ROLES.filter(role => (role === 'reaction') === (draft.clipKind === 'once')).map(role => (
-            <label key={role}>
-              <input
-                checked={draft.performanceRole === role}
-                name="action-role"
-                onChange={() => patch({ performanceRole: role })}
-                type="radio"
-              />
-              {ROLE_TEXT[role]}
-            </label>
-          ))}
-        </fieldset>
-        <fieldset>
-          <legend>动作强度（轻量动态下只自动选择轻微动作）</legend>
-          {ACTION_MOTION_INTENSITIES.map(level => (
-            <label key={level}>
-              <input
-                checked={draft.motionIntensity === level}
-                name="action-intensity"
-                onChange={() => patch({ motionIntensity: level })}
-                type="radio"
-              />
-              {INTENSITY_TEXT[level]}
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          <input
-            checked={draft.interruptible}
-            onChange={event => patch({ interruptible: event.target.checked })}
-            type="checkbox"
-          />
-          允许互动或新活动中断动作
-        </label>
-      </fieldset>
+        </div>
+      )}
       {error ? <Notice>{error}</Notice> : null}
       {!readonly && (
         <div className="creation-footer">
           <button
             className="primary full"
-            disabled={busy || !valid}
-            onClick={() =>
-              run(async () => {
-                let saved: ActionDefinition
-                if (action) {
-                  saved = await saveWithReadback({
-                    write: () =>
-                      api.invoke('companion_actions.update_action', {
-                        path: { action_id: action.id },
-                        body: { ...body, expected_updated_at: draft.expectedUpdatedAt ?? action.updated_at }
-                      }),
-                    read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
-                    matches: latest => JSON.stringify(actionBody(toDraft(latest))) === JSON.stringify(body),
-                    isCurrent: alive,
-                    onUnconfirmed: latest => {
-                      if (latest) {
-                        onReload(latest)
-                      }
-                    }
-                  })
-                } else {
-                  saved = await api.invoke('companion_actions.create_action', {
-                    body
-                  })
-                }
-
-                if (alive()) {
-                  onClose()
-                  await onChanged(saved)
-                }
-              })
-            }
+            disabled={busy || (!composer.preview && !description)}
+            onClick={() => (composer.preview ? save() : interpret())}
             type="button"
           >
-            {action ? '保存修改' : '创建动作'}
+            {composer.preview ? '保存并评审' : '整理描述'}
           </button>
+          {composer.preview && (
+            <button disabled={busy} onClick={() => void interpret()} type="button">
+              再说一句
+            </button>
+          )}
         </div>
       )}
       {action && (action.status === 'failed' || action.status === 'deferred') && (
         <button
-          disabled={busy || changed}
+          disabled={busy}
           onClick={() =>
             run(async () => {
               const saved = await saveWithReadback({
@@ -344,9 +214,8 @@ function ActionEditor({
                 read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
                 matches: latest =>
                   latest.updated_at !== action.updated_at &&
-                  JSON.stringify(actionBody(toDraft(latest))) === JSON.stringify(actionBody(toDraft(action))) &&
-                  JSON.stringify(latest.allowed_triggers) === JSON.stringify(action.allowed_triggers) &&
-                  latest.reason === action.reason,
+                  latest.name === action.name &&
+                  latest.motion_description === action.motion_description,
                 isCurrent: alive,
                 onUnconfirmed: latest => {
                   if (latest) {
@@ -369,24 +238,6 @@ function ActionEditor({
         <details className="optional-details">
           <summary>更多操作</summary>
           <div className="button-row">
-            <button
-              disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  if (changed && !window.confirm('重新载入会放弃当前未保存的修改，继续吗？')) {
-                    return
-                  }
-                  const latest = await api.invoke('companion_actions.get_action', { path: { action_id: action.id } })
-                  if (alive()) {
-                    setDraft(toDraft(latest))
-                    onReload(latest)
-                  }
-                })
-              }
-              type="button"
-            >
-              重新载入已保存内容
-            </button>
             <button
               className="danger"
               disabled={busy}

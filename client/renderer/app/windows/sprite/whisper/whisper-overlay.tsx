@@ -155,7 +155,9 @@ function WhisperPositioner({
           className="mr-auto flex items-center gap-1 rounded px-1 text-xs text-muted hover:bg-fill-hover"
           onClick={() => {
             closeWhisper()
-            void requestOpenSurface({ page: 'life' }).catch(error => notifyError(error, getStrings().life.title))
+            void requestOpenSurface({ location: { page: 'life', section: 'now' }, focus: { page: 'life' } }).catch(
+              error => notifyError(error, getStrings().life.title)
+            )
           }}
           onPointerDown={event => event.stopPropagation()}
           type="button"

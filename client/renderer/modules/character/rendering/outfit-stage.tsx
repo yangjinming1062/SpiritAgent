@@ -318,7 +318,10 @@ export function OutfitStage({
           message={strings.companion.egg[egg]}
           onStatusAction={() => {
             if (egg === 'unavailable') {
-              void requestOpenSurface({ page: 'companion', companionSection: 'visuals' })
+              void requestOpenSurface({
+                location: { page: 'creation', section: 'visuals' },
+                focus: { page: 'creation' }
+              })
 
               return
             }

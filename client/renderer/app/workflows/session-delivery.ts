@@ -14,7 +14,7 @@ export function openWhisper(sessionId?: string): void {
 export function openSessionSurface(sessionId: string): void {
   if (sessionId === $companionSessionId.get()) {
     if ($surfaceRole.get() !== 'sprite' || $surfaceOpen.get()) {
-      void requestOpenSurface({ page: 'chat', sessionId })
+      void requestOpenSurface({ location: { page: 'chat' }, focus: { page: 'chat', sessionId } })
 
       return
     }
@@ -24,5 +24,5 @@ export function openSessionSurface(sessionId: string): void {
     return
   }
 
-  void requestOpenSurface({ sessionId, page: 'chat' })
+  void requestOpenSurface({ location: { page: 'chat' }, focus: { page: 'chat', sessionId } })
 }

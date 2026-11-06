@@ -314,7 +314,9 @@ export function SpriteStage({
         log.warn('sprite-stage', 'Dropped files handoff failed', error)
         notifyError(error, getStrings().chat.filesHandoffFailed)
       })
-      .then(() => (isCurrent() ? requestOpenSurface({ page: 'chat', sessionId }) : undefined))
+      .then(() =>
+        isCurrent() ? requestOpenSurface({ location: { page: 'chat' }, focus: { page: 'chat', sessionId } }) : undefined
+      )
       .catch((error: unknown) => log.warn('sprite-stage', 'Could not open main window', error))
   }
 

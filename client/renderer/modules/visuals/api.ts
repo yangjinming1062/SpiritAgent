@@ -6,11 +6,9 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import type {
   ActionDefinition,
-  ActionDefinitionRequest,
   ActionLibraryGroup,
   ActionListResponse,
   ActionMediaListResponse,
-  ActionUpdateRequest,
   PlaybackReceiptKind,
   VisualDetail,
   VisualJob,
@@ -74,9 +72,12 @@ export interface VisualReceiptBody {
 export const visualsApi = {
   analyze: (visualId: string, body: ApiSchemas['ImportAnalysisRequest']): Promise<ApiSchemas['ImportAnalysisView']> =>
     requestResource('companion_visuals.analyze_visual', { path: { visual_id: visualId }, body }),
-  createCinematic: (body: Omit<ApiSchemas['CinematicRequest'], 'request_id'>): Promise<VisualJob> =>
-    submitCreation(JSON.stringify(['cinematic', body]), request_id =>
-      requestResource('companion_visuals.create_cinematic', { body: { ...body, request_id } })
+  interpret: (body: ApiSchemas['VisualInterpretRequest']): Promise<ApiSchemas['VisualInterpretation']> =>
+    requestResource('companion_visuals.interpret_visual', { body }),
+  /** 统一创建入口：同一份草稿复用同一个 request_id，重试不会产生第二个工作项。 */
+  create: (draft: Record<string, unknown>): Promise<VisualJob> =>
+    submitCreation(JSON.stringify(draft), request_id =>
+      requestResource('companion_visuals.create_visual', { body: { request_id, draft } })
     ),
   upload: (
     data: Uint8Array,
@@ -92,16 +93,7 @@ export const visualsApi = {
     requestResource('companion_visuals.delete_visual', { path: { visual_id: visualId } }),
   listActionMedia: (actionId: string): Promise<ActionMediaListResponse> =>
     requestResource('companion_visuals.list_action_media', { path: { action_id: actionId }, query: { limit: 30 } }),
-  /** 制作透明主体动画：身份 + 造型 + 动作，不绑定环境；桌面与手机共用同一契约。 */
-  createActorClip: (body: Omit<ApiSchemas['ActorClipRequest'], 'request_id'>): Promise<VisualJob> =>
-    submitCreation(JSON.stringify(['actor', body]), request_id =>
-      requestResource('companion_visuals.create_actor_clip', { body: { ...body, request_id } })
-    ),
-  /** 制作环境循环视频：单张已就绪的环境素材。 */
-  createSceneMedia: (body: Omit<ApiSchemas['SceneMediaRequest'], 'request_id'>): Promise<VisualJob> =>
-    submitCreation(JSON.stringify(['scene', body]), request_id =>
-      requestResource('companion_visuals.create_scene_media', { body: { ...body, request_id } })
-    ),
+
   regenerate: (visualId: string, body: VisualRegenerateRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.regenerate_visual', { path: { visual_id: visualId }, body }),
   jobs: (): Promise<VisualJobListResponse> => requestResource('companion_visuals.list_visual_jobs'),
@@ -135,9 +127,11 @@ export const actionsApi = {
   list: (
     query: { query?: string; cursor?: string; limit?: number; group?: ActionLibraryGroup } = {}
   ): Promise<ActionListResponse> => requestResource('companion_actions.list_actions', { query }),
-  create: (body: ActionDefinitionRequest): Promise<ActionDefinition> =>
+  interpret: (body: ApiSchemas['ActionInterpretRequest']): Promise<ApiSchemas['ActionInterpretation']> =>
+    requestResource('companion_actions.interpret_action', { body }),
+  create: (body: ApiSchemas['ActionCreateRequest']): Promise<ActionDefinition> =>
     requestResource('companion_actions.create_action', { body }),
-  update: (actionId: string, body: ActionUpdateRequest): Promise<ActionDefinition> =>
+  update: (actionId: string, body: ApiSchemas['ActionUpdateRequest']): Promise<ActionDefinition> =>
     requestResource('companion_actions.update_action', { path: { action_id: actionId }, body }),
   review: (actionId: string, expectedUpdatedAt: string): Promise<ActionDefinition> =>
     requestResource('companion_actions.retry_review', {

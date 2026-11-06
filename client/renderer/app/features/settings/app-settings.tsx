@@ -1,18 +1,12 @@
 import { useStore } from '@nanostores/react'
 import { IconDeviceMobile } from '@tabler/icons-react'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
 
+import type { AppPageProps } from '@/app/components/app-content-page'
+import { SectionShell } from '@/app/components/section-shell/section-shell'
 import { RemotePage } from '@/app/features/remote/remote-page'
-import {
-  $appNavigationTarget,
-  $settingsSection,
-  applyAppNavigation,
-  setSettingsSection,
-  SETTINGS_SECTIONS
-} from '@/app/navigation/app-navigation'
+import { $settingsSection, $settingsTab, openSettings, SETTINGS_SECTIONS } from '@/app/navigation/app-navigation'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
-import { triggerHaptic } from '@/shared/lib/haptics'
 import {
   Brain,
   Command,
@@ -20,11 +14,9 @@ import {
   type IconComponent,
   Info,
   Keyboard,
-  Monitor,
   Palette,
   SlidersHorizontal,
-  Sparkles,
-  Volume2
+  Sparkles
 } from '@/shared/lib/icons'
 import { CapsuleTabs, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { runnerApi } from '@/shared/platform/desktop'
@@ -33,7 +25,6 @@ import { useStrings } from '@/shared/strings'
 import type { SettingsSection, SettingsTab } from '@ipc/contracts'
 
 import { AboutPage } from './about-page'
-import styles from './app-settings.module.css'
 import { CompanionPage } from './companion-page'
 import { InteractionPage } from './interaction-page'
 import { PresentationPage } from './presentation-page'
@@ -47,14 +38,17 @@ import { ThemePage } from './theme-page'
 
 const ICONS: Record<SettingsSection, IconComponent> = {
   companionship: SlidersHorizontal,
-  voice: Volume2,
+  appearance: Palette,
   sources: Globe,
-  theme: Palette,
-  display: Monitor,
   devices: IconDeviceMobile,
   capabilities: Sparkles,
-  application: Info,
   advanced: Brain
+}
+
+const DEFAULT_TAB: Partial<Record<SettingsSection, SettingsTab>> = {
+  companionship: 'together',
+  capabilities: 'skills',
+  advanced: 'general'
 }
 
 function ApplicationSettings(): React.JSX.Element {
@@ -96,76 +90,75 @@ function ApplicationSettings(): React.JSX.Element {
   )
 }
 
-export function AppSettings(): React.JSX.Element {
+/** 设置：常用项在前，进阶配置集中在最后一组；页签只在本组内切换。 */
+export function AppSettings(_props: AppPageProps): React.JSX.Element {
   const section = useStore($settingsSection)
-  const target = useStore($appNavigationTarget)
-  const scrollerRef = useRef<HTMLDivElement>(null)
-  const settingsTab = target.settingsTab ?? (section === 'capabilities' ? 'skills' : 'general')
+  const tab = useStore($settingsTab)
   const strings = useStrings()
   const labels = strings.settings.application.sections
+  const activeTab = tab ?? DEFAULT_TAB[section]
 
-  useEffect(() => {
-    scrollerRef.current?.scrollTo(0, 0)
-  }, [settingsTab])
+  const tabOptions = (): ReadonlyArray<{ value: SettingsTab; label: string; icon?: IconComponent }> => {
+    switch (section) {
+      case 'companionship':
+        return [
+          { value: 'together', label: strings.settings.interaction.title, icon: SlidersHorizontal },
+          { value: 'voice', label: strings.settings.interaction.voiceHeading, icon: Sparkles }
+        ]
 
-  const selectTab = (next: SettingsTab): void => {
-    if (next !== settingsTab) {
-      triggerHaptic()
-      void applyAppNavigation({
-        page: 'settings',
-        section,
-        settingsTab: next
-      })
+      case 'capabilities':
+        return [
+          { value: 'skills', label: strings.skills.tabSkills, icon: Sparkles },
+          { value: 'toolsets', label: strings.skills.tabToolsets, icon: Command }
+        ]
+
+      case 'advanced':
+        return [
+          { value: 'general', label: strings.settings.application.generalTitle, icon: SlidersHorizontal },
+          { value: 'shortcuts', label: strings.settings.application.shortcutsTitle, icon: Keyboard },
+          { value: 'about', label: strings.settings.nav.about, icon: Info }
+        ]
+
+      default:
+        return []
     }
   }
 
-  const select = (next: SettingsSection): void => {
-    triggerHaptic('open')
-    setSettingsSection(next)
-  }
+  const options = tabOptions()
 
   const content = (): React.ReactNode => {
     switch (section) {
       case 'companionship':
-        return <InteractionPage part="companionship" />
+        return <InteractionPage part={activeTab === 'voice' ? 'voice' : 'companionship'} />
 
-      case 'voice':
-        return <InteractionPage part="voice" />
-
-      case 'sources':
-        return <SocialAccountsSection />
-
-      case 'theme':
-        return <ThemePage />
-
-      case 'display':
+      case 'appearance':
         return (
           <div className="space-y-6">
-            <SettingsSectionIntro hint={strings.settings.application.displayHint} title={labels.display} />
+            <SettingsSectionIntro hint={strings.settings.application.displayHint} title={labels.appearance} />
+            <ThemePage />
             <PresentationPage />
             <CompanionPage />
           </div>
         )
 
+      case 'sources':
+        return <SocialAccountsSection />
+
       case 'devices':
         return <RemotePage />
 
       case 'capabilities':
-        return settingsTab === 'toolsets' ? <ToolsetsPage /> : <SkillsPage />
-
-      case 'application':
-        return settingsTab === 'shortcuts' ? (
-          <ShortcutsPage />
-        ) : settingsTab === 'about' ? (
-          <AboutPage />
-        ) : (
-          <ApplicationSettings />
-        )
+        return activeTab === 'toolsets' ? <ToolsetsPage /> : <SkillsPage />
 
       case 'advanced':
-        return (
+        return activeTab === 'shortcuts' ? (
+          <ShortcutsPage />
+        ) : activeTab === 'about' ? (
+          <AboutPage />
+        ) : (
           <div className="space-y-5">
             <SettingsSectionIntro hint={strings.settings.application.advancedHint} title={labels.advanced} />
+            <ApplicationSettings />
             <Disclosure
               hint={strings.settings.application.conversationHint}
               title={strings.settings.application.conversationTitle}
@@ -184,65 +177,23 @@ export function AppSettings(): React.JSX.Element {
   }
 
   return (
-    <div className={styles.layout}>
-      <nav aria-label={strings.settings.application.categoriesAria} className={styles.directory}>
-        {SETTINGS_SECTIONS.map(id => {
-          const Icon = ICONS[id]
-
-          return (
-            <button
-              aria-current={section === id ? 'page' : undefined}
-              className={`${styles.category} ${id === 'advanced' ? styles.advanced : ''}`}
-              key={id}
-              onClick={() => select(id)}
-              type="button"
-            >
-              <Icon aria-hidden="true" size={17} />
-              <span>{labels[id]}</span>
-            </button>
-          )
-        })}
-      </nav>
-      <div className={styles.contentColumn}>
-        <div className={styles.mobileDirectory}>
-          <span>{strings.settings.application.settingsLabel}</span>
-          <PanelSelect
-            ariaLabel={strings.settings.application.categoryAria}
-            onChange={select}
-            options={SETTINGS_SECTIONS.map(id => ({ value: id, label: labels[id] }))}
-            value={section}
-            widthClass="w-full"
+    <SectionShell
+      activeId={section}
+      ariaLabel={strings.settings.application.categoriesAria}
+      entries={SETTINGS_SECTIONS.map(id => ({ id, icon: ICONS[id], label: labels[id] }))}
+      onSelect={next => void openSettings(next)}
+      tabs={
+        options.length > 0 ? (
+          <CapsuleTabs<SettingsTab>
+            ariaLabel={labels[section]}
+            onChange={next => void openSettings(section, next)}
+            options={options}
+            value={activeTab ?? options[0].value}
           />
-        </div>
-        {(section === 'capabilities' || section === 'application') && (
-          <div className={styles.tabs}>
-            <div className={styles.content}>
-              <CapsuleTabs<SettingsTab>
-                ariaLabel={labels[section]}
-                onChange={selectTab}
-                options={
-                  section === 'capabilities'
-                    ? [
-                        { value: 'skills', label: strings.skills.tabSkills, icon: Sparkles },
-                        { value: 'toolsets', label: strings.skills.tabToolsets, icon: Command }
-                      ]
-                    : [
-                        { value: 'general', label: strings.settings.application.generalTitle, icon: SlidersHorizontal },
-                        { value: 'shortcuts', label: strings.settings.application.shortcutsTitle, icon: Keyboard },
-                        { value: 'about', label: strings.settings.nav.about, icon: Info }
-                      ]
-                }
-                value={settingsTab}
-              />
-            </div>
-          </div>
-        )}
-        <div className={styles.scroller} key={section} ref={scrollerRef}>
-          <div className={styles.content} data-section={section}>
-            {content()}
-          </div>
-        </div>
-      </div>
-    </div>
+        ) : undefined
+      }
+    >
+      <div key={`${section}:${activeTab ?? ''}`}>{content()}</div>
+    </SectionShell>
   )
 }

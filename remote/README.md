@@ -11,6 +11,7 @@
 | 动态、日记与已读 | [Feed.tsx](Feed.tsx) |
 | 生活近况、事项与阅读成果 | [LifeSummary.tsx](LifeSummary.tsx)，由 [Companion.tsx](Companion.tsx) 装配 |
 | 资料、记忆与声音 | [Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[memory-state.ts](memory-state.ts)、[Voice.tsx](Voice.tsx) |
+| 生活与创作入口 | [Life.tsx](Life.tsx)、[Creation.tsx](Creation.tsx) |
 | 素材、动作与影像 | [Assets.tsx](Assets.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx)、[material-options.ts](material-options.ts) |
 | 草稿、轮询、保存核对与媒体 | [ui.tsx](ui.tsx)、[save-result.ts](save-result.ts) |
 

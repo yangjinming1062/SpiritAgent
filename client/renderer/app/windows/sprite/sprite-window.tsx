@@ -145,7 +145,7 @@ export function SpriteWindow(): React.JSX.Element {
         action: {
           label: voice.invalidAction,
           onClick: () => {
-            void requestOpenSurface({ page: 'companion', companionSection: 'voice' })
+            void requestOpenSurface({ location: { page: 'companion', section: 'voice' }, focus: { page: 'companion' } })
           }
         }
       })

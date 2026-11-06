@@ -1,7 +1,6 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
-import { isVisualCreationDraft, type VisualCreationDraft } from '../../../shared/visuals'
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
@@ -137,8 +136,17 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
   )
 }
 
+/** 创作草稿：描述、整理结果与待确认计划；只在本机内存与模式交接中保留。 */
+export interface StudioUiSnapshot {
+  mode: 'idle' | 'describe' | 'upload'
+  intent: 'photo' | 'video' | 'motion'
+  description: string
+  preview: Record<string, unknown> | null
+  refinement: string
+}
+
 export interface VisualsUiSnapshot {
-  creation?: VisualCreationDraft
+  studio?: StudioUiSnapshot
   analysisNotes?: Record<string, string>
   analysisSelections?: Record<string, string>
   query: string
@@ -146,6 +154,17 @@ export interface VisualsUiSnapshot {
   source: string
   page: number
   cursors: (string | null)[]
+}
+
+export function isStudioUiSnapshot(value: unknown): value is StudioUiSnapshot {
+  return (
+    isRecord(value) &&
+    (value.mode === 'idle' || value.mode === 'describe' || value.mode === 'upload') &&
+    (value.intent === 'photo' || value.intent === 'video' || value.intent === 'motion') &&
+    typeof value.description === 'string' &&
+    typeof value.refinement === 'string' &&
+    (value.preview === null || isRecord(value.preview))
+  )
 }
 
 export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot {
@@ -160,7 +179,7 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     Array.isArray(value.cursors) &&
     value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
     value.page < value.cursors.length &&
-    (value.creation === undefined || isVisualCreationDraft(value.creation)) &&
+    (value.studio === undefined || isStudioUiSnapshot(value.studio)) &&
     (value.analysisNotes === undefined ||
       (isRecord(value.analysisNotes) && Object.values(value.analysisNotes).every(note => typeof note === 'string'))) &&
     (value.analysisSelections === undefined ||

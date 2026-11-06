@@ -5,6 +5,7 @@ import {
   type DesktopShortcutsConfig,
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
+  type DesktopSurfaceOpenPayload,
   IPC
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
@@ -14,7 +15,7 @@ import { broadcastToAllWindows } from '../shared/utils'
 
 /** 窄接口：快捷键只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {
-  toggleSurface: (payload: Record<string, never>) => Promise<void>
+  toggleSurface: (payload?: DesktopSurfaceOpenPayload) => Promise<void>
 }
 
 interface ShortcutsIpcDeps {
@@ -65,7 +66,7 @@ function handleToggleVisibility(): void {
 }
 
 function handleToggleSurface(): void {
-  deps?.surfaces?.toggleSurface({}).catch(err => {
+  deps?.surfaces?.toggleSurface().catch(err => {
     deps?.rememberLog?.(`[shortcuts] toggleSurface failed: ${errorMessage(err)}`)
   })
 }

@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApiInput, ApiOperationKey } from '../shared/api'
 import type { ApiSchemas } from '../shared/api.generated'
 import { uiCopy } from '../shared/ui-copy'
+import { isStaleDraftError } from '../shared/visuals'
 
-import type { RemoteApi } from './api'
-import { ApiError, readImage } from './api'
+import { ApiError, readImage, type RemoteApi } from './api'
 import { copyText, newRequestId } from './browser'
 import { MediaReviewButton } from './MediaReviewButton'
 import type { Outfit, Scene } from './types'
@@ -588,6 +588,17 @@ function SceneDetail({
   const [description, setDescription] = usePageState(`scene.${scene.id}.description`, scene.description)
   const [motionNotice, setMotionNotice] = useState<string | null>(null)
   const [motionRequest, setMotionRequest] = usePageState(`scene.${scene.id}.motionRequest`, newRequestId())
+  const [motionDescription, setMotionDescription] = usePageState(`scene.${scene.id}.motionDescription`, '')
+  const [motionPhase, setMotionPhase] = usePageState<'' | 'dawn' | 'day' | 'dusk' | 'night'>(
+    `scene.${scene.id}.motionPhase`,
+    ''
+  )
+  const [motionPreview, setMotionPreview] = usePageState<{
+    draft: Record<string, unknown> | null
+    summary: string
+    feasible: boolean
+    reason: string
+  } | null>(`scene.${scene.id}.motionPreview`, null)
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`scene.${scene.id}`, onUpdate)
   const previous = useRef({ title: scene.title, description: scene.description })
   const picker = useRef<HTMLInputElement>(null)
@@ -680,23 +691,81 @@ function SceneDetail({
       </details>
       {scene.status === 'ready' && scene.url ? (
         <>
-          <button
-            disabled={busy || submitted}
-            onClick={() =>
-              run(async () => {
-                await api.invoke('companion_visuals.create_scene_media', {
-                  body: { scene_id: scene.id, request_id: motionRequest }
+          <details className="optional-details">
+            <summary>制作动态环境</summary>
+            <p className="muted">描述想要的动态效果，确认后再开始制作。</p>
+            <label>
+              动态效果
+              <input
+                disabled={busy}
+                onChange={event => setMotionDescription(event.target.value)}
+                placeholder="例如：窗帘轻轻飘动"
+                value={motionDescription}
+              />
+            </label>
+            <label>
+              光线时段
+              <select
+                disabled={busy}
+                onChange={event => setMotionPhase(event.target.value as '' | 'dawn' | 'day' | 'dusk' | 'night')}
+                value={motionPhase}
+              >
+                <option value="">不限</option>
+                <option value="dawn">黎明</option>
+                <option value="day">白天</option>
+                <option value="dusk">黄昏</option>
+                <option value="night">夜间</option>
+              </select>
+            </label>
+            {motionPreview ? (
+              <p aria-live="polite">
+                <strong>{motionPreview.summary}</strong>
+                {motionPreview.feasible ? null : ` · ${motionPreview.reason}`}
+              </p>
+            ) : null}
+            <button
+              disabled={busy || submitted}
+              onClick={() =>
+                run(async () => {
+                  if (!motionPreview?.draft) {
+                    const plan = await api.invoke('companion_visuals.interpret_visual', {
+                      body: {
+                        description: motionDescription.trim() || '让这个环境自然地动起来',
+                        intent: 'scenery',
+                        scene_id: scene.id,
+                        day_phase: motionPhase || null
+                      }
+                    })
+                    if (alive()) {
+                      setMotionPreview(plan)
+                      setMotionRequest(newRequestId())
+                    }
+                    return
+                  }
+                  try {
+                    await api.invoke('companion_visuals.create_visual', {
+                      body: { request_id: motionRequest, draft: motionPreview.draft }
+                    })
+                  } catch (failure) {
+                    if (alive() && failure instanceof ApiError && isStaleDraftError(failure.code)) {
+                      setMotionPreview(null)
+                    }
+
+                    throw failure
+                  }
+                  if (alive()) {
+                    setMotionRequest(newRequestId())
+                    setMotionPreview(null)
+                    setMotionDescription('')
+                    setMotionNotice('已开始制作动态环境，可在影像页查看进度。')
+                  }
                 })
-                if (alive()) {
-                  setMotionRequest(newRequestId())
-                  setMotionNotice('已开始制作动态环境，可在影像页查看进度。')
-                }
-              })
-            }
-            type="button"
-          >
-            制作动态环境
-          </button>
+              }
+              type="button"
+            >
+              {motionPreview?.draft ? '开始制作' : '整理描述'}
+            </button>
+          </details>
           {motionNotice ? <p className="muted">{motionNotice}</p> : null}
         </>
       ) : null}

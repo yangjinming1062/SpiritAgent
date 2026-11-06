@@ -331,15 +331,7 @@ function VisualDetailPanel({
   )
 }
 
-export function Visuals({
-  api,
-  onBack,
-  refresh
-}: {
-  api: RemoteApi
-  onBack: () => void
-  refresh: number
-}): ReactElement {
+export function Visuals({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
   const [rows, setRows] = useState<VisualItem[]>([])
@@ -414,9 +406,6 @@ export function Visuals({
     <>
       {!selected ? (
         <>
-          <button className="back-link" onClick={onBack} type="button">
-            ← 返回伙伴
-          </button>
           <PageHeader subtitle="创建、上传与收藏你和伙伴的影像" title="影像" />
           <VisualCreate
             api={api}

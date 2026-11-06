@@ -1,52 +1,28 @@
-import { IconDeviceTv } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useState } from 'react'
 
-import { Actions } from './Actions'
 import type { RemoteApi } from './api'
-import { Assets } from './Assets'
-import { LifeSummary } from './LifeSummary'
 import { MemoryView } from './Memory'
 import { Profile } from './Profile'
-import { focusAfterRender, PageHeader, usePageState } from './ui'
-import { Visuals } from './Visuals'
+import { PageHeader, usePageState } from './ui'
 import { Voice } from './Voice'
 
-type Section = 'action' | 'memory' | 'outfit' | 'profile' | 'scene' | 'voice'
+type Section = 'memory' | 'profile' | 'voice'
 
+const ITEMS = [
+  { id: 'profile', title: '资料' },
+  { id: 'voice', title: '声音' },
+  { id: 'memory', title: '记忆' }
+] as const
+
+/** 伙伴页签只保留"它是谁"：资料、声音与记忆；创作相关入口在创作页。 */
 export function Companion({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('companion.section', 'profile')
-  // 影像子页随组件生命周期，切 tab 即回分类页。
-  const [visuals, setVisuals] = useState(false)
-  const items = [
-    { id: 'profile', title: '资料' },
-    { id: 'voice', title: '声音' },
-    { id: 'memory', title: '记忆' },
-    { id: 'outfit', title: '衣柜' },
-    { id: 'scene', title: '环境' },
-    { id: 'action', title: '动作' }
-  ] as const
-  const section = items.some(item => item.id === savedSection) ? savedSection : 'profile'
-
-  if (visuals) {
-    return (
-      <div className="page companion-page">
-        <Visuals
-          api={api}
-          onBack={() => {
-            setVisuals(false)
-            focusAfterRender('[data-visuals-entry]')
-          }}
-          refresh={refresh}
-        />
-      </div>
-    )
-  }
+  const section = ITEMS.some(item => item.id === savedSection) ? savedSection : 'profile'
 
   return (
     <div className="page companion-page">
       <nav aria-label="伙伴分类" className="companion-nav">
-        {items.map(item => (
+        {ITEMS.map(item => (
           <button
             aria-current={section === item.id ? 'page' : undefined}
             key={item.id}
@@ -57,14 +33,6 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
           </button>
         ))}
       </nav>
-      <button className="visuals-entry" data-visuals-entry onClick={() => setVisuals(true)} type="button">
-        <IconDeviceTv aria-hidden size={20} stroke={1.7} />
-        <span>
-          <strong>影像</strong>
-          <small>浏览成品画面或重做，实际呈现由伙伴自主决定</small>
-        </span>
-      </button>
-      <LifeSummary api={api} refresh={refresh} />
       {section === 'profile' ? (
         <>
           <PageHeader subtitle="名字、性格和你们的相处方式" title="伙伴资料" />
@@ -72,15 +40,11 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
         </>
       ) : section === 'voice' ? (
         <Voice api={api} refresh={refresh} />
-      ) : section === 'memory' ? (
+      ) : (
         <>
           <PageHeader subtitle="查看、修改或忘记聊天中记住的事" title="记忆" />
           <MemoryView api={api} refresh={refresh} />
         </>
-      ) : section === 'action' ? (
-        <Actions api={api} refresh={refresh} />
-      ) : (
-        <Assets api={api} key={section} kind={section} refresh={refresh} />
       )}
     </div>
   )

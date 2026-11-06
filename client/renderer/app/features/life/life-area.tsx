@@ -8,8 +8,8 @@ import { X } from '@/shared/lib/icons'
 import { BTN_ICON } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
-import { LifeOverview } from './life-overview'
 import styles from './life.module.css'
+import { LifeOverview } from './overview/life-overview'
 
 export function LifeArea({
   onClose,

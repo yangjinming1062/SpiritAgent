@@ -27,15 +27,27 @@ import type {
 export {
   APP_PAGES,
   COMPANION_SECTIONS,
+  composeNavigation,
+  CREATION_SECTIONS,
+  DEFAULT_APP_LOCATION,
+  DEFAULT_NAVIGATION,
+  DEFAULT_SECTION,
   DEFAULT_STAGE_LAYOUT,
+  LIFE_SECTIONS,
+  navigationHash,
+  normalizeAppLocation,
   normalizeAppNavigation,
+  normalizePageFocus,
+  parseNavigationHash,
   SETTINGS_SECTIONS,
   SETTINGS_TABS
 } from './desktop-presentation'
 export type {
+  AppLocation,
   AppNavigationTarget,
   AppPage,
   CompanionSection,
+  CreationSection,
   DesktopAccount,
   DesktopBackground,
   DesktopBackgroundPlayback,
@@ -53,6 +65,8 @@ export type {
   DockState,
   DockTask,
   DockWindow,
+  LifeSection,
+  PageFocus,
   PresentationDisplay,
   PresentationMode,
   PresentationState,
@@ -60,7 +74,13 @@ export type {
   SettingsTab,
   StageActivity
 } from './desktop-presentation'
-export type { CompanionEditorUiSnapshot, DiaryUiSnapshot, LifeUiSnapshot, VisualsUiSnapshot } from './ui-state'
+export type {
+  CompanionEditorUiSnapshot,
+  DiaryUiSnapshot,
+  LifeUiSnapshot,
+  StudioUiSnapshot,
+  VisualsUiSnapshot
+} from './ui-state'
 export { isCompanionEditorUiSnapshot, isDiaryUiSnapshot, isLifeUiSnapshot, isVisualsUiSnapshot } from './ui-state'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。

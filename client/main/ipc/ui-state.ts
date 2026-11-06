@@ -419,19 +419,13 @@ export function createUiStateBridge(options: UiStateOptions) {
       const snapshot = getSnapshot()
 
       if (snapshot) {
-        const next = normalizeAppNavigation(target)
+        if (target) {
+          const next = normalizeAppNavigation(target)
+          snapshot.navigation = next
 
-        if (next.page || next.sessionId) {
-          const page = next.page ?? (next.sessionId ? 'chat' : snapshot.navigation.page)
-
-          snapshot.navigation = {
-            ...snapshot.navigation,
-            page,
-            section: next.section ?? snapshot.navigation.section,
-            settingsTab: next.section ? next.settingsTab : snapshot.navigation.settingsTab,
-            companionSection: next.companionSection ?? snapshot.navigation.companionSection
+          if (next.focus.page === 'chat' && next.focus.sessionId) {
+            snapshot.conversation.selectedSessionId = next.focus.sessionId
           }
-          snapshot.conversation.selectedSessionId = next.sessionId ?? snapshot.conversation.selectedSessionId
         }
 
         await request(win, { kind: 'restore', requestId: randomUUID(), authSessionId: identity, snapshot })

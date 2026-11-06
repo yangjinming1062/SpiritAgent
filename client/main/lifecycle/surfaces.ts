@@ -34,13 +34,13 @@ export interface SurfacesManager {
   minimizeWindow: (win: BrowserWindow) => void
   onWindowClosed: (win: BrowserWindow) => void
   onWindowLoading: (win: BrowserWindow) => void
-  openSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
+  openSurface: (payload?: DesktopSurfaceOpenPayload) => Promise<void>
   restoreMainWindow: (payload: DesktopSurfaceOpenPayload) => Promise<void>
   /** 精灵窗显示、隐藏、最小化或还原后调用，向各窗口发布含 `spriteVisible` 的新快照。 */
   publishSpriteVisibility: () => void
   registerIpcHandlers: (deps: { ipcMain: IpcMain }) => void
   toggleMaximizeWindow: (win: BrowserWindow) => void
-  toggleSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
+  toggleSurface: (payload?: DesktopSurfaceOpenPayload) => Promise<void>
   /** 跟随锁屏与显示器变化，须在 app ready 后调用一次。 */
   watchSystemEvents: () => void
 }
@@ -298,11 +298,11 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   const internalOpen = async (
-    payload: DesktopSurfaceOpenPayload,
+    payload?: DesktopSurfaceOpenPayload,
     forcePublish = false,
     restore = false
   ): Promise<void> => {
-    if (!restore && options.routeToDesktop(payload)) {
+    if (!restore && payload && options.routeToDesktop(payload)) {
       publish(forcePublish)
 
       return
@@ -317,7 +317,9 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const { win } = surface
 
     try {
-      await options.prepareWindow(win, payload)
+      if (payload) {
+        await options.prepareWindow(win, payload)
+      }
     } catch (error) {
       if (restore) {
         throw error
@@ -326,8 +328,12 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       options.rememberLog(`[main-window] view restore failed: ${errorMessage(error)}`)
     }
 
-    if (payload.page || payload.section || payload.sessionId || payload.messageKey) {
-      await options.navigateWindow(win, payload)
+    if (payload) {
+      const focused = payload.focus.page === 'chat' && Boolean(payload.focus.sessionId || payload.focus.messageKey)
+
+      if (payload.location.page !== 'chat' || focused) {
+        await options.navigateWindow(win, payload)
+      }
     }
 
     // navigate/create 期间用户退出：窗口已销毁，不能再 show/focus。
@@ -360,7 +366,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     publish(forcePublish)
   }
 
-  const openSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> =>
+  const openSurface = (payload?: DesktopSurfaceOpenPayload): Promise<void> =>
     withMutex(async () => {
       try {
         // open 的调用方先写入本地意图，即使实际状态未变也要回灌权威快照。
@@ -371,9 +377,9 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }
     })
 
-  const toggleSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> => {
+  const toggleSurface = (payload?: DesktopSurfaceOpenPayload): Promise<void> => {
     return withMutex(async () => {
-      if (options.routeToDesktop(payload)) {
+      if (payload && options.routeToDesktop(payload)) {
         return
       }
 

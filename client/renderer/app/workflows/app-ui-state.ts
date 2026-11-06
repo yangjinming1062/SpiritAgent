@@ -3,9 +3,13 @@ import {
   applyCompanionEditorUiSnapshot,
   captureCompanionEditorUiSnapshot
 } from '@/app/features/companion/companion-editor-state'
-import { $diaryUi, exportDiaryUiSnapshot, importDiaryUiSnapshot } from '@/app/features/diary/diary-state'
-import { $lifeUi, exportLifeUiSnapshot, importLifeUiSnapshot } from '@/app/features/life/life-state'
-import { $visualsUi, exportVisualsUiSnapshot, importVisualsUiSnapshot } from '@/app/features/visuals/visuals-state'
+import {
+  $visualsUi,
+  exportVisualsUiSnapshot,
+  importVisualsUiSnapshot
+} from '@/app/features/creation/visuals/visuals-state'
+import { $diaryUi, exportDiaryUiSnapshot, importDiaryUiSnapshot } from '@/app/features/life/diary/diary-state'
+import { $lifeUi, exportLifeUiSnapshot, importLifeUiSnapshot } from '@/app/features/life/overview/life-state'
 import {
   $appNavigationRevision,
   applyAppNavigation,
@@ -27,9 +31,11 @@ import { $auth } from '@/shared/store/auth'
 import { $surfaceRole } from '@/shared/store/surfaces'
 import { $uiStateError, $uiStateReady, $uiStateRetry } from '@/shared/store/ui-state'
 import {
+  type AppNavigationTarget,
+  composeNavigation,
   type MainUiStateData,
   type MainUiStateSnapshot,
-  normalizeAppNavigation,
+  type PageFocus,
   type UiStateRequest
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
@@ -39,16 +45,31 @@ export function installAppUiStateSync(): () => void {
   const bridge = shellApi().uiState
   const search = new URLSearchParams(window.location.search)
   const hashTarget = readAppNavigationHash()
+  const searchSession = search.get('sessionId')
 
-  const initialTarget = normalizeAppNavigation({
-    ...hashTarget,
-    sessionId: search.get('sessionId') ?? hashTarget?.sessionId,
-    messageKey: search.get('messageKey') ?? hashTarget?.messageKey,
-    pursuitId: search.get('pursuitId') ?? hashTarget?.pursuitId,
-    outfitId: search.get('outfitId') ?? hashTarget?.outfitId,
-    sceneId: search.get('sceneId') ?? hashTarget?.sceneId,
-    visualId: search.get('visualId') ?? hashTarget?.visualId
-  })
+  // 启动地址携带的定位参数优先于账户快照；没有地址目标时不覆盖已恢复的位置。
+  const withSearchFocus = (target: AppNavigationTarget): AppNavigationTarget => {
+    const focus: Record<string, string | undefined> = { ...target.focus }
+
+    for (const key of ['sessionId', 'messageKey', 'pursuitId', 'outfitId', 'sceneId', 'visualId']) {
+      const value = search.get(key)
+
+      if (value) {
+        focus[key] = value
+      }
+    }
+
+    return composeNavigation(target.location, focus as PageFocus)
+  }
+
+  const initialTarget = hashTarget
+    ? withSearchFocus(hashTarget)
+    : searchSession
+      ? composeNavigation(
+          { page: 'chat' },
+          { page: 'chat', sessionId: searchSession, messageKey: search.get('messageKey') ?? undefined }
+        )
+      : null
 
   let initialTargetConsumed = false
   let disposed = false
@@ -177,18 +198,19 @@ export function installAppUiStateSync(): () => void {
         const snapshot = await bridge.get(identity)
         const explicitTarget = initialTargetConsumed ? null : initialTarget
 
+        const explicitSession = explicitTarget?.focus.page === 'chat' ? explicitTarget.focus.sessionId : undefined
+
         if (snapshot) {
-          await apply(snapshot, identity, token, explicitTarget?.sessionId ?? snapshot.conversation.selectedSessionId)
-        } else if (explicitTarget?.sessionId) {
-          await restoreConversationSelection(explicitTarget.sessionId)
+          await apply(snapshot, identity, token, explicitSession ?? snapshot.conversation.selectedSessionId)
+        } else if (explicitSession) {
+          await restoreConversationSelection(explicitSession)
         }
 
         assertLive(identity, token)
 
         if (!initialTargetConsumed) {
-          if (initialTarget.page || initialTarget.section || initialTarget.sessionId) {
-            const { sessionId, ...target } = initialTarget
-            await applyAppNavigation({ ...target, page: target.page ?? (sessionId ? 'chat' : undefined) })
+          if (initialTarget) {
+            await applyAppNavigation(initialTarget)
           }
 
           assertLive(identity, token)

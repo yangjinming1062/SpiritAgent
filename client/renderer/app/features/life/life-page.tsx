@@ -2,7 +2,9 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
-import { applyAppNavigation } from '@/app/navigation/app-navigation'
+import type { AppPageProps } from '@/app/components/app-content-page'
+import { SectionShell } from '@/app/components/section-shell/section-shell'
+import { $lifeSection, openCreation, openLife } from '@/app/navigation/app-navigation'
 import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import {
   $lifeDetail,
@@ -26,22 +28,18 @@ import {
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, ErrorBanner, LoadingBlock, Pager } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
+import type { LifeSection } from '@ipc/contracts'
 
 import { isResourceId } from '../../../../../shared/resource-id'
 
-import { LifeOverview } from './life-overview'
-import { LifeArchiveSearch } from './life-search'
-import { $lifeUi, $lifeUiRestoreRevision, updateLifeUi } from './life-state'
+import { DiaryPage } from './diary/diary-page'
 import styles from './life.module.css'
-import { useLife } from './use-life'
+import { LifeArchiveSearch } from './overview/life-search'
+import { $lifeUi, $lifeUiRestoreRevision, updateLifeUi } from './overview/life-state'
+import { useLife } from './overview/use-life'
+import { PostsPage } from './posts/posts-page'
 
-export function LifePage({
-  visible = true,
-  standalone = false
-}: {
-  visible?: boolean
-  standalone?: boolean
-}): React.JSX.Element {
+function LifeOverviewPage({ visible = true }: { visible?: boolean }): React.JSX.Element {
   const revision = useLife(visible)
   const ui = useStore($lifeUi)
   const restoreRevision = useStore($lifeUiRestoreRevision)
@@ -71,7 +69,12 @@ export function LifePage({
 
   // 事项详情随组件生命周期；导航指向生活页时才消费 pursuitId 直达，离开本页的导航不回退详情。
   const [selectedId, setSelectedId] = useNavigationDetail<string | null>(
-    target => (target.page === 'life' ? (target.pursuitId ?? null) : undefined),
+    target =>
+      target.location.page === 'life'
+        ? target.focus.page === 'life'
+          ? (target.focus.pursuitId ?? null)
+          : null
+        : undefined,
     null
   )
 
@@ -90,12 +93,10 @@ export function LifePage({
       return
     }
 
-    void applyAppNavigation({
-      page: 'companion',
-      companionSection:
-        kind === 'visual' ? 'visuals' : kind === 'outfit' ? 'wardrobe' : kind === 'scene' ? 'environment' : 'actions',
-      ...(kind === 'visual' ? { visualId: id } : kind === 'outfit' ? { outfitId: id } : { sceneId: id })
-    })
+    void openCreation(
+      kind === 'visual' ? 'visuals' : kind === 'outfit' ? 'wardrobe' : kind === 'scene' ? 'environment' : 'actions',
+      kind === 'visual' ? { visualId: id } : kind === 'outfit' ? { outfitId: id } : { sceneId: id }
+    )
   }
 
   useEffect(() => {
@@ -178,7 +179,6 @@ export function LifePage({
         <h1>{t.title}</h1>
         <p>{t.intro}</p>
       </header>
-      {standalone && <LifeOverview showLifeLink={false} visible={visible} />}
       {selectedId !== null ? (
         <section className={styles.section}>
           <button className={BTN_GHOST} onClick={() => selectPursuit(null)} type="button">
@@ -338,20 +338,12 @@ export function LifePage({
                         </button>
                       )}
                       {entry.postId && (
-                        <button
-                          className={BTN_GHOST}
-                          onClick={() => void applyAppNavigation({ page: 'posts' })}
-                          type="button"
-                        >
+                        <button className={BTN_GHOST} onClick={() => void openLife('posts')} type="button">
                           {t.openPosts}
                         </button>
                       )}
                       {entry.diaryId && (
-                        <button
-                          className={BTN_GHOST}
-                          onClick={() => void applyAppNavigation({ page: 'diary' })}
-                          type="button"
-                        >
+                        <button className={BTN_GHOST} onClick={() => void openLife('diary')} type="button">
                           {t.openDiary}
                         </button>
                       )}
@@ -377,5 +369,38 @@ export function LifePage({
         </section>
       )}
     </div>
+  )
+}
+
+/** 生活页：近况、动态与日记共用一级入口，各自保留滚动与阅读状态。 */
+export function LifePage({ containerRef, foreground, mediaViewId, visible }: AppPageProps): React.JSX.Element {
+  const section = useStore($lifeSection)
+  const strings = useStrings()
+  const t = strings.life
+  const rail = strings.living.rail
+
+  const tabs = (
+    <CapsuleTabs<LifeSection>
+      ariaLabel={t.title}
+      onChange={next => void openLife(next)}
+      options={[
+        { value: 'now', label: t.now },
+        { value: 'posts', label: rail.posts },
+        { value: 'diary', label: rail.diary }
+      ]}
+      value={section}
+    />
+  )
+
+  return (
+    <SectionShell activeId={section} ariaLabel={t.title} bounded tabs={tabs}>
+      {section === 'now' ? (
+        <LifeOverviewPage visible={visible} />
+      ) : section === 'posts' ? (
+        <PostsPage containerRef={containerRef} foreground={foreground} mediaViewId={mediaViewId} />
+      ) : (
+        <DiaryPage foreground={foreground} />
+      )}
+    </SectionShell>
   )
 }

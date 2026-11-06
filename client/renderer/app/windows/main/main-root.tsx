@@ -77,10 +77,9 @@ export function MainRoot(): React.JSX.Element {
 
   const labels: Record<AppPage, string> = {
     chat: t.chat,
-    posts: t.posts,
-    diary: t.diary,
-    companion: t.companionFallback,
     life: t.life,
+    creation: t.creation,
+    companion: t.companionFallback,
     settings: t.settings
   }
 
@@ -114,7 +113,10 @@ export function MainRoot(): React.JSX.Element {
     !lifeModal &&
     !['starting', 'recovering'].includes(presentation.status)
 
-  const reveal = target.messageKey ? { key: target.messageKey, request: navigationRevision } : undefined
+  const reveal =
+    target.focus.page === 'chat' && target.focus.messageKey
+      ? { key: target.focus.messageKey, request: navigationRevision }
+      : undefined
 
   useEffect(() => {
     const updateFocus = (): void => setForeground(document.hasFocus())
@@ -303,7 +305,6 @@ export function MainRoot(): React.JSX.Element {
           >
             <MainRail
               chatUnread={pending.length > 0 || companionUnread}
-              companionUnread={companionUnread}
               labels={labels}
               onOverlayChange={setOverlayOpen}
             />
@@ -342,7 +343,6 @@ export function MainRoot(): React.JSX.Element {
                       foreground={active}
                       mediaViewId="main-posts"
                       page={page}
-                      standaloneLife={!lifeShown}
                       visible={visible && authenticated && uiStateReady}
                     />
                   )}

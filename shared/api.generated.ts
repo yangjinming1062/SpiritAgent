@@ -4,19 +4,20 @@ export interface ApiSchemas {
   "AIConfigPublic": { "providers": Array<ApiSchemas["ProviderCardPublic"]>; "capabilities": ApiSchemas["CapabilityChains"]; "tasks": { [key: string]: ApiSchemas["TaskConfig"] } }
   "AIConfigUpdate": { "providers": Array<ApiSchemas["ProviderCardUpdate"]>; "capabilities": ApiSchemas["CapabilityChainsInput"]; "tasks"?: { [key: string]: ApiSchemas["TaskConfigInput"] } }
   "ActionAssetDesign": { "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind": "once" | "loop"; "duration_seconds": number; "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role": ("idle" | "sustained" | "reaction" | null); "motion_intensity": "subtle" | "normal" | "expressive"; "interruptible": boolean; "reason": string }
-  "ActionAssetDesignInput": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "semantic_tags"?: Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role"?: ("idle" | "sustained" | "reaction" | null); "motion_intensity"?: "subtle" | "normal" | "expressive"; "interruptible"?: boolean; "reason"?: string }
-  "ActionAssetUpdate": { "name": string; "motion_description": string; "use_when"?: Array<string>; "avoid_when"?: Array<string>; "allowed_triggers"?: Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind"?: "once" | "loop"; "duration_seconds"?: number; "semantic_tags"?: Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role"?: ("idle" | "sustained" | "reaction" | null); "motion_intensity"?: "subtle" | "normal" | "expressive"; "interruptible"?: boolean; "reason"?: string; "expected_updated_at": string }
   "ActionAssetView": { "id": string; "name": string; "motion_description": string; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<"chat" | "manual" | "periodic" | "user_return">; "clip_kind": "once" | "loop"; "duration_seconds": number; "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role": "idle" | "sustained" | "reaction"; "motion_intensity": "subtle" | "normal" | "expressive"; "interruptible": boolean; "reason": string; "source": "user_requested" | "autonomous" | "preset"; "preset_key": (string | null); "status": "pending" | "reviewing" | "approved" | "deferred" | "rejected" | "failed"; "review_reason": string; "created_at": string; "updated_at": string }
+  "ActionCreateRequest": { "request_id": string; "design": { [key: string]: unknown } }
+  "ActionInterpretRequest": { "description": string; "action_id"?: (string | null) }
+  "ActionInterpretation": { "draft": { [key: string]: unknown }; "expected_updated_at": (string | null); "summary": string; "details": Array<ApiSchemas["DescribedDetail"]> }
   "ActionListResponse": { "actions": Array<ApiSchemas["ActionAssetView"]>; "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "ActionMaterialRef": { "action_id": (string | null); "name": string; "motion_description": string; "clip_kind": "once" | "loop"; "duration_seconds": number; "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role": "idle" | "sustained" | "reaction"; "motion_intensity": "subtle" | "normal" | "expressive"; "interruptible": boolean; "use_when": Array<string>; "avoid_when": Array<string>; "allowed_triggers": Array<string>; "revision": (string | null) }
   "ActionMediaEntry": { "visual_id": string; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "title": string; "version": number; "outfit_id": (string | null); "outfit_name": string; "stage_ready": boolean; "updated_at": string }
   "ActionMediaListResponse": { "media": Array<ApiSchemas["ActionMediaEntry"]>; "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "ActionReviewRequest": { "expected_updated_at": string }
+  "ActionUpdateRequest": { "design": { [key: string]: unknown }; "expected_updated_at": string }
   "ActivateRequest": { "code": string; "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
   "ActiveTurnView": { "request_id": string; "message_ids": Array<string>; "assistant_message_id": (string | null); "messages": Array<ApiSchemas["SessionMessageView"]>; "text": string; "reasoning": string; "bubbles": Array<ApiSchemas["ReplyBubbleView"]>; "tools": Array<ApiSchemas["ToolSnapshot"]>; "running": boolean; "replace_reply_message_id": (string | null) }
   "ActorClipBody": { "mask_path": (string | null); "first_frame_path": (string | null); "last_frame_path": (string | null); "foot_anchor": ([number, number] | null); "head_anchor": ([number, number] | null); "body_bounds": ([number, number, number, number] | null); "hit_bounds": ([number, number, number, number] | null); "continuity_key": (string | null) }
   "ActorClipRef": { "visual_id": string; "version": number }
-  "ActorClipRequest": { "request_id": string; "outfit_id": string; "action_id": string; "requirements"?: string }
   "ActorClipSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "actor"; "identity": ApiSchemas["VisualIdentitySnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "ActualPresentationSnapshot": { "visual_id": (string | null); "media_kind": ("image" | "video" | null); "asset_kind": ("actor" | "scene" | "cinematic" | null); "visual_version": (number | null); "visual_description": string; "visual_path": (string | null); "outfit_path": (string | null); "outfit_hash": (string | null); "outfit_description": string; "scene_path": (string | null); "scene_hash": (string | null); "scene_description": string; "identity_path": (string | null); "identity_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "ready": boolean }
   "AdminLoginRequest": { "username": string; "password": string }
@@ -43,7 +44,6 @@ export interface ApiSchemas {
   "ChatAudioUploadResponse": { "url": string; "mime_type": string; "duration": number }
   "ChatRequestClientContext": { "environment_hints"?: (string | null); "platform_hints"?: (string | null) }
   "ChatVideoUploadResponse": { "url": string }
-  "CinematicRequest": { "request_id": string; "outfit_id": string; "scene_id": string; "action_id": string; "media_kind"?: "image" | "video"; "requirements"?: string }
   "CinematicSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "cinematic"; "identity": ApiSchemas["VisualIdentitySnapshot"]; "identity_path": string; "identity_hash": string; "portrait_path": string; "portrait_hash": string; "identity_reference_role": "portrait" | "fullbody"; "outfit": ApiSchemas["ComboMaterialRef"]; "scene": ApiSchemas["SceneMediaRef"]; "action": ApiSchemas["ActionMaterialRef"]; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "plan": (ApiSchemas["VisualCreationPlan"] | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "ClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown" | "review_pending"; "job_id": (string | null); "media_revision": number; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null) }
   "ClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
@@ -59,6 +59,7 @@ export interface ApiSchemas {
   "CurrentVoiceRequest": { "voice_id": string }
   "CurrentVoiceResponse": { "voice_id": string }
   "CustomVoiceSummary": { "candidate_id": string; "kind": "design" | "clone"; "voice_id": string; "prompt": string; "preview_audio_url": string; "reference_audio_url": (string | null); "provider": string; "model": string; "version": number; "available": boolean }
+  "DescribedDetail": { "label": string; "value": string }
   "DesktopConfigPutRequest": { "config": { [key: string]: ApiSchemas["JsonValueInput"] } }
   "DesktopConfigResponse": { "config": { [key: string]: ApiSchemas["JsonValue"] } }
   "DesktopSessionInfo": { "id": string; "kind": string; "title": (string | null); "started_at": number; "last_active": number; "message_count": number; "preview": (string | null); "pinned": boolean; "archived": boolean; "system_preset_id": (string | null); "system_preset_icon_key": (string | null) }
@@ -295,7 +296,6 @@ export interface ApiSchemas {
   "SceneImportRequest": { "image": string; "source": "analysis"; "scene_id"?: (string | null) }
   "SceneListResponse": { "scenes": Array<ApiSchemas["SceneResponse"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "SceneMediaRef": { "scene_id": (string | null); "title": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
-  "SceneMediaRequest": { "request_id": string; "scene_id": string; "day_phase"?: ("dawn" | "day" | "dusk" | "night" | null); "requirements"?: string }
   "SceneMediaSource": { "original_filename": (string | null); "original_path": (string | null); "original_content_hash": (string | null); "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "scene"; "scene": ApiSchemas["SceneMediaRef"]; "day_phase": ("dawn" | "day" | "dusk" | "night" | null); "requirements": string; "feedback": string; "video_feedback": string; "persona": { [key: string]: string } }
   "SceneOrigin": "onboarding" | "llm" | "nightly" | "user_request"
   "ScenePolicy": "locked" | "llm_may_replace"
@@ -378,14 +378,18 @@ export interface ApiSchemas {
   "VideoQueueRequestView": { "id": string; "revision": number; "kind": ApiSchemas["VideoQueueKind"]; "job_id": (string | null); "user_id": (string | null); "model": string; "state": string; "cancel_requested": boolean; "provider_task_id": (string | null); "created_at": string; "updated_at": string; "error_message": (string | null) }
   "VisualClaimRequest": { "client_id": string }
   "VisualClaimResponse": { "claimed": boolean }
+  "VisualCreateRequest": { "request_id": string; "draft": { [key: string]: unknown } }
   "VisualCreationPlan": { "activity": string; "opening_description": string; "required_props": Array<string>; "motion_requirements": string }
   "VisualDetailView": { "id": string; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "body": (ApiSchemas["ActorClipBody"] | null); "auto_playable": boolean; "analysis_state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input" | null); "original_url": (string | null); "snapshot": ApiSchemas["VisualSnapshot"]; "jobs": Array<ApiSchemas["VisualJobView"]>; "analysis": (ApiSchemas["ImportAnalysisView"] | null) }
   "VisualIdentitySnapshot": { "avatar_id": (string | null); "revision": number }
+  "VisualInterpretRequest": { "description": string; "intent": "photo" | "video" | "motion" | "scenery"; "scene_id"?: (string | null); "day_phase"?: ("dawn" | "day" | "dusk" | "night" | null) }
+  "VisualInterpretation": { "feasible": boolean; "reason": string; "draft": ({ [key: string]: unknown } | null); "summary": string; "details": Array<ApiSchemas["DescribedDetail"]>; "materials": Array<ApiSchemas["VisualMaterialView"]>; "next_step": ("create_action" | "create_outfit" | "create_scene" | null) }
   "VisualItemView": { "id": string; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "title": string; "status": string; "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "version": number; "description": string; "outfit_id": (string | null); "outfit_name": string; "scene_id": (string | null); "scene_title": string; "action_id": (string | null); "action_name": (string | null); "input_image_hash": (string | null); "created_at": string; "updated_at": string; "body": (ApiSchemas["ActorClipBody"] | null); "auto_playable": boolean; "analysis_state": ("queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown" | "awaiting_input" | null); "original_url": (string | null) }
   "VisualJobCommandRequest": { "command": "pause" | "resume" | "cancel" | "retry" }
   "VisualJobListResponse": { "jobs": Array<ApiSchemas["VisualJobView"]>; "has_more": boolean; "next_cursor": (string | null); "limit": number }
   "VisualJobView": { "id": string; "target_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "action_name": string; "preparation": boolean; "target_visual_id": (string | null); "state": "queued" | "running" | "paused" | "succeeded" | "failed" | "cancelled" | "unknown"; "stage": string; "error": (string | null); "failure_reason": (string | null); "video_queue": (ApiSchemas["VideoQueueInfo"] | null); "result_visual_id": (string | null); "updated_at": string }
   "VisualListResponse": { "visuals": Array<ApiSchemas["VisualItemView"]>; "total": (number | null); "has_more": boolean; "next_cursor": (string | null); "limit": number }
+  "VisualMaterialView": { "role": "outfit" | "scene" | "action"; "id": string; "name": string; "preview_url": (string | null) }
   "VisualPlayCommand": { "play_id": string; "status": "queued"; "asset_kind": "actor" | "scene" | "cinematic"; "visual_id": string; "visual_version": number; "media_kind": "image" | "video"; "media_path": string; "poster_path": (string | null); "input_image_hash": (string | null); "clip_kind": ("once" | "loop" | null); "loop": boolean; "transition": "natural" | "fade"; "presentation_epoch": number; "state_revision": number; "source": "manual" | "autonomous" | "life" | "restore"; "origin": "user" | "life" | "restore"; "expires_at": string; "composition": (ApiSchemas["StageComposition"] | null); "outfit": (ApiSchemas["ComboMaterialRef"] | null); "scene": (ApiSchemas["SceneMediaRef"] | null); "body": (ApiSchemas["ActorClipBody"] | null); "day_phase": ("dawn" | "day" | "dusk" | "night" | null) }
   "VisualPreferencesRequest": { "autonomous_enabled"?: (boolean | null); "target_width"?: (number | null); "target_height"?: (number | null) }
   "VisualPresentationResponse": { "composition": (ApiSchemas["StageComposition"] | null); "ambient_actor": (ApiSchemas["StageLayerMedia"] | null); "ambient_catalog": Array<ApiSchemas["AmbientCatalogEntry"]>; "ambient_scene": Array<ApiSchemas["StageLayerMedia"]>; "intent": (ApiSchemas["StageIntent"] | null); "current_visual": (ApiSchemas["VisualItemView"] | null); "loop_visual": (ApiSchemas["VisualItemView"] | null); "autonomous_enabled": boolean; "target_width": (number | null); "target_height": (number | null); "presentation_epoch": number; "state_revision": number; "pending_play": (ApiSchemas["VisualPlayCommand"] | null); "static_presentation": (ApiSchemas["StagePresentation"] | null); "actual": ApiSchemas["ActualPresentationSnapshot"] }
@@ -460,12 +464,14 @@ export interface ApiOperations {
   "companion.delete_outfit_route": { path: { "outfit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "outfit_id": string }; query?: never; body?: never }; response: ApiSchemas["CompanionOperationResponse"] }
   "companion.serve_companion_asset": { path: { "user_id": string; "asset_path": string }; query: { "expires"?: (number | null); "sig"?: (string | null) }; body: undefined; input: { path: { "user_id": string; "asset_path": string }; query?: { "expires"?: (number | null); "sig"?: (string | null) }; body?: never }; response: Uint8Array }
   "companion_actions.list_actions": { path: Record<string, never>; query: { "query"?: (string | null); "group"?: "in_library" | "not_in_library"; "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "group"?: "in_library" | "not_in_library"; "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["ActionListResponse"] }
-  "companion_actions.create_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActionAssetDesignInput"]; input: { path?: never; query?: never; body: ApiSchemas["ActionAssetDesignInput"] }; response: ApiSchemas["ActionAssetView"] }
+  "companion_actions.create_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActionCreateRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActionCreateRequest"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_actions.get_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: ApiSchemas["ActionAssetView"] }
-  "companion_actions.update_action": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionAssetUpdate"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionAssetUpdate"] }; response: ApiSchemas["ActionAssetView"] }
+  "companion_actions.update_action": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionUpdateRequest"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionUpdateRequest"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_actions.delete_action": { path: { "action_id": string }; query: Record<string, never>; body: undefined; input: { path: { "action_id": string }; query?: never; body?: never }; response: undefined }
+  "companion_actions.interpret_action": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActionInterpretRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActionInterpretRequest"] }; response: ApiSchemas["ActionInterpretation"] }
   "companion_actions.retry_review": { path: { "action_id": string }; query: Record<string, never>; body: ApiSchemas["ActionReviewRequest"]; input: { path: { "action_id": string }; query?: never; body: ApiSchemas["ActionReviewRequest"] }; response: ApiSchemas["ActionAssetView"] }
   "companion_visuals.list_visuals": { path: Record<string, never>; query: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "query"?: (string | null); "media_kind"?: ("image" | "video" | null); "source"?: (string | null); "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["VisualListResponse"] }
+  "companion_visuals.create_visual": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualCreateRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualCreateRequest"] }; response: ApiSchemas["VisualJobView"] }
   "companion_visuals.list_visual_jobs": { path: Record<string, never>; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["VisualJobListResponse"] }
   "companion_visuals.list_action_media": { path: { "action_id": string }; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "action_id": string }; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["ActionMediaListResponse"] }
   "companion_visuals.get_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["VisualPresentationResponse"] }
@@ -473,9 +479,7 @@ export interface ApiOperations {
   "companion_visuals.static_receipt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["StageReceipt"]; input: { path?: never; query?: never; body: ApiSchemas["StageReceipt"] }; response: ApiSchemas["VisualReceiptResponse"] }
   "companion_visuals.play_visual": { path: { "visual_id": string }; query: { "version": number; "origin"?: "user" | "life"; "life_revision"?: (number | null) }; body: undefined; input: { path: { "visual_id": string }; query: { "version": number; "origin"?: "user" | "life"; "life_revision"?: (number | null) }; body?: never }; response: ApiSchemas["VisualPlayCommand"] }
   "companion_visuals.restore_presentation": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: (ApiSchemas["VisualPlayCommand"] | null) }
-  "companion_visuals.create_actor_clip": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ActorClipRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ActorClipRequest"] }; response: ApiSchemas["VisualJobView"] }
-  "companion_visuals.create_scene_media": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["SceneMediaRequest"]; input: { path?: never; query?: never; body: ApiSchemas["SceneMediaRequest"] }; response: ApiSchemas["VisualJobView"] }
-  "companion_visuals.create_cinematic": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["CinematicRequest"]; input: { path?: never; query?: never; body: ApiSchemas["CinematicRequest"] }; response: ApiSchemas["VisualJobView"] }
+  "companion_visuals.interpret_visual": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["VisualInterpretRequest"]; input: { path?: never; query?: never; body: ApiSchemas["VisualInterpretRequest"] }; response: ApiSchemas["VisualInterpretation"] }
   "companion_visuals.upload_visual": { path: Record<string, never>; query: { "filename": string; "title"?: string; "description"?: string }; body: Uint8Array; input: { path?: never; query: { "filename": string; "title"?: string; "description"?: string }; body: Uint8Array }; response: ApiSchemas["VisualDetailView"] }
   "companion_visuals.analyze_visual": { path: { "visual_id": string }; query: Record<string, never>; body: ApiSchemas["ImportAnalysisRequest"]; input: { path: { "visual_id": string }; query?: never; body: ApiSchemas["ImportAnalysisRequest"] }; response: ApiSchemas["ImportAnalysisView"] }
   "companion_visuals.get_visual": { path: { "visual_id": string }; query: Record<string, never>; body: undefined; input: { path: { "visual_id": string }; query?: never; body?: never }; response: ApiSchemas["VisualDetailView"] }
@@ -1234,6 +1238,18 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
+  "companion_actions.interpret_action": {
+    "path": "/api/companion/actions/interpret",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": true,
+    "ipc": true
+  },
   "companion_actions.retry_review": {
     "path": "/api/companion/actions/{action_id}/review",
     "method": "POST",
@@ -1249,6 +1265,18 @@ export const API_OPERATIONS = {
   "companion_visuals.list_visuals": {
     "path": "/api/companion/visuals",
     "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "companion_visuals.create_visual": {
+    "path": "/api/companion/visuals",
+    "method": "POST",
     "encoding": "json",
     "response": "json",
     "identities": [
@@ -1339,8 +1367,8 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
-  "companion_visuals.create_actor_clip": {
-    "path": "/api/companion/visuals/actor-clips",
+  "companion_visuals.interpret_visual": {
+    "path": "/api/companion/visuals/interpret",
     "method": "POST",
     "encoding": "json",
     "response": "json",
@@ -1348,31 +1376,7 @@ export const API_OPERATIONS = {
       "desktop",
       "remote"
     ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_visuals.create_scene_media": {
-    "path": "/api/companion/visuals/scene-media",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_visuals.create_cinematic": {
-    "path": "/api/companion/visuals/cinematics",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
+    "wait_for_model": true,
     "ipc": true
   },
   "companion_visuals.upload_visual": {

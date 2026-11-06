@@ -512,7 +512,7 @@ async function openSurfaceFromTray(): Promise<void> {
   }
 
   try {
-    await trayDeps.surfaces.openSurface({})
+    await trayDeps.surfaces.openSurface()
   } catch (err) {
     const message = errorMessage(err)
     trayDeps.rememberLog(`[tray] openSurface failed: ${message}`)

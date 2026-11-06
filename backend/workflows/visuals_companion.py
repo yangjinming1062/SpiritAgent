@@ -20,7 +20,12 @@ from features.action_library.schemas import (
     ActionReviewSource,
 )
 from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
-from features.appearance.queries import avatar_snapshot, outfit_identity_matches, ready_outfit_snapshot
+from features.appearance.queries import (
+    avatar_snapshot,
+    outfit_identity_matches,
+    ready_outfit_snapshot,
+    ready_outfit_snapshots,
+)
 from features.companion.definition import visual_persona_definition
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
@@ -29,8 +34,9 @@ from features.companion.visual_state import persona_snapshot
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, DayPhase, SemanticTag
-from features.scenes.queries import scene_snapshot
+from features.scenes.queries import list_scenes, scene_snapshot
 from features.visuals import service as visuals_service
+from features.visuals.interpret import interpret_visual_description
 from features.visuals.queries import creation_request, presentation_state
 from features.visuals.schemas import (
     ActionMaterialRef,
@@ -40,11 +46,14 @@ from features.visuals.schemas import (
     SceneMediaRef,
     SceneMediaSource,
     VisualAssetKind,
+    VisualIntent,
+    VisualInterpretation,
     VisualJobView,
     VisualMediaKind,
+    VisualPlanDraft,
     VisualSnapshot,
 )
-from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
+from infrastructure.assets.asset_store import client_asset_url, compute_file_sha256, resolve_asset_reference
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -184,6 +193,7 @@ async def design_action_reference(
     clip_kind: ActionClipKind = "once",
     source: ActionAssetSource = "autonomous",
     life_step: LifeStepRequest | None = None,
+    request_key: str | None = None,
 ) -> dict[str, Any]:
     """登记动作素材并安排语义评审；不创建图片或视频制作。"""
 
@@ -210,6 +220,7 @@ async def design_action_reference(
             source=source,
             review_source_json=review_source.model_dump(mode="json"),
             life_step=life_step,
+            request_key=request_key,
         )
         await db.commit()
     if view.status == "pending":
@@ -407,6 +418,172 @@ async def generate_character_visual_reference(
             video_feedback=video_feedback,
             request_id=request_key,
         )
+
+
+_CATALOG_PAGE = 100
+_CATALOG_LIMIT = 1000
+
+
+async def _load_visual_catalog(user_id: int) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+    """读取可用素材；达到上限时如实标记目录不完整，不让截断冒充没有素材。"""
+
+    outfits: list[dict[str, Any]] = []
+    scenes: list[dict[str, Any]] = []
+    actions: list[dict[str, Any]] = []
+    async with SESSION_LOCAL() as db:
+        outfit_cursor: int | None = None
+        while len(outfits) < _CATALOG_LIMIT:
+            page = await ready_outfit_snapshots(db, user_id, limit=_CATALOG_PAGE, cursor=outfit_cursor)
+            outfits.extend(
+                {
+                    "id": str(item.id),
+                    "name": item.name,
+                    "description": (item.description or "")[:80],
+                    "preview_url": client_asset_url(item.fullbody_url) if item.fullbody_url else None,
+                }
+                for item in page
+            )
+            if len(page) < _CATALOG_PAGE:
+                break
+            outfit_cursor = page[-1].id
+
+        scene_cursor: int | None = None
+        while len(scenes) < _CATALOG_LIMIT:
+            items, _total, next_cursor = await list_scenes(
+                db, user_id, cursor=scene_cursor, limit=_CATALOG_PAGE, ready_only=True
+            )
+            scenes.extend(
+                {
+                    "id": str(item.id),
+                    "name": item.title,
+                    "description": (item.description or "")[:80],
+                    "preview_url": client_asset_url(item.media_path) if item.media_path else None,
+                }
+                for item in items
+            )
+            if next_cursor is None:
+                break
+            scene_cursor = int(next_cursor)
+
+        action_cursor: int | None = None
+        while len(actions) < _CATALOG_LIMIT:
+            page = await action_queries.list_actions(
+                db, user_id, group="in_library", cursor=action_cursor, limit=_CATALOG_PAGE
+            )
+            actions.extend(
+                {
+                    "id": str(item.id),
+                    "name": item.name,
+                    "motion_description": item.motion_description[:80],
+                    "clip_kind": item.clip_kind,
+                }
+                for item in page.actions
+            )
+            if page.next_cursor is None:
+                break
+            action_cursor = int(page.next_cursor)
+
+    truncated = any(len(items) >= _CATALOG_LIMIT for items in (outfits, scenes, actions))
+    return {"outfits": outfits, "scenes": scenes, "actions": actions}, truncated
+
+
+async def interpret_visual_reference(
+    user_id: int,
+    description: str,
+    intent: VisualIntent,
+    scene_id: int | None = None,
+    day_phase: DayPhase | None = None,
+) -> VisualInterpretation:
+    """按账户读取可用素材后整理描述；整理本身不写库、不受理制作。"""
+
+    catalog, truncated = await _load_visual_catalog(user_id)
+    return await interpret_visual_description(
+        user_id,
+        description,
+        intent,
+        catalog,
+        catalog_truncated=truncated,
+        scene_id=scene_id,
+        day_phase=day_phase,
+    )
+
+
+class VisualDraftError(ValueError):
+    """整理出的草稿在创建前复核不通过；code 供客户端判断草稿是否需要重新整理。"""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+async def _require_materials(user_id: int, draft: VisualPlanDraft) -> None:
+    """按草稿引用的素材一次性复核归属与就绪状态；同一次创建只开一个会话。"""
+
+    async with SESSION_LOCAL() as db:
+        outfit = await ready_outfit_snapshot(db, user_id, draft.outfit_id) if draft.outfit_id is not None else None
+        scene = await scene_snapshot(db, user_id, draft.scene_id) if draft.scene_id is not None else None
+        action = (
+            await action_queries.action_detail(db, user_id, draft.action_id) if draft.action_id is not None else None
+        )
+
+    if draft.outfit_id is not None and (outfit is None or not outfit.fullbody_url):
+        raise VisualDraftError("material_not_ready", "所选造型不存在或尚未就绪")
+    if draft.scene_id is not None:
+        if scene is None:
+            raise VisualDraftError("material_missing", "所选环境不存在")
+        if scene.status != "ready" or not scene.media_path:
+            raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
+    if draft.action_id is not None:
+        if action is None:
+            raise VisualDraftError("material_missing", "所选动作不存在")
+        if action.status != "approved":
+            raise VisualDraftError("material_not_ready", "所选动作尚未通过评审")
+
+
+async def create_visual_from_draft(user_id: int, request_id: str, draft: VisualPlanDraft) -> VisualJobView:
+    """统一创建入口：先复核草稿引用的素材，再按资产类型分派到既有制作用例。"""
+
+    if draft.asset_kind == "actor":
+        if draft.outfit_id is None or draft.action_id is None:
+            raise VisualDraftError("material_mismatch", "透明主体动画需要造型与动作")
+        if draft.scene_id is not None or draft.media_kind != "video":
+            raise VisualDraftError("material_mismatch", "透明主体动画只能是视频，且不绑定环境")
+        await _require_materials(user_id, draft)
+        return await generate_character_visual_reference(
+            user_id,
+            request_id=f"manual:{request_id}",
+            outfit_id=draft.outfit_id,
+            action_id=draft.action_id,
+            requirements=draft.requirements,
+        )
+
+    if draft.asset_kind == "scene":
+        if draft.scene_id is None or draft.media_kind != "video":
+            raise VisualDraftError("material_mismatch", "环境动态只能是视频，且只需要环境")
+        if draft.outfit_id is not None or draft.action_id is not None:
+            raise VisualDraftError("material_mismatch", "环境动态只使用环境，不带造型与动作")
+        await _require_materials(user_id, draft)
+        return await generate_scene_media_reference(
+            user_id,
+            request_id=f"manual:{request_id}",
+            scene_id=draft.scene_id,
+            day_phase=draft.day_phase,
+            requirements=draft.requirements,
+        )
+
+    if draft.outfit_id is None or draft.scene_id is None or draft.action_id is None:
+        raise VisualDraftError("material_mismatch", "完整场景影像需要造型、环境与动作")
+    await _require_materials(user_id, draft)
+    return await generate_character_visual_reference(
+        user_id,
+        request_id=f"manual:{request_id}",
+        asset_kind="cinematic",
+        outfit_id=draft.outfit_id,
+        scene_id=draft.scene_id,
+        action_id=draft.action_id,
+        media_kind=draft.media_kind,
+        requirements=draft.requirements,
+    )
 
 
 async def generate_scene_media_reference(

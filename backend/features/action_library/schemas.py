@@ -1,11 +1,12 @@
 """动作素材公共契约：设计入参、对外视图与冻结评审依据。"""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from features.media.described import DescribedDetail
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, SemanticTags
 
@@ -110,3 +111,39 @@ class ActionListResponse(BaseModel):
     has_more: bool
     next_cursor: str | None = None
     limit: int
+
+
+class ActionInterpretRequest(BaseModel):
+    """用户用一句日常描述表达新建或修改动作的意图。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    description: str = Field(min_length=1, max_length=1000)
+    # 带 action_id 表示修改已有动作；缺省为新建。
+    action_id: ResourceId | None = None
+
+
+class ActionInterpretation(BaseModel):
+    """整理结果：draft 对客户端不透明，原样回传即可，服务端负责校验。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    draft: dict[str, Any]
+    # 仅修改时有值，用于乐观锁。
+    expected_updated_at: datetime | None = None
+    summary: str
+    details: list[DescribedDetail] = Field(default_factory=list)
+
+
+class ActionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=128)
+    design: dict[str, Any]
+
+
+class ActionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    design: dict[str, Any]
+    expected_updated_at: datetime

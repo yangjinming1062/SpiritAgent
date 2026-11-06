@@ -847,15 +847,12 @@ export const dict = {
       categoryAria: '设置分类',
       settingsLabel: '设置',
       sections: {
-        companionship: '陪伴方式',
-        voice: '语音交互',
+        companionship: '相处方式',
+        appearance: '外观与显示',
         sources: '资讯来源',
-        theme: '界面主题',
-        display: '伙伴显示',
         devices: '手机访问',
         capabilities: '能力管理',
-        application: '应用设置',
-        advanced: '高级设置'
+        advanced: '应用与高级'
       }
     },
 
@@ -1289,10 +1286,42 @@ export const dict = {
     }
   },
 
+  studio: {
+    intents: {
+      photo: '一张照片',
+      photoHint: '记录此刻的画面',
+      video: '一段视频',
+      videoHint: '让画面动起来',
+      motion: '让它动起来',
+      motionHint: '用当前造型演一段动作'
+    },
+    descriptionLabel: '描述你想要的画面',
+    descriptionPlaceholder: '例如：穿着舒适的家居服，在窗边安静地读书',
+    describe: '整理描述',
+    describing: '整理中…',
+    interpretFailed: '这段描述还没整理成功，请重试',
+    previewTitle: '这样理解对吗',
+    confirm: '开始制作',
+    refineLabel: '还需要补充什么',
+    refinePlaceholder: '例如：光线再柔和一些',
+    refine: '再说一句',
+    infeasible: '暂时做不了',
+    stepAction: '先创建一个动作',
+    stepOutfit: '先准备一套造型',
+    stepScene: '先创建一个环境',
+    invalidated: '素材已变化，请重新整理后再确认',
+    activityTitle: '正在制作',
+    actionCreate: '它会在什么时候、大概怎么动',
+    actionEditTitle: '想改哪里',
+    actionSave: '保存并评审',
+    createFailed: '制作没有受理，请重试'
+  },
+
   living: {
     rail: {
       chat: '陪伴',
       life: '生活',
+      creation: '创作',
       posts: '动态',
       diary: '日记',
       unread: '有未读信息',
@@ -1641,6 +1670,7 @@ export const dict = {
     posts: '动态',
     diary: '日记',
     life: '生活',
+    creation: '创作',
     remote: '远程',
     settings: '设置',
     windowMode: '返回窗口模式',

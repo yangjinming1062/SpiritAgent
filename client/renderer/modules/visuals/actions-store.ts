@@ -1,10 +1,29 @@
 import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import { actionsApi } from './api'
-import type { ActionDefinition, ActionDefinitionRequest, ActionLibraryGroup, ActionUpdateRequest } from './types'
+import type { ActionDefinition, ActionLibraryGroup } from './types'
+
+function newRequestId(): string {
+  return typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `action:${Date.now()}:${Math.random()}`
+}
+
+// 待确认的请求身份按设计内容保存：响应丢失后沿用同一个键，后端不会重复登记。
+const createRequests = definePersistedAtom<{ ids: Record<string, string> }>({
+  key: 'da.actions.createRequests',
+  fallback: { ids: {} },
+  isPersistable: (value): value is { ids: Record<string, string> } =>
+    typeof value === 'object' &&
+    value !== null &&
+    'ids' in value &&
+    typeof value.ids === 'object' &&
+    value.ids !== null &&
+    Object.values(value.ids).every(id => typeof id === 'string')
+})
 
 function createGroupState() {
   return {
@@ -109,20 +128,39 @@ export async function loadMoreActions(group: ActionLibraryGroup): Promise<void> 
   await refreshActions(undefined, true, group)
 }
 
-export async function createAction(input: ActionDefinitionRequest): Promise<ActionDefinition> {
+/** 整理一句描述：只产出草稿，不登记、不评审；客户端不解析 draft 结构。 */
+export async function interpretAction(
+  description: string,
+  actionId?: string
+): Promise<ApiSchemas['ActionInterpretation']> {
+  return actionsApi.interpret({ description, action_id: actionId ?? null })
+}
+
+/** 用户确认后才登记；同一份设计复用请求身份，重试不会产生第二个动作。 */
+export async function createAction(design: Record<string, unknown>): Promise<ActionDefinition> {
   const scope = captureAuthScope()
-  const action = await actionsApi.create(input)
+  const key = JSON.stringify(design)
+  const requestId = createRequests.get().ids[key] ?? newRequestId()
+  createRequests.set({ ids: { ...createRequests.get().ids, [key]: requestId } })
+  const action = await actionsApi.create({ request_id: requestId, design })
 
   if (scope?.()) {
+    const pending = { ...createRequests.get().ids }
+    delete pending[key]
+    createRequests.set({ ids: pending })
     await refreshActionGroups()
   }
 
   return action
 }
 
-export async function updateAction(actionId: string, input: ActionUpdateRequest): Promise<ActionDefinition> {
+export async function updateAction(
+  actionId: string,
+  design: Record<string, unknown>,
+  expectedUpdatedAt: string
+): Promise<ActionDefinition> {
   const scope = captureAuthScope()
-  const action = await actionsApi.update(actionId, input)
+  const action = await actionsApi.update(actionId, { design, expected_updated_at: expectedUpdatedAt })
 
   if (scope?.()) {
     await refreshActionGroups()

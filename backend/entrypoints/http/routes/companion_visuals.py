@@ -9,19 +9,20 @@ from features.visuals.imports import import_visual
 from features.visuals.repository import VisualError
 from features.visuals.schemas import (
     ActionMediaListResponse,
-    ActorClipRequest,
-    CinematicRequest,
     ImportAnalysisRequest,
     ImportAnalysisView,
-    SceneMediaRequest,
     StageReceipt,
     VisualClaimRequest,
     VisualClaimResponse,
+    VisualCreateRequest,
     VisualDetailView,
+    VisualInterpretation,
+    VisualInterpretRequest,
     VisualJobCommandRequest,
     VisualJobListResponse,
     VisualJobView,
     VisualListResponse,
+    VisualPlanDraft,
     VisualPlayCommand,
     VisualPreferencesRequest,
     VisualPresentationResponse,
@@ -35,7 +36,7 @@ from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 from infrastructure.request_errors import RequestError
 from workflows.visual_imports import control_import_analysis, queue_import_analysis
-from workflows.visuals_companion import generate_character_visual_reference, generate_scene_media_reference
+from workflows.visuals_companion import VisualDraftError, create_visual_from_draft, interpret_visual_reference
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
@@ -138,53 +139,27 @@ async def restore_presentation(user: CurrentUser) -> VisualPlayCommand | None:
     return await _visuals.restore_presentation(user_id=user.id)
 
 
-@router.post("/actor-clips", response_model=VisualJobView, status_code=202)
-async def create_actor_clip(user: CurrentUser, body: ActorClipRequest) -> VisualJobView:
-    """制作透明主体动画：身份 + 造型 + 动作，不绑定环境。"""
+@router.post("/interpret", response_model=VisualInterpretation, openapi_extra=operation_policy(wait_for_model=True))
+async def interpret_visual(user: CurrentUser, body: VisualInterpretRequest) -> VisualInterpretation:
+    """把用户的一句描述整理成制作计划；只产出草稿，不扣额度也不受理制作。"""
 
     try:
-        return await generate_character_visual_reference(
-            user.id,
-            request_id=f"manual:{body.request_id}",
-            outfit_id=body.outfit_id,
-            action_id=body.action_id,
-            requirements=body.requirements,
-        )
-    except (ValueError, VisualError) as exc:
+        return await interpret_visual_reference(user.id, body.description, body.intent, body.scene_id, body.day_phase)
+    except ValueError as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
 
 
-@router.post("/scene-media", response_model=VisualJobView, status_code=202)
-async def create_scene_media(user: CurrentUser, body: SceneMediaRequest) -> VisualJobView:
-    """制作环境媒体：单张环境素材派生环境循环视频，可指定适用时段。"""
+@router.post("", response_model=VisualJobView, status_code=202)
+async def create_visual(user: CurrentUser, body: VisualCreateRequest) -> VisualJobView:
+    """统一创建入口：复核草稿引用的素材后按类型分派，request_id 作为幂等键。"""
 
     try:
-        return await generate_scene_media_reference(
-            user.id,
-            request_id=f"manual:{body.request_id}",
-            scene_id=body.scene_id,
-            day_phase=body.day_phase,
-            requirements=body.requirements,
-        )
+        draft = VisualPlanDraft.model_validate(body.draft)
+        return await create_visual_from_draft(user.id, body.request_id, draft)
+    except VisualDraftError as exc:
+        raise RequestError(status_code=409, code=exc.code, message=str(exc)) from exc
     except (ValueError, VisualError) as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
-
-
-@router.post("/cinematics", response_model=VisualJobView, status_code=202)
-async def create_cinematic(user: CurrentUser, body: CinematicRequest) -> VisualJobView:
-    try:
-        return await generate_character_visual_reference(
-            user.id,
-            request_id=f"manual:{body.request_id}",
-            asset_kind="cinematic",
-            outfit_id=body.outfit_id,
-            scene_id=body.scene_id,
-            action_id=body.action_id,
-            media_kind=body.media_kind,
-            requirements=body.requirements,
-        )
-    except (ValueError, VisualError) as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
+        raise RequestError(status_code=409, code="create_failed", message=str(exc)) from exc
 
 
 @router.post("/imports", response_model=VisualDetailView, openapi_extra=operation_policy(upload="video"))

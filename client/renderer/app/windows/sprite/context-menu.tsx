@@ -174,7 +174,9 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
               icon={Home}
               label={dict.life.title}
               onClick={() => {
-                void requestOpenSurface({ page: 'life' }).catch(error => notifyError(error, dict.life.title))
+                void requestOpenSurface({ location: { page: 'life', section: 'now' }, focus: { page: 'life' } }).catch(
+                  error => notifyError(error, dict.life.title)
+                )
               }}
             />
             {presentation.supported && presentation.effectiveMode !== 'desktop' && (

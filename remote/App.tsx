@@ -1,4 +1,4 @@
-import { IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@tabler/icons-react'
+import { IconDeviceTv, IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -8,12 +8,13 @@ import { type GatewayNetworkEvent, isRecord } from '../shared/gateway'
 import { ApiError, errorText, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
-import { Feed } from './Feed'
+import { Creation } from './Creation'
+import { Life } from './Life'
 import { readTheme, saveTheme, type ThemeChoice } from './theme'
 import type { RemoteSession } from './types'
 import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui'
 
-type Tab = 'messages' | 'feed' | 'companion' | 'me'
+type Tab = 'messages' | 'life' | 'creation' | 'companion' | 'me'
 const api = new RemoteApi()
 
 function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary' | 'posts' | null {
@@ -150,7 +151,11 @@ export function App(): ReactElement {
 
         try {
           const savedTab = sessionStorage.getItem(`remote:${next.user.id}:${next.device.id}:ui:tab`)
-          setTab(savedTab === 'feed' || savedTab === 'companion' || savedTab === 'me' ? savedTab : 'messages')
+          setTab(
+            savedTab === 'life' || savedTab === 'creation' || savedTab === 'companion' || savedTab === 'me'
+              ? savedTab
+              : 'messages'
+          )
         } catch {
           setTab('messages')
         }
@@ -199,7 +204,7 @@ export function App(): ReactElement {
           if ((resource && domain) || mood || message) {
             scheduleRefresh(
               ((domain === 'companion' || mood) && tabRef.current === 'companion') ||
-                (domain === 'diary' && tabRef.current === 'feed') ||
+                (domain === 'diary' && tabRef.current === 'life') ||
                 (message && tabRef.current === 'messages'),
               domain === 'posts' || domain === 'diary'
             )
@@ -359,14 +364,16 @@ export function App(): ReactElement {
               refresh={refresh}
               userId={session.user.id}
             />
-          ) : tab === 'feed' ? (
-            <Feed
+          ) : tab === 'life' ? (
+            <Life
               api={api}
               gateway={gateway}
               onRead={() => setUnreadRefresh(value => value + 1)}
               refresh={refresh}
               unread={{ feed: unread.feed, diary: unread.diary }}
             />
+          ) : tab === 'creation' ? (
+            <Creation api={api} refresh={refresh} />
           ) : tab === 'companion' ? (
             <Companion api={api} refresh={refresh} />
           ) : (
@@ -387,8 +394,9 @@ export function App(): ReactElement {
           {(
             [
               { id: 'messages', label: '聊天', icon: IconMessageCircle },
+              { id: 'life', label: '生活', icon: IconSparkles },
+              { id: 'creation', label: '创作', icon: IconDeviceTv },
               { id: 'companion', label: '伙伴', icon: IconHeart },
-              { id: 'feed', label: '动态', icon: IconSparkles },
               { id: 'me', label: '设置', icon: IconSettings }
             ] as const
           ).map(item => (
@@ -402,7 +410,7 @@ export function App(): ReactElement {
               <span>
                 <item.icon size={23} stroke={1.7} />
                 {(item.id === 'messages' && unread.messages) ||
-                (item.id === 'feed' && (unread.feed || unread.diary)) ? (
+                (item.id === 'life' && (unread.feed || unread.diary)) ? (
                   <i aria-label="有未读内容" className="unread-dot" />
                 ) : null}
               </span>

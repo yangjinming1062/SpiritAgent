@@ -9,15 +9,15 @@ import type { AppPage } from '@ipc/contracts'
 import type { DesktopWindowState } from './desktop-layout'
 import styles from './desktop.module.css'
 
-const DESKTOP_NAV_APPS = ['life', 'posts', 'diary', 'companion', 'settings'] as const satisfies readonly AppPage[]
+const DESKTOP_NAV_APPS = ['life', 'creation', 'companion', 'settings'] as const satisfies readonly AppPage[]
 
 type DesktopNavApp = (typeof DESKTOP_NAV_APPS)[number]
 
 export function DesktopProductNav({
   windows,
   activeWindow,
-  postsUnread,
-  diaryUnread,
+  lifeUnread,
+  creationBusy,
   overlayActive,
   onActivate,
   onClose,
@@ -26,8 +26,8 @@ export function DesktopProductNav({
 }: {
   windows: DesktopWindowState[]
   activeWindow?: AppPage
-  postsUnread: boolean
-  diaryUnread: boolean
+  lifeUnread: boolean
+  creationBusy: boolean
   overlayActive: boolean
   onActivate: (id: AppPage) => void
   onClose: (id: AppPage) => void
@@ -117,7 +117,7 @@ export function DesktopProductNav({
       <nav aria-label={t.title} className={styles.productNav}>
         {DESKTOP_NAV_APPS.map(id => {
           const item = windows.find(candidate => candidate.id === id)
-          const unread = id === 'posts' ? postsUnread : id === 'diary' ? diaryUnread : false
+          const unread = id === 'life' ? lifeUnread : id === 'creation' ? creationBusy : false
 
           const label = [
             t[id],

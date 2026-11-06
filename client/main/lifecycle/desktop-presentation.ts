@@ -5,6 +5,7 @@ import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContent
 
 import {
   type AppNavigationTarget,
+  DEFAULT_NAVIGATION,
   type DesktopMediaBytes,
   type DesktopMediaReference,
   type DesktopTrayLayout,
@@ -1269,7 +1270,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         assertModeInputAvailable(mode)
 
         if (mode === 'window' && effectiveMode === 'desktop') {
-          await options.restoreMain(uiState.getSnapshot()?.navigation ?? { page: 'chat' })
+          await options.restoreMain(uiState.getSnapshot()?.navigation ?? DEFAULT_NAVIGATION)
         }
 
         assertModeInputAvailable(mode)
@@ -1327,7 +1328,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
             !source.isDestroyed() &&
             (sourceVisible || sourceMinimized)
           ) {
-            await options.restoreMain(uiState.getSnapshot()?.navigation ?? {})
+            await options.restoreMain(uiState.getSnapshot()?.navigation ?? DEFAULT_NAVIGATION)
 
             if (sourceMinimized) {
               source.minimize()
