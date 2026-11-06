@@ -16,7 +16,7 @@ import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
-import type { WardrobeDesignUiSnapshot } from '@ipc/contracts'
+import type { WardrobeDesignSessionSnapshot, WardrobeDesignUiSnapshot } from '@ipc/contracts'
 import type { ImageReviseMode } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
@@ -75,34 +75,46 @@ registerStorageClearHandler(() => $sessions.set(new Map()))
 
 export const $designSessions = $sessions
 
-/** 交接只带制作对话与待核对状态；草稿图来自服务端明细，参考图另有账户级草稿存储。 */
-export function readDesignSessionSnapshot(sessionId: string | null): WardrobeDesignUiSnapshot {
-  const session = readSession(sessionId)
+/** 交接按草稿携带制作对话与待核对状态；草稿图来自服务端明细，参考图另有账户级草稿存储。 */
+export function readDesignSessionSnapshot(): WardrobeDesignUiSnapshot {
+  const sessions: WardrobeDesignSessionSnapshot[] = []
 
-  return {
-    sessionId,
-    awaitingResult: session.stage === 'generating' || session.resultUnknown,
-    messages: session.messages.map(({ role, text, tone }) => ({ role, text, ...(tone ? { tone } : {}) }))
+  for (const [sessionId, session] of $sessions.get()) {
+    if (session.messages.length > 0 || session.stage === 'generating' || session.resultUnknown) {
+      sessions.push({
+        sessionId,
+        awaitingResult: session.stage === 'generating' || session.resultUnknown,
+        messages: session.messages.map(({ role, text, tone }) => ({ role, text, ...(tone ? { tone } : {}) }))
+      })
+    }
   }
+
+  return { sessions }
 }
 
 /** 目标窗口的生成请求已随来源窗口销毁，恢复成「结果待核对」而不是允许直接重发。 */
 export function applyDesignSessionSnapshot(snapshot: WardrobeDesignUiSnapshot): void {
-  if (snapshot.messages.length === 0 && !snapshot.awaitingResult) {
+  const restored = snapshot.sessions.filter(session => session.messages.length > 0 || session.awaitingResult)
+
+  if (restored.length === 0) {
     return
   }
 
   const sessions = new Map($sessions.get())
-  sessions.set(snapshot.sessionId, {
-    ...readSession(snapshot.sessionId),
-    stage: null,
-    lastRequest: null,
-    previewError: false,
-    inspected: false,
-    resultUnknown: snapshot.awaitingResult,
-    messages: snapshot.messages.map(message => ({ ...message, id: ++nextMessageId })),
-    revision: ++nextRevision
-  })
+
+  for (const session of restored) {
+    sessions.set(session.sessionId, {
+      ...readSession(session.sessionId),
+      stage: null,
+      lastRequest: null,
+      previewError: false,
+      inspected: false,
+      resultUnknown: session.awaitingResult,
+      messages: session.messages.map(message => ({ ...message, id: ++nextMessageId })),
+      revision: ++nextRevision
+    })
+  }
+
   $sessions.set(sessions)
 }
 

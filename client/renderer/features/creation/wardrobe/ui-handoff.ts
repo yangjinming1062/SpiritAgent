@@ -10,10 +10,10 @@ export const appearanceUiHandoff: UiStateHandoff<'appearance'> = {
   apply: snapshot => importAppearanceUiSnapshot(snapshot)
 }
 
-// 制作会话按当前草稿取用，草稿 ID 由上面的造型片段先恢复。
+// 制作会话按草稿整体交接，草稿 ID 由上面的造型片段先恢复。
 export const wardrobeDesignUiHandoff: UiStateHandoff<'wardrobeDesign'> = {
   key: 'wardrobeDesign',
   revision: $designSessions,
-  capture: () => readDesignSessionSnapshot($appearanceUi.get().draftId),
+  capture: () => readDesignSessionSnapshot(),
   apply: snapshot => applyDesignSessionSnapshot(snapshot)
 }

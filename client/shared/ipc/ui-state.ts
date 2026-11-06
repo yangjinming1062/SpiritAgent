@@ -228,25 +228,38 @@ export interface WardrobeDesignMessage {
   tone?: 'error' | 'info'
 }
 
-/** 造型制作会话：只带尚未落库的对话与「结果待核对」状态，草稿图与参考图另有服务端或账户级副本。 */
-export interface WardrobeDesignUiSnapshot {
+/** 单个草稿的制作会话：尚未落库的对话与「结果待核对」状态。 */
+export interface WardrobeDesignSessionSnapshot {
   sessionId: string | null
   messages: WardrobeDesignMessage[]
   awaitingResult: boolean
 }
 
+/** 造型制作会话按草稿交接：草稿图与参考图另有服务端或账户级副本。 */
+export interface WardrobeDesignUiSnapshot {
+  sessions: WardrobeDesignSessionSnapshot[]
+}
+
+function isWardrobeDesignMessage(value: unknown): value is WardrobeDesignMessage {
+  return (
+    isRecord(value) &&
+    (value.role === 'user' || value.role === 'system') &&
+    typeof value.text === 'string' &&
+    (value.tone === undefined || value.tone === 'error' || value.tone === 'info')
+  )
+}
+
 export function isWardrobeDesignUiSnapshot(value: unknown): value is WardrobeDesignUiSnapshot {
   return (
     isRecord(value) &&
-    (value.sessionId === null || typeof value.sessionId === 'string') &&
-    typeof value.awaitingResult === 'boolean' &&
-    Array.isArray(value.messages) &&
-    value.messages.every(
-      message =>
-        isRecord(message) &&
-        (message.role === 'user' || message.role === 'system') &&
-        typeof message.text === 'string' &&
-        (message.tone === undefined || message.tone === 'error' || message.tone === 'info')
+    Array.isArray(value.sessions) &&
+    value.sessions.every(
+      session =>
+        isRecord(session) &&
+        (session.sessionId === null || typeof session.sessionId === 'string') &&
+        typeof session.awaitingResult === 'boolean' &&
+        Array.isArray(session.messages) &&
+        session.messages.every(isWardrobeDesignMessage)
     )
   )
 }

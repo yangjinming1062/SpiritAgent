@@ -56,6 +56,33 @@ export function useMediaJobReview({
     }
   }, [jobId, mediaId])
 
+  /** 只读刷新：始终查询任务，不执行接收结果等业务变更。 */
+  const reload = async (): Promise<void> => {
+    if (busy) {
+      return
+    }
+
+    const version = epoch.current
+    setBusy(true)
+    setError('')
+
+    try {
+      const updated = await requestResource('media.get_media_job', { path: { job_id: jobId } })
+
+      if (epoch.current === version) {
+        setJob(updated)
+      }
+    } catch (cause) {
+      if (epoch.current === version) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    } finally {
+      if (epoch.current === version) {
+        setBusy(false)
+      }
+    }
+  }
+
   async function run(slot?: number, action?: 'approve' | 'regenerate', candidateId?: string): Promise<void> {
     if (busy) {
       return
@@ -108,6 +135,6 @@ export function useMediaJobReview({
     receive: () => void run(),
     approve: (slot, candidateId) => void run(slot, 'approve', candidateId),
     regenerate: slot => void run(slot, 'regenerate'),
-    reload: () => void run()
+    reload: () => void reload()
   }
 }

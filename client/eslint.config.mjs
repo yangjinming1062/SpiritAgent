@@ -157,11 +157,7 @@ export default [
   },
   {
     // 后端相对 URL 在 Vite/file origin 下无法解析，数据与字节统一走主进程桥；直连例外注明 URL 来源。
-    files: [
-      'renderer/app/**/*.{ts,tsx}',
-      'renderer/modules/**/*.{ts,tsx}',
-      'renderer/shared/**/*.{ts,tsx}'
-    ],
+    files: ['renderer/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': [
         'error',

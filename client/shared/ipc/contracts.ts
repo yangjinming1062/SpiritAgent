@@ -80,6 +80,7 @@ export type {
   StudioUiSnapshot,
   VisualsUiSnapshot,
   WardrobeDesignMessage,
+  WardrobeDesignSessionSnapshot,
   WardrobeDesignUiSnapshot
 } from './ui-state'
 export {
