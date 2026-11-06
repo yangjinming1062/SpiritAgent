@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type React from 'react'
 
+import { MediaReviewButton } from '@/features/media-review'
 import { requestResource } from '@/shared/lib/resource-request'
-import { MediaReviewButton } from '@/ui/media-review-button'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 

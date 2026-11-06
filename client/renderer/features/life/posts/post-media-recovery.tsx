@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { InlineMedia } from '@/features/media'
+import { MediaReviewButton } from '@/features/media-review'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
@@ -9,7 +10,6 @@ import { gatewayApi } from '@/shared/platform/desktop'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { ActionRow, BTN_SUBTLE, ConfirmDialog, Pager } from '@/ui'
-import { MediaReviewButton } from '@/ui/media-review-button'
 
 import styles from './posts.module.css'
 import {

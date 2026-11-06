@@ -1,8 +1,8 @@
 import type React from 'react'
 
+import { MediaReviewButton } from '@/features/media-review'
 import { useStrings } from '@/shared/strings'
 import { BTN_SUBTLE, CreationFeedback, type CreationFeedbackState } from '@/ui'
-import { MediaReviewButton } from '@/ui/media-review-button'
 
 import { visualJobCommands } from '../../../../../shared/visuals'
 

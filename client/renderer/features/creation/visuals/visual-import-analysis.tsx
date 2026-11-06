@@ -2,13 +2,13 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useState } from 'react'
 
 import { MediaPreview } from '@/features/media'
+import { MediaReviewButton } from '@/features/media-review'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 import { useStrings } from '@/shared/strings'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Pill } from '@/ui'
-import { MediaReviewButton } from '@/ui/media-review-button'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import {

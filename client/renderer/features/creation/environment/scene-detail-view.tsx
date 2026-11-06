@@ -3,6 +3,7 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { pickAvatarImage } from '@/features/character'
+import { MediaReviewButton } from '@/features/media-review'
 import { RENDERER_LIMITS } from '@/shared/constants'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -24,7 +25,6 @@ import {
   SettingCard,
   Spinner
 } from '@/ui'
-import { MediaReviewButton } from '@/ui/media-review-button'
 import type { VisualInterpretation } from '@protocol'
 
 import { isStaleDraftError } from '../../../../../shared/visuals'

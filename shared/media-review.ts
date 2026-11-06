@@ -41,6 +41,8 @@ export const mediaReviewCopy = {
   }
 }
 
+export type MediaReviewCopy = (typeof mediaReviewCopy)['zh']
+
 // 手机端经局域网 HTTP 打开时不是安全上下文，crypto.randomUUID 不可用。
 function newRequestId(): string {
   if (typeof crypto.randomUUID === 'function') {
