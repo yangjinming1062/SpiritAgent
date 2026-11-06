@@ -12,6 +12,7 @@ import {
   restoreConversationSelection,
   setChatSession
 } from '@/features/conversation'
+import { actionsUiHandoff } from '@/features/creation/actions'
 import { sceneUiHandoff } from '@/features/creation/environment'
 import { visualsUiHandoff } from '@/features/creation/visuals'
 import { appearanceUiHandoff, wardrobeDesignUiHandoff } from '@/features/creation/wardrobe'
@@ -36,6 +37,7 @@ const UI_STATE_HANDOFFS = [
   lifeUiHandoff,
   diaryUiHandoff,
   visualsUiHandoff,
+  actionsUiHandoff,
   appearanceUiHandoff,
   sceneUiHandoff,
   wardrobeDesignUiHandoff,
@@ -90,6 +92,7 @@ export function installAppUiStateSync(): () => void {
       diary: diaryUiHandoff.capture(),
       conversation: conversationUiHandoff.capture(),
       visuals: visualsUiHandoff.capture(),
+      actions: actionsUiHandoff.capture(),
       appearance: appearanceUiHandoff.capture(),
       scene: sceneUiHandoff.capture(),
       wardrobeDesign: wardrobeDesignUiHandoff.capture(),
@@ -139,6 +142,7 @@ export function installAppUiStateSync(): () => void {
     await lifeUiHandoff.apply(snapshot.life)
     await diaryUiHandoff.apply(snapshot.diary)
     await visualsUiHandoff.apply(snapshot.visuals)
+    await actionsUiHandoff.apply(snapshot.actions)
     await appearanceUiHandoff.apply(snapshot.appearance)
     await sceneUiHandoff.apply(snapshot.scene)
     await wardrobeDesignUiHandoff.apply(snapshot.wardrobeDesign)

@@ -1,5 +1,6 @@
 import type { AppNavigationTarget } from '../desktop-presentation'
 import type {
+  ActionsUiSnapshot,
   AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
@@ -18,6 +19,7 @@ export interface MainUiStateData {
   diary: DiaryUiSnapshot
   conversation: MainConversationDraftSnapshot
   visuals: VisualsUiSnapshot
+  actions: ActionsUiSnapshot
   appearance: AppearanceUiSnapshot
   scene: SceneUiSnapshot
   wardrobeDesign: WardrobeDesignUiSnapshot

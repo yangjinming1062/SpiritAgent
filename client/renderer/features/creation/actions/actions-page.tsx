@@ -27,6 +27,7 @@ import {
   SettingsSectionIntro
 } from '@/ui'
 import { LibraryToolbar } from '@/ui/asset-library-header'
+import type { ActionComposerSnapshot } from '@ipc/contracts'
 
 import { composeDescribedInput } from '../../../../../shared/described-input'
 import {
@@ -38,6 +39,7 @@ import {
 } from '../visuals'
 import { $presentedOutfit, hydrateWardrobe } from '../wardrobe'
 
+import { $actionsUi, beginActionInterpretation, updateActionsComposer } from './actions-state'
 import {
   actionGroups,
   createAction,
@@ -50,15 +52,7 @@ import {
   updateAction
 } from './actions-store'
 
-interface Composer {
-  actionId: string | null
-  expectedUpdatedAt: string | null
-  description: string
-  refinement: string
-  preview: { draft: Record<string, unknown>; summary: string; details: { label: string; value: string }[] } | null
-}
-
-const EMPTY_COMPOSER: Composer = {
+const EMPTY_COMPOSER: ActionComposerSnapshot = {
   actionId: null,
   expectedUpdatedAt: null,
   description: '',
@@ -132,7 +126,7 @@ function ActionsPageContent(): React.JSX.Element {
   const error = useStore(actionGroups[group].error)
   const nextCursor = useStore(actionGroups[group].nextCursor)
   const [query, setQuery] = useState('')
-  const [composer, setComposer] = useState<Composer | null>(null)
+  const composer = useStore($actionsUi).composer
   const [interpreting, setInterpreting] = useState(false)
   const [composerError, setComposerError] = useState('')
   const { run, busy, busyKey } = usePanelAction()
@@ -259,12 +253,19 @@ function ActionsPageContent(): React.JSX.Element {
       return
     }
 
+    // 结果只在请求代次与草稿修订都未变时落地：改描述、换动作或关编辑器都会作废在途整理。
+    const accept = beginActionInterpretation()
     setInterpreting(true)
     setComposerError('')
 
     try {
       const result = await interpretAction(description, composer.actionId ?? undefined)
-      setComposer(current =>
+
+      if (!accept()) {
+        return
+      }
+
+      updateActionsComposer(current =>
         current
           ? {
               ...current,
@@ -280,7 +281,10 @@ function ActionsPageContent(): React.JSX.Element {
           : current
       )
     } catch (failure) {
-      setComposerError(failureText(failure, studio.interpretFailed))
+      // 过期失败不替换当前提示，也不清草稿。
+      if (accept()) {
+        setComposerError(failureText(failure, studio.interpretFailed))
+      }
     } finally {
       setInterpreting(false)
     }
@@ -299,7 +303,7 @@ function ActionsPageContent(): React.JSX.Element {
       { failure: t.saveFailed, key: 'save' }
     )?.then(action => {
       if (action) {
-        setComposer(null)
+        updateActionsComposer(null)
         setGroup(action.status === 'approved' ? 'in_library' : 'not_in_library')
         setQuery('')
       }
@@ -320,7 +324,7 @@ function ActionsPageContent(): React.JSX.Element {
       void run(
         async () => {
           await deleteAction(action.id)
-          setComposer(current => (current?.actionId === action.id ? null : current))
+          updateActionsComposer(current => (current?.actionId === action.id ? null : current))
         },
         { failure: t.deleteFailed, key: `delete:${action.id}` }
       )
@@ -349,7 +353,7 @@ function ActionsPageContent(): React.JSX.Element {
         <LibraryToolbar
           createDisabled={busy}
           createLabel={t.create}
-          onCreate={() => setComposer({ ...EMPTY_COMPOSER })}
+          onCreate={() => updateActionsComposer({ ...EMPTY_COMPOSER })}
           onQueryChange={setQuery}
           query={query}
           searchLabel={t.searchAria}
@@ -367,7 +371,9 @@ function ActionsPageContent(): React.JSX.Element {
                 <textarea
                   className={`${INPUT_CLASS} min-h-20`}
                   onChange={event =>
-                    setComposer(current => (current ? { ...current, description: event.currentTarget.value } : current))
+                    updateActionsComposer(current =>
+                      current ? { ...current, description: event.currentTarget.value } : current
+                    )
                   }
                   value={composer.description}
                 />
@@ -389,7 +395,7 @@ function ActionsPageContent(): React.JSX.Element {
                   <input
                     className={INPUT_CLASS}
                     onChange={event =>
-                      setComposer(current =>
+                      updateActionsComposer(current =>
                         current ? { ...current, refinement: event.currentTarget.value } : current
                       )
                     }
@@ -413,7 +419,7 @@ function ActionsPageContent(): React.JSX.Element {
                   {studio.refine}
                 </button>
               )}
-              <button className={BTN_GHOST} onClick={() => setComposer(null)} type="button">
+              <button className={BTN_GHOST} onClick={() => updateActionsComposer(null)} type="button">
                 {t.cancel}
               </button>
               {composer.actionId && (
@@ -500,7 +506,7 @@ function ActionsPageContent(): React.JSX.Element {
                     className={BTN_GHOST}
                     disabled={busyKey !== null || action.status === 'pending' || action.status === 'reviewing'}
                     onClick={() =>
-                      setComposer({
+                      updateActionsComposer({
                         actionId: action.id,
                         expectedUpdatedAt: action.updated_at,
                         description: '',

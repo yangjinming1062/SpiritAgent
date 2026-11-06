@@ -72,6 +72,9 @@ export type {
   StageActivity
 } from './desktop-presentation'
 export type {
+  ActionComposerPreview,
+  ActionComposerSnapshot,
+  ActionsUiSnapshot,
   AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
@@ -84,6 +87,7 @@ export type {
   WardrobeDesignUiSnapshot
 } from './ui-state'
 export {
+  isActionsUiSnapshot,
   isAppearanceUiSnapshot,
   isCompanionEditorUiSnapshot,
   isDiaryUiSnapshot,

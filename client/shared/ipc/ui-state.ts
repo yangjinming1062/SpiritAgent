@@ -188,6 +188,51 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
   )
 }
 
+/** 动作整理预览：客户端不解析草稿结构，只展示服务端给出的摘要与细节。 */
+export interface ActionComposerPreview {
+  draft: Record<string, unknown>
+  summary: string
+  details: { label: string; value: string }[]
+}
+
+/** 动作编辑器草稿：当前编辑对象、描述、补充意见、整理结果与预期修改版本。 */
+export interface ActionComposerSnapshot {
+  actionId: string | null
+  expectedUpdatedAt: string | null
+  description: string
+  refinement: string
+  preview: ActionComposerPreview | null
+}
+
+export interface ActionsUiSnapshot {
+  composer: ActionComposerSnapshot | null
+}
+
+function isActionComposerPreview(value: unknown): value is ActionComposerPreview {
+  return (
+    isRecord(value) &&
+    isRecord(value.draft) &&
+    typeof value.summary === 'string' &&
+    Array.isArray(value.details) &&
+    value.details.every(
+      detail => isRecord(detail) && typeof detail.label === 'string' && typeof detail.value === 'string'
+    )
+  )
+}
+
+export function isActionsUiSnapshot(value: unknown): value is ActionsUiSnapshot {
+  return (
+    isRecord(value) &&
+    (value.composer === null ||
+      (isRecord(value.composer) &&
+        (value.composer.actionId === null || typeof value.composer.actionId === 'string') &&
+        (value.composer.expectedUpdatedAt === null || typeof value.composer.expectedUpdatedAt === 'string') &&
+        typeof value.composer.description === 'string' &&
+        typeof value.composer.refinement === 'string' &&
+        (value.composer.preview === null || isActionComposerPreview(value.composer.preview))))
+  )
+}
+
 /** 造型制作输入：描述、当前草稿与各草稿未提交的输入文本。 */
 export interface AppearanceUiSnapshot {
   text: string

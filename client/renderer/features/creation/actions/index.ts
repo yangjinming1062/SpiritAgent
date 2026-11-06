@@ -1,5 +1,6 @@
 export type { ActionDefinition, ActionLibraryGroup, ActionMediaEntry } from '../visuals'
 
+export { $actionsUi, beginActionInterpretation, updateActionsComposer } from './actions-state'
 export {
   $actions,
   actionGroups,
@@ -13,3 +14,5 @@ export {
   retryActionReview,
   updateAction
 } from './actions-store'
+
+export { actionsUiHandoff } from './ui-handoff'

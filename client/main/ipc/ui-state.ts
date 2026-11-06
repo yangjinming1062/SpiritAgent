@@ -5,6 +5,7 @@ import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 import {
   type AppNavigationTarget,
   IPC,
+  isActionsUiSnapshot,
   isAppearanceUiSnapshot,
   isCompanionEditorUiSnapshot,
   isDiaryUiSnapshot,
@@ -74,6 +75,10 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     throw new Error('影像页状态无效。')
   }
 
+  if (!isActionsUiSnapshot(raw?.actions)) {
+    throw new Error('动作页状态无效。')
+  }
+
   if (!isAppearanceUiSnapshot(raw?.appearance)) {
     throw new Error('造型页状态无效。')
   }
@@ -98,6 +103,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     diary: raw.diary,
     conversation,
     visuals,
+    actions: raw.actions,
     appearance: raw.appearance,
     scene: raw.scene,
     wardrobeDesign: raw.wardrobeDesign,
