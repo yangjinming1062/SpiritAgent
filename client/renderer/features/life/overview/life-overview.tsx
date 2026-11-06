@@ -1,9 +1,8 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { $appPage, openChat as openChatLocation, openLife } from '@/app/navigation/app-navigation'
+import { $appPage, openCompanionMainChat, openLife } from '@/app/navigation/app-navigation'
 import { $chatSessionId } from '@/features/conversation'
-import { ensureCompanionSession } from '@/features/conversation'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { notifyError } from '@/shared/store/notifications'
@@ -38,15 +37,10 @@ export function LifeOverview({
     const scope = captureAuthScope()
 
     try {
-      const sessionId = await ensureCompanionSession()
+      const sessionId = await openCompanionMainChat()
 
-      if (!sessionId && current()) {
-        throw new Error(strings.chat.nav.loadFailed)
-      }
-
-      if (sessionId && current()) {
+      if (current()) {
         onNavigate?.()
-        await openChatLocation({ sessionId })
         requestAnimationFrame(() => {
           if (scope?.() && $appPage.get() === 'chat' && $chatSessionId.get() === sessionId) {
             document.querySelector<HTMLTextAreaElement>('[data-conversation-input="true"]')?.focus()

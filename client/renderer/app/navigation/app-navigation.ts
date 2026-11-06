@@ -1,9 +1,10 @@
 import { atom, computed } from 'nanostores'
 
-import { setChatSession, switchSession } from '@/features/conversation'
+import { $companionSessionId, ensureCompanionSession, setChatSession, switchSession } from '@/features/conversation'
 import { log } from '@/shared/lib/log'
 import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
+import { getStrings } from '@/shared/strings'
 import {
   APP_PAGES,
   type AppLocation,
@@ -14,11 +15,13 @@ import {
   composeNavigation,
   CREATION_SECTIONS,
   type CreationSection,
+  DEFAULT_APP_LOCATION,
   DEFAULT_NAVIGATION,
   DEFAULT_SECTION,
   LIFE_SECTIONS,
   type LifeSection,
   navigationHash,
+  normalizeAppLocation,
   normalizeAppNavigation,
   type PageFocus,
   parseNavigationHash,
@@ -32,14 +35,11 @@ export { APP_PAGES, SETTINGS_SECTIONS }
 
 const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation')
 
-const isLocation = (value: unknown): value is AppLocation =>
-  typeof value === 'object' && value !== null && APP_PAGES.some(page => page === (value as { page?: unknown }).page)
-
-/** 持久化只落位置：分区与页签随账户保存，切换模式时交接。 */
+/** 持久化只落位置：分区与页签随账户保存，切换模式时交接；整体替换，读取时规范化。 */
 const location = definePersistedAtom<AppLocation>({
   key: NAVIGATION_KEY,
-  fallback: { page: 'chat' },
-  isPersistable: isLocation
+  fallback: DEFAULT_APP_LOCATION,
+  normalize: normalizeAppLocation
 })
 
 /** 定位细节只在本窗口有效，不落盘。 */
@@ -97,7 +97,7 @@ export function getAppNavigation(): AppNavigationTarget {
 
 async function apply(target: AppNavigationTarget, updateHash = true): Promise<void> {
   const next = normalizeAppNavigation(target)
-  location.set(next.location)
+  location.replace(next.location)
   pageFocus.set(next.focus)
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
@@ -122,6 +122,19 @@ export function applyAppNavigation(target: AppNavigationTarget, updateHash = tru
 
 export function openChat(focus: Omit<Extract<PageFocus, { page: 'chat' }>, 'page'> = {}): Promise<void> {
   return apply(composeNavigation({ page: 'chat' }, { page: 'chat', ...focus }))
+}
+
+/** 进入伙伴主会话：已知会话时直接定位，未加载时才拉取；打不开时抛出可提示的错误。 */
+export async function openCompanionMainChat(): Promise<string> {
+  const sessionId = $companionSessionId.get() ?? (await ensureCompanionSession())
+
+  if (!sessionId) {
+    throw new Error(getStrings().chat.openMainSessionFailed)
+  }
+
+  await openChat({ sessionId })
+
+  return sessionId
 }
 
 export function openLife(

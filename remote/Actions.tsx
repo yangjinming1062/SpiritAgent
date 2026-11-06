@@ -5,8 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActionClipKind, ActionDefinition, ActionLibraryGroup, ActionReviewStatus } from '@protocol'
 
 import { composeDescribedInput } from '../shared/described-input'
+import { isRequestConflictError } from '../shared/visuals'
 
-import { errorText, type RemoteApi } from './api'
+import { ApiError, errorText, type RemoteApi } from './api'
 import { saveWithReadback } from './save-result'
 import {
   Empty,
@@ -103,27 +104,40 @@ function ActionEditor({
 
       const request_id = composer.requestId ?? crypto.randomUUID()
       patch({ requestId: request_id })
-      const saved: ActionDefinition = action
-        ? await saveWithReadback({
-            write: () =>
-              api.invoke('companion_actions.update_action', {
-                path: { action_id: action.id },
-                body: { design: plan.draft, expected_updated_at: composer.expectedUpdatedAt ?? action.updated_at }
-              }),
-            read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
-            matches: latest =>
-              latest.name === String(plan.draft.name ?? '') &&
-              latest.motion_description === String(plan.draft.motion_description ?? ''),
-            isCurrent: alive,
-            onUnconfirmed: latest => {
-              if (latest) {
-                onReload(latest)
-              }
+      let saved: ActionDefinition
+
+      if (action) {
+        saved = await saveWithReadback({
+          write: () =>
+            api.invoke('companion_actions.update_action', {
+              path: { action_id: action.id },
+              body: { design: plan.draft, expected_updated_at: composer.expectedUpdatedAt ?? action.updated_at }
+            }),
+          read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
+          matches: latest =>
+            latest.name === String(plan.draft.name ?? '') &&
+            latest.motion_description === String(plan.draft.motion_description ?? ''),
+          isCurrent: alive,
+          onUnconfirmed: latest => {
+            if (latest) {
+              onReload(latest)
             }
-          })
-        : await api.invoke('companion_actions.create_action', {
+          }
+        })
+      } else {
+        try {
+          saved = await api.invoke('companion_actions.create_action', {
             body: { request_id, design: plan.draft }
           })
+        } catch (failure) {
+          // 请求身份已绑定另一份设计：换新身份再试，不能沿用旧请求。
+          if (alive() && failure instanceof ApiError && isRequestConflictError(failure.code)) {
+            patch({ requestId: null })
+          }
+
+          throw failure
+        }
+      }
 
       if (alive()) {
         patch({ requestId: null })

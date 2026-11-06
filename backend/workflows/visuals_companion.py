@@ -377,7 +377,7 @@ async def generate_character_visual_reference(
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> VisualJobView:
-    """用户组合制作；请求重放沿原任务，不重新读取可变素材。"""
+    """用户组合制作；请求重放沿原任务，不重新读取可变素材，新请求先复核引用素材。"""
 
     async with user_asset_lock(user_id):
         request_key = "manual:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
@@ -394,8 +394,11 @@ async def generate_character_visual_reference(
                 or (source.requirements, source.feedback, source.video_feedback)
                 != (requirements, feedback, video_feedback)
             ):
-                raise ComboAssemblyError("这个请求已用于另一次制作，请核对原任务")
+                raise visuals_service.VisualRequestConflictError("这个请求已用于另一次制作，请核对原任务")
             return job
+        await _require_materials(
+            user_id, outfit_id=outfit_id, scene_id=scene_id if asset_kind == "cinematic" else None, action_id=action_id
+        )
         async with SESSION_LOCAL() as db:
             combo = await load_visual_snapshot(
                 db,
@@ -516,24 +519,24 @@ class VisualDraftError(ValueError):
         self.code = code
 
 
-async def _require_materials(user_id: int, draft: VisualPlanDraft) -> None:
-    """按草稿引用的素材一次性复核归属与就绪状态；同一次创建只开一个会话。"""
+async def _require_materials(
+    user_id: int, *, outfit_id: int | None = None, scene_id: int | None = None, action_id: int | None = None
+) -> None:
+    """按引用素材一次性复核归属与就绪状态；仅未受理的新请求需要。"""
 
     async with SESSION_LOCAL() as db:
-        outfit = await ready_outfit_snapshot(db, user_id, draft.outfit_id) if draft.outfit_id is not None else None
-        scene = await scene_snapshot(db, user_id, draft.scene_id) if draft.scene_id is not None else None
-        action = (
-            await action_queries.action_detail(db, user_id, draft.action_id) if draft.action_id is not None else None
-        )
+        outfit = await ready_outfit_snapshot(db, user_id, outfit_id) if outfit_id is not None else None
+        scene = await scene_snapshot(db, user_id, scene_id) if scene_id is not None else None
+        action = await action_queries.action_detail(db, user_id, action_id) if action_id is not None else None
 
-    if draft.outfit_id is not None and (outfit is None or not outfit.fullbody_url):
+    if outfit_id is not None and (outfit is None or not outfit.fullbody_url):
         raise VisualDraftError("material_not_ready", "所选造型不存在或尚未就绪")
-    if draft.scene_id is not None:
+    if scene_id is not None:
         if scene is None:
             raise VisualDraftError("material_missing", "所选环境不存在")
         if scene.status != "ready" or not scene.media_path:
             raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
-    if draft.action_id is not None:
+    if action_id is not None:
         if action is None:
             raise VisualDraftError("material_missing", "所选动作不存在")
         if action.status != "approved":
@@ -541,14 +544,13 @@ async def _require_materials(user_id: int, draft: VisualPlanDraft) -> None:
 
 
 async def create_visual_from_draft(user_id: int, request_id: str, draft: VisualPlanDraft) -> VisualJobView:
-    """统一创建入口：先复核草稿引用的素材，再按资产类型分派到既有制作用例。"""
+    """统一创建入口：按资产类型分派到既有制作用例，重放请求先找回原任务。"""
 
     if draft.asset_kind == "actor":
         if draft.outfit_id is None or draft.action_id is None:
             raise VisualDraftError("material_mismatch", "透明主体动画需要造型与动作")
         if draft.scene_id is not None or draft.media_kind != "video":
             raise VisualDraftError("material_mismatch", "透明主体动画只能是视频，且不绑定环境")
-        await _require_materials(user_id, draft)
         return await generate_character_visual_reference(
             user_id,
             request_id=f"manual:{request_id}",
@@ -562,7 +564,6 @@ async def create_visual_from_draft(user_id: int, request_id: str, draft: VisualP
             raise VisualDraftError("material_mismatch", "环境动态只能是视频，且只需要环境")
         if draft.outfit_id is not None or draft.action_id is not None:
             raise VisualDraftError("material_mismatch", "环境动态只使用环境，不带造型与动作")
-        await _require_materials(user_id, draft)
         return await generate_scene_media_reference(
             user_id,
             request_id=f"manual:{request_id}",
@@ -573,7 +574,6 @@ async def create_visual_from_draft(user_id: int, request_id: str, draft: VisualP
 
     if draft.outfit_id is None or draft.scene_id is None or draft.action_id is None:
         raise VisualDraftError("material_mismatch", "完整场景影像需要造型、环境与动作")
-    await _require_materials(user_id, draft)
     return await generate_character_visual_reference(
         user_id,
         request_id=f"manual:{request_id}",
@@ -598,7 +598,7 @@ async def generate_scene_media_reference(
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> VisualJobView:
-    """冻结环境媒体的输入并提交：单张环境素材制作环境循环视频。"""
+    """冻结环境媒体的输入并提交：单张环境素材制作环境循环视频；重放沿原任务。"""
 
     async with user_asset_lock(user_id):
         request_key = "manual:visual:" + hashlib.sha256(request_id.encode("utf-8")).hexdigest()
@@ -613,33 +613,34 @@ async def generate_scene_media_reference(
                 or (source.requirements, source.feedback, source.video_feedback)
                 != (requirements, feedback, video_feedback)
             ):
-                raise ComboAssemblyError("这个请求已用于另一次制作，请核对原任务")
+                raise visuals_service.VisualRequestConflictError("这个请求已用于另一次制作，请核对原任务")
             return job
-        state = await presentation_state(user_id, with_catalog=False)
         async with SESSION_LOCAL() as db:
             scene = await scene_snapshot(db, user_id, scene_id)
-            if scene is None or scene.status != "ready" or not scene.media_path:
-                raise ComboAssemblyError("请选择已就绪的环境图片")
-            scene_hash = await asyncio.to_thread(_asset_hash, scene.media_path)
-            combo = VisualSnapshot(
-                source=SceneMediaSource(
-                    scene=SceneMediaRef(
-                        scene_id=scene.id,
-                        title=scene.title,
-                        path=scene.media_path,
-                        content_hash=scene_hash,
-                        description=scene.description,
-                        revision=scene.updated_at,
-                    ),
-                    day_phase=day_phase,
-                    requirements=requirements,
-                    feedback=feedback,
-                    video_feedback=video_feedback,
+        if scene is None:
+            raise VisualDraftError("material_missing", "所选环境不存在")
+        if scene.status != "ready" or not scene.media_path:
+            raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
+        state = await presentation_state(user_id, with_catalog=False)
+        scene_hash = await asyncio.to_thread(_asset_hash, scene.media_path)
+        combo = VisualSnapshot(
+            source=SceneMediaSource(
+                scene=SceneMediaRef(
+                    scene_id=scene.id,
+                    title=scene.title,
+                    path=scene.media_path,
+                    content_hash=scene_hash,
+                    description=scene.description,
+                    revision=scene.updated_at,
                 ),
-                target_width=target_width or state.target_width or DEFAULT_TARGET[0],
-                target_height=target_height or state.target_height or DEFAULT_TARGET[1],
-            )
-            await db.commit()
+                day_phase=day_phase,
+                requirements=requirements,
+                feedback=feedback,
+                video_feedback=video_feedback,
+            ),
+            target_width=target_width or state.target_width or DEFAULT_TARGET[0],
+            target_height=target_height or state.target_height or DEFAULT_TARGET[1],
+        )
         return await visuals_service.create_visual_job(
             user_id,
             snapshot=combo,

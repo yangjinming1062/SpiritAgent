@@ -293,7 +293,7 @@ export function normalizeAppLocation(raw: unknown): AppLocation {
       }
     case 'settings': {
       const section = matches(SETTINGS_SECTIONS, value.section) ? value.section : DEFAULT_SECTION.settings
-      const tabs: readonly SettingsTab[] = SETTINGS_TABS[section as keyof typeof SETTINGS_TABS] ?? []
+      const tabs = (SETTINGS_TABS as Partial<Record<SettingsSection, readonly SettingsTab[]>>)[section] ?? []
       const tab = matches(tabs, value.tab) ? value.tab : undefined
 
       return tab ? { page: 'settings', section, tab } : { page: 'settings', section }
@@ -335,9 +335,11 @@ export function normalizePageFocus(raw: unknown, location: AppLocation): PageFoc
   }
 }
 
-/** 唯一合成点：页面不一致时整体丢弃定位，不同步、不合并。 */
+/** 唯一合成点：位置与定位都先规范化；页面不一致时整体丢弃定位，不同步、不合并。 */
 export function composeNavigation(location: AppLocation, focus: PageFocus | undefined): AppNavigationTarget {
-  return { location, focus: normalizePageFocus(focus, location) }
+  const next = normalizeAppLocation(location)
+
+  return { location: next, focus: normalizePageFocus(focus, next) }
 }
 
 export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {

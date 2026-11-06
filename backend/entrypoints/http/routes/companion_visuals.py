@@ -30,6 +30,7 @@ from features.visuals.schemas import (
     VisualReceiptResponse,
     VisualRegenerateRequest,
 )
+from features.visuals.service import VisualRequestConflictError
 from features.visuals.static_presentation import record_static_receipt
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
@@ -151,13 +152,15 @@ async def interpret_visual(user: CurrentUser, body: VisualInterpretRequest) -> V
 
 @router.post("", response_model=VisualJobView, status_code=202)
 async def create_visual(user: CurrentUser, body: VisualCreateRequest) -> VisualJobView:
-    """统一创建入口：复核草稿引用的素材后按类型分派，request_id 作为幂等键。"""
+    """统一创建入口：重放请求优先找回原任务，未受理的新请求复核素材后按类型分派。"""
 
     try:
         draft = VisualPlanDraft.model_validate(body.draft)
         return await create_visual_from_draft(user.id, body.request_id, draft)
     except VisualDraftError as exc:
         raise RequestError(status_code=409, code=exc.code, message=str(exc)) from exc
+    except VisualRequestConflictError as exc:
+        raise RequestError(status_code=409, code="request_conflict", message=str(exc)) from exc
     except (ValueError, VisualError) as exc:
         raise RequestError(status_code=409, code="create_failed", message=str(exc)) from exc
 

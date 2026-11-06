@@ -209,6 +209,7 @@ export const living = {
       makeMotionPhaseLabel: '适用时段',
       makeMotionPhaseAny: '不限时段',
       makeMotionPhaseDone: '已开始制作该时段的动态环境，可在影像页查看进度。',
+      makeMotionRedo: '制作要求已变化，请重新整理后再确认',
       dayPhases: {
         dawn: '黎明',
         day: '白天',

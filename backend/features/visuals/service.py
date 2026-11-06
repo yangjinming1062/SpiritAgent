@@ -95,6 +95,10 @@ class VisualPresentationConflictError(VisualStateError):
     """判断期间生活或呈现已变化，应按最新状态重评。"""
 
 
+class VisualRequestConflictError(ValueError):
+    """创建请求身份已绑定不同的制作内容或输入；客户端应换新请求身份或重新整理。"""
+
+
 def _lock(user_id: int) -> asyncio.Lock:
     return _LOCKS.setdefault(user_id, asyncio.Lock())
 
@@ -270,7 +274,7 @@ async def create_visual_job(
             existing = await _requested_job(db, user_id, request_id, combo_hash)
             if existing is not None:
                 if existing.purpose != "create" or existing.target_kind != target_kind:
-                    raise VisualStateError("这个创建请求已经用于另一次制作")
+                    raise VisualRequestConflictError("这个创建请求已经用于另一次制作")
                 await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
                 await db.commit()
@@ -333,7 +337,7 @@ async def _requested_job(db: AsyncSession, user_id: int, request_id: str, finger
     try:
         job_id = await requested_job_id(db, user_id, request_id, fingerprint)
     except ValueError as exc:
-        raise VisualStateError(str(exc)) from exc
+        raise VisualRequestConflictError(str(exc)) from exc
     if job_id is None:
         return None
     return await db.scalar(select(VisualJob).where(VisualJob.user_id == user_id, VisualJob.id == job_id))

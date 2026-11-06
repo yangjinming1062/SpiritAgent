@@ -231,6 +231,7 @@ export const living: Pick<Dictionary, 'living'> = {
       makeMotionPhaseLabel: 'Time of day',
       makeMotionPhaseAny: 'Any time',
       makeMotionPhaseDone: 'Creation started for the selected time of day. Track it in the visuals page.',
+      makeMotionRedo: 'Your request changed. Organize the description again before confirming.',
       dayPhases: {
         dawn: 'Dawn',
         day: 'Day',

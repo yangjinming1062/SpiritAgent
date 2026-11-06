@@ -27,6 +27,27 @@ from .schemas import ActionAssetDesign, ActionAssetSource, ActionAssetStatus, Ac
 from .views import definition_view, normalize_action_name
 
 
+class ActionRequestConflictError(ValueError):
+    """同一请求身份已绑定另一份动作设计；客户端应换新请求身份或重新整理。"""
+
+
+def _design_fields_match(row: ActionDefinition, design: ActionAssetDesign) -> bool:
+    """行为字段逐项核对；名称与理由是否纳入由调用方的身份语义决定。"""
+
+    return (
+        row.motion_description == design.motion_description
+        and row.use_when_json == design.use_when
+        and row.avoid_when_json == design.avoid_when
+        and row.allowed_triggers_json == design.triggers
+        and row.clip_kind == design.clip_kind
+        and row.duration_seconds == design.duration_seconds
+        and row.semantic_tags_json == design.semantic_tags
+        and row.performance_role == design.performance_role
+        and row.motion_intensity == design.motion_intensity
+        and row.interruptible == design.interruptible
+    )
+
+
 async def create_action(
     db: AsyncSession,
     user_id: int,
@@ -48,6 +69,12 @@ async def create_action(
             )
         )
         if confirmed is not None:
+            if not (
+                _design_fields_match(confirmed, design)
+                and confirmed.name == design.name
+                and confirmed.reason == design.reason
+            ):
+                raise ActionRequestConflictError("这个请求已用于另一份动作设计，请核对原任务")
             return definition_view(confirmed)
     if import_key is not None:
         original_import = await db.scalar(
@@ -75,18 +102,7 @@ async def create_action(
         )
     )
     for item in existing:
-        if (
-            item.motion_description == design.motion_description
-            and item.clip_kind == design.clip_kind
-            and item.duration_seconds == design.duration_seconds
-            and item.use_when_json == design.use_when
-            and item.avoid_when_json == design.avoid_when
-            and item.allowed_triggers_json == design.triggers
-            and item.semantic_tags_json == design.semantic_tags
-            and item.performance_role == design.performance_role
-            and item.motion_intensity == design.motion_intensity
-            and item.interruptible == design.interruptible
-        ):
+        if _design_fields_match(item, design):
             if life_step is not None:
                 await bind_step_in_session(db, user_id, life_step, business_ref={"action_id": item.id})
                 await settle_action_steps(db, item)

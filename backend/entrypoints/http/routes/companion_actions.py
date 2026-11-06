@@ -18,6 +18,7 @@ from features.action_library.schemas import (
     ActionReviewRequest,
     ActionUpdateRequest,
 )
+from features.action_library.service import ActionRequestConflictError
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
@@ -77,6 +78,8 @@ async def create_action(user: CurrentUser, db: DbSession, body: ActionCreateRequ
         result = await design_action_reference(
             user.id, **design.model_dump(), source="user_requested", request_key=body.request_id
         )
+    except ActionRequestConflictError as exc:
+        raise RequestError(status_code=409, code="request_conflict", message=str(exc)) from exc
     except ValueError as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
     return await _actions.read_action(user_id=user.id, db=db, action_id=int(result["action_id"]))

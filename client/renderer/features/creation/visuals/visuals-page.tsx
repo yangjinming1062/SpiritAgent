@@ -2,9 +2,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { openChat } from '@/app/navigation/app-navigation'
+import { openCompanionMainChat } from '@/app/navigation/app-navigation'
 import { useDetailFlow } from '@/app/navigation/use-detail-flow'
-import { ensureCompanionSession } from '@/features/conversation'
 import { useResolvedMediaSrc } from '@/features/media'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { ImagePlus, MessageCircle, Sparkles } from '@/shared/lib/icons'
@@ -157,16 +156,7 @@ export function VisualsPage(): React.JSX.Element {
   }
 
   const openCompanion = (): void => {
-    void run(
-      async () => {
-        const sessionId = await ensureCompanionSession()
-
-        if (sessionId) {
-          await openChat({ sessionId })
-        }
-      },
-      { failure: t.contactCompanion }
-    )
+    void run(() => openCompanionMainChat(), { failure: t.contactCompanion })
   }
 
   const closeDetail = (): void => {

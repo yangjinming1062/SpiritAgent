@@ -14,6 +14,25 @@ export function isStaleDraftError(code: string | null | undefined): boolean {
   return STALE_DRAFT_CODES.some(item => item === code)
 }
 
+/** 同一请求身份已绑定不同内容：换新请求身份或重新整理，不能原样重试。 */
+export function isRequestConflictError(code: string | null | undefined): boolean {
+  return code === 'request_conflict'
+}
+
+/** 环境动态整理的默认描述；整理请求与草稿绑定核对共用同一取值。 */
+export const SCENERY_DEFAULT_DESCRIPTION = '让这个环境自然地动起来'
+
+/** 环境动态整理时冻结的用户输入；与表单不一致时草稿作废，必须重新整理。 */
+export interface MotionPlanInputs {
+  description: string
+  sceneId: string
+  phase: '' | 'dawn' | 'day' | 'dusk' | 'night'
+}
+
+export function sameMotionInputs(a: MotionPlanInputs, b: MotionPlanInputs): boolean {
+  return a.description === b.description && a.sceneId === b.sceneId && a.phase === b.phase
+}
+
 export interface VisualMaterialOptions {
   outfits: VisualMaterialOption[]
   scenes: VisualMaterialOption[]

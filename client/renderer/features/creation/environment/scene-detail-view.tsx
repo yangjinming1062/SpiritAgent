@@ -27,7 +27,13 @@ import {
 } from '@/ui'
 import type { VisualInterpretation } from '@protocol'
 
-import { isStaleDraftError } from '../../../../../shared/visuals'
+import {
+  isRequestConflictError,
+  isStaleDraftError,
+  type MotionPlanInputs,
+  sameMotionInputs,
+  SCENERY_DEFAULT_DESCRIPTION
+} from '../../../../../shared/visuals'
 import { visualsApi } from '../visuals'
 
 import {
@@ -41,6 +47,12 @@ import {
 export interface SceneEditDraft {
   title: string
   description: string
+}
+
+/** 环境动态整理结果与生成时输入的绑定；表单变化后草稿作废，必须重新整理。 */
+interface MotionPlan {
+  preview: VisualInterpretation
+  inputs: MotionPlanInputs
 }
 
 interface SceneDetailViewProps {
@@ -109,10 +121,44 @@ export function SceneDetailView({
   const [motionNotice, setMotionNotice] = useState<string | null>(null)
   const [motionPhase, setMotionPhase] = useState<'' | DayPhase>('')
   const [motionDescription, setMotionDescription] = useState('')
-  const [motionPreview, setMotionPreview] = useState<VisualInterpretation | null>(null)
+  const [motionPlan, setMotionPlan] = useState<MotionPlan | null>(null)
   const begin = useAsyncGuard()
   const actionBusy = actionKind !== null || motionBusy
   const canMakeMotion = Boolean(detail?.status === 'ready' && detail.assetUrl && detail.id)
+
+  const motionInputs = (sceneId: string): MotionPlanInputs => ({
+    description: motionDescription.trim() || SCENERY_DEFAULT_DESCRIPTION,
+    sceneId,
+    phase: motionPhase
+  })
+
+  // 草稿只在输入与整理时一致时可用；环境切换或表单变化都会作废它。
+  const motionReady = Boolean(motionPlan && detail && sameMotionInputs(motionPlan.inputs, motionInputs(detail.id)))
+
+  const motionConfirmable = Boolean(motionReady && motionPlan?.preview.draft)
+
+  // 表单变化立即废弃已有整理结果，提示重新整理。
+  const discardMotionPlan = (): void => {
+    if (motionPlan) {
+      setMotionPlan(null)
+      setMotionNotice(t.makeMotionRedo)
+    }
+  }
+
+  const handleMotionFailure = (error: unknown): void => {
+    const code = ipcErrorCode(error)
+
+    if (isStaleDraftError(code)) {
+      setMotionPlan(null)
+      setMotionError(strings.studio.invalidated)
+    } else {
+      if (isRequestConflictError(code)) {
+        setMotionPlan(null)
+      }
+
+      setMotionError(failureText(error, t.makeMotionFailed))
+    }
+  }
 
   // 环境动态同样走描述 → 预览 → 确认；整理只产出草稿，确认后才受理制作。
   const interpretMotion = (): void => {
@@ -122,35 +168,32 @@ export function SceneDetailView({
 
     const scope = captureAuthScope()
     const live = begin()
+    const inputs = motionInputs(detail.id)
 
     setMotionBusy(true)
     setActionError(null)
     setMotionError(null)
     setMotionNotice(null)
+    setMotionPlan(null)
     void visualsApi
       .interpret({
-        description: motionDescription.trim() || '让这个环境自然地动起来',
+        description: inputs.description,
         intent: 'scenery',
         scene_id: detail.id,
-        day_phase: motionPhase || null
+        day_phase: inputs.phase || null
       })
       .then(result => {
         if (scope?.() && live()) {
-          setMotionPreview(result)
-
           if (!result.feasible) {
             setMotionError(result.reason || t.makeMotionFailed)
+          } else {
+            setMotionPlan({ preview: result, inputs })
           }
         }
       })
       .catch(error => {
         if (scope?.() && live()) {
-          if (isStaleDraftError(ipcErrorCode(error))) {
-            setMotionPreview(null)
-            setMotionError(strings.studio.invalidated)
-          } else {
-            setMotionError(failureText(error, t.makeMotionFailed))
-          }
+          handleMotionFailure(error)
         }
       })
       .finally(() => {
@@ -161,9 +204,9 @@ export function SceneDetailView({
   }
 
   const confirmMotion = (): void => {
-    const plan = motionPreview
+    const plan = motionConfirmable && motionPlan?.preview.draft ? motionPlan : null
 
-    if (!detail || actionBusy || !plan?.draft) {
+    if (!detail || actionBusy || !plan) {
       return
     }
 
@@ -174,23 +217,19 @@ export function SceneDetailView({
     setActionError(null)
     setMotionError(null)
     void visualsApi
-      .create(plan.draft as Record<string, unknown>)
+      .create(plan.preview.draft as Record<string, unknown>)
       .then(() => {
         if (scope?.() && live()) {
           setActionError(null)
-          setMotionNotice(motionPhase ? t.makeMotionPhaseDone : t.makeMotionDone)
-          setMotionPreview(null)
+          // 提示按实际提交的冻结草稿给出，不读取可能已修改的表单值。
+          setMotionNotice(plan.inputs.phase ? t.makeMotionPhaseDone : t.makeMotionDone)
+          setMotionPlan(null)
           setMotionDescription('')
         }
       })
       .catch(error => {
         if (scope?.() && live()) {
-          if (isStaleDraftError(ipcErrorCode(error))) {
-            setMotionPreview(null)
-            setMotionError(strings.studio.invalidated)
-          } else {
-            setMotionError(failureText(error, t.makeMotionFailed))
-          }
+          handleMotionFailure(error)
         }
       })
       .finally(() => {
@@ -544,22 +583,28 @@ export function SceneDetailView({
             <input
               className={INPUT_CLASS}
               disabled={actionBusy || Boolean(uncertain)}
-              onChange={event => setMotionDescription(event.currentTarget.value)}
+              onChange={event => {
+                setMotionDescription(event.currentTarget.value)
+                discardMotionPlan()
+              }}
               placeholder={t.makeMotion}
               value={motionDescription}
             />
             <button
               className={BTN_SUBTLE}
               disabled={actionBusy || Boolean(uncertain)}
-              onClick={motionPreview?.draft ? confirmMotion : interpretMotion}
+              onClick={motionConfirmable ? confirmMotion : interpretMotion}
               type="button"
             >
-              {motionBusy ? t.makeMotionBusy : motionPreview?.draft ? t.makeMotion : '整理描述'}
+              {motionBusy ? t.makeMotionBusy : motionConfirmable ? t.makeMotion : '整理描述'}
             </button>
             <PanelSelect
               ariaLabel={t.makeMotionPhaseLabel}
               disabled={actionBusy || Boolean(uncertain)}
-              onChange={setMotionPhase}
+              onChange={value => {
+                setMotionPhase(value)
+                discardMotionPlan()
+              }}
               options={[
                 { value: '', label: t.makeMotionPhaseAny },
                 { value: 'dawn', label: t.dayPhases.dawn },
@@ -569,7 +614,9 @@ export function SceneDetailView({
               ]}
               value={motionPhase}
             />
-            {motionPreview?.draft ? <span className="text-[11px] text-muted">{motionPreview.summary}</span> : null}
+            {motionConfirmable && motionPlan ? (
+              <span className="text-[11px] text-muted">{motionPlan.preview.summary}</span>
+            ) : null}
           </div>
         ) : null}
         {motionNotice && !motionError ? <p className="text-[11px] text-faint">{motionNotice}</p> : null}

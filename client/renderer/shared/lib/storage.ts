@@ -137,12 +137,16 @@ interface PersistedAtomOptions<T> {
   key: string
   fallback: T
   isPersistable?: (val: unknown) => val is T
+  /** 读取本地存储后按此规范化；未提供时用 isPersistable 校验。 */
+  normalize?: (val: unknown) => T
   preserveOnLogout?: boolean
 }
 
 interface PersistedAtomResult<T> {
   $atom: WritableAtom<T>
   set: (next: T | Partial<T>) => void
+  /** 整体替换当前值，不逐字段合并；不残留上一值的旧字段。 */
+  replace: (next: T) => void
   reset: () => void
   reload: () => void
   get: () => T
@@ -189,15 +193,21 @@ function createPersisted<T>(opts: {
   apply: (current: T, next: T) => T
   /** isPersistable 守门：返回 false 时不落 localStorage（瞬态值保留在内存）。 */
   persist: (val: T) => void
-}): { $atom: WritableAtom<T>; get: () => T; set: (next: T) => void; reset: () => void; reload: () => void } {
+}): {
+  $atom: WritableAtom<T>
+  get: () => T
+  set: (next: T, replace?: boolean) => void
+  reset: () => void
+  reload: () => void
+} {
   const { apply, fallback, key, load, persist, preserveOnLogout } = opts
   registerCompanionStorageKey(key, { preserveOnLogout })
 
   const initial = load()
   const $atom = atom<T>(initial)
 
-  function set(next: T): void {
-    const updated = apply($atom.get(), next)
+  function set(next: T, replace = false): void {
+    const updated = replace ? next : apply($atom.get(), next)
 
     $atom.set(updated)
     persist(updated)
@@ -228,16 +238,17 @@ function createPersisted<T>(opts: {
   }
 }
 
-/** 账户持久化 Atom：加载本地缓存，瞬态不冲刷持久层。 */
+/** 账户持久化 Atom：加载本地缓存，瞬态不冲刷持久层；set 合并字段，replace 整体替换。 */
 export function definePersistedAtom<T extends object>(options: PersistedAtomOptions<T>): PersistedAtomResult<T> {
-  const { fallback, isPersistable, key, preserveOnLogout = false } = options
+  const { fallback, isPersistable, key, normalize, preserveOnLogout = false } = options
 
   const base = createPersisted<T>({
     // 数组整体替换，对象按字段合并。
     apply: (current, next) => (!Array.isArray(next) ? { ...current, ...next } : next),
     fallback,
     key,
-    load: () => storedJson<T>(key, fallback, isPersistable),
+    load: () =>
+      normalize ? normalize(storedJson<unknown>(key, fallback)) : storedJson<T>(key, fallback, isPersistable),
     persist: val => {
       if (!isPersistable || isPersistable(val)) {
         persistString(key, JSON.stringify(val))
@@ -251,6 +262,7 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
     $atom: base.$atom,
     get: base.get,
     reload: base.reload,
+    replace: next => base.set(next, true),
     reset: base.reset,
     set: next => base.set(next as T)
   }

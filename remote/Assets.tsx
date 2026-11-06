@@ -5,7 +5,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApiInput, ApiOperationKey } from '../shared/api'
 import type { ApiSchemas } from '../shared/api.generated'
 import { uiCopy } from '../shared/ui-copy'
-import { isStaleDraftError } from '../shared/visuals'
+import {
+  isRequestConflictError,
+  isStaleDraftError,
+  type MotionPlanInputs,
+  sameMotionInputs,
+  SCENERY_DEFAULT_DESCRIPTION
+} from '../shared/visuals'
 
 import { ApiError, readImage, type RemoteApi } from './api'
 import { copyText, newRequestId } from './browser'
@@ -30,6 +36,15 @@ import {
 } from './ui'
 
 type SceneState = ApiSchemas['SceneStateResponse']
+
+/** 环境动态整理结果与生成时输入的绑定；表单变化后草稿作废，必须重新整理。 */
+interface MotionPlan {
+  draft: Record<string, unknown> | null
+  summary: string
+  feasible: boolean
+  reason: string
+  inputs: MotionPlanInputs
+}
 
 function AssetSteps({ step, upload = false }: { step: number; upload?: boolean }): ReactElement {
   const labels = [upload ? '选择图片' : '描述想法', '预览确认', '完成制作']
@@ -593,12 +608,20 @@ function SceneDetail({
     `scene.${scene.id}.motionPhase`,
     ''
   )
-  const [motionPreview, setMotionPreview] = usePageState<{
-    draft: Record<string, unknown> | null
-    summary: string
-    feasible: boolean
-    reason: string
-  } | null>(`scene.${scene.id}.motionPreview`, null)
+  const [motionPlan, setMotionPlan] = usePageState<MotionPlan | null>(`scene.${scene.id}.motionPlan`, null)
+  const currentMotionInputs = (): MotionPlanInputs => ({
+    description: motionDescription.trim() || SCENERY_DEFAULT_DESCRIPTION,
+    sceneId: scene.id,
+    phase: motionPhase
+  })
+  // 草稿只在输入与整理时一致时可用；表单变化后必须重新整理才能提交。
+  const motionReady = Boolean(motionPlan && sameMotionInputs(motionPlan.inputs, currentMotionInputs()))
+  const discardMotionPlan = (): void => {
+    if (motionPlan) {
+      setMotionPlan(null)
+      setMotionNotice('制作要求已变化，请重新整理后再确认')
+    }
+  }
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`scene.${scene.id}`, onUpdate)
   const previous = useRef({ title: scene.title, description: scene.description })
   const picker = useRef<HTMLInputElement>(null)
@@ -698,7 +721,10 @@ function SceneDetail({
               动态效果
               <input
                 disabled={busy}
-                onChange={event => setMotionDescription(event.target.value)}
+                onChange={event => {
+                  setMotionDescription(event.target.value)
+                  discardMotionPlan()
+                }}
                 placeholder="例如：窗帘轻轻飘动"
                 value={motionDescription}
               />
@@ -707,7 +733,10 @@ function SceneDetail({
               光线时段
               <select
                 disabled={busy}
-                onChange={event => setMotionPhase(event.target.value as '' | 'dawn' | 'day' | 'dusk' | 'night')}
+                onChange={event => {
+                  setMotionPhase(event.target.value as '' | 'dawn' | 'day' | 'dusk' | 'night')
+                  discardMotionPlan()
+                }}
                 value={motionPhase}
               >
                 <option value="">不限</option>
@@ -717,53 +746,78 @@ function SceneDetail({
                 <option value="night">夜间</option>
               </select>
             </label>
-            {motionPreview ? (
+            {motionPlan && motionReady ? (
               <p aria-live="polite">
-                <strong>{motionPreview.summary}</strong>
-                {motionPreview.feasible ? null : ` · ${motionPreview.reason}`}
+                <strong>{motionPlan.summary}</strong>
+                {motionPlan.feasible ? null : ` · ${motionPlan.reason}`}
               </p>
             ) : null}
             <button
               disabled={busy || submitted}
               onClick={() =>
                 run(async () => {
-                  if (!motionPreview?.draft) {
+                  const bound = motionReady ? motionPlan : null
+
+                  if (!bound?.draft) {
+                    const inputs = currentMotionInputs()
                     const plan = await api.invoke('companion_visuals.interpret_visual', {
                       body: {
-                        description: motionDescription.trim() || '让这个环境自然地动起来',
+                        description: inputs.description,
                         intent: 'scenery',
                         scene_id: scene.id,
-                        day_phase: motionPhase || null
+                        day_phase: inputs.phase || null
                       }
                     })
                     if (alive()) {
-                      setMotionPreview(plan)
+                      // 与生成时输入绑定；整理期间输入再变化会被时效校验作废。
+                      setMotionPlan({
+                        draft: plan.draft,
+                        summary: plan.summary,
+                        feasible: plan.feasible,
+                        reason: plan.reason,
+                        inputs
+                      })
                       setMotionRequest(newRequestId())
+                      setMotionNotice(null)
                     }
                     return
                   }
                   try {
                     await api.invoke('companion_visuals.create_visual', {
-                      body: { request_id: motionRequest, draft: motionPreview.draft }
+                      body: { request_id: motionRequest, draft: bound.draft }
                     })
                   } catch (failure) {
-                    if (alive() && failure instanceof ApiError && isStaleDraftError(failure.code)) {
-                      setMotionPreview(null)
+                    if (alive() && failure instanceof ApiError) {
+                      if (isStaleDraftError(failure.code)) {
+                        setMotionPlan(null)
+                        setMotionNotice('素材已变化，请重新整理后再确认')
+                        return
+                      }
+
+                      if (isRequestConflictError(failure.code)) {
+                        setMotionPlan(null)
+                        setMotionRequest(newRequestId())
+                      }
                     }
 
                     throw failure
                   }
                   if (alive()) {
                     setMotionRequest(newRequestId())
-                    setMotionPreview(null)
+                    setMotionPlan(null)
                     setMotionDescription('')
-                    setMotionNotice('已开始制作动态环境，可在影像页查看进度。')
+                    // 提示按实际提交的冻结草稿给出，不读取可能已修改的表单值。
+                    setMotionNotice(
+                      bound.inputs.phase
+                        ? '已开始制作该时段的动态环境，可在影像页查看进度。'
+                        : '已开始制作动态环境，可在影像页查看进度。'
+                    )
                   }
                 })
               }
               type="button"
             >
-              {motionPreview?.draft ? '开始制作' : '整理描述'}
+              {motionReady && motionPlan?.draft ? '开始制作' : '整理描述'}
             </button>
           </details>
           {motionNotice ? <p className="muted">{motionNotice}</p> : null}

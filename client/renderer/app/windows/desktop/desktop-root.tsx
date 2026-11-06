@@ -3,7 +3,13 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppContentPage } from '@/app/components/app-content-page'
-import { $appNavigationRevision, $appPage, openCreation, setAppPage } from '@/app/navigation/app-navigation'
+import {
+  $appNavigationRevision,
+  $appPage,
+  openCompanionMainChat,
+  openCreation,
+  setAppPage
+} from '@/app/navigation/app-navigation'
 import { useDesktopWindowHydration } from '@/app/workflows/window-hydration'
 import { useDesktopNavigation } from '@/app/workflows/window-navigation'
 import { AccountMenu } from '@/features/accounts/account-menu'
@@ -217,10 +223,14 @@ export function DesktopRoot(): React.JSX.Element {
       }
 
       void switchSession(companionSessionId)
-    } else {
-      clearReveal()
+
+      return
     }
-  }, [activatePanel, clearReveal, companionSessionId, firstUnheard, reveal])
+
+    // 主会话尚未加载：按头像语义找回伙伴主会话，而不是不响应。
+    clearReveal()
+    void openCompanionMainChat().catch(error => notifyError(error, strings.chat.nav.companion))
+  }, [activatePanel, clearReveal, companionSessionId, firstUnheard, reveal, strings])
 
   const openAccountMenu = (): void => {
     setOverlay('account')

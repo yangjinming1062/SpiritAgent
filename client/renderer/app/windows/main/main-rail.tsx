@@ -6,6 +6,7 @@ import {
   $appPage,
   openChat,
   openCompanion,
+  openCompanionMainChat,
   openCreation,
   openLife,
   openSettings
@@ -15,10 +16,12 @@ import { $persona, $portraitUrl } from '@/features/character'
 import { $creationBusy } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
 import { $postsHasUnread } from '@/features/life/posts'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Home, type IconComponent, MessageSquareText, Palette, Settings, Sparkles, Users } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
+import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { AppPage } from '@ipc/contracts'
 
@@ -54,6 +57,7 @@ export function MainRail({
   const [accountOpen, setAccountOpen] = useState(false)
   const accountRef = useRef<HTMLDivElement>(null)
   const accountButtonRef = useRef<HTMLButtonElement>(null)
+  const beginAsync = useAsyncGuard()
 
   const unreadByPage: Partial<Record<RailPage, boolean>> = {
     chat: chatUnread,
@@ -80,13 +84,25 @@ export function MainRail({
           : openCompanion())
   }
 
+  // 头像固定回伙伴主会话；普通“陪伴”导航仍恢复上次会话。
+  const openCompanionMain = (): void => {
+    triggerHaptic('tap')
+    const current = beginAsync()
+
+    void openCompanionMainChat().catch(error => {
+      if (current()) {
+        notifyError(error, strings.chat.nav.companion)
+      }
+    })
+  }
+
   return (
     <aside className={styles.rail}>
       <button
         aria-label={`${name} · ${strings.chat.nav.companion}${chatUnread ? ` (${t.unread})` : ''}`}
         className={styles.avatar}
         data-unread={chatUnread}
-        onClick={() => navigate('chat')}
+        onClick={openCompanionMain}
         title={name}
         type="button"
       >
