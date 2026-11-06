@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from 'react'
 
+import { useVoiceRecorder } from '@/features/speech'
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
@@ -13,8 +14,9 @@ import { $chatDraftFromUndo, $pendingExternalAttachment } from './chat-store'
 import type { ChatSubmitState, ConversationInputProps } from './conversation-input'
 import { beginConversationInputActivity } from './conversation-input-busy'
 import { useConversationView } from './conversation-view'
+import { ensureChatSession } from './sessions/selection'
 import { useChatSubmit } from './use-chat-submit'
-import { useVoiceRecorder } from './use-voice-recorder'
+import { conversationVoiceSink } from './voice-link'
 
 // 主对话与轻语共享输入逻辑，草稿和附件归所属视图。
 export interface UseChatInputOptions {
@@ -63,11 +65,25 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     onPreCheckFail: msg => notifyError(msg, getStrings().common.operationFailed)
   })
 
+  const ensureSession = useCallback(() => ensureChatSession(controller), [controller])
+
+  const setRecordingState = useCallback(
+    (recording: boolean) => conversationVoiceSink().setRecording(recording),
+    []
+  )
+
   const {
     recording,
     start: startRecording,
     stop: stopRecording
-  } = useVoiceRecorder({ isReadOnlySession, runtime: controller, eligible: view.eligible })
+  } = useVoiceRecorder({
+    beginInputActivity: beginConversationInputActivity,
+    eligible: view.eligible,
+    ensureSession,
+    isReadOnlySession,
+    runtime: controller,
+    setRecordingState
+  })
 
   // 撤销草稿回填，多窗口按会话过滤
   useAtomListen($chatDraftFromUndo, draft => {

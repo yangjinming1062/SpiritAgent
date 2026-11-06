@@ -1,6 +1,3 @@
-export { ChatMediaCard } from './chat-media-card'
-export { ChatPanel } from './chat-panel'
-
 export type { ConversationRuntime } from './chat-runtime'
 export {
   $chatDraftFromUndo,
@@ -14,32 +11,16 @@ export {
   setProactiveBubble,
   showMediaHint
 } from './chat-store'
-export {
-  conversationRuntimes,
-  findConversationRuntime,
-  getConversationRuntime,
-  retainConversationRuntime,
-  runtimeForMessage
-} from './chat-store'
-export { CompanionAvatar } from './companion-avatar'
+export { conversationRuntimes, findConversationRuntime, getConversationRuntime, runtimeForMessage } from './chat-store'
 export { ConversationInput } from './conversation-input'
 export { $conversationInputBusy, beginConversationInputActivity } from './conversation-input-busy'
 export { ConversationSurface } from './conversation-surface'
-export {
-  $conversationViews,
-  $mainConversationDraftRevision,
-  ConversationViewProvider,
-  exportMainConversationDraftSnapshot,
-  forgetConversationDraft,
-  importMainConversationDraftSnapshot,
-  isConversationActive,
-  useConversationView
-} from './conversation-view'
+export { $conversationViews, isConversationActive } from './conversation-view'
 
 export { openWhisper } from './open-whisper'
 
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
-export { presetDisplayDescription, presetDisplayName, sessionDisplayTitle } from './preset-labels'
+export { presetDisplayName } from './preset-labels'
 export {
   invalidateSessionHistory,
   loadLocalSessionHistory,
@@ -48,34 +29,15 @@ export {
   SessionHistoryChangedError,
   syncSessionHistory
 } from './session-history-cache'
-export { archiveSession, createNewSession, deleteSession, pinSession, renameSession } from './sessions/actions'
 export { onSessionListChanged } from './sessions/events'
-export { fetchArchived, fetchSessions, runSessionSearch, setSessionSort } from './sessions/list'
 export { fetchSystemPresets } from './sessions/presets'
-export { ensureCompanionSession, openMainSession, restoreConversationSelection, switchSession } from './sessions/selection'
 export {
-  $archivedLoading,
-  $archivedNextCursor,
-  $archivedSessions,
-  $archiveOpen,
-  $currentSessionTitle,
-  $searchLoading,
-  $searchNextCursor,
-  $searchResults,
-  $sessionNavigationError,
-  $sessions,
-  $sessionSearch,
-  $sessionsError,
-  $sessionsLoading,
-  $sessionsNextCursor,
-  $sessionSort,
-  $systemPresets,
-  $systemPresetsFetched,
-  $systemPresetsLoading,
-  isCompanionSession,
-  type SessionSort,
-  TITLE_MAX_CHARS
-} from './sessions/state'
+  ensureCompanionSession,
+  openMainSession,
+  restoreConversationSelection,
+  switchSession
+} from './sessions/selection'
+export { $systemPresets } from './sessions/state'
 export { onTopicFeedbackUpdated } from './topic-feedback-store'
 
 export { conversationUiHandoff } from './ui-handoff'
@@ -99,4 +61,3 @@ export {
   removeVoicePlayback,
   voicePlaybackReady
 } from './voice-playback'
-export type { MainConversationDraftSnapshot } from '@client-shared/ipc/ui-state'

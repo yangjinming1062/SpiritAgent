@@ -3,6 +3,7 @@ import '../../../styles.css'
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { createMediaObjectUrl } from '@/features/media'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
@@ -246,7 +247,7 @@ function DesktopWallpaper() {
               natural: media.playTarget !== 'actor' || media.playId === null,
               value: media,
               load: async () => {
-                const url = URL.createObjectURL(new Blob([new Uint8Array(actorBytes.bytes)], { type: actorBytes.mime }))
+                const url = createMediaObjectUrl(actorBytes)
 
                 return { url, release: () => URL.revokeObjectURL(url) }
               }
@@ -259,7 +260,7 @@ function DesktopWallpaper() {
       if (outfit && actorPosterKey !== mediaKey) {
         actorPosterKey = mediaKey
         const generation = ++actorPosterGeneration
-        const url = URL.createObjectURL(new Blob([new Uint8Array(outfit.bytes)], { type: outfit.mime }))
+        const url = createMediaObjectUrl(outfit)
         const image = new Image()
         image.src = url
         void image
@@ -1157,10 +1158,8 @@ function DesktopWallpaper() {
 
       reset(slot)
       slot.media = media
-      slot.videoUrl = URL.createObjectURL(new Blob([new Uint8Array(media.video.bytes)], { type: media.video.mime }))
-      slot.posterUrl = media.poster
-        ? URL.createObjectURL(new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime }))
-        : null
+      slot.videoUrl = createMediaObjectUrl(media.video)
+      slot.posterUrl = media.poster ? createMediaObjectUrl(media.poster) : null
       slot.element.loop = media.kind === 'loop' && media.transition !== 'fade'
       slot.element.style.objectFit = 'contain'
       slot.element.src = slot.videoUrl

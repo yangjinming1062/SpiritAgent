@@ -1,5 +1,6 @@
 export { playDataUrl } from './audio-track'
 export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
+export { useVoiceRecorder } from './use-voice-recorder'
 export {
   $voiceCatalogRevision,
   cloneVoice,

@@ -1,3 +1,4 @@
+import { createMediaObjectUrl } from '@/features/media'
 import type { DesktopMediaBytes } from '@ipc/contracts'
 
 /** 将已有环境与透明造型按完整轮廓适配为静态画面；不产生新的业务素材。 */
@@ -5,7 +6,7 @@ export async function prepareStaticPoster(scene: DesktopMediaBytes, outfit: Desk
   const urls: string[] = []
 
   const load = async (media: DesktopMediaBytes): Promise<HTMLImageElement> => {
-    const url = URL.createObjectURL(new Blob([new Uint8Array(media.bytes)], { type: media.mime }))
+    const url = createMediaObjectUrl(media)
     urls.push(url)
     const image = new Image()
     image.src = url

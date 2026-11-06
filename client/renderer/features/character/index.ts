@@ -71,52 +71,32 @@ export {
 } from './prefs'
 export { AccessibilityPermissionButton } from './presentation/accessibility-permission-button'
 export { PresentationModeButton, usePresentationModeSwitch } from './presentation/mode-switch'
-export { handleDragEndInteraction } from './reactions/reaction-audio'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
-  $expressionBoost,
-  $homePosition,
   $spatialLocomotion,
   $spatialPos,
   $spatialScale,
   $spriteContentRect,
-  $spriteFootAnchor,
   $spriteHeadRect,
   $viewport,
-  baseSpriteSize,
-  cancelMovement,
   computeOverlayAnchorBesideSprite,
-  endDragAt,
-  EXPRESSION_BOOST_SCALE,
-  getBaseSpriteHeight,
-  getBaseSpriteWidth,
   initSpatial,
   resetToHomePosition,
   returnToHomePosition,
   setDefaultScale,
-  startDrag,
-  syncDefaultScale,
-  updateDragPosition
+  syncDefaultScale
 } from './spatial'
 export { SPRITE_REGION_ID, SpriteStage } from './sprite-stage'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
-export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
-export { $spritePointerHeld, playSpriteGesture } from './sprite/gesture'
-export { useSpriteBodyGesture } from './sprite/gesture-layer'
+export { triggerFootGlowPulse } from './sprite/foot-glow'
+export { $spritePointerHeld } from './sprite/gesture'
 export { isCharacterMediaVisible, isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
 
-export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
+export { clearVfx, emitVfx } from './vfx'
 
 export { useOutfitDesignSession } from './wardrobe/design-session'
-export {
-  $stageOutfit,
-  $stageOutfitPresented,
-  $stageOutfitStatus,
-  retryStageOutfit,
-  setStageOutfitSource
-} from './wardrobe/stage-source'
-export type { StageOutfitSource } from './wardrobe/stage-source'
+export { $stageOutfitPresented, setStageOutfitSource } from './wardrobe/stage-source'
 
 export {
   $outfitPolicy,
@@ -128,4 +108,4 @@ export {
   retryOutfitDescription,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
-export { $windowActorMedia, $windowActorPlayback, type WindowActorMedia } from './window-media'
+export { $windowActorMedia, $windowActorPlayback } from './window-media'

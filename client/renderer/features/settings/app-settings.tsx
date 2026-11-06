@@ -3,7 +3,6 @@ import { IconDeviceMobile } from '@tabler/icons-react'
 import type React from 'react'
 
 import { $settingsSection, $settingsTab, openSettings, SETTINGS_SECTIONS } from '@/app/navigation/app-navigation'
-import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import {
   Brain,
   Command,
@@ -15,15 +14,14 @@ import {
   SlidersHorizontal,
   Sparkles
 } from '@/shared/lib/icons'
-import { runnerApi } from '@/shared/platform/desktop'
-import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import type { AppPageProps } from '@/shared/types/app-page'
-import { CapsuleTabs, Disclosure, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/ui'
+import { CapsuleTabs, Disclosure, SettingsSectionIntro } from '@/ui'
 import { SectionShell } from '@/ui/section-shell/section-shell'
 import type { SettingsSection, SettingsTab } from '@ipc/contracts'
 
 import { AboutPage } from './about-page'
+import { ApplicationSettings } from './application-settings'
 import { CompanionPage } from './companion-page'
 import { InteractionPage } from './interaction-page'
 import { PresentationPage } from './presentation-page'
@@ -49,45 +47,6 @@ const DEFAULT_TAB: Partial<Record<SettingsSection, SettingsTab>> = {
   companionship: 'together',
   capabilities: 'skills',
   advanced: 'general'
-}
-
-function ApplicationSettings(): React.JSX.Element {
-  const locale = useStore($locale)
-  const strings = useStrings()
-  const { run, busy: savingLanguage } = usePanelAction()
-
-  const changeLanguage = (value: string): void => {
-    void run(
-      async () => {
-        const result = await runnerApi().runnerConfig.patch({ path: ['language'], value })
-
-        if (!result.ok) {
-          throw new Error(result.error)
-        }
-      },
-      { failure: strings.settings.application.languageSaveFailed }
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      <SettingsSectionIntro hint={strings.settings.application.hint} title={strings.settings.application.title} />
-      <SettingCard>
-        <SettingRow label={strings.settings.application.languageLabel}>
-          <PanelSelect
-            ariaLabel={strings.settings.application.languageLabel}
-            disabled={savingLanguage}
-            onChange={changeLanguage}
-            options={[
-              { value: 'zh', label: '简体中文' },
-              { value: 'en', label: 'English' }
-            ]}
-            value={locale}
-          />
-        </SettingRow>
-      </SettingCard>
-    </div>
-  )
 }
 
 /** 设置：常用项在前，进阶配置集中在最后一组；页签只在本组内切换。 */

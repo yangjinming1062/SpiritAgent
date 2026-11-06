@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import type { ConversationRuntime } from '@/features/conversation'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { log } from '@/shared/lib/log'
@@ -12,10 +13,6 @@ import { getStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
 
 import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
-import type { ConversationRuntime } from './chat-runtime'
-import { beginConversationInputActivity } from './conversation-input-busy'
-import { ensureChatSession } from './sessions/selection'
-import { conversationVoiceSink } from './voice-link'
 
 // 原始录音落到会话附件；后端优先原生音频，必要时转写。
 const PREFERRED_OPUS_MIME_TYPES = [
@@ -72,11 +69,24 @@ type Options = {
   runtime: ConversationRuntime
   eligible?: boolean
   isReadOnlySession?: boolean
+  /** 录制与上传的活动占用，由对话输入侧提供。 */
+  beginInputActivity: (activity: 'recording' | 'uploading') => () => void
+  /** 发送附件前确保存在会话。 */
+  ensureSession: () => Promise<string>
+  /** 同步对话语音条的录音状态。 */
+  setRecordingState: (recording: boolean) => void
 }
 
 // 语音消息生命周期管理：录音、自动停止、全局事件解绑、音轨清理与附件发送。
 
-export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }: Options): {
+export function useVoiceRecorder({
+  beginInputActivity,
+  eligible = true,
+  ensureSession,
+  isReadOnlySession,
+  runtime,
+  setRecordingState
+}: Options): {
   recording: boolean
   start: () => void
   stop: () => Promise<void>
@@ -147,9 +157,9 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
 
     if (recordingOwner === ownerToken.current) {
       recordingOwner = null
-      conversationVoiceSink().setRecording(false)
+      setRecordingState(false)
     }
-  }, [])
+  }, [setRecordingState])
 
   // 中止录音并释放录制器与麦克风；operation 递增作废在途转写与等待中的 start。
   const abortRecording = useCallback(() => {
@@ -240,7 +250,7 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
     }
 
     presentationPorts().setSpriteState('thinking')
-    const finishUpload = beginConversationInputActivity('uploading')
+    const finishUpload = beginInputActivity('uploading')
     finishUploadActivity.current = finishUpload
 
     try {
@@ -248,7 +258,7 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
         return
       }
 
-      const sessionId = await ensureChatSession(runtime)
+      const sessionId = await ensureSession()
 
       if (!recordingCurrent()) {
         return
@@ -294,8 +304,9 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
       }
     }
   }, [
+    beginInputActivity,
+    ensureSession,
     isReadOnlySession,
-    runtime,
     markAssistantTerminal,
     pushPendingPrompt,
     pushUserMessage,
@@ -319,9 +330,9 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
     }
 
     recordingOwner = ownerToken.current
-    finishRecordingActivity.current = beginConversationInputActivity('recording')
+    finishRecordingActivity.current = beginInputActivity('recording')
     const operation = ++operationRef.current
-    conversationVoiceSink().setRecording(true)
+    setRecordingState(true)
     let pending: Promise<void> | null = null
     pending = (async () => {
       let stream: MediaStream | null = null
@@ -380,7 +391,7 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
       }
     })()
     startPendingRef.current = pending
-  }, [isReadOnlySession, markAssistantTerminal, isCurrent, endRecording])
+  }, [beginInputActivity, endRecording, isCurrent, isReadOnlySession, markAssistantTerminal, setRecordingState])
 
   useEffect(() => {
     if (eligible) {
