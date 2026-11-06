@@ -16,10 +16,12 @@ export { ConversationInput } from './conversation-input'
 export { $conversationInputBusy, beginConversationInputActivity } from './conversation-input-busy'
 export { ConversationSurface } from './conversation-surface'
 export { $conversationViews, isConversationActive } from './conversation-view'
+export { type ConversationEventEffects, handleConversationEvent } from './gateway-events'
 
 export { openWhisper } from './open-whisper'
 
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
+export { pendingReplyText } from './pending-reply'
 export { presetDisplayName } from './preset-labels'
 export {
   invalidateSessionHistory,

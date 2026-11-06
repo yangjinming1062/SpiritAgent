@@ -115,6 +115,11 @@ export async function refreshActions(
   }
 }
 
+/** 动作目录变化事件只作刷新触发。 */
+export function onActionEvent(): void {
+  void refreshActionGroups()
+}
+
 export async function refreshActionGroups(): Promise<void> {
   await Promise.all([
     refreshActions(undefined, false, 'in_library'),

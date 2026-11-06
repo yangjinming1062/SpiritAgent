@@ -7,6 +7,7 @@ export {
   deleteAction,
   interpretAction,
   loadMoreActions,
+  onActionEvent,
   refreshActionGroups,
   refreshActions,
   retryActionReview,

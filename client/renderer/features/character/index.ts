@@ -20,6 +20,7 @@ export {
 } from './companion-store'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { hydrateFullbodyReference } from './fullbody-reference-store'
+export { applyServerVoiceUpdate, onCharacterEvent } from './gateway-events'
 export { GenerationActionsGroup } from './generation-actions'
 export {
   assembleCharacterPersona,

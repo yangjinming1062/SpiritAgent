@@ -1,11 +1,16 @@
+import { syncConversationActivity } from '@/app/workflows/conversation-activity'
+import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
+import { applyServerVoiceUpdate, onCharacterEvent, triggerFootGlowPulse } from '@/features/character'
 import {
+  type ConversationRuntime,
   findConversationRuntime,
+  handleConversationEvent,
   invalidateSessionHistory,
   onSessionListChanged,
   onTopicFeedbackUpdated
 } from '@/features/conversation'
 import { onOutfitEvent } from '@/features/creation'
-import { refreshActionGroups } from '@/features/creation/actions'
+import { onActionEvent } from '@/features/creation/actions'
 import { onSceneEvent } from '@/features/creation/environment'
 import {
   enqueueInteraction,
@@ -16,16 +21,30 @@ import {
 import { handleLifeUpdated } from '@/features/life'
 import { onJournalEvent } from '@/features/life/diary'
 import { onPostEvent } from '@/features/life/posts'
+import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 import { $surfaceRole } from '@/shared/store/surfaces'
 
 import { $devMode, pushDevLog } from './dev-log'
-import { handleCharacterEvent } from './handlers/character-events'
-import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
+
+/** 会话事件只改所属会话投影；精灵活动与反馈脉冲等跨功能表现由应用层在此应用。 */
+function dispatchConversationEvent(event: GatewayEvent, runtime: ConversationRuntime): void {
+  const effects = handleConversationEvent(event, runtime, { spriteOverlayVisible: isSpriteOverlayVisible })
+
+  if (effects.syncActivity) {
+    syncConversationActivity()
+  }
+
+  if (effects.footGlow === 'completed') {
+    triggerFootGlowPulse('completed', 1200)
+  } else if (effects.footGlow === 'failed') {
+    triggerFootGlowPulse('failed', 2000)
+  }
+}
 
 function turnRequestId(event: GatewayEvent): string | null {
   switch (event.type) {
@@ -79,7 +98,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
   switch (event.type) {
     case 'companion.action.updated':
-      void refreshActionGroups()
+      onActionEvent()
 
       break
 
@@ -121,7 +140,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'error':
       if (runtime) {
-        handleConversationEvent(event, runtime)
+        dispatchConversationEvent(event, runtime)
       }
 
       break
@@ -135,7 +154,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       if (runtime) {
-        handleConversationEvent(event, runtime)
+        dispatchConversationEvent(event, runtime)
       }
 
       break
@@ -149,7 +168,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       if (runtime) {
-        handleConversationEvent(event, runtime)
+        dispatchConversationEvent(event, runtime)
       }
 
       break
@@ -169,14 +188,19 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.mood':
-
     case 'companion.voice.updated':
+      // 声音选择同时影响角色偏好与语音目录，由应用层各调一次。
+      applyServerVoiceUpdate(event.payload.voice_id)
+      invalidateVoiceCatalog()
+
+      break
+
+    case 'companion.mood':
 
     case 'companion.visual_identity.updated':
 
     case 'companion.appearance_preparation.updated':
-      handleCharacterEvent(event)
+      onCharacterEvent(event)
 
       break
 

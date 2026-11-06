@@ -1,30 +1,20 @@
-import {
-  $activeAvatarId,
-  $companionMood,
-  applyServerCompanionVoiceId,
-  hydrateFullbodyReference,
-  refreshAvatarSeeds
-} from '@/features/character'
-import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
+
+import { refreshAvatarSeeds } from './avatar-seeds-store'
+import { hydrateFullbodyReference } from './fullbody-reference-store'
+import { $companionMood } from './persona-store'
+import { $activeAvatarId } from './portrait-store'
+import { applyServerCompanionVoiceId } from './prefs'
 
 function authed(): boolean {
   return $auth.get().kind === 'authenticated'
 }
 
-export function handleCharacterEvent(event: GatewayEvent): void {
+/** 角色表现事件：心情、身份版本与首次准备状态；声音目录由应用层另行协调。 */
+export function onCharacterEvent(event: GatewayEvent): void {
   switch (event.type) {
-    case 'companion.voice.updated': {
-      void applyServerCompanionVoiceId(event.payload.voice_id).catch(error =>
-        log.warn('voice-selection', 'Could not apply server voice:', error)
-      )
-      invalidateVoiceCatalog()
-
-      break
-    }
-
     case 'companion.mood': {
       const mood = event.payload.mood.trim()
 
@@ -53,4 +43,11 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     default:
       break
   }
+}
+
+/** 服务端确认的伙伴声音：只写角色偏好，语音目录失效由应用层触发。 */
+export function applyServerVoiceUpdate(voiceId: string): void {
+  void applyServerCompanionVoiceId(voiceId).catch(error =>
+    log.warn('voice-selection', 'Could not apply server voice:', error)
+  )
 }

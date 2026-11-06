@@ -1,30 +1,39 @@
-import { syncConversationActivity } from '@/app/workflows/conversation-activity'
-import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
-import { triggerFootGlowPulse } from '@/features/character'
-import {
-  $chatDraftFromUndo,
-  $companionSessionId,
-  type ConversationRuntime,
-  invalidateSessionHistory,
-  rememberFullHistory,
-  rememberPendingMessage,
-  removeVoicePlayback,
-  showMediaHint
-} from '@/features/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
-import { isResourceId } from '../../../../../shared/resource-id'
+import { isResourceId } from '../../../../shared/resource-id'
 
+import type { ConversationRuntime } from './chat-runtime'
+import { $chatDraftFromUndo, $companionSessionId, showMediaHint } from './conversation-state'
+import { rememberPendingMessage } from './pending-messages'
 import { pendingReplyText } from './pending-reply'
+import { invalidateSessionHistory, rememberFullHistory } from './session-history-cache'
+import { removeVoicePlayback } from './voice-playback'
 
-// 会话回合事件：message.*、Slash、压缩与撤回。
+const NO_EFFECTS: ConversationEventEffects = { footGlow: null, syncActivity: false }
 
-export function handleConversationEvent(event: GatewayEvent, runtime: ConversationRuntime): void {
+/** 归属方需要在应用层执行的表现副作用，由调用方在事件处理后统一应用。 */
+export interface ConversationEventEffects {
+  /** 需要重新汇总精灵活动（思考/工作/空闲）。 */
+  syncActivity: boolean
+  footGlow: 'completed' | 'failed' | null
+}
+
+/**
+ * 会话回合事件：message.*、Slash、压缩与撤回。
+ * 只改本会话投影；精灵脉冲与活动汇总等跨功能表现作为结果返回给应用层。
+ */
+export function handleConversationEvent(
+  event: GatewayEvent,
+  runtime: ConversationRuntime,
+  { spriteOverlayVisible }: { spriteOverlayVisible: () => boolean }
+): ConversationEventEffects {
   if (!runtime.isCurrent()) {
-    return
+    return NO_EFFECTS
   }
+
+  const effects: ConversationEventEffects = { footGlow: null, syncActivity: false }
 
   const {
     $chatSessionId,
@@ -79,7 +88,7 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
       }
 
       setTurnHadBubbleBreak(false)
-      syncConversationActivity()
+      effects.syncActivity = true
 
       break
     }
@@ -203,7 +212,7 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
       const snapshot = event.payload
 
       runtime.applyRemoteSnapshot(snapshot)
-      syncConversationActivity()
+      effects.syncActivity = true
 
       break
     }
@@ -216,7 +225,7 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
       void recoverUnconfirmedSubmission()
       submitPendingBatch()
 
-      syncConversationActivity()
+      effects.syncActivity = true
 
       break
     }
@@ -280,7 +289,7 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
       if (
         (media?.length ||
           bubbles?.some(bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready')) &&
-        isSpriteOverlayVisible()
+        spriteOverlayVisible()
       ) {
         const sys = getStrings().notifications.system
         showMediaHint(
@@ -290,14 +299,14 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
         )
       }
 
-      triggerFootGlowPulse('completed', 1200)
+      effects.footGlow = 'completed'
 
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)
       void recoverUnconfirmedSubmission()
       submitPendingBatch()
 
-      syncConversationActivity()
+      effects.syncActivity = true
 
       break
     }
@@ -310,7 +319,7 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
       if (runtime.$replacingReplyMessageId.get() || payload.replace_reply_message_id) {
         runtime.$replacingReplyMessageId.set(null)
         pushStatusPill('status_command_result', payload.message)
-        syncConversationActivity()
+        effects.syncActivity = true
 
         break
       }
@@ -320,8 +329,8 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
         error: payload.message,
         retryMessageId: isResourceId(payload.retry_message_id) ? (payload.retry_message_id ?? undefined) : undefined
       })
-      syncConversationActivity()
-      triggerFootGlowPulse('failed', 2000)
+      effects.syncActivity = true
+      effects.footGlow = 'failed'
 
       break
     }
@@ -414,4 +423,6 @@ export function handleConversationEvent(event: GatewayEvent, runtime: Conversati
     default:
       break
   }
+
+  return effects
 }
