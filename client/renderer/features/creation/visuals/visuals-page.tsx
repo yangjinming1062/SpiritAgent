@@ -30,9 +30,9 @@ import {
 } from '@/ui'
 import { LibraryToolbar } from '@/ui/asset-library-header'
 
-import { $actions, refreshActions } from '../actions/actions-store'
+import { $actions, refreshActions } from '../actions'
 import { $sceneLibrary, loadSceneLibrary } from '../environment'
-import { $outfits, hydrateWardrobe } from '../wardrobe/wardrobe-store'
+import { $outfits, hydrateWardrobe } from '../wardrobe'
 
 import { visualsApi } from './api'
 import {

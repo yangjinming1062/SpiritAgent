@@ -3,6 +3,13 @@ import path from 'node:path'
 
 import ts from 'typescript'
 
+// 创作域内的独立子域：造型、环境、影像与动作各有自己的状态与任务，互相只经入口协作。
+const CREATION_SUBDOMAINS = new Set(['wardrobe', 'environment', 'visuals', 'actions'])
+
+// 只有业务功能可以发起后端请求；公共 UI 库必须由调用方给出数据与回调。
+const BUSINESS_REQUEST_MODULES = new Set(['shared/lib/resource-request'])
+const BUSINESS_REQUEST_HELPERS = new Set(['authedResource', 'backendApi', 'requestResource'])
+
 const canonical = filename => {
   const resolved = path.resolve(filename).replaceAll('\\', '/')
 
@@ -213,6 +220,8 @@ export function createArchitecturePlugin(clientDirectory) {
         parts[0] === 'app' && parts[1] === 'windows' && isDirectory(windows, 'app/windows', parts[2])
           ? parts[2]
           : undefined,
+      subdomain:
+        parts[0] === 'features' && parts[1] === 'creation' && CREATION_SUBDOMAINS.has(parts[2]) ? parts[2] : undefined,
       rendering: relative.startsWith('features/character/rendering/'),
       coordination: relative.startsWith('app/runtime/') || relative.startsWith('app/workflows/')
     }
@@ -247,6 +256,14 @@ export function createArchitecturePlugin(clientDirectory) {
       return 'ui 只承载无业务依赖的组件；不得依赖业务功能或应用层。'
     }
 
+    if (
+      from.layer === 'ui' &&
+      to.layer === 'shared' &&
+      BUSINESS_REQUEST_MODULES.has(to.relative?.replace(/\.tsx?$/, ''))
+    ) {
+      return 'ui 不得自行发起业务请求；请求与状态归所属功能，组件只接收数据与回调。'
+    }
+
     if (from.feature && to.layer === 'app' && to.relative.split('/')[1] !== 'navigation') {
       return '业务功能只可依赖 app/navigation 路由端口，不得依赖窗口、运行时与工作流实现。'
     }
@@ -265,6 +282,12 @@ export function createArchitecturePlugin(clientDirectory) {
 
     if (from.feature && from.feature === to.feature && !specifier.startsWith('.')) {
       return '业务功能内部使用相对路径；角色渲染域经 character 公共入口访问角色能力。'
+    }
+
+    if (from.subdomain && to.subdomain && from.subdomain !== to.subdomain) {
+      if (!to.relative.endsWith(`/${to.subdomain}/index.ts`)) {
+        return '同一功能的子域各自独立；跨子域只消费对方 index.ts。'
+      }
     }
 
     if (!to.feature || from.feature === to.feature) {
@@ -450,6 +473,38 @@ export function createArchitecturePlugin(clientDirectory) {
                     data: { chain }
                   })
                 }
+              }
+            }
+          }
+        }
+      },
+      'ui-business-calls': {
+        meta: {
+          type: 'problem',
+          schema: [],
+          messages: { business: 'ui 只承载展示与交互；业务请求归所属功能，组件只接收数据与回调。' }
+        },
+        create(context) {
+          const filename = canonical(context.filename)
+
+          if (!filename.startsWith(`${rendererRoot}ui/`)) {
+            return {}
+          }
+
+          const reported = new Set()
+
+          return {
+            Identifier(node) {
+              if (!BUSINESS_REQUEST_HELPERS.has(node.name)) {
+                return
+              }
+
+              // 同一位置的多个绑定节点（导入名/本地名、简写属性键值）只报一次。
+              const anchor = `${node.range[0]}:${node.range[1]}`
+
+              if (!reported.has(anchor)) {
+                reported.add(anchor)
+                context.report({ node, messageId: 'business' })
               }
             }
           }

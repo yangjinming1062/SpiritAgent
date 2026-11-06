@@ -17,7 +17,7 @@ import { $windowScenePath, $windowScenePresented, $windowStaticProjection } from
 import { useStrings } from '@/shared/strings'
 import { BTN_SUBTLE } from '@/ui'
 
-import { $stagePlan, type StageScenePlan } from '../visuals/stage-plan'
+import { $stagePlan, type StageScenePlan } from '../visuals'
 
 import styles from './scene-backdrop.module.css'
 

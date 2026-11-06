@@ -29,10 +29,14 @@ import {
 import { LibraryToolbar } from '@/ui/asset-library-header'
 
 import { composeDescribedInput } from '../../../../../shared/described-input'
-import { visualsApi } from '../visuals/api'
-import { $visualsPresentation } from '../visuals/state'
-import { type ActionDefinition, type ActionLibraryGroup, type ActionMediaEntry } from '../visuals/types'
-import { $presentedOutfit, hydrateWardrobe } from '../wardrobe/wardrobe-store'
+import {
+  $visualsPresentation,
+  type ActionDefinition,
+  type ActionLibraryGroup,
+  type ActionMediaEntry,
+  visualsApi
+} from '../visuals'
+import { $presentedOutfit, hydrateWardrobe } from '../wardrobe'
 
 import {
   actionGroups,

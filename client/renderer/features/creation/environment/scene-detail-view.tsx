@@ -28,7 +28,7 @@ import {
 import type { VisualInterpretation } from '@protocol'
 
 import { isStaleDraftError } from '../../../../../shared/visuals'
-import { visualsApi } from '../visuals/api'
+import { visualsApi } from '../visuals'
 
 import {
   $sceneMutationIssues,

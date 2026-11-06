@@ -1,5 +1,5 @@
 export type { VisualReceiptBody, VisualsListQuery } from './api'
-export { visualsApi } from './api'
+export { actionsApi, visualsApi } from './api'
 export { bindPresentationDirector, enqueueInteraction, enqueueInteractionForward, resolveAmbientLoop } from './director'
 export {
   clearVisualDetail,

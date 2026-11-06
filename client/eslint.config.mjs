@@ -146,7 +146,7 @@ export default [
   },
   {
     files: ['renderer/**/*.{ts,tsx,mts,cts}'],
-    rules: { 'architecture/platform-access': 'error' }
+    rules: { 'architecture/platform-access': 'error', 'architecture/ui-business-calls': 'error' }
   },
   {
     files: ['renderer/**/*.{ts,tsx,mts,cts}', 'main/**/*.{ts,tsx,mts,cts}', 'shared/**/*.{ts,tsx,mts,cts}', 'scripts/**/*.{ts,tsx,mts,cts}'],

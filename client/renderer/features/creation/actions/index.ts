@@ -1,4 +1,4 @@
-export type { ActionDefinition, ActionLibraryGroup, ActionMediaEntry } from '../visuals/types'
+export type { ActionDefinition, ActionLibraryGroup, ActionMediaEntry } from '../visuals'
 
 export {
   $actions,

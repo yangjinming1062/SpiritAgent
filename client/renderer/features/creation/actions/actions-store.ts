@@ -4,8 +4,7 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
-import { actionsApi } from '../visuals/api'
-import type { ActionDefinition, ActionLibraryGroup } from '../visuals/types'
+import { type ActionDefinition, type ActionLibraryGroup, actionsApi } from '../visuals'
 
 function newRequestId(): string {
   return typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `action:${Date.now()}:${Math.random()}`
