@@ -2,13 +2,20 @@ import type { SessionMessage } from '@protocol'
 
 import type { ChatMessageController } from './chat-message-controller'
 import type { ConversationState } from './chat-runtime-state'
-import { createSubmissionCancellation, installCancel } from './submission/cancel'
-import type { SubmissionContext } from './submission/context'
-import { installPrompt } from './submission/prompt'
-import { installQueue } from './submission/queue'
-import { installRecovery } from './submission/recovery'
+import { createTurnControl } from './submission/cancel'
+import type {
+  PendingQueueProjection,
+  PromptSubmissionProjection,
+  SubmissionBase,
+  SubmissionPeers,
+  TurnControlProjection,
+  TurnRecoveryProjection
+} from './submission/context'
+import { createPromptSubmission } from './submission/prompt'
+import { createPendingQueue } from './submission/queue'
+import { createTurnRecovery } from './submission/recovery'
 
-/** 提交控制器：装配取消、落库对齐、恢复与连发队列，对外保持单一命令面。 */
+/** 提交控制器：按能力装配取消、落库对齐、恢复与连发队列，对外保持单一命令面。 */
 export function createChatSubmissionController(
   state: ConversationState,
   messages: ChatMessageController,
@@ -25,49 +32,62 @@ export function createChatSubmissionController(
     }
   }
 
-  const ctx = {
-    state,
-    messages,
-    isCurrent,
-    onReplyReplaced,
-    settledRequests,
+  const base: SubmissionBase = { state, messages, isCurrent, onReplyReplaced, settledRequests }
+
+  let prompts: PromptSubmissionProjection
+  let queue: PendingQueueProjection
+  let control: TurnControlProjection
+  let recovery: TurnRecoveryProjection
+
+  // 协作面只做转发，模块之间的调用都发生在装配完成之后。
+  const peers: SubmissionPeers = {
+    get cancellation() {
+      return control.cancellation
+    },
     rememberSettled,
-    cancellation: null
-  } as unknown as SubmissionContext
+    submitPendingBatch: () => queue.submitPendingBatch(),
+    cancelPendingFlush: () => queue.cancelPendingFlush(),
+    preparePromptSubmission: (params, bubbleIds) => prompts.preparePromptSubmission(params, bubbleIds),
+    mergePersistedUserMessages: (list, requestId, ids, trackActive) =>
+      prompts.mergePersistedUserMessages(list, requestId, ids, trackActive),
+    applySessionState: event => prompts.applySessionState(event),
+    acceptPromptSubmission: result => prompts.acceptPromptSubmission(result),
+    cancellationRequested: requestId => control.cancellationRequested(requestId),
+    submissionFailed: (params, error) => control.submissionFailed(params, error),
+    isPromptUnconfirmed: requestId => recovery.isPromptUnconfirmed(requestId)
+  }
 
-  ctx.cancellation = createSubmissionCancellation(ctx)
-
-  installPrompt(ctx)
-  installCancel(ctx)
-  installRecovery(ctx)
-  installQueue(ctx)
+  prompts = createPromptSubmission(base, peers)
+  queue = createPendingQueue(base, peers)
+  control = createTurnControl(base, peers)
+  recovery = createTurnRecovery(base, peers)
 
   return {
     activeRequestId: (): string | null => state.submission.activeRequestId,
-    stopActiveTurn: ctx.stopActiveTurn,
-    cancellationRequested: ctx.cancellationRequested,
-    submissionFailed: ctx.submissionFailed,
+    stopActiveTurn: control.stopActiveTurn,
+    cancellationRequested: control.cancellationRequested,
+    submissionFailed: control.submissionFailed,
     disposeSubmission: () => {
-      ctx.cancelPendingFlush()
-      ctx.cancellation.close()
+      queue.cancelPendingFlush()
+      control.cancellation.close()
       state.stores.$stoppingRequestId.set(null)
     },
-    retryAssistantReply: ctx.retryAssistantReply,
-    replaceAssistantReply: ctx.replaceAssistantReply,
-    bindTrailingUserMessageIds: ctx.bindTrailingUserMessageIds,
-    preparePromptSubmission: ctx.preparePromptSubmission,
-    mergePersistedUserMessages: ctx.mergePersistedUserMessages,
-    applySessionState: ctx.applySessionState,
-    acceptPromptSubmission: ctx.acceptPromptSubmission,
-    recoverUnconfirmedSubmission: ctx.recoverUnconfirmedSubmission,
-    acceptsTurnEvent: ctx.acceptsTurnEvent,
-    isPromptUnconfirmed: ctx.isPromptUnconfirmed,
-    pushPendingPrompt: ctx.pushPendingPrompt,
-    clearPendingPrompts: ctx.clearPendingPrompts,
-    schedulePendingFlush: ctx.schedulePendingFlush,
-    cancelPendingFlush: ctx.cancelPendingFlush,
-    submitPendingBatch: ctx.submitPendingBatch,
-    abandonDisconnectedTurn: ctx.abandonDisconnectedTurn
+    retryAssistantReply: control.retryAssistantReply,
+    replaceAssistantReply: control.replaceAssistantReply,
+    bindTrailingUserMessageIds: prompts.bindTrailingUserMessageIds,
+    preparePromptSubmission: prompts.preparePromptSubmission,
+    mergePersistedUserMessages: prompts.mergePersistedUserMessages,
+    applySessionState: prompts.applySessionState,
+    acceptPromptSubmission: prompts.acceptPromptSubmission,
+    recoverUnconfirmedSubmission: recovery.recoverUnconfirmedSubmission,
+    acceptsTurnEvent: recovery.acceptsTurnEvent,
+    isPromptUnconfirmed: recovery.isPromptUnconfirmed,
+    pushPendingPrompt: queue.pushPendingPrompt,
+    clearPendingPrompts: queue.clearPendingPrompts,
+    schedulePendingFlush: queue.schedulePendingFlush,
+    cancelPendingFlush: queue.cancelPendingFlush,
+    submitPendingBatch: queue.submitPendingBatch,
+    abandonDisconnectedTurn: recovery.abandonDisconnectedTurn
   }
 }
 

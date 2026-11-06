@@ -3,14 +3,14 @@ import type { CompanionBubble, CompanionMediaBubble, SessionMessage, VideoQueueS
 import { conversationVoiceSink } from '../voice-link'
 import { removeVoicePlayback } from '../voice-playback'
 
-import type { ProjectionContext } from './context'
+import type { MediaProjection, ProjectionShared, RowWriter } from './context'
 
 /** 媒体与语音气泡的终态更新：重复完成事件的空音频不能覆盖已就绪内容。 */
-export function installMediaBubble(ctx: ProjectionContext): void {
-  const { $chatMessageList, $chatMessageBodies, $chatSessionId } = ctx.state.stores
+export function createMediaProjection(shared: ProjectionShared, rows: RowWriter): MediaProjection {
+  const { $chatMessageList, $chatMessageBodies, $chatSessionId } = shared.state.stores
 
   function updateVideoQueue(mediaId: string, videoQueue: VideoQueueState | null): void {
-    ctx.videoQueueUpdates.set(mediaId, videoQueue)
+    shared.videoQueueUpdates.set(mediaId, videoQueue)
 
     for (const item of $chatMessageList.get()) {
       const body = $chatMessageBodies.get()[item.id]
@@ -26,14 +26,14 @@ export function installMediaBubble(ctx: ProjectionContext): void {
       return
     }
 
-    const key = ctx.mediaUpdateKey(messageId, mediaId)
-    const previous = ctx.mediaUpdates.get(key)
+    const key = rows.mediaUpdateKey(messageId, mediaId)
+    const previous = shared.mediaUpdates.get(key)
 
     if (previous && (previous.status === 'ready' || previous.media_revision >= bubble.media_revision)) {
       return
     }
 
-    ctx.mediaUpdates.set(key, bubble)
+    shared.mediaUpdates.set(key, bubble)
 
     for (const item of $chatMessageList.get()) {
       const body = $chatMessageBodies.get()[item.id]
@@ -46,7 +46,7 @@ export function installMediaBubble(ctx: ProjectionContext): void {
         continue
       }
 
-      $chatMessageBodies.setKey(item.id, { ...body, ...ctx.companionBubbleBody(bubble, messageId) })
+      $chatMessageBodies.setKey(item.id, { ...body, ...rows.companionBubbleBody(bubble, messageId) })
     }
   }
 
@@ -79,10 +79,5 @@ export function installMediaBubble(ctx: ProjectionContext): void {
     }
   }
 
-  Object.assign(ctx, {
-    updateVideoQueue,
-    updateMediaBubble,
-    updateVoiceBubble,
-    forgetDeletedVoiceMessages
-  })
+  return { updateVideoQueue, updateMediaBubble, updateVoiceBubble, forgetDeletedVoiceMessages }
 }

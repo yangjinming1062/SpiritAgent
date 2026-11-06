@@ -1,13 +1,13 @@
-import type { CompanionBubble, CompanionMediaBubble } from '@protocol'
+import type { CompanionBubble } from '@protocol'
 
 import type { ChatMessageBody, ChatMessageListItem } from '../chat-runtime-types'
 import { nextChatMessageId } from '../conversation-state'
 
-import type { AssistantSnapshot, ProjectionContext } from './context'
+import type { ProjectionShared, RowWriter } from './context'
 
 /** 行与 body 的写入原语：先写 body 再入列，保证列表订阅者取 body 时已存在。 */
-export function installBase(ctx: ProjectionContext): void {
-  const { $chatMessageBodies, $chatMessageList } = ctx.state.stores
+export function createRowWriter(shared: ProjectionShared): RowWriter {
+  const { $chatMessageBodies, $chatMessageList } = shared.state.stores
 
   const mediaUpdateKey = (messageId: string, mediaId: string): string => `${messageId}:${mediaId}`
 
@@ -18,16 +18,16 @@ export function installBase(ctx: ProjectionContext): void {
 
     if (bubble.type === 'image' || bubble.type === 'video') {
       const current =
-        messageId === undefined ? undefined : ctx.mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
+        messageId === undefined ? undefined : shared.mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
 
-      const media: CompanionMediaBubble =
+      const media =
         current ??
-        (bubble.status === 'pending' && ctx.videoQueueUpdates.has(bubble.media_id)
-          ? { ...bubble, video_queue: ctx.videoQueueUpdates.get(bubble.media_id) ?? null }
+        (bubble.status === 'pending' && shared.videoQueueUpdates.has(bubble.media_id)
+          ? { ...bubble, video_queue: shared.videoQueueUpdates.get(bubble.media_id) ?? null }
           : bubble)
 
       if (messageId !== undefined && media.status !== 'pending') {
-        ctx.mediaUpdates.set(mediaUpdateKey(messageId, media.media_id), media)
+        shared.mediaUpdates.set(mediaUpdateKey(messageId, media.media_id), media)
       }
 
       return {
@@ -50,7 +50,7 @@ export function installBase(ctx: ProjectionContext): void {
       return list.length - 1
     }
 
-    const inflight = ctx.inflight.value
+    const inflight = shared.inflight.value
 
     if (inflight) {
       const idx = list.findIndex(item => item.id === inflight.firstId)
@@ -65,8 +65,8 @@ export function installBase(ctx: ProjectionContext): void {
     const id = nextChatMessageId()
     $chatMessageBodies.setKey(
       id,
-      item.role === 'assistant' && !item.subtype && ctx.state.submission.activeRequestId
-        ? { ...body, requestId: ctx.state.submission.activeRequestId }
+      item.role === 'assistant' && !item.subtype && shared.state.submission.activeRequestId
+        ? { ...body, requestId: shared.state.submission.activeRequestId }
         : body
     )
     const list = $chatMessageList.get()
@@ -106,45 +106,11 @@ export function installBase(ctx: ProjectionContext): void {
     return groupStart >= 0 ? insertAt + 1 : (activeReplyInsertIndex(list) ?? list.length)
   }
 
-  function lastAssistantMessage(): AssistantSnapshot | null {
-    const list = $chatMessageList.get()
-    const item = list.at(-1)
-    const body = item?.role === 'assistant' ? $chatMessageBodies.get()[item.id] : undefined
-
-    return item && body ? { list, item, body } : null
-  }
-
-  function ensureAssistantMessage(): AssistantSnapshot | null {
-    const last = lastAssistantMessage()
-
-    if (last?.body.streaming) {
-      return last
-    }
-
-    ctx.beginAssistantMessage()
-
-    return lastAssistantMessage()
-  }
-
-  function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): void {
-    const last = ensureAssistantMessage()
-
-    if (!last) {
-      return
-    }
-
-    $chatMessageBodies.setKey(last.item.id, patch(last.body))
-    ctx.state.stores.$chatStreamingTick.set(ctx.state.stores.$chatStreamingTick.get() + 1)
-  }
-
-  Object.assign(ctx, {
+  return {
     mediaUpdateKey,
     companionBubbleBody,
     appendMessage,
     activeReplyInsertIndex,
-    companionBubbleInsertAt,
-    lastAssistantMessage,
-    ensureAssistantMessage,
-    patchLastAssistant
-  })
+    companionBubbleInsertAt
+  }
 }

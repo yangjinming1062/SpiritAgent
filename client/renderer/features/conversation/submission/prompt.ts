@@ -9,10 +9,13 @@ import type { ConversationSubmission } from '../chat-requests'
 import type { ChatMessageListItem } from '../chat-runtime-types'
 import { nextChatMessageId } from '../conversation-state'
 
-import type { SubmissionContext } from './context'
+import type { PromptSubmissionProjection, SubmissionBase, SubmissionPeers } from './context'
 
 /** 用户消息落库对齐：把待确认气泡绑定到服务端消息 ID，并合并迟到水合。 */
-export function installPrompt(ctx: SubmissionContext): void {
+export function createPromptSubmission(
+  base: SubmissionBase,
+  peers: SubmissionPeers
+): PromptSubmissionProjection {
   const {
     $chatSessionId,
     $chatMessageList,
@@ -21,13 +24,13 @@ export function installPrompt(ctx: SubmissionContext): void {
     $stoppingRequestId,
     $lastAssistantStreaming,
     $replacingReplyMessageId
-  } = ctx.state.stores
+  } = base.state.stores
 
-  const { splitUserBubblesEnabled, reconcilePersistedMessages } = ctx.messages.internal
-  const { markAssistantTerminal } = ctx.messages.api
+  const { splitUserBubblesEnabled, reconcilePersistedMessages } = base.messages.internal
+  const { markAssistantTerminal } = base.messages.api
 
   function bindTrailingUserMessageIds(ids: string[], requestId?: string): void {
-    if (!requestId || requestId !== ctx.state.submission.submittedRequestId) {
+    if (!requestId || requestId !== base.state.submission.submittedRequestId) {
       return
     }
 
@@ -47,7 +50,7 @@ export function installPrompt(ctx: SubmissionContext): void {
       if (
         item.backendMessageId === undefined &&
         item.role === 'user' &&
-        ctx.state.submission.submittedBubbleIds.has(item.id)
+        base.state.submission.submittedBubbleIds.has(item.id)
       ) {
         unboundIndexes.push(i)
       }
@@ -98,15 +101,15 @@ export function installPrompt(ctx: SubmissionContext): void {
     const fingerprint = JSON.stringify(params)
 
     const requestId =
-      ctx.state.submission.unconfirmedSubmission?.fingerprint === fingerprint
-        ? ctx.state.submission.unconfirmedSubmission.requestId
+      base.state.submission.unconfirmedSubmission?.fingerprint === fingerprint
+        ? base.state.submission.unconfirmedSubmission.requestId
         : crypto.randomUUID()
 
-    ctx.state.submission.submittedRequestId = requestId
-    ctx.state.submission.activeRequestId = requestId
-    ctx.state.submission.submittedBubbleIds = new Set(bubbleIds)
+    base.state.submission.submittedRequestId = requestId
+    base.state.submission.activeRequestId = requestId
+    base.state.submission.submittedBubbleIds = new Set(bubbleIds)
     const prepared = { ...params, request_id: requestId }
-    ctx.state.submission.unconfirmedSubmission = { params: prepared, fingerprint, requestId }
+    base.state.submission.unconfirmedSubmission = { params: prepared, fingerprint, requestId }
 
     return prepared
   }
@@ -120,12 +123,16 @@ export function installPrompt(ctx: SubmissionContext): void {
     bindTrailingUserMessageIds(ids, requestId)
 
     if (requestId) {
-      if (trackActive && !ctx.settledRequests.has(requestId) && requestId !== ctx.state.submission.settledRequestId) {
-        ctx.state.submission.activeRequestId = requestId
+      if (
+        trackActive &&
+        !base.settledRequests.has(requestId) &&
+        requestId !== base.state.submission.settledRequestId
+      ) {
+        base.state.submission.activeRequestId = requestId
       }
 
-      if (ctx.state.submission.unconfirmedSubmission?.requestId === requestId) {
-        ctx.state.submission.unconfirmedSubmission = null
+      if (base.state.submission.unconfirmedSubmission?.requestId === requestId) {
+        base.state.submission.unconfirmedSubmission = null
       }
     }
 
@@ -164,7 +171,7 @@ export function installPrompt(ctx: SubmissionContext): void {
 
   function applySessionState(event: Partial<GatewayEventPayloads['session.state']>): void {
     if (event.request_id && event.running === false) {
-      ctx.rememberSettled(event.request_id)
+      peers.rememberSettled(event.request_id)
 
       if ($stoppingRequestId.get() === event.request_id) {
         $stoppingRequestId.set(null)
@@ -173,9 +180,10 @@ export function installPrompt(ctx: SubmissionContext): void {
 
     if (
       event.request_id &&
-      ((ctx.state.submission.activeRequestId && event.request_id !== ctx.state.submission.activeRequestId) ||
+      ((base.state.submission.activeRequestId && event.request_id !== base.state.submission.activeRequestId) ||
         (event.running &&
-          (event.request_id === ctx.state.submission.settledRequestId || ctx.settledRequests.has(event.request_id))))
+          (event.request_id === base.state.submission.settledRequestId ||
+            base.settledRequests.has(event.request_id))))
     ) {
       return
     }
@@ -186,12 +194,12 @@ export function installPrompt(ctx: SubmissionContext): void {
       )
 
       if (reply) {
-        ctx.onReplyReplaced(event.replace_reply_message_id, reply)
+        base.onReplyReplaced(event.replace_reply_message_id, reply)
       }
     }
 
     if (event.running) {
-      ctx.state.submission.activeRequestId = event.request_id ?? ctx.state.submission.activeRequestId
+      base.state.submission.activeRequestId = event.request_id ?? base.state.submission.activeRequestId
       $chatTurnInFlight.set(true)
 
       return
@@ -208,24 +216,24 @@ export function installPrompt(ctx: SubmissionContext): void {
 
     const stopped =
       event.request_id && $chatSessionId.get()
-        ? ctx.cancellation.settled({ sessionId: $chatSessionId.get()!, requestId: event.request_id })
+        ? peers.cancellation.settled({ sessionId: $chatSessionId.get()!, requestId: event.request_id })
         : false
 
     $chatTurnInFlight.set(false)
     $replacingReplyMessageId.set(null)
 
-    if (event.request_id === ctx.state.submission.activeRequestId) {
-      ctx.state.submission.settledRequestId = event.request_id
-      ctx.state.submission.activeRequestId = null
+    if (event.request_id === base.state.submission.activeRequestId) {
+      base.state.submission.settledRequestId = event.request_id
+      base.state.submission.activeRequestId = null
     }
 
-    if (event.request_id === ctx.state.submission.unconfirmedSubmission?.requestId) {
-      ctx.state.submission.unconfirmedSubmission = null
+    if (event.request_id === base.state.submission.unconfirmedSubmission?.requestId) {
+      base.state.submission.unconfirmedSubmission = null
     }
 
     if (stopped) {
       presentationPorts().setSpriteState('idle', { force: true })
-      ctx.submitPendingBatch()
+      peers.submitPendingBatch()
     }
   }
 
@@ -233,10 +241,10 @@ export function installPrompt(ctx: SubmissionContext): void {
     const sessionId = $chatSessionId.get()
 
     if (sessionId) {
-      ctx.cancellation.observe({ sessionId, requestId: result.request_id }, result)
+      peers.cancellation.observe({ sessionId, requestId: result.request_id }, result)
     }
 
-    if (!ctx.isCurrent() || result.request_id !== ctx.state.submission.submittedRequestId) {
+    if (!base.isCurrent() || result.request_id !== base.state.submission.submittedRequestId) {
       return
     }
 
@@ -245,7 +253,8 @@ export function installPrompt(ctx: SubmissionContext): void {
         result.messages ?? [],
         result.request_id,
         result.message_ids ?? [],
-        (result.status === 'accepted' || result.status === 'running') && !ctx.settledRequests.has(result.request_id)
+        (result.status === 'accepted' || result.status === 'running') &&
+          !base.settledRequests.has(result.request_id)
       )
     }
 
@@ -254,11 +263,11 @@ export function installPrompt(ctx: SubmissionContext): void {
     }
   }
 
-  Object.assign(ctx, {
+  return {
     bindTrailingUserMessageIds,
     preparePromptSubmission,
     mergePersistedUserMessages,
     applySessionState,
     acceptPromptSubmission
-  })
+  }
 }

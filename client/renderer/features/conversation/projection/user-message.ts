@@ -2,22 +2,22 @@ import type { ChatAttachment, ChatMediaItem } from '@protocol'
 
 import type { ChatMessageListItem } from '../chat-runtime-types'
 
-import type { ProjectionContext } from './context'
+import type { ProjectionShared, RowWriter, UserMessageProjection } from './context'
 
 /** 用户消息与历史对账：活气泡按后端消息快照替换，保持历史位置。 */
-export function installUserMessage(ctx: ProjectionContext): void {
-  const { $chatMessageBodies, $chatMessageList, $chatSessionPresetId } = ctx.state.stores
+export function createUserMessageProjection(shared: ProjectionShared, rows: RowWriter): UserMessageProjection {
+  const { $chatMessageBodies, $chatMessageList, $chatSessionPresetId } = shared.state.stores
 
   // 后台视频完成的实时送达行，只带媒体；历史水合的同类 system 行同样不显示正文。
   function pushMediaMessage(media: ChatMediaItem[]): string {
-    return ctx.appendMessage(
+    return rows.appendMessage(
       { role: 'assistant', subtype: 'status_media' },
       { text: '', media, streaming: false, toolName: null }
     )
   }
 
   function pushUserMessage(text: string, attachments?: ChatAttachment[]): string {
-    return ctx.appendMessage(
+    return rows.appendMessage(
       { role: 'user' },
       { text, attachments: attachments?.length ? attachments : undefined, streaming: false, toolName: null }
     )
@@ -65,10 +65,5 @@ export function installUserMessage(ctx: ProjectionContext): void {
     $chatMessageList.set(merged)
   }
 
-  Object.assign(ctx, {
-    pushMediaMessage,
-    pushUserMessage,
-    splitUserBubblesEnabled,
-    reconcilePersistedMessages
-  })
+  return { pushMediaMessage, pushUserMessage, splitUserBubblesEnabled, reconcilePersistedMessages }
 }

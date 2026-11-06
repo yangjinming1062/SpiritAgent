@@ -8,10 +8,10 @@ import { submitConversationTurn } from '../chat-requests'
 import type { PendingPromptItem } from '../chat-runtime-types'
 import { FLUSH_DEBOUNCE_MS } from '../conversation-state'
 
-import type { SubmissionContext } from './context'
+import type { PendingQueueProjection, SubmissionBase, SubmissionPeers } from './context'
 
 /** 连发队列：合并等待项后按单批提交，turn_busy 时退回队列或有限指数退避。 */
-export function installQueue(ctx: SubmissionContext): void {
+export function createPendingQueue(base: SubmissionBase, peers: SubmissionPeers): PendingQueueProjection {
   const {
     $chatSessionId,
     $chatMessageList,
@@ -19,10 +19,10 @@ export function installQueue(ctx: SubmissionContext): void {
     $chatTurnInFlight,
     $stoppingRequestId,
     $pendingPromptBatch
-  } = ctx.state.stores
+  } = base.state.stores
 
-  const { markAssistantTerminal } = ctx.messages.api
-  const { splitUserBubblesEnabled } = ctx.messages.internal
+  const { markAssistantTerminal } = base.messages.api
+  const { splitUserBubblesEnabled } = base.messages.internal
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -111,12 +111,12 @@ export function installQueue(ctx: SubmissionContext): void {
     }
 
     // 记录本批对应的存活气泡 id（合并路径只剩首条），persisted 据此精确绑定。
-    ctx.state.submission.submittedBubbleIds = new Set(pendingRows.map(item => item.id))
+    base.state.submission.submittedBubbleIds = new Set(pendingRows.map(item => item.id))
 
     const attachments = pendingBatch.flatMap(p => p.attachments ?? [])
     const promptText = pendingBatch.map(p => p.text).join('\n\n')
 
-    for (const id of ctx.state.submission.submittedBubbleIds) {
+    for (const id of base.state.submission.submittedBubbleIds) {
       const body = $chatMessageBodies.get()[id]
 
       if (body) {
@@ -124,7 +124,7 @@ export function installQueue(ctx: SubmissionContext): void {
       }
     }
 
-    const batchPayload = ctx.preparePromptSubmission(
+    const batchPayload = peers.preparePromptSubmission(
       {
         session_id: sessionId,
         response_preference: presentationPorts().getResponsePreference(),
@@ -135,22 +135,22 @@ export function installQueue(ctx: SubmissionContext): void {
           }
         ]
       },
-      [...ctx.state.submission.submittedBubbleIds]
+      [...base.state.submission.submittedBubbleIds]
     )
 
-    const submittedRevision = ctx.state.historyEditRevision
-    const submittedGeneration = ctx.state.submission.submissionGeneration
+    const submittedRevision = base.state.historyEditRevision
+    const submittedGeneration = base.state.submission.submissionGeneration
     const epoch = currentClearEpoch()
 
     // 失败只收尾本批所属runtime；断连或账户清理后不再回写。
     const failSubmit = (err?: unknown): void => {
       if (
-        !ctx.isCurrent() ||
+        !base.isCurrent() ||
         epoch !== currentClearEpoch() ||
-        submittedGeneration !== ctx.state.submission.submissionGeneration ||
-        !ctx.isPromptUnconfirmed(batchPayload.request_id) ||
-        (ctx.state.submission.activeRequestId !== null &&
-          ctx.state.submission.activeRequestId !== batchPayload.request_id)
+        submittedGeneration !== base.state.submission.submissionGeneration ||
+        !peers.isPromptUnconfirmed(batchPayload.request_id) ||
+        (base.state.submission.activeRequestId !== null &&
+          base.state.submission.activeRequestId !== batchPayload.request_id)
       ) {
         return
       }
@@ -162,23 +162,27 @@ export function installQueue(ctx: SubmissionContext): void {
     }
 
     const submitWithRetry = async (attempt = 0): Promise<void> => {
-      if (!ctx.isCurrent() || submittedGeneration !== ctx.state.submission.submissionGeneration) {
+      if (!base.isCurrent() || submittedGeneration !== base.state.submission.submissionGeneration) {
         return
       }
 
       try {
         presentationPorts().setSpriteState('thinking')
-        ctx.acceptPromptSubmission(await submitConversationTurn(batchPayload))
+        peers.acceptPromptSubmission(await submitConversationTurn(batchPayload))
       } catch (err: unknown) {
-        ctx.submissionFailed(batchPayload, err)
+        peers.submissionFailed(batchPayload, err)
 
-        if (ctx.cancellationRequested(batchPayload.request_id)) {
+        if (peers.cancellationRequested(batchPayload.request_id)) {
           return
         }
 
         const turnBusy = err instanceof ApiError && err.code === 'turn_busy'
 
-        if (turnBusy && ctx.state.historyEditRevision !== submittedRevision && $chatSessionId.get() === sessionId) {
+        if (
+          turnBusy &&
+          base.state.historyEditRevision !== submittedRevision &&
+          $chatSessionId.get() === sessionId
+        ) {
           // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
           $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
           submitPendingBatch()
@@ -199,13 +203,5 @@ export function installQueue(ctx: SubmissionContext): void {
     void submitWithRetry()
   }
 
-  Object.assign(ctx, {
-    pushPendingPrompt,
-    clearPendingPrompts,
-    schedulePendingFlush,
-    cancelPendingFlush,
-    submitPendingBatch
-  })
-
-  return
+  return { pushPendingPrompt, clearPendingPrompts, schedulePendingFlush, cancelPendingFlush, submitPendingBatch }
 }

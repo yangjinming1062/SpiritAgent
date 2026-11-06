@@ -1,10 +1,43 @@
+import type { ChatMediaItem } from '@protocol'
+
 import { isResourceId } from '../../../../../shared/resource-id'
+import type { ChatMessageBody } from '../chat-runtime-types'
 
-import type { ProjectionContext } from './context'
+import type {
+  AssistantProjection,
+  AssistantSnapshot,
+  ProjectionShared,
+  RowWriter,
+  UserMessageProjection
+} from './context'
 
-/** 助手回复投影：流式增量、工具状态与完成帧收尾。 */
-export function installAssistant(ctx: ProjectionContext): void {
-  const { $chatMessageBodies, $chatMessageList, $lastAssistantStreaming, $turnHadBubbleBreak } = ctx.state.stores
+/** 助手回复投影：流式增量、工具状态、完成帧收尾与回复消息绑定。 */
+export function createAssistantProjection(
+  shared: ProjectionShared,
+  rows: RowWriter,
+  users: UserMessageProjection
+): AssistantProjection {
+  const { $chatMessageBodies, $chatMessageList, $chatStreamingTick, $lastAssistantStreaming, $turnHadBubbleBreak } =
+    shared.state.stores
+
+  function lastAssistantMessage(): AssistantSnapshot | null {
+    const list = $chatMessageList.get()
+    const item = list.at(-1)
+    const body = item?.role === 'assistant' ? $chatMessageBodies.get()[item.id] : undefined
+
+    return item && body ? { list, item, body } : null
+  }
+
+  function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): void {
+    const last = ensureAssistantMessage()
+
+    if (!last) {
+      return
+    }
+
+    $chatMessageBodies.setKey(last.item.id, patch(last.body))
+    $chatStreamingTick.set($chatStreamingTick.get() + 1)
+  }
 
   function bindTrailingAssistantMessageId(messageId: string): void {
     // bubble.break 会拆出多段助手气泡，但 DB 只有一行；同一 id 挂到上次用户之后所有未绑定的普通助手行。
@@ -28,7 +61,7 @@ export function installAssistant(ctx: ProjectionContext): void {
     }
 
     if (boundIds.size > 0) {
-      ctx.reconcilePersistedMessages(next, boundIds)
+      users.reconcilePersistedMessages(next, boundIds)
     }
   }
 
@@ -41,7 +74,7 @@ export function installAssistant(ctx: ProjectionContext): void {
       return
     }
 
-    ctx.appendMessage({ role: 'assistant', subtype, backendMessageId }, { text, streaming: false, toolName: null })
+    rows.appendMessage({ role: 'assistant', subtype, backendMessageId }, { text, streaming: false, toolName: null })
   }
 
   function setTurnHadBubbleBreak(value: boolean): void {
@@ -49,15 +82,15 @@ export function installAssistant(ctx: ProjectionContext): void {
   }
 
   function beginAssistantMessage(): void {
-    ctx.inflight.value = null
-    const last = ctx.lastAssistantMessage()
+    shared.inflight.value = null
+    const last = lastAssistantMessage()
 
     if (last?.body.error && last.body.retryMessageId) {
       $chatMessageBodies.setKey(last.item.id, {
         text: '',
         streaming: true,
         toolName: null,
-        requestId: ctx.state.submission.activeRequestId ?? undefined
+        requestId: shared.state.submission.activeRequestId ?? undefined
       })
       $lastAssistantStreaming.set(true)
 
@@ -74,16 +107,28 @@ export function installAssistant(ctx: ProjectionContext): void {
       finalizeAssistantMessage()
     }
 
-    ctx.appendMessage(
+    rows.appendMessage(
       { role: 'assistant' },
-      { text: '', streaming: true, toolName: null, requestId: ctx.state.submission.activeRequestId ?? undefined }
+      { text: '', streaming: true, toolName: null, requestId: shared.state.submission.activeRequestId ?? undefined }
     )
     $lastAssistantStreaming.set(true)
   }
 
+  function ensureAssistantMessage(): AssistantSnapshot | null {
+    const last = lastAssistantMessage()
+
+    if (last?.body.streaming) {
+      return last
+    }
+
+    beginAssistantMessage()
+
+    return lastAssistantMessage()
+  }
+
   function appendAssistantDelta(text: string): void {
     // 仅更新流式 body 不动 list 引用；首个 delta 过滤前导空行，避免撑大气泡上方。
-    ctx.patchLastAssistant(body => {
+    patchLastAssistant(body => {
       const streamingText = (body.streamingText ?? body.text) + text
 
       return {
@@ -95,14 +140,14 @@ export function installAssistant(ctx: ProjectionContext): void {
   }
 
   function appendAssistantReasoningDelta(text: string): void {
-    ctx.patchLastAssistant(body => ({
+    patchLastAssistant(body => ({
       ...body,
       reasoning: !body.reasoning ? text.trimStart() : body.reasoning + text
     }))
   }
 
   function setAssistantTool(name: string | null): void {
-    const last = ctx.ensureAssistantMessage()
+    const last = ensureAssistantMessage()
 
     if (!last) {
       return
@@ -114,12 +159,8 @@ export function installAssistant(ctx: ProjectionContext): void {
     $chatMessageBodies.setKey(item.id, { ...body, toolName: name, tools })
   }
 
-  function finalizeAssistantMessage(
-    text?: string,
-    media?: Parameters<ProjectionContext['finalizeAssistantMessage']>[1],
-    reasoning?: string
-  ): void {
-    const last = ctx.lastAssistantMessage()
+  function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[], reasoning?: string): void {
+    const last = lastAssistantMessage()
 
     if (!last) {
       return
@@ -163,14 +204,16 @@ export function installAssistant(ctx: ProjectionContext): void {
     $lastAssistantStreaming.set(false)
   }
 
-  Object.assign(ctx, {
-    bindTrailingAssistantMessageId,
-    pushStatusPill,
-    setTurnHadBubbleBreak,
+  return {
+    lastAssistantMessage,
+    ensureAssistantMessage,
     beginAssistantMessage,
     appendAssistantDelta,
     appendAssistantReasoningDelta,
     setAssistantTool,
-    finalizeAssistantMessage
-  })
+    finalizeAssistantMessage,
+    bindTrailingAssistantMessageId,
+    pushStatusPill,
+    setTurnHadBubbleBreak
+  }
 }

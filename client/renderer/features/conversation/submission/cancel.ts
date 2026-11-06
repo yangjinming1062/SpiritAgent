@@ -10,10 +10,10 @@ import { createTurnCancellation, type TurnReference } from '../../../../../share
 import { type ConversationSubmission, readConversationTurn, submitConversationTurn } from '../chat-requests'
 import { conversationVoiceSink } from '../voice-link'
 
-import type { SubmissionContext } from './context'
+import type { SubmissionBase, SubmissionPeers, TurnControlProjection } from './context'
 
 /** 回合取消与回复替换：只处理本窗口拥有的回合，迟到回执按会话与请求身份丢弃。 */
-export function installCancel(ctx: SubmissionContext): void {
+export function createTurnControl(base: SubmissionBase, peers: SubmissionPeers): TurnControlProjection {
   const {
     $chatSessionId,
     $chatTurnInFlight,
@@ -22,13 +22,57 @@ export function installCancel(ctx: SubmissionContext): void {
     $replacingReplyMessageId,
     $retryableAssistantMessage,
     $chatMessageBodies
-  } = ctx.state.stores
+  } = base.state.stores
+
+  // 取消器只依赖本模块函数与协作面能力；回调在建立后才可能触发，声明顺序不构成依赖。
+  const cancellation = createTurnCancellation({
+    isCurrent: base.isCurrent,
+    read: turn => readConversationTurn(turn.sessionId, turn.requestId),
+    cancel: turn =>
+      requestResource('sessions.cancel_turn', {
+        path: { session_id: turn.sessionId, request_id: turn.requestId }
+      }),
+    onSettled: async (receipt, turn) => {
+      if ($stoppingRequestId.get() === turn.requestId) {
+        $stoppingRequestId.set(null)
+      }
+
+      if (!ownsTurn(turn)) {
+        return
+      }
+
+      peers.mergePersistedUserMessages(receipt.messages, receipt.request_id, receipt.message_ids, false)
+      peers.applySessionState({ ...receipt, running: false })
+      await refreshAfterCancellation(turn)
+    },
+    onRejected: async (error, turn) => {
+      if ($stoppingRequestId.get() === turn.requestId) {
+        $stoppingRequestId.set(null)
+      }
+
+      if (!ownsTurn(turn)) {
+        return
+      }
+
+      if (base.state.submission.unconfirmedSubmission?.requestId === turn.requestId) {
+        base.state.submission.unconfirmedSubmission = null
+      }
+
+      base.state.submission.activeRequestId = null
+      base.state.submission.settledRequestId = turn.requestId
+      peers.rememberSettled(turn.requestId)
+      $chatTurnInFlight.set(false)
+      base.messages.api.markAssistantTerminal({ error: errorMessage(error, getStrings().chat.sendFailed) })
+      await refreshAfterCancellation(turn)
+    },
+    onError: error => notifyError(error, getStrings().chat.sendFailed)
+  })
 
   function ownsTurn(turn: TurnReference): boolean {
     return (
-      ctx.isCurrent() &&
+      base.isCurrent() &&
       $chatSessionId.get() === turn.sessionId &&
-      (!ctx.state.submission.activeRequestId || ctx.state.submission.activeRequestId === turn.requestId)
+      (!base.state.submission.activeRequestId || base.state.submission.activeRequestId === turn.requestId)
     )
   }
 
@@ -38,40 +82,42 @@ export function installCancel(ctx: SubmissionContext): void {
     try {
       await requestResource('sessions.snapshot', { path: { session_id: turn.sessionId } })
     } catch (error) {
-      if (ctx.isCurrent()) {
+      if (base.isCurrent()) {
         notifyError(error, getStrings().chat.sendFailed)
       }
     }
 
-    if (ctx.isCurrent() && $chatSessionId.get() === turn.sessionId) {
-      ctx.submitPendingBatch()
+    if (base.isCurrent() && $chatSessionId.get() === turn.sessionId) {
+      peers.submitPendingBatch()
     }
   }
 
   function cancellationRequested(requestId: string): boolean {
     const sessionId = $chatSessionId.get()
 
-    return Boolean(sessionId && ctx.cancellation.requested({ sessionId, requestId }))
+    return Boolean(sessionId && cancellation.requested({ sessionId, requestId }))
   }
 
   function submissionFailed(params: ConversationSubmission, error: unknown): void {
     if (error instanceof ApiError && error.status !== null && error.status >= 400 && error.status < 500) {
-      ctx.cancellation.rejected({ sessionId: params.session_id, requestId: params.request_id }, error)
+      cancellation.rejected({ sessionId: params.session_id, requestId: params.request_id }, error)
     }
   }
 
   async function stopActiveTurn(): Promise<void> {
-    ctx.cancelPendingFlush()
+    peers.cancelPendingFlush()
     const sessionId = $chatSessionId.get()
-    const requestId = ctx.state.submission.activeRequestId ?? ctx.state.submission.unconfirmedSubmission?.requestId
 
-    if (!sessionId || !requestId || !ctx.isCurrent()) {
+    const requestId =
+      base.state.submission.activeRequestId ?? base.state.submission.unconfirmedSubmission?.requestId
+
+    if (!sessionId || !requestId || !base.isCurrent()) {
       return
     }
 
     $chatTurnInFlight.set(true)
     $stoppingRequestId.set(requestId)
-    await ctx.cancellation.request({ sessionId, requestId })
+    await cancellation.request({ sessionId, requestId })
   }
 
   async function replaceAssistantReply(messageId: string): Promise<void> {
@@ -87,22 +133,22 @@ export function installCancel(ctx: SubmissionContext): void {
     $chatTurnInFlight.set(true)
     conversationVoiceSink().cancel(sessionId)
 
-    const params = ctx.preparePromptSubmission({
+    const params = peers.preparePromptSubmission({
       session_id: sessionId,
       replace_reply_message_id: message.backendMessageId,
       response_preference: presentationPorts().getResponsePreference()
     })
 
     try {
-      ctx.acceptPromptSubmission(await submitConversationTurn(params))
+      peers.acceptPromptSubmission(await submitConversationTurn(params))
     } catch (error) {
       submissionFailed(params, error)
 
       if (
-        ctx.isCurrent() &&
+        base.isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
-        ctx.state.submission.unconfirmedSubmission?.requestId === params.request_id &&
+        base.state.submission.unconfirmedSubmission?.requestId === params.request_id &&
         !cancellationRequested(params.request_id)
       ) {
         $chatTurnInFlight.set(false)
@@ -124,24 +170,24 @@ export function installCancel(ctx: SubmissionContext): void {
     $chatTurnInFlight.set(true)
     conversationVoiceSink().cancel(sessionId)
 
-    const params = ctx.preparePromptSubmission({
+    const params = peers.preparePromptSubmission({
       session_id: sessionId,
       retry_message_id: body.retryMessageId,
       response_preference: presentationPorts().getResponsePreference()
     })
 
     try {
-      ctx.acceptPromptSubmission(await submitConversationTurn(params))
+      peers.acceptPromptSubmission(await submitConversationTurn(params))
     } catch (error) {
       submissionFailed(params, error)
 
       // 已收到开始/完成事件时请求已被接受，迟到的请求失败不能覆盖新回复。
       if (
-        ctx.isCurrent() &&
+        base.isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
         $chatMessageBodies.get()[messageId] === body &&
-        ctx.state.submission.unconfirmedSubmission !== null &&
+        base.state.submission.unconfirmedSubmission !== null &&
         !cancellationRequested(params.request_id)
       ) {
         $chatTurnInFlight.set(false)
@@ -150,7 +196,8 @@ export function installCancel(ctx: SubmissionContext): void {
     }
   }
 
-  Object.assign(ctx, {
+  return {
+    cancellation,
     ownsTurn,
     refreshAfterCancellation,
     cancellationRequested,
@@ -158,53 +205,5 @@ export function installCancel(ctx: SubmissionContext): void {
     stopActiveTurn,
     replaceAssistantReply,
     retryAssistantReply
-  })
-}
-
-/** 取消器由控制器创建；回调经上下文读取当前实现，避免固定安装顺序。 */
-export function createSubmissionCancellation(ctx: SubmissionContext): ReturnType<typeof createTurnCancellation> {
-  const { $stoppingRequestId, $chatTurnInFlight } = ctx.state.stores
-
-  return createTurnCancellation({
-    isCurrent: ctx.isCurrent,
-    read: turn => readConversationTurn(turn.sessionId, turn.requestId),
-    cancel: turn =>
-      requestResource('sessions.cancel_turn', {
-        path: { session_id: turn.sessionId, request_id: turn.requestId }
-      }),
-    onSettled: async (receipt, turn) => {
-      if ($stoppingRequestId.get() === turn.requestId) {
-        $stoppingRequestId.set(null)
-      }
-
-      if (!ctx.ownsTurn(turn)) {
-        return
-      }
-
-      ctx.mergePersistedUserMessages(receipt.messages, receipt.request_id, receipt.message_ids, false)
-      ctx.applySessionState({ ...receipt, running: false })
-      await ctx.refreshAfterCancellation(turn)
-    },
-    onRejected: async (error, turn) => {
-      if ($stoppingRequestId.get() === turn.requestId) {
-        $stoppingRequestId.set(null)
-      }
-
-      if (!ctx.ownsTurn(turn)) {
-        return
-      }
-
-      if (ctx.state.submission.unconfirmedSubmission?.requestId === turn.requestId) {
-        ctx.state.submission.unconfirmedSubmission = null
-      }
-
-      ctx.state.submission.activeRequestId = null
-      ctx.state.submission.settledRequestId = turn.requestId
-      ctx.rememberSettled(turn.requestId)
-      $chatTurnInFlight.set(false)
-      ctx.messages.api.markAssistantTerminal({ error: errorMessage(error, getStrings().chat.sendFailed) })
-      await ctx.refreshAfterCancellation(turn)
-    },
-    onError: error => notifyError(error, getStrings().chat.sendFailed)
-  })
+  }
 }

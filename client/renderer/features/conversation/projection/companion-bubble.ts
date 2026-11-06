@@ -4,11 +4,15 @@ import type { ChatMessageListItem } from '../chat-runtime-types'
 import { nextChatMessageId } from '../conversation-state'
 import { conversationVoiceSink } from '../voice-link'
 
-import type { ProjectionContext } from './context'
+import type { CompanionBubbleProjection, MediaProjection, ProjectionShared, RowWriter } from './context'
 
 /** 逐泡交付：按到达顺序插入气泡，重复到达按补丁处理，完成帧做空位对账。 */
-export function installCompanionBubble(ctx: ProjectionContext): void {
-  const { $chatMessageBodies, $chatMessageList, $lastAssistantStreaming } = ctx.state.stores
+export function createCompanionBubbleProjection(
+  shared: ProjectionShared,
+  rows: RowWriter,
+  media: MediaProjection
+): CompanionBubbleProjection {
+  const { $chatMessageBodies, $chatMessageList, $lastAssistantStreaming } = shared.state.stores
 
   function insertCompanionBubbleRow(
     list: ChatMessageListItem[],
@@ -19,7 +23,7 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
   ): string {
     const id = nextChatMessageId()
 
-    list.splice(ctx.companionBubbleInsertAt(list, messageId, index), 0, {
+    list.splice(rows.companionBubbleInsertAt(list, messageId, index), 0, {
       id,
       role: 'assistant',
       backendMessageId: messageId,
@@ -28,7 +32,7 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
     })
     $chatMessageBodies.setKey(id, {
       text: '',
-      ...ctx.companionBubbleBody(bubble, messageId),
+      ...rows.companionBubbleBody(bubble, messageId),
       replyIndex: index,
       streaming: false,
       toolName: null,
@@ -48,11 +52,11 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
       }
 
       if (bubble.type === 'image' || bubble.type === 'video') {
-        ctx.updateMediaBubble(messageId, bubble.media_id, bubble)
+        media.updateMediaBubble(messageId, bubble.media_id, bubble)
       } else if (bubble.type === 'link') {
-        $chatMessageBodies.setKey(item.id, { ...body, ...ctx.companionBubbleBody(bubble, messageId) })
+        $chatMessageBodies.setKey(item.id, { ...body, ...rows.companionBubbleBody(bubble, messageId) })
       } else {
-        ctx.updateVoiceBubble(messageId, index, bubble)
+        media.updateVoiceBubble(messageId, index, bubble)
       }
 
       return true
@@ -78,8 +82,8 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
 
     const id = insertCompanionBubbleRow(next, messageId, index, bubble)
 
-    if (!ctx.inflight.value || ctx.inflight.value.messageId !== messageId) {
-      ctx.inflight.value = { messageId, firstId: id }
+    if (!shared.inflight.value || shared.inflight.value.messageId !== messageId) {
+      shared.inflight.value = { messageId, firstId: id }
     }
 
     $chatMessageList.set(next)
@@ -96,8 +100,8 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
     reasoning?: string,
     proactive = false
   ): void {
-    if (ctx.inflight.value?.messageId === messageId) {
-      ctx.inflight.value = null
+    if (shared.inflight.value?.messageId === messageId) {
+      shared.inflight.value = null
     }
 
     const list = $chatMessageList.get()
@@ -183,10 +187,5 @@ export function installCompanionBubble(ctx: ProjectionContext): void {
     }
   }
 
-  Object.assign(ctx, {
-    insertCompanionBubbleRow,
-    patchCompanionBubble,
-    appendCompanionBubble,
-    finalizeCompanionReply
-  })
+  return { appendCompanionBubble, finalizeCompanionReply }
 }

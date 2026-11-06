@@ -1,10 +1,14 @@
 import { conversationVoiceSink } from '../voice-link'
 
-import type { ProjectionContext } from './context'
+import type { AssistantProjection, ProjectionShared, RowWriter, TerminalProjection } from './context'
 
 /** 回合终态：把错误、取消与重试标记落到当前回复，并在没有可写气泡时补一行。 */
-export function installTerminal(ctx: ProjectionContext): void {
-  const { $chatMessageList, $chatMessageBodies, $lastAssistantStreaming, $chatSessionId } = ctx.state.stores
+export function createTerminalProjection(
+  shared: ProjectionShared,
+  rows: RowWriter,
+  assistant: AssistantProjection
+): TerminalProjection {
+  const { $chatMessageList, $chatMessageBodies, $lastAssistantStreaming, $chatSessionId } = shared.state.stores
 
   function markAssistantTerminal({
     error,
@@ -17,19 +21,19 @@ export function installTerminal(ctx: ProjectionContext): void {
     retryMessageId?: string
     beforePending?: boolean
   } = {}): void {
-    ctx.inflight.value = null
+    shared.inflight.value = null
     conversationVoiceSink().cancel($chatSessionId.get())
 
     const list = $chatMessageList.get()
 
-    const existing = ctx.state.submission.activeRequestId
-      ? list.findLast(item => $chatMessageBodies.get()[item.id]?.requestId === ctx.state.submission.activeRequestId)
+    const existing = shared.state.submission.activeRequestId
+      ? list.findLast(item => $chatMessageBodies.get()[item.id]?.requestId === shared.state.submission.activeRequestId)
       : undefined
 
-    const last = ctx.lastAssistantMessage()
+    const last = assistant.lastAssistantMessage()
 
     const terminal = {
-      ...(ctx.state.submission.activeRequestId && { requestId: ctx.state.submission.activeRequestId }),
+      ...(shared.state.submission.activeRequestId && { requestId: shared.state.submission.activeRequestId }),
       ...(error !== undefined && { error }),
       ...(cancelled && { cancelled: true }),
       ...(retryMessageId !== undefined && { retryMessageId })
@@ -64,7 +68,7 @@ export function installTerminal(ctx: ProjectionContext): void {
       return
     }
 
-    const id = ctx.appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
+    const id = rows.appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
     const updated = $chatMessageList.get()
     const pendingIndex = updated.findIndex(item => item.role === 'user' && item.backendMessageId === undefined)
 
@@ -80,14 +84,14 @@ export function installTerminal(ctx: ProjectionContext): void {
   }
 
   const clearReplyState = (): void => {
-    ctx.mediaUpdates.clear()
-    ctx.videoQueueUpdates.clear()
-    ctx.inflight.value = null
+    shared.mediaUpdates.clear()
+    shared.videoQueueUpdates.clear()
+    shared.inflight.value = null
   }
 
   const clearInflightReply = (): void => {
-    ctx.inflight.value = null
+    shared.inflight.value = null
   }
 
-  Object.assign(ctx, { markAssistantTerminal, clearReplyState, clearInflightReply })
+  return { markAssistantTerminal, clearReplyState, clearInflightReply }
 }
