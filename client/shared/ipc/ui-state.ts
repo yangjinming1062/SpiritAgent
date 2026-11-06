@@ -228,11 +228,13 @@ export interface WardrobeDesignMessage {
   tone?: 'error' | 'info'
 }
 
-/** 单个草稿的制作会话：尚未落库的对话与「结果待核对」状态。 */
+/** 单个草稿的制作会话：尚未落库的对话与「结果待核对」状态（生成与确认在途都算待核对）。 */
 export interface WardrobeDesignSessionSnapshot {
   sessionId: string | null
   messages: WardrobeDesignMessage[]
   awaitingResult: boolean
+  /** 新建在途时已存在的草稿；目标窗口据此把服务端新出现的草稿关联回本次创建。 */
+  knownDraftIds?: string[]
 }
 
 /** 造型制作会话按草稿交接：草稿图与参考图另有服务端或账户级副本。 */
@@ -258,6 +260,8 @@ export function isWardrobeDesignUiSnapshot(value: unknown): value is WardrobeDes
         isRecord(session) &&
         (session.sessionId === null || typeof session.sessionId === 'string') &&
         typeof session.awaitingResult === 'boolean' &&
+        (session.knownDraftIds === undefined ||
+          (Array.isArray(session.knownDraftIds) && session.knownDraftIds.every(id => typeof id === 'string'))) &&
         Array.isArray(session.messages) &&
         session.messages.every(isWardrobeDesignMessage)
     )

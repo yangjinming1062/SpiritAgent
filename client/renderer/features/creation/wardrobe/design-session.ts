@@ -71,20 +71,37 @@ const $sessions = atom<ReadonlyMap<string | null, DesignState>>(new Map())
 let nextRevision = 0
 let nextMessageId = 0
 
-registerStorageClearHandler(() => $sessions.set(new Map()))
+registerStorageClearHandler(() => {
+  $sessions.set(new Map())
+  sessionBases.clear()
+})
 
 export const $designSessions = $sessions
+
+// 交接基线：新建在途时刻服务端已存在的草稿 ID，用于恢复时关联服务端新出现的草稿。
+interface DesignSessionBase {
+  knownDraftIds: ReadonlySet<string>
+}
+
+const sessionBases = new Map<string | null, DesignSessionBase>()
 
 /** 交接按草稿携带制作对话与待核对状态；草稿图来自服务端明细，参考图另有账户级草稿存储。 */
 export function readDesignSessionSnapshot(): WardrobeDesignUiSnapshot {
   const sessions: WardrobeDesignSessionSnapshot[] = []
 
+  const knownDraftIds = $outfits
+    .get()
+    .filter(outfit => outfit.status === 'draft')
+    .map(outfit => outfit.id)
+
   for (const [sessionId, session] of $sessions.get()) {
-    if (session.messages.length > 0 || session.stage === 'generating' || session.resultUnknown) {
+    if (session.messages.length > 0 || session.stage || session.resultUnknown) {
       sessions.push({
         sessionId,
-        awaitingResult: session.stage === 'generating' || session.resultUnknown,
-        messages: session.messages.map(({ role, text, tone }) => ({ role, text, ...(tone ? { tone } : {}) }))
+        awaitingResult: session.stage !== null || session.resultUnknown,
+        messages: session.messages.map(({ role, text, tone }) => ({ role, text, ...(tone ? { tone } : {}) })),
+        // 新建在途时记录已知草稿基线；目标窗口据此把服务端新出现的草稿关联回本次创建。
+        ...(sessionId === null && (session.stage !== null || session.resultUnknown) ? { knownDraftIds } : {})
       })
     }
   }
@@ -113,6 +130,10 @@ export function applyDesignSessionSnapshot(snapshot: WardrobeDesignUiSnapshot): 
       messages: session.messages.map(message => ({ ...message, id: ++nextMessageId })),
       revision: ++nextRevision
     })
+
+    if (session.knownDraftIds) {
+      sessionBases.set(session.sessionId, { knownDraftIds: new Set(session.knownDraftIds) })
+    }
   }
 
   $sessions.set(sessions)
@@ -182,17 +203,42 @@ export function useOutfitDesignSession(
 
     const drafts = new Set(outfits.filter(outfit => outfit.status === 'draft').map(outfit => outfit.id))
     const next = new Map($sessions.get())
+    let changed = false
+
+    // 新建在途的交接恢复：基线之外出现唯一新草稿时视为本次创建的落库回执，会话迁移到服务端身份。
+    const base = sessionBases.get(null)
+    const pending = next.get(null)
+
+    if (base && pending && (pending.stage !== null || pending.resultUnknown)) {
+      const created = outfits.filter(outfit => outfit.status === 'draft' && !base.knownDraftIds.has(outfit.id))
+
+      if (created.length === 1) {
+        const submitted = [...pending.messages].reverse().find(message => message.role === 'user')?.text ?? ''
+
+        sessionBases.delete(null)
+        next.set(created[0].id, { ...pending, revision: ++nextRevision })
+        next.delete(null)
+        changed = true
+
+        if (selectedDraftId === null) {
+          onDrafted(created[0].id, submitted)
+        }
+      }
+    } else if (base && (!pending || (!pending.stage && !pending.resultUnknown))) {
+      sessionBases.delete(null)
+    }
 
     for (const [id, session] of next) {
       if (id !== null && !session.stage && !drafts.has(id)) {
         next.delete(id)
+        changed = true
       }
     }
 
-    if (next.size !== $sessions.get().size) {
+    if (changed) {
       $sessions.set(next)
     }
-  }, [outfits, sessions, wardrobeStatus])
+  }, [onDrafted, outfits, selectedDraftId, sessions, wardrobeStatus])
 
   const restoreReference = useCallback((): void => {
     if (selectedDraftId !== null || readSession(null).stage) {
