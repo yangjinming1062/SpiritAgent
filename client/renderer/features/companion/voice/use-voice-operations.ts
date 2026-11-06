@@ -7,7 +7,12 @@ import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import type { getStrings } from '@/shared/strings'
 
-import { $voiceCreation, beginVoiceConfirmation, cancelVoiceCreation, updateVoiceCreation } from '../voice-creation-store'
+import {
+  $voiceCreation,
+  beginVoiceConfirmation,
+  cancelVoiceCreation,
+  updateVoiceCreation
+} from '../voice-creation-store'
 
 type VoiceStrings = ReturnType<typeof getStrings>['voice']
 
@@ -65,10 +70,7 @@ export function useVoiceOperations({
     }
   }, [active])
 
-  const runOperation = async (
-    action: (live: () => boolean) => Promise<void>,
-    recovering = false
-  ): Promise<void> => {
+  const runOperation = async (action: (live: () => boolean) => Promise<void>, recovering = false): Promise<void> => {
     if (disabled || sampleBusy || !viewEligible() || operation.current) {
       return
     }

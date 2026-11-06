@@ -108,8 +108,7 @@ export function createTurnControl(base: SubmissionBase, peers: SubmissionPeers):
     peers.cancelPendingFlush()
     const sessionId = $chatSessionId.get()
 
-    const requestId =
-      base.state.submission.activeRequestId ?? base.state.submission.unconfirmedSubmission?.requestId
+    const requestId = base.state.submission.activeRequestId ?? base.state.submission.unconfirmedSubmission?.requestId
 
     if (!sessionId || !requestId || !base.isCurrent()) {
       return

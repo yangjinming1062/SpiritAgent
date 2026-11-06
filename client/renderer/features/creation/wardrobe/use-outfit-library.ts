@@ -6,7 +6,14 @@ import { currentClearEpoch } from '@/shared/lib/storage'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { $outfitPolicy, $outfits, $wardrobeStatus, deleteOutfit, retryOutfitDescription, setOutfitPolicy } from './wardrobe-store'
+import {
+  $outfitPolicy,
+  $outfits,
+  $wardrobeStatus,
+  deleteOutfit,
+  retryOutfitDescription,
+  setOutfitPolicy
+} from './wardrobe-store'
 
 /** 衣柜列表与行级操作：读取、分页滚动恢复、删除与描述重试、政策开关。 */
 export function useOutfitLibrary({ restoreKey }: { restoreKey: boolean }) {

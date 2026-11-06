@@ -178,11 +178,7 @@ export function createPendingQueue(base: SubmissionBase, peers: SubmissionPeers)
 
         const turnBusy = err instanceof ApiError && err.code === 'turn_busy'
 
-        if (
-          turnBusy &&
-          base.state.historyEditRevision !== submittedRevision &&
-          $chatSessionId.get() === sessionId
-        ) {
+        if (turnBusy && base.state.historyEditRevision !== submittedRevision && $chatSessionId.get() === sessionId) {
           // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
           $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
           submitPendingBatch()

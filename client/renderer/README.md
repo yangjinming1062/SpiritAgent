@@ -12,18 +12,19 @@
 | `shared` | 平台端口、全局状态、hooks、文案与类型等基础能力 |
 | `@ipc` | 跨进程真源，renderer 不复制类型 |
 
-跨功能走公共入口，功能内部用相对路径；页面由 `app` 装配，可直接引用具体页面文件。只有 [desktop.ts](shared/platform/desktop.ts) 访问 preload 全局桥，其他代码消费窄接口；后端请求与资产经主进程，直连例外须注明 URL 来源。[架构门禁](../scripts/architecture-rules.mjs) 解析真实路径、窗口边界和运行时依赖环，纯类型引用不算运行时环。
+跨功能走公共入口，功能内部用相对路径；页面由 `app` 装配，可直接引用具体页面文件。创作域的造型、环境、影像与动作是独立子域，跨子域同样只经对方 `index.ts`。只有 [desktop.ts](shared/platform/desktop.ts) 访问 preload 全局桥，其他代码消费窄接口；后端请求与资产经主进程，直连例外须注明 URL 来源。[架构门禁](../scripts/architecture-rules.mjs) 解析真实路径、窗口边界、运行时依赖环、创作子域边界与公共 UI 的业务请求，纯类型引用不算运行时环。
 
 | 修改任务 | 入口 |
 |---|---|
 | 窗口装配与账户恢复 | [sprite.tsx](app/bootstrap/sprite.tsx)、[surface.tsx](app/bootstrap/surface.tsx)、[window-hydration.ts](app/workflows/window-hydration.ts)、[window-navigation.ts](app/workflows/window-navigation.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
-| 网关事件 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[handlers](app/runtime/handlers/) |
+| 网关事件 | [gateway-runtime.ts](app/runtime/gateway-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[投递与工具](app/runtime/handlers/)、[会话事件](features/conversation/gateway-events.ts)、[角色事件](features/character/gateway-events.ts) |
 | 引导、激活与恢复 | [onboarding](app/onboarding/) |
 | 精灵、手势与空间 | [character](features/character/)、[sprite-stage.tsx](features/character/sprite-stage.tsx) |
 | 生活浏览 | [life](features/life/)、[生活页面](features/life/) |
 | 对话、语音与执行过程 | [conversation](features/conversation/)、[speech](features/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 资料、声音与记忆 | [companion](features/companion/) |
-| 创作页与素材 | [创作页](features/creation/creation-page.tsx)、[造型](features/creation/wardrobe/)、[环境](features/creation/environment/)、[动作](features/creation/actions/)、[影像](features/creation/visuals/)、[模块](features/creation/visuals/)、[环境模块](features/creation/environment/) |
+| 创作页与素材 | [创作页](features/creation/creation-page.tsx)、[造型](features/creation/wardrobe/)、[环境](features/creation/environment/)、[动作](features/creation/actions/)、[影像](features/creation/visuals/) |
+| 素材人工复核 | [media-review](features/media-review/)、公共面板 [media-review-panel.tsx](ui/media-review-panel.tsx) |
 | 动态、日记与设置 | [posts](features/life/posts/)、[diary](features/life/diary/)、[settings](features/settings/) |
 | 通用 UI 与文案 | [UI 库](ui/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 
@@ -51,7 +52,8 @@
 | 音频队列与合成 | speech；conversation 持投影，app 工作流连接两者 |
 | 表现优先级、偏好与空间 | character；窗口不另造状态机 |
 | 开窗、附件信箱、显示资格 | 主进程；来源窗口不能只写本地 store |
-| 跨模式页面、草稿、筛选与阅读位置 | 主进程账户快照；[app-ui-state.ts](app/workflows/app-ui-state.ts) 捕获、恢复并确认交接 |
+| 造型与环境未提交输入、造型制作会话 | 所属功能持有，经 [app-ui-state.ts](app/workflows/app-ui-state.ts) 参与账户快照；制作结果以服务端为准 |
+| 窗口舞台事实 | [window-stage.ts](shared/store/window-stage.ts)：目标由 [window-presentation.ts](app/workflows/window-presentation.ts) 写入，环境层只读并回填已呈现地址 |
 
 菜单详情态（列表→详情/制作/创建的子页面位置）归组件生命周期：切页、关闭承载窗口即弃，再进入回到一级列表；跨页直达详情经导航瞬态参数（与 `pursuitId` 同机制），不写入业务 store。筛选、分页与编辑草稿是会话级状态：跨切页与关窗保留、随模式交接迁移、重启回初始值，不落盘。
 
@@ -59,7 +61,7 @@
 
 ## 事件与异步生命周期
 
-`app/runtime` 先订阅再读快照，网关按账户与 `session_id` 把事件路由给保留的 runtime。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 传稳定操作标识，窗口卸载不关闭主进程网络。
+`app/runtime` 先订阅再读快照，网关按账户与 `session_id` 把事件路由给保留的 runtime。单一业务功能的事件处理归该功能（[会话](features/conversation/gateway-events.ts)、[角色](features/character/gateway-events.ts)），应用层只做身份检查、分派与跨功能协调：会话事件把精灵脉冲与活动汇总作为表现副作用返回，声音选择同时刷新角色偏好与语音目录。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 传稳定操作标识，窗口卸载不关闭主进程网络。
 
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 守卫鉴权会话及清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 守卫挂载和请求代次。旧回包不得写入新账户、新查询或新草稿。
 - [storage.ts](shared/lib/storage.ts) 登记账户键和恢复回调，换号清内存并重挂载；重置期不回写索引，命名空间就绪后才应用云广播。`runner-status.ts` 的快照不能覆盖较新事件，握手超时须进入可恢复错误态。
@@ -77,7 +79,7 @@
 
 [panel-activity](shared/context/panel-activity.tsx) 把活动资格传入子面板和 Portal，子级不能解除父级禁用。切页保留对话实例及草稿，但关闭录音和新播放资格；旧麦克风或上传回包不能因重新激活而复活。查看器归发起视图，离开来源页释放。参考图片由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存并跨窗通知，不等同服务端成品。
 
-[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；静态回执共用 `visuals-store.ts` 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。
+[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；静态回执共用 [performance.ts](features/creation/visuals/performance.ts) 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。
 
 [背景播放器](app/windows/desktop/player/engine.ts) 双缓冲等实际首帧，切换先预加载，[入口](app/windows/desktop/desktop-background-entry.tsx) 只装配 refs；短动作只能回到仍有效的持续画面。环境层与透明主体层（`actor` 字节，WebM）独立接收与更换，主体层短动作结束后回常驻循环；预览、播放和过渡共用 [desktop-media-geometry.ts](../shared/desktop-media-geometry.ts)，媒体失败保留当前画面并释放临时 URL；主进程同时核对账户与选中路径。
 
@@ -143,17 +145,17 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [companion-editor-state.ts](features/companion/companion-editor-state.ts) 在内存中按账户隔离人物资料编辑起点与草稿并参与交接，换号清空、不落盘。记忆页按预设保存搜索与分页，未保存条目保留到会话结束；日记 store 不管理记忆编辑。
 
-[场景子域](features/creation/environment/scene/state.ts) 的 state／library／detail／commands 分别持环境、任务、详情与分页库。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。
+[场景子域](features/creation/environment/scene/state.ts) 按职责分工：state 持原子、缓存与请求原语，library 只做分页读取，detail 只读单场景，[sync.ts](features/creation/environment/scene/sync.ts) 持待处理任务、轮询与刷新入口，commands 持写操作并在写后调用同步服务。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。
 
 素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。衣柜本地筛选（live 搜索），环境服务端提交搜索（submit 语义），两者不能共用隐含的查询状态。
 
 ## 主体舞台与静态呈现
 
-[design-session.ts](features/character/wardrobe/design-session.ts) 按草稿持有制作、确认和未知状态，离页仍收敛原任务；完成不抢选其他草稿，按不可变路径核对结果后回收空闲会话。参考图在取得新设计 ID 时消费，迟到预览不能清理后续输入。
+造型制作与衣柜列表归创作域的[造型子域](features/creation/wardrobe/)，角色模块只保留舞台造型来源与呈现事实。[design-session.ts](features/creation/wardrobe/design-session.ts) 按草稿持有制作、确认和未知状态，离页仍收敛原任务；完成不抢选其他草稿，按不可变路径核对结果后回收空闲会话。参考图在取得新设计 ID 时消费，迟到预览不能清理后续输入；切换运行模式时只交接制作对话与待核对状态，草稿图回到目标窗口后按服务端明细重新采用。
 
 窗口主体画面优先播放透明主体视频：[stage-plan.ts](features/creation/visuals/stage-plan.ts) 解析有效组合与当前造型可复用的待机成品；只有认领成功的临时指令覆盖基础主体，结束后恢复仍有效的循环。[visual-presentation.ts](app/workflows/visual-presentation.ts) 统一桌面目标，[window-presentation.ts](app/workflows/window-presentation.ts) 装配窗口目标并经 [window-media.ts](features/character/window-media.ts) 与 [window-stage.ts](shared/store/window-stage.ts) 交接窄端口，影像与环境层都不依赖角色内部实现，character 不依赖影像库。[CharacterStage](features/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
 
-[director.ts](features/creation/visuals/director.ts) 负责选择常驻、生活和互动媒体；[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 持有唯一宿主的临时任务、优先级、最多两项等待和冷却。`visuals-store.ts` 装配点播、认领与串行回执，窗口和桌面只消费 `$performance.command`，普通生活区不认领正式指令。HTTP 受理进入等待，播放器事件驱动开播，终态后先刷新基础舞台再出队；已开始的持续媒体结算本次切换，后续循环本地运行。窗口切换、账户变化、关闭动态与机械操作取消失效任务，迟到受理只结算原任务。恢复使用最新组合与生活修订，不保留旧视频 ID 作为无条件回退。
+[director.ts](features/creation/visuals/director.ts) 负责选择常驻、生活和互动媒体；[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 持有唯一宿主的临时任务、优先级、最多两项等待和冷却。[performance.ts](features/creation/visuals/performance.ts) 负责认领与串行回执，窗口和桌面只消费 `$performance.command`，普通生活区不认领正式指令。HTTP 受理进入等待，播放器事件驱动开播，终态后先刷新基础舞台再出队；已开始的持续媒体结算本次切换，后续循环本地运行。窗口切换、账户变化、关闭动态与机械操作取消失效任务，迟到受理只结算原任务。恢复使用最新组合与生活修订，不保留旧视频 ID 作为无条件回退。
 
 活动监测只报告可用性与情境信号，不按空闲或用户返回请求模型选择画面。导演不依赖 character；舞台资格、动态偏好与机械状态由 app 注入。精灵单击、进入对话及 `companion.reaction` 共用互动入口，非宿主通过带账户、舞台代次、事件身份和有效期的 storage 信号转发，宿主只消费实时事件。聊天反应使用网关流/序号去重；重新绑定不补播旧的一次性动作，恢复时先核对当前组合与生活意图，缺少匹配持续画面时允许按当前修订尝试一次选择，常驻轮换在正式演出期间暂停。生活整片成为持续画面后沿用同一套语义要求：意图变化时按组合 `selection_source` 核对——life 画面不再匹配即退出回基础舞台（同活动的新修订沿用现画面，不重复派发），user 画面不被普通生活更新打断。
 

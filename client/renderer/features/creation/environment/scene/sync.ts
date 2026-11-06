@@ -165,7 +165,8 @@ export async function refreshSceneStatus(sceneId: string): Promise<SceneAsset | 
     $sceneRegenerating.set(detail.regeneration?.status === 'pending' ? detail : null)
   }
 
-  const taskStatus = !$pendingScene.get() ? 'none' : $pendingScene.get()?.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
+  const pendingScene = $pendingScene.get()
+  const taskStatus = !pendingScene ? 'none' : pendingScene.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
   $sceneTaskStatus.set(taskStatus)
   stopPoll()
   $sceneTaskSlow.set(false)

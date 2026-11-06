@@ -14,7 +14,7 @@ import {
 } from '@/features/conversation'
 import { sceneUiHandoff } from '@/features/creation/environment'
 import { visualsUiHandoff } from '@/features/creation/visuals'
-import { appearanceUiHandoff, wardrobeDesignUiHandoff } from '@/features/creation/wardrobe/ui-handoff'
+import { appearanceUiHandoff, wardrobeDesignUiHandoff } from '@/features/creation/wardrobe'
 import { diaryUiHandoff, lifeUiHandoff } from '@/features/life'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'

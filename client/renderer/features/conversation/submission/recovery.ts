@@ -82,10 +82,7 @@ export function createTurnRecovery(base: SubmissionBase, peers: SubmissionPeers)
     peers.cancelPendingFlush()
 
     // 已受理回合继续执行，重连后由恢复快照确认终态。
-    if (
-      !base.state.submission.activeRequestId ||
-      !peers.cancellationRequested(base.state.submission.activeRequestId)
-    ) {
+    if (!base.state.submission.activeRequestId || !peers.cancellationRequested(base.state.submission.activeRequestId)) {
       $chatTurnInFlight.set(false)
     }
   }

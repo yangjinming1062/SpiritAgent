@@ -231,4 +231,3 @@ export async function sceneRequest<K extends DesktopApiOperationKey>(
 
   return result.value
 }
-

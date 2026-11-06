@@ -19,7 +19,6 @@ export {
   startQuiet
 } from './companion-store'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
-export { hydrateFullbodyReference } from './fullbody-reference-store'
 export { applyServerVoiceUpdate, onCharacterEvent } from './gateway-events'
 export { GenerationActionsGroup } from './generation-actions'
 export {
@@ -38,7 +37,7 @@ export {
   USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from './persona-presets'
-export { $companionMood, $persona, applyPersonaResponse, hydratePersona } from './persona-store'
+export { $persona, applyPersonaResponse, hydratePersona } from './persona-store'
 export {
   $activeAvatarId,
   $portraitHistory,

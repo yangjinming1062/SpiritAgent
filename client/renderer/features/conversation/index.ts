@@ -1,6 +1,5 @@
 export type { ConversationRuntime } from './chat-runtime'
 export {
-  $chatDraftFromUndo,
   $chatSessionId,
   $companionSessionId,
   $proactiveBubble,
@@ -16,7 +15,7 @@ export { ConversationInput } from './conversation-input'
 export { $conversationInputBusy, beginConversationInputActivity } from './conversation-input-busy'
 export { ConversationSurface } from './conversation-surface'
 export { $conversationViews, isConversationActive } from './conversation-view'
-export { type ConversationEventEffects, handleConversationEvent } from './gateway-events'
+export { handleConversationEvent } from './gateway-events'
 
 export { openWhisper } from './open-whisper'
 
@@ -26,7 +25,6 @@ export { presetDisplayName } from './preset-labels'
 export {
   invalidateSessionHistory,
   loadLocalSessionHistory,
-  rememberFullHistory,
   requestSessionSnapshot,
   SessionHistoryChangedError,
   syncSessionHistory
@@ -60,6 +58,5 @@ export {
   bindVoicePlaybackUpdates,
   captureVoiceProgress,
   getVoicePlaybackStore,
-  removeVoicePlayback,
   voicePlaybackReady
 } from './voice-playback'

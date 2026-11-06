@@ -4,15 +4,7 @@ import { log } from '@/shared/lib/log'
 import { authedResource } from '@/shared/lib/resource-request'
 import { getStrings } from '@/shared/strings'
 
-import {
-  cacheSceneDetails,
-  detailCache,
-  detailReads,
-  resolveScene,
-  type SceneAsset,
-  sceneIO,
-  toScene
-} from './state'
+import { cacheSceneDetails, detailCache, detailReads, resolveScene, type SceneAsset, sceneIO, toScene } from './state'
 
 export async function fetchSceneDetail(
   sceneId: string,
@@ -91,4 +83,3 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
 export async function reloadSceneImage(sceneId: string): Promise<SceneAsset | null> {
   return fetchSceneDetail(sceneId, 'reload')
 }
-

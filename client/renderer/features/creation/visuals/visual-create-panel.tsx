@@ -57,7 +57,7 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
 
     try {
       const result = await visualsApi.interpret({ description, intent: studio.intent })
-      patch({ preview: result as unknown as Record<string, unknown>, description, refinement: '' })
+      patch({ preview: result, description, refinement: '' })
     } catch (failure) {
       setError(failureText(failure, t.interpretFailed))
     } finally {

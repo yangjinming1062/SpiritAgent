@@ -12,10 +12,7 @@ import { nextChatMessageId } from '../conversation-state'
 import type { PromptSubmissionProjection, SubmissionBase, SubmissionPeers } from './context'
 
 /** 用户消息落库对齐：把待确认气泡绑定到服务端消息 ID，并合并迟到水合。 */
-export function createPromptSubmission(
-  base: SubmissionBase,
-  peers: SubmissionPeers
-): PromptSubmissionProjection {
+export function createPromptSubmission(base: SubmissionBase, peers: SubmissionPeers): PromptSubmissionProjection {
   const {
     $chatSessionId,
     $chatMessageList,
@@ -123,11 +120,7 @@ export function createPromptSubmission(
     bindTrailingUserMessageIds(ids, requestId)
 
     if (requestId) {
-      if (
-        trackActive &&
-        !base.settledRequests.has(requestId) &&
-        requestId !== base.state.submission.settledRequestId
-      ) {
+      if (trackActive && !base.settledRequests.has(requestId) && requestId !== base.state.submission.settledRequestId) {
         base.state.submission.activeRequestId = requestId
       }
 
@@ -182,8 +175,7 @@ export function createPromptSubmission(
       event.request_id &&
       ((base.state.submission.activeRequestId && event.request_id !== base.state.submission.activeRequestId) ||
         (event.running &&
-          (event.request_id === base.state.submission.settledRequestId ||
-            base.settledRequests.has(event.request_id))))
+          (event.request_id === base.state.submission.settledRequestId || base.settledRequests.has(event.request_id))))
     ) {
       return
     }
@@ -253,8 +245,7 @@ export function createPromptSubmission(
         result.messages ?? [],
         result.request_id,
         result.message_ids ?? [],
-        (result.status === 'accepted' || result.status === 'running') &&
-          !base.settledRequests.has(result.request_id)
+        (result.status === 'accepted' || result.status === 'running') && !base.settledRequests.has(result.request_id)
       )
     }
 
