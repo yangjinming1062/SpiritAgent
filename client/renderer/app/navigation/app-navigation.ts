@@ -6,7 +6,6 @@ import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearH
 import { $gatewayState } from '@/shared/store/gateway'
 import { getStrings } from '@/shared/strings'
 import {
-  APP_PAGES,
   type AppLocation,
   type AppNavigationTarget,
   type AppPage,
@@ -31,7 +30,7 @@ import {
   type SettingsTab
 } from '@ipc/contracts'
 
-export { APP_PAGES, SETTINGS_SECTIONS }
+export { SETTINGS_SECTIONS }
 
 const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation')
 
@@ -59,9 +58,7 @@ export const $companionSection = computed($appLocation, value =>
 export const $settingsSection = computed($appLocation, value =>
   value.page === 'settings' ? value.section : DEFAULT_SECTION.settings
 )
-export const $settingsTab = computed($appLocation, value =>
-  value.page === 'settings' && value.section ? ('tab' in value ? value.tab : undefined) : undefined
-)
+export const $settingsTab = computed($appLocation, value => (value.page === 'settings' ? value.tab : undefined))
 export const $appNavigationTarget = computed([$appLocation, pageFocus], (current, focus) =>
   composeNavigation(current, focus)
 )
