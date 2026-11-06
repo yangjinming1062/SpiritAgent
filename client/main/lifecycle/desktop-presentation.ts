@@ -1,7 +1,7 @@
-import { existsSync, unlinkSync } from 'node:fs'
-import path from 'node:path'
+import { existsSync } from 'node:fs'
 
-import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
+import type { BrowserWindow} from 'electron';
+import { app, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import {
   type AppNavigationTarget,
@@ -19,19 +19,36 @@ import {
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { DESKTOP_LAYOUT, getDesktopRailLayout } from '../../shared/desktop-layout'
-import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
+import { DESKTOP_LAYOUT } from '../../shared/desktop-layout'
 import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
 import type { ApplicationEligibility, RunningApplicationsState } from '../shared/desktop-applications'
 import type { DesktopHostSystemTray } from '../shared/desktop-host'
-import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
 
 import { createDesktopBackgroundRuntime } from './desktop-background-runtime'
 import { readNativeDisplayBounds } from './desktop-display-resolutions'
 import { createDesktopHealth } from './desktop-health'
 import { createDesktopHost } from './desktop-host'
 import { createDesktopWindows } from './desktop-windows'
+import {
+  assertNativeWorkArea,
+  buildDisplays,
+  desktopSpaceFits,
+  displayGeometry,
+  displayLocalRect,
+  resolveDisplay,
+  sameDisplayGeometry
+} from './desktop/displays'
+import {
+  assertDesktopSender,
+  assertSettingsSender,
+  captureDesktopEligibility as captureEligibility,
+  type EligibilitySnapshot
+} from './desktop/eligibility'
+import { registerDesktopIpc } from './desktop/ipc'
+import { createRecoveryJournal } from './desktop/mode'
+import { inspectTrayBounds, systemTrayFromNative, trayLayoutToPhysical, validTrayRect } from './desktop/tray'
 import { createPresentationPreferences } from './presentation-preferences'
 
 interface DesktopPresentationOptions {
@@ -61,10 +78,7 @@ interface DesktopPresentationOptions {
 export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const preferences = createPresentationPreferences(options.userData)
   const serial = createSerialQueue()
-  const journalFile = path.join(options.userData, 'desktop-shell-recovery.json')
-  const interruptedFile = `${journalFile}.interrupted`
-  const mainInterruptedFile = `${journalFile}.main-interrupted`
-  const macosActiveFile = path.join(options.userData, 'desktop-macos-active.json')
+  const journal = createRecoveryJournal(options.userData, options.log)
   let revision = 0
   let stageEpoch = 0
   let desiredPalette = getUiPalette(normalizeUiTheme(options.seedTheme()))
@@ -183,7 +197,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   const native = createDesktopHost({
     helperPath: options.helperPath,
-    journalPath: journalFile,
+    journalPath: journal.journalPath,
     log: options.log,
     onForegroundChanged: state => {
       if (
@@ -275,32 +289,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const allDisplays = app.isReady() ? screen.getAllDisplays() : []
     const primaryId = app.isReady() ? screen.getPrimaryDisplay().id : null
 
-    const displays = allDisplays.map(display => {
-      const native = displayResolutions.get(display.id)
-      const resolution = native?.geometry === displayGeometry(display) ? native : null
-
-      return {
-        id: display.id,
-        label: display.label || `显示器 ${display.id}`,
-        isPrimary: display.id === primaryId,
-        width: display.bounds.width,
-        height: display.bounds.height,
-        pixelWidth:
-          process.platform === 'win32'
-            ? (resolution?.width ?? null)
-            : Math.round(display.bounds.width * display.scaleFactor),
-        pixelHeight:
-          process.platform === 'win32'
-            ? (resolution?.height ?? null)
-            : Math.round(display.bounds.height * display.scaleFactor)
-      }
-    })
+    const displays = buildDisplays(allDisplays, primaryId, displayResolutions)
 
     const preferred = preferences.get()
     const activeDisplayId = activeDisplay?.id
 
     const targetDisplay =
-      allDisplays.find(display => display.id === activeDisplayId) ?? resolveDisplay(allDisplays, preferred.displayId)
+      allDisplays.find(display => display.id === activeDisplayId) ??
+      resolveDisplay(allDisplays, preferred.displayId, undefined, options.getMainWindow())
 
     const desktopUnlocked =
       (foreground || stageAvailable) && effectiveMode === 'desktop' && powerMonitor.getSystemIdleState(1) !== 'locked'
@@ -367,19 +363,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     return { win, display: activeDisplay }
   }
 
-  function displayLocalRect(dip: Electron.Rectangle, display: Electron.Rectangle): Electron.Rectangle | null {
-    const x = Math.max(0, dip.x - display.x)
-    const y = Math.max(0, dip.y - display.y)
-    const right = Math.min(display.width, dip.x + dip.width - display.x)
-    const bottom = Math.min(display.height, dip.y + dip.height - display.y)
-
-    if (right <= x || bottom <= y) {
-      return null
-    }
-
-    return { x, y, width: right - x, height: bottom - y }
-  }
-
   function updateNativeWorkArea(physical: Electron.Rectangle): void {
     const surface = interactiveSurface()
 
@@ -397,13 +380,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       throw new Error('Desktop helper work area does not intersect the interactive display')
     }
 
-    if (process.platform === 'darwin') {
-      const safeWidth = display.width - 2 * Math.max(area.x, display.width - (area.x + area.width))
-
-      if (area.height <= DESKTOP_LAYOUT.bottomInset || !getDesktopRailLayout(safeWidth).fits) {
-        throw new Error('系统可用区域没有足够空间显示桌面底栏，请使用窗口模式。')
-      }
-    }
+    assertNativeWorkArea(display, area)
 
     if (
       nativeWorkArea?.x === area.x &&
@@ -425,34 +402,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       return
     }
 
-    let tray: PresentationState['systemTray'] = null
-
-    if (physical) {
-      const display = surface.display.bounds
-      const monitor = screen.dipToScreenRect(surface.win, display)
-      const rect = physical.bounds
-
-      if (
-        rect.x < monitor.x - 2 ||
-        rect.y < monitor.y - 2 ||
-        rect.x + rect.width > monitor.x + monitor.width + 2 ||
-        rect.y + rect.height > monitor.y + monitor.height + 2
-      ) {
-        throw new Error('系统托盘位置与交互屏不匹配，已恢复窗口模式。')
-      }
-
-      const local = displayLocalRect(screen.screenToDipRect(surface.win, rect), display)
-
-      if (!local) {
-        throw new Error('无法确认系统托盘位置，已恢复窗口模式。')
-      }
-
-      tray = { width: local.width, height: local.height, visible: physical.visible }
-
-      if (!getDesktopRailLayout(display.width).fits) {
-        throw new Error('屏幕没有足够空间显示桌面底栏，已恢复窗口模式。')
-      }
-    }
+    const tray = systemTrayFromNative(surface.win, surface.display, physical)
 
     nativeSystemTrayReceived = true
 
@@ -460,10 +410,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       nativeSystemTray = tray
       publish()
     }
-  }
-
-  function displayGeometry(display: Electron.Display): string {
-    return JSON.stringify([display.bounds, display.scaleFactor, display.rotation])
   }
 
   async function refreshDisplayResolutions(): Promise<void> {
@@ -505,39 +451,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (!disposed && generation === displayResolutionGeneration) {
       publish()
     }
-  }
-
-  function resolveDisplay(
-    displays: Electron.Display[],
-    preferredId: number | null,
-    sender?: WebContents
-  ): Electron.Display | undefined {
-    const preferred = displays.find(display => display.id === preferredId)
-
-    if (preferred || !displays.length) {
-      return preferred
-    }
-
-    const source = sender ? BrowserWindow.fromWebContents(sender) : options.getMainWindow()
-
-    const currentId =
-      source && !source.isDestroyed() && (sender || source.isVisible() || source.isMinimized())
-        ? screen.getDisplayMatching(source.getBounds()).id
-        : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
-
-    return displays.find(display => display.id === currentId) ?? displays[0]
-  }
-
-  function sameDisplayGeometry(left: Electron.Display, right: Electron.Display): boolean {
-    return (
-      left.id === right.id &&
-      left.scaleFactor === right.scaleFactor &&
-      left.rotation === right.rotation &&
-      left.bounds.x === right.bounds.x &&
-      left.bounds.y === right.bounds.y &&
-      left.bounds.width === right.bounds.width &&
-      left.bounds.height === right.bounds.height
-    )
   }
 
   function publish(): void {
@@ -652,20 +565,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       uiState.releaseOwner()
     }
 
-    const recording =
-      recordInterruption && reason
-        ? Promise.resolve()
-            .then(() => atomicWriteFile(mainInterruptedFile, 'main_failure'))
-            .catch(error => {
-              const message = `[desktop] interruption marker write: ${errorMessage(error)}`
-
-              try {
-                options.log(message)
-              } catch {
-                console.warn(message)
-              }
-            })
-        : Promise.resolve()
+    const recording = recordInterruption && reason ? journal.markMainInterruption() : Promise.resolve()
 
     try {
       await native.stop()
@@ -682,12 +582,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       try {
         destroyWindows()
 
-        if (process.platform === 'darwin' && existsSync(macosActiveFile)) {
-          try {
-            unlinkSync(macosActiveFile)
-          } catch (error) {
-            options.log(`[desktop] macOS active marker cleanup: ${errorMessage(error)}`)
-          }
+        if (process.platform === 'darwin') {
+          journal.clearMacosActive()
         }
 
         foreground = false
@@ -775,26 +671,19 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       const allDisplays = screen.getAllDisplays()
 
       const preferred = preferences.get()
-      const selected = resolveDisplay(allDisplays, targetDisplayId ?? preferred.displayId, sender)
+
+      const selected = resolveDisplay(
+        allDisplays,
+        targetDisplayId ?? preferred.displayId,
+        sender,
+        options.getMainWindow()
+      )
 
       if (!selected) {
         throw new Error('当前没有可用显示器，请连接显示屏后重试。')
       }
 
-      const availableWidth =
-        process.platform === 'darwin'
-          ? selected.bounds.width -
-            2 *
-              Math.max(
-                selected.workArea.x - selected.bounds.x,
-                selected.bounds.x + selected.bounds.width - selected.workArea.x - selected.workArea.width
-              )
-          : selected.bounds.width
-
-      if (
-        !getDesktopRailLayout(availableWidth).fits ||
-        (process.platform === 'darwin' && selected.workArea.height <= DESKTOP_LAYOUT.bottomInset)
-      ) {
+      if (!desktopSpaceFits(selected)) {
         throw new Error('屏幕没有足够空间显示桌面底栏，请使用窗口模式。')
       }
 
@@ -839,7 +728,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       if (process.platform === 'darwin') {
         // 进入原生模块前落盘，硬崩溃后首次启动不会重入同一路径。
-        await atomicWriteFile(macosActiveFile, JSON.stringify({ pid: process.pid }))
+        await journal.markMacosActive()
         assertReady()
       }
 
@@ -908,52 +797,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     initialized = true
 
-    let interrupted =
-      existsSync(interruptedFile) ||
-      existsSync(mainInterruptedFile) ||
-      (process.platform === 'darwin' && existsSync(macosActiveFile))
+    const recovered = await journal.recover(() => native.recover())
 
-    suppressAutoRestore = interrupted
+    suppressAutoRestore = recovered.suppressed
 
-    if (process.platform === 'win32' && existsSync(journalFile)) {
-      try {
-        suppressAutoRestore = (await native.recover()) || interrupted
-      } catch (error) {
-        suppressAutoRestore = true
-        failureReason = `系统桌面恢复失败：${errorMessage(error)}`
-        status = 'failed'
-        options.log(`[desktop] startup recovery: ${errorMessage(error)}`)
-      }
-
-      if (suppressAutoRestore && !failureReason) {
-        failureReason = '上次桌面异常退出，已恢复系统桌面。请重新选择桌面模式。'
-        status = 'failed'
-      }
-    }
-
-    // 残留 guardian 在上个主进程退出后才写 .interrupted，且与 recover() 争用同一恢复锁；首次检查可能早于其写入，recover 后须复检。
-    interrupted ||= existsSync(interruptedFile) || existsSync(mainInterruptedFile)
-    suppressAutoRestore ||= interrupted
-
-    if (interrupted && !failureReason) {
-      failureReason = '上次桌面异常中断，已保留窗口模式。请重新选择桌面模式。'
+    if (recovered.failureReason) {
+      failureReason = recovered.failureReason
       status = 'failed'
-    }
-
-    if (interrupted && !existsSync(journalFile)) {
-      for (const marker of [
-        interruptedFile,
-        mainInterruptedFile,
-        ...(process.platform === 'darwin' ? [macosActiveFile] : [])
-      ]) {
-        if (existsSync(marker)) {
-          try {
-            unlinkSync(marker)
-          } catch (error) {
-            options.log(`[desktop] interruption marker cleanup: ${errorMessage(error)}`)
-          }
-        }
-      }
     }
 
     if (!disposed) {
@@ -1014,32 +864,26 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  function assertDesktop(sender: WebContents): void {
-    if (disposed) {
-      throw new Error('桌面呈现已关闭。')
-    }
-
-    if (!isDesktopSender(sender)) {
-      throw new Error('仅桌面入口允许此操作。')
+  function eligibilitySnapshot(): EligibilitySnapshot {
+    return {
+      disposed,
+      status,
+      effectiveMode,
+      stageEpoch,
+      startupGeneration,
+      authenticated: options.authenticated(),
+      identity: options.authIdentity(),
+      locked: lastActivity.locked,
+      isDesktopSender
     }
   }
 
-  function captureDesktopEligibility(sender: WebContents, epoch = stageEpoch): () => boolean {
-    assertDesktop(sender)
-    const generation = startupGeneration
-    const identity = options.authIdentity()
+  function assertDesktop(sender: WebContents): void {
+    assertDesktopSender(eligibilitySnapshot(), sender)
+  }
 
-    return () =>
-      !disposed &&
-      status === 'active' &&
-      effectiveMode === 'desktop' &&
-      generation === startupGeneration &&
-      epoch === stageEpoch &&
-      !lastActivity.locked &&
-      powerMonitor.getSystemIdleState(1) !== 'locked' &&
-      options.authenticated() &&
-      identity === options.authIdentity() &&
-      isDesktopSender(sender)
+  function captureDesktopEligibility(sender: WebContents, epoch = stageEpoch): () => boolean {
+    return captureEligibility(eligibilitySnapshot, sender, epoch)
   }
 
   async function setTrayLayout(sender: WebContents, raw: unknown): Promise<void> {
@@ -1086,89 +930,28 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       windows.getInteractive() === win &&
       !win.isDestroyed()
 
-    const validRect = (rect: unknown): rect is Electron.Rectangle => {
-      if (!rect || typeof rect !== 'object') {
-        return false
-      }
-
-      const { x, y, width, height } = rect as Electron.Rectangle
-
-      return (
-        [x, y, width, height].every(item => typeof item === 'number' && Number.isFinite(item)) &&
-        Math.abs(x) <= 1_000_000 &&
-        Math.abs(y) <= 1_000_000 &&
-        width > 0 &&
-        width <= 65_536 &&
-        height > 0 &&
-        height <= DESKTOP_LAYOUT.bottomInset
-      )
-    }
-
     if (layout !== null) {
-      if (!validRect(layout.bounds) || !validRect(layout.clip)) {
+      if (!validTrayRect(layout.bounds) || !validTrayRect(layout.clip)) {
         throw new Error('无效系统托盘区域。')
       }
 
-      const { bounds, clip } = layout
-      const minimumY = display.bounds.height - DESKTOP_LAYOUT.bottomInset - 1
-      const content = win.getContentBounds()
+      const inspection = inspectTrayBounds(layout, win, display, value.viewport)
 
-      const outOfBand =
-        clip.x < -1 ||
-        clip.y < minimumY ||
-        clip.x + clip.width > display.bounds.width + 1 ||
-        clip.y + clip.height > display.bounds.height + 1 ||
-        bounds.y < minimumY ||
-        bounds.y + bounds.height > display.bounds.height + 1
-
-      if (outOfBand) {
+      if (inspection.outOfBand) {
         // 底部预留生效时系统会把铺屏窗口压回工作区，压缩期间的测量已作废：
         // 窗口尺寸与测量时不一致、或窗口尚未回到交互屏时，丢弃旧测量并等待重新测量。
-        const viewport = value.viewport
-
-        const compressed = content.y + content.height < display.bounds.y + display.bounds.height - 2
-
-        const stale =
-          compressed || (viewport !== undefined && viewport !== null && Math.abs(viewport.height - content.height) > 2)
-
-        if (stale) {
+        if (inspection.stale) {
           enforceSurfaceBounds()
 
           return
         }
 
-        options.log(
-          `[desktop] 系统托盘布局越界，已拒绝：display=${JSON.stringify(display.bounds)} ` +
-            `window=${JSON.stringify(content)} bounds=${JSON.stringify(bounds)} clip=${JSON.stringify(clip)}`
-        )
+        options.log(`[desktop] 系统托盘布局越界，已拒绝：${inspection.detail}`)
         throw new Error('系统托盘必须位于交互屏底栏内。')
       }
     }
 
-    const toPhysical = (rect: Electron.Rectangle): Electron.Rectangle => {
-      const x = Math.round(rect.x)
-      const y = Math.round(rect.y)
-
-      return screen.dipToScreenRect(win, {
-        x: display.bounds.x + x,
-        y: display.bounds.y + y,
-        width: Math.max(1, Math.round(rect.x + rect.width) - x),
-        height: Math.max(1, Math.round(rect.y + rect.height) - y)
-      })
-    }
-
-    const physical =
-      layout === null
-        ? null
-        : {
-            bounds: toPhysical(layout.bounds),
-            clip: toPhysical({
-              x: Math.max(0, layout.clip.x),
-              y: Math.max(0, layout.clip.y),
-              width: Math.min(display.bounds.width, layout.clip.x + layout.clip.width) - Math.max(0, layout.clip.x),
-              height: Math.min(display.bounds.height, layout.clip.y + layout.clip.height) - Math.max(0, layout.clip.y)
-            })
-          }
+    const physical = trayLayoutToPhysical(layout, win, display)
 
     try {
       await native.setTrayLayout(
@@ -1201,13 +984,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function assertSettings(sender: WebContents): void {
-    if (disposed) {
-      throw new Error('桌面呈现已关闭。')
-    }
-
-    if (!isDesktopSender(sender) && !options.isSettingsSender(sender)) {
-      throw new Error('仅本机设置入口允许此操作。')
-    }
+    assertSettingsSender(
+      { disposed, isDesktopSender, isSettingsSender: sender => options.isSettingsSender(sender) },
+      sender
+    )
   }
 
   function assertModeInputAvailable(mode: PresentationMode): void {
@@ -1308,12 +1088,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         try {
           await enter(sender)
 
-          if (effectiveMode === 'desktop' && snapshot().status === 'active' && existsSync(mainInterruptedFile)) {
-            try {
-              unlinkSync(mainInterruptedFile)
-            } catch (error) {
-              options.log(`[desktop] main interruption marker cleanup: ${errorMessage(error)}`)
-            }
+          if (effectiveMode === 'desktop' && snapshot().status === 'active') {
+            journal.clearMainInterruption()
           }
         } catch (error) {
           if (snapshot().status !== 'failed') {
@@ -1417,67 +1193,29 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   function registerIpc(ipcMain: IpcMain): void {
     uiState.register(ipcMain)
-    disposeIpc = registerDesktopPresentationIpc(
-      ipcMain,
-      {
-        isDesktopSender,
-        isSpriteSender: sender => isSenderWindow(sender, options.getSpriteWindow()),
-        desktopWindow: sender => (isDesktopSender(sender) ? windows.getInteractive() : null),
-        backgroundWindow: windows.getBackgroundWindow,
-        assertSettings,
-        authenticated: options.authenticated
-      },
-      {
-        getState: snapshot,
-        setMode,
-        setDisplay,
-        setTrayLayout,
-        requestAccessibility: async () => {
-          native.requestAccessibility()
-          publish()
-
-          return snapshot()
-        },
-        reportReady: () => {
-          const main = windows.getInteractive()
-
-          if (main) {
-            windows.reportReady(main)
-          }
-
-          health.heartbeat()
-        },
-        focus: (sender, epoch) => {
-          const eligible = captureDesktopEligibility(sender, epoch)
-
-          return serial(async () => {
-            assertDesktop(sender)
-
-            if (!eligible()) {
-              return false
-            }
-
-            return native.focus(windows.getInteractive()!.getNativeWindowHandle(), eligible)
-          })
-        },
-        heartbeat: health.heartbeat,
-        hostReady: hostBecameReady,
-        setBackground: (sender, raw) => (disposed ? Promise.resolve() : background.set(sender, raw)),
-        backgroundReady: win => {
-          sendToWindow(win, IPC.event.backgroundMedia, background.getState())
-          windows.reportReady(win)
-        },
-        acknowledgeBackground: background.acknowledge,
-        stageActivity: activity => {
-          if (disposed) {
-            return
-          }
-
-          lastActivity = activity
-          background.publish()
-        }
+    disposeIpc = registerDesktopIpc(ipcMain, {
+      windows,
+      background,
+      health,
+      native,
+      authenticated: options.authenticated,
+      isSpriteSender: sender => isSenderWindow(sender, options.getSpriteWindow()),
+      hostReady: hostBecameReady,
+      snapshot,
+      setMode,
+      setDisplay,
+      setTrayLayout,
+      captureDesktopEligibility,
+      assertDesktop,
+      assertSettings,
+      serial,
+      isDisposed: () => disposed,
+      publish,
+      setStageActivity: activity => {
+        lastActivity = activity
+        background.publish()
       }
-    )
+    })
   }
 
   function stop(): Promise<void> {
