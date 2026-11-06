@@ -15,6 +15,7 @@ import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
+import type { WardrobeDesignUiSnapshot } from '@ipc/contracts'
 import type { ImageReviseMode } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
@@ -71,6 +72,39 @@ let nextRevision = 0
 let nextMessageId = 0
 
 registerStorageClearHandler(() => $sessions.set(new Map()))
+
+export const $designSessions = $sessions
+
+/** 交接只带制作对话与待核对状态；草稿图来自服务端明细，参考图另有账户级草稿存储。 */
+export function readDesignSessionSnapshot(sessionId: string | null): WardrobeDesignUiSnapshot {
+  const session = readSession(sessionId)
+
+  return {
+    sessionId,
+    awaitingResult: session.stage === 'generating' || session.resultUnknown,
+    messages: session.messages.map(({ role, text, tone }) => ({ role, text, ...(tone ? { tone } : {}) }))
+  }
+}
+
+/** 目标窗口的生成请求已随来源窗口销毁，恢复成「结果待核对」而不是允许直接重发。 */
+export function applyDesignSessionSnapshot(snapshot: WardrobeDesignUiSnapshot): void {
+  if (snapshot.messages.length === 0 && !snapshot.awaitingResult) {
+    return
+  }
+
+  const sessions = new Map($sessions.get())
+  sessions.set(snapshot.sessionId, {
+    ...readSession(snapshot.sessionId),
+    stage: null,
+    lastRequest: null,
+    previewError: false,
+    inspected: false,
+    resultUnknown: snapshot.awaitingResult,
+    messages: snapshot.messages.map(message => ({ ...message, id: ++nextMessageId })),
+    revision: ++nextRevision
+  })
+  $sessions.set(sessions)
+}
 
 function readSession(id: string | null): DesignState {
   return $sessions.get().get(id) ?? EMPTY_STATE

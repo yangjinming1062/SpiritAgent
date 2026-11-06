@@ -38,3 +38,4 @@ export {
 } from './scene'
 
 export { SceneBackdrop } from './scene-backdrop'
+export { sceneUiHandoff } from './ui-handoff'

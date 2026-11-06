@@ -188,6 +188,69 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
   )
 }
 
+/** 造型制作输入：描述、当前草稿与各草稿未提交的输入文本。 */
+export interface AppearanceUiSnapshot {
+  text: string
+  draftId: string | null
+  draftTexts: Record<string, string>
+}
+
+export function isAppearanceUiSnapshot(value: unknown): value is AppearanceUiSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    (value.draftId === null || typeof value.draftId === 'string') &&
+    isRecord(value.draftTexts) &&
+    Object.values(value.draftTexts).every(text => typeof text === 'string')
+  )
+}
+
+/** 环境创建说明与各场景未提交的编辑草稿。 */
+export interface SceneUiSnapshot {
+  notes: string
+  editDrafts: Record<string, { title: string; description: string }>
+}
+
+export function isSceneUiSnapshot(value: unknown): value is SceneUiSnapshot {
+  return (
+    isRecord(value) &&
+    typeof value.notes === 'string' &&
+    isRecord(value.editDrafts) &&
+    Object.values(value.editDrafts).every(
+      draft => isRecord(draft) && typeof draft.title === 'string' && typeof draft.description === 'string'
+    )
+  )
+}
+
+export interface WardrobeDesignMessage {
+  role: 'user' | 'system'
+  text: string
+  tone?: 'error' | 'info'
+}
+
+/** 造型制作会话：只带尚未落库的对话与「结果待核对」状态，草稿图与参考图另有服务端或账户级副本。 */
+export interface WardrobeDesignUiSnapshot {
+  sessionId: string | null
+  messages: WardrobeDesignMessage[]
+  awaitingResult: boolean
+}
+
+export function isWardrobeDesignUiSnapshot(value: unknown): value is WardrobeDesignUiSnapshot {
+  return (
+    isRecord(value) &&
+    (value.sessionId === null || typeof value.sessionId === 'string') &&
+    typeof value.awaitingResult === 'boolean' &&
+    Array.isArray(value.messages) &&
+    value.messages.every(
+      message =>
+        isRecord(message) &&
+        (message.role === 'user' || message.role === 'system') &&
+        typeof message.text === 'string' &&
+        (message.tone === undefined || message.tone === 'error' || message.tone === 'info')
+    )
+  )
+}
+
 export type MainConversationPendingAttachment =
   | { type: 'image'; value: string; fileName?: string }
   | {

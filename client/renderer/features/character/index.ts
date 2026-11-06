@@ -95,7 +95,12 @@ export { isCharacterMediaVisible, isCharacterStageVisible, observeCharacterStage
 
 export { clearVfx, emitVfx } from './vfx'
 
-export { useOutfitDesignSession } from './wardrobe/design-session'
+export {
+  $designSessions,
+  applyDesignSessionSnapshot,
+  readDesignSessionSnapshot,
+  useOutfitDesignSession
+} from './wardrobe/design-session'
 export { $stageOutfitPresented, setStageOutfitSource } from './wardrobe/stage-source'
 
 export {

@@ -1,10 +1,13 @@
 import type { AppNavigationTarget } from '../desktop-presentation'
 import type {
+  AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
   LifeUiSnapshot,
   MainConversationDraftSnapshot,
-  VisualsUiSnapshot
+  SceneUiSnapshot,
+  VisualsUiSnapshot,
+  WardrobeDesignUiSnapshot
 } from '../ui-state'
 
 export type DesktopSurfaceOpenPayload = AppNavigationTarget
@@ -15,6 +18,9 @@ export interface MainUiStateData {
   diary: DiaryUiSnapshot
   conversation: MainConversationDraftSnapshot
   visuals: VisualsUiSnapshot
+  appearance: AppearanceUiSnapshot
+  scene: SceneUiSnapshot
+  wardrobeDesign: WardrobeDesignUiSnapshot
   companionEditors: CompanionEditorUiSnapshot
 }
 

@@ -72,13 +72,25 @@ export type {
   StageActivity
 } from './desktop-presentation'
 export type {
+  AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
   LifeUiSnapshot,
+  SceneUiSnapshot,
   StudioUiSnapshot,
-  VisualsUiSnapshot
+  VisualsUiSnapshot,
+  WardrobeDesignMessage,
+  WardrobeDesignUiSnapshot
 } from './ui-state'
-export { isCompanionEditorUiSnapshot, isDiaryUiSnapshot, isLifeUiSnapshot, isVisualsUiSnapshot } from './ui-state'
+export {
+  isAppearanceUiSnapshot,
+  isCompanionEditorUiSnapshot,
+  isDiaryUiSnapshot,
+  isLifeUiSnapshot,
+  isSceneUiSnapshot,
+  isVisualsUiSnapshot,
+  isWardrobeDesignUiSnapshot
+} from './ui-state'
 
 import type {
   DesktopActivatePayload,

@@ -5,10 +5,13 @@ import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 import {
   type AppNavigationTarget,
   IPC,
+  isAppearanceUiSnapshot,
   isCompanionEditorUiSnapshot,
   isDiaryUiSnapshot,
   isLifeUiSnapshot,
+  isSceneUiSnapshot,
   isVisualsUiSnapshot,
+  isWardrobeDesignUiSnapshot,
   type MainUiStateData,
   type MainUiStateSnapshot,
   type MainUiStateUpdate,
@@ -71,6 +74,18 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     throw new Error('影像页状态无效。')
   }
 
+  if (!isAppearanceUiSnapshot(raw?.appearance)) {
+    throw new Error('造型页状态无效。')
+  }
+
+  if (!isSceneUiSnapshot(raw?.scene)) {
+    throw new Error('环境页状态无效。')
+  }
+
+  if (!isWardrobeDesignUiSnapshot(raw?.wardrobeDesign)) {
+    throw new Error('造型制作状态无效。')
+  }
+
   const companionEditors = raw.companionEditors
 
   if (!isCompanionEditorUiSnapshot(companionEditors)) {
@@ -83,6 +98,9 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     diary: raw.diary,
     conversation,
     visuals,
+    appearance: raw.appearance,
+    scene: raw.scene,
+    wardrobeDesign: raw.wardrobeDesign,
     companionEditors
   })
 }
