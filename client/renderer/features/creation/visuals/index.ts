@@ -50,10 +50,3 @@ export type {
   VisualsPresentation
 } from './types'
 export { visualsUiHandoff } from './ui-handoff'
-
-export {
-  $windowScenePresented,
-  $windowStaticProjection,
-  $windowVisualProjection,
-  useVisualProjection
-} from './window-projection'

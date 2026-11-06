@@ -6,6 +6,7 @@ import { AppContentPage } from '@/app/components/app-content-page'
 import { $appNavigationRevision, $appNavigationTarget, $appPage } from '@/app/navigation/app-navigation'
 import { useMainWindowHydration } from '@/app/workflows/window-hydration'
 import { useSurfaceNavigation } from '@/app/workflows/window-navigation'
+import { useWindowPresentation } from '@/app/workflows/window-presentation'
 import { PresentationModeButton } from '@/features/character'
 import { CompanionMenu } from '@/features/character/surface-companion'
 import {
@@ -107,6 +108,7 @@ export function MainRoot(): React.JSX.Element {
       : undefined
 
   useSurfaceNavigation(t.chat)
+  useWindowPresentation()
   useMainWindowHydration({
     authenticated,
     accountId,

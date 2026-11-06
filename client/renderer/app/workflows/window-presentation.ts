@@ -1,13 +1,34 @@
 import { useStore } from '@nanostores/react'
-import { atom } from 'nanostores'
 import { useEffect } from 'react'
 
-import { $motionLevel } from '@/features/character'
-import { $spatialLocomotion } from '@/features/character'
-import { $spritePointerHeld } from '@/features/character'
-import { isCharacterMediaVisible, observeCharacterStageVisibility } from '@/features/character'
-import { $stageOutfitPresented, setStageOutfitSource } from '@/features/character'
-import { $windowActorMedia, $windowActorPlayback } from '@/features/character'
+import {
+  $motionLevel,
+  $spatialLocomotion,
+  $spritePointerHeld,
+  $stageOutfitPresented,
+  $windowActorMedia,
+  $windowActorPlayback,
+  isCharacterMediaVisible,
+  observeCharacterStageVisibility,
+  setStageOutfitSource
+} from '@/features/character'
+import {
+  $performance,
+  $stagePlan,
+  $visualsPresentation,
+  bindPresentationDirector,
+  claimVisualPlay,
+  deriveStagePlan,
+  refreshVisualPresentation,
+  resolveAmbientLoop,
+  sendStaticReceipt,
+  sendVisualReceipt,
+  staticPresentationKey,
+  type VisualActualSnapshot,
+  visualPerformancePorts,
+  type VisualPlayCommand,
+  type VisualsPresentation
+} from '@/features/creation/visuals'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
@@ -17,24 +38,8 @@ import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceRole } from '@/shared/store/surfaces'
+import { $windowScenePath, $windowScenePresented, $windowStaticProjection } from '@/shared/store/window-stage'
 
-import { bindPresentationDirector, resolveAmbientLoop } from './director'
-import { refreshVisualPresentation } from './library'
-import {
-  claimVisualPlay,
-  sendStaticReceipt,
-  sendVisualReceipt,
-  staticPresentationKey,
-  visualPerformancePorts
-} from './performance'
-import { $performance } from './performance-scheduler'
-import { $stagePlan, deriveStagePlan } from './stage-plan'
-import { $visualsPresentation } from './state'
-import { type VisualActualSnapshot, type VisualPlayCommand, type VisualsPresentation } from './types'
-
-export const $windowVisualProjection = atom<VisualActualSnapshot | null>(null)
-export const $windowScenePresented = atom<string | null>(null)
-export const $windowStaticProjection = atom(false)
 const clientId = crypto.randomUUID()
 const settledPlays = new Set<string>()
 let windowCommand: VisualPlayCommand | null = null
@@ -44,7 +49,7 @@ let projectingPlay: string | null = null
 let projectionConsumers = 0
 
 function applySources(actual: VisualActualSnapshot | null): void {
-  $windowVisualProjection.set(actual)
+  $windowScenePath.set(actual?.scene_path ?? null)
   setStageOutfitSource(actual?.outfit_path ? { path: actual.outfit_path, name: actual.outfit_description } : null)
 }
 
@@ -519,7 +524,8 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
   }
 }
 
-export function useVisualProjection(): void {
+/** 窗口模式的呈现装配：影像只提供计划、认领与回执，舞台事实由角色模块提供。 */
+export function useWindowPresentation(): void {
   const auth = useStore($auth)
   const presentation = useStore($presentation)
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null

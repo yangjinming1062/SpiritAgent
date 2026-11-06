@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
+import { useWindowPresentation } from '@/app/workflows/window-presentation'
 import {
   $companionLifecycle,
   $companionVoiceId,
@@ -20,7 +21,6 @@ import {
 } from '@/features/character'
 import { SpriteStage } from '@/features/character'
 import { CharacterStage } from '@/features/character/rendering'
-import { useVisualProjection } from '@/features/creation/visuals'
 import { enqueueInteraction } from '@/features/creation/visuals'
 import { MediaViewerOverlay } from '@/features/media'
 import { checkVoiceValidity } from '@/features/speech'
@@ -53,7 +53,7 @@ export function SpriteWindow(): React.JSX.Element {
   const validityCheckedRef = useRef(false)
 
   useAccountLifecycle()
-  useVisualProjection()
+  useWindowPresentation()
 
   useEffect(() => {
     const stopSpatial = initSpatial()

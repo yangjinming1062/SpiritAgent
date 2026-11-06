@@ -13,29 +13,23 @@ import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
+import { $windowScenePath, $windowScenePresented, $windowStaticProjection } from '@/shared/store/window-stage'
 import { useStrings } from '@/shared/strings'
 import { BTN_SUBTLE } from '@/ui'
 
 import { $stagePlan, type StageScenePlan } from '../visuals/stage-plan'
-import {
-  $windowScenePresented,
-  $windowStaticProjection,
-  $windowVisualProjection,
-  useVisualProjection
-} from '../visuals/window-projection'
 
 import styles from './scene-backdrop.module.css'
 
 export function SceneBackdrop(): React.JSX.Element {
-  useVisualProjection()
   const plan = useStore($stagePlan)
-  const projection = useStore($windowVisualProjection)
+  const projectedScenePath = useStore($windowScenePath)
   const staticProjection = useStore($windowStaticProjection)
   const auth = useStore($auth)
   const motionLevel = useStore($motionLevel)
   const owner = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const scene = staticProjection || motionLevel === 'off' ? null : plan.scene
-  const path = (scene?.isVideo ? scene.posterUrl : scene?.url) ?? projection?.scene_path ?? null
+  const path = (scene?.isVideo ? scene.posterUrl : scene?.url) ?? projectedScenePath
   const [image, setImage] = useState<{ owner: string; path: string; url: string; phaseMatched: boolean } | null>(null)
   const [video, setVideo] = useState<StageScenePlan | null>(null)
   const [failed, setFailed] = useState(false)
@@ -150,7 +144,7 @@ export function SceneBackdrop(): React.JSX.Element {
 
   useEffect(() => {
     const videoMatches = video && video.visualId === scene?.visualId && video.version === scene.version
-    const presented = videoMatches ? (projection?.scene_path ?? null) : (shown?.path ?? null)
+    const presented = videoMatches ? projectedScenePath : (shown?.path ?? null)
 
     if (presented && (video || (imageRef.current?.complete && imageRef.current.naturalWidth > 0))) {
       $windowScenePresented.set(presented)
@@ -161,7 +155,7 @@ export function SceneBackdrop(): React.JSX.Element {
         $windowScenePresented.set(null)
       }
     }
-  }, [shown, video, scene, projection?.scene_path])
+  }, [shown, video, scene, projectedScenePath])
 
   const videoStyle: React.CSSProperties = {
     position: 'absolute',
