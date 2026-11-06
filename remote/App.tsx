@@ -122,7 +122,7 @@ export function App(): ReactElement {
       if (live) {
         setSession(null)
         setGateway(null)
-        setError('手机连接已到期。请在电脑的“设置 → 设备与能力 → 手机连接”重新扫码。')
+        setError('手机连接已到期。请在电脑的“设置 → 手机访问”重新扫码。')
       }
     }
 
@@ -328,7 +328,7 @@ export function App(): ReactElement {
         <p className="eyebrow">SPIRITAGENT · 远程</p>
         <h1>{loading ? '正在连接你的伙伴' : '把陪伴带在身边'}</h1>
         <p className="subtitle">
-          在电脑上打开“设置 → 设备与能力 → 手机连接”，
+          在电脑上打开“设置 → 手机访问”，
           <br />
           用手机相机扫描二维码即可连接。
         </p>

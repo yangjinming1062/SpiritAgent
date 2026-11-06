@@ -260,7 +260,7 @@ export const settings = {
         profile: '资料',
         voice: '声音',
         memory: '记忆',
-        wardrobe: '衣柜',
+        wardrobe: '造型',
         environment: '环境',
         actions: '动作',
         visuals: '影像'

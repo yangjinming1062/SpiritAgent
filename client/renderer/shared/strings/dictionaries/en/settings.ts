@@ -275,7 +275,7 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
         profile: 'Profile',
         voice: 'Voice',
         memory: 'Memories',
-        wardrobe: 'Wardrobe',
+        wardrobe: 'Outfits',
         environment: 'Environments',
         actions: 'Actions',
         visuals: 'Visuals'

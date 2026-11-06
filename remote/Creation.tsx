@@ -1,10 +1,10 @@
 import { IconDeviceTv, IconHome, IconShirt, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useState } from 'react'
 
 import { Actions } from './Actions'
 import type { RemoteApi } from './api'
 import { Assets } from './Assets'
+import { usePageState } from './ui'
 import { Visuals } from './Visuals'
 
 type Section = 'action' | 'outfit' | 'scene' | 'visuals'
@@ -16,9 +16,9 @@ const ITEMS = [
   { id: 'action', title: '动作', icon: IconSparkles }
 ] as const
 
-/** 创作页签：与桌面同一套入口顺序，素材归属不再单独成页。 */
+/** 创作页签：与桌面同一套入口顺序；分区随会话保存，切走再回来不丢创作位置。 */
 export function Creation({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
-  const [section, setSection] = useState<Section>('visuals')
+  const [section, setSection] = usePageState<Section>('creation.section', 'visuals')
 
   return (
     <div className="page creation-page">
