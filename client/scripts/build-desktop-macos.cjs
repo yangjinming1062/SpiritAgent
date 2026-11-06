@@ -112,12 +112,24 @@ function nodeHeaders() {
 function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
   if (process.platform !== 'darwin') throw new Error('macOS desktop components must be built on macOS')
   if (!['x64', 'arm64'].includes(arch)) throw new Error(`Unsupported macOS desktop architecture: ${arch}`)
-  const source = path.join(clientRoot, 'desktop-macos', 'desktop-macos.mm')
+  const sourceDir = path.join(clientRoot, 'desktop-macos')
+  const sources = fs
+    .readdirSync(sourceDir)
+    .filter(name => name.endsWith('.mm'))
+    .sort()
+    .map(name => path.join(sourceDir, name))
+  const header = path.join(sourceDir, 'host.hpp')
   const output = path.join(clientRoot, 'build', arch, 'desktop_macos.node')
   const manifest = `${output}.build.json`
   const deploymentTarget = process.env.MACOSX_DEPLOYMENT_TARGET || '12.0'
   const fingerprint = createHash('sha256')
-    .update(fs.readFileSync(source))
+    .update(fs.readFileSync(header))
+
+  for (const source of sources) {
+    fingerprint.update(fs.readFileSync(source))
+  }
+
+  fingerprint
     .update(fs.readFileSync(__filename))
     .update(JSON.stringify({ arch, deploymentTarget, node: process.versions.node }))
     .digest('hex')
@@ -161,7 +173,7 @@ function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
       'CoreGraphics',
       '-framework',
       'Foundation',
-      source,
+      ...sources,
       '-o',
       temporary
     ])

@@ -109,7 +109,12 @@ export function updateMediaLayout(
 }
 
 export function updateVideoLayout(slot: VideoSlot, fallbackLayout: DesktopStageLayout): void {
-  updateMediaLayout(slot.element, slot.element.videoWidth, slot.element.videoHeight, slot.media?.layout ?? fallbackLayout)
+  updateMediaLayout(
+    slot.element,
+    slot.element.videoWidth,
+    slot.element.videoHeight,
+    slot.media?.layout ?? fallbackLayout
+  )
 }
 
 export function waitForFrame(slot: VideoSlot, isDisposed: () => boolean, ready: () => void): void {
@@ -127,7 +132,15 @@ export function waitForFrame(slot: VideoSlot, isDisposed: () => boolean, ready: 
   })
 }
 
-export function resetSlot({ slot, slots, isPending, onPendingCleared, currentFillUrl, setFill, posterFallback }: ResetOptions): void {
+export function resetSlot({
+  slot,
+  slots,
+  isPending,
+  onPendingCleared,
+  currentFillUrl,
+  setFill,
+  posterFallback
+}: ResetOptions): void {
   slot.generation += 1
 
   if (slot.frameCallback !== null) {
@@ -157,7 +170,8 @@ export function resetSlot({ slot, slots, isPending, onPendingCleared, currentFil
   if (slot.posterUrl) {
     const revokedPoster = slot.posterUrl
 
-    const replacement = slots.find(candidate => candidate !== slot && candidate.posterUrl)?.posterUrl ?? posterFallback() ?? null
+    const replacement =
+      slots.find(candidate => candidate !== slot && candidate.posterUrl)?.posterUrl ?? posterFallback() ?? null
 
     if (currentFillUrl() === revokedPoster) {
       setFill(replacement)

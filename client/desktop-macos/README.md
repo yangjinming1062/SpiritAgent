@@ -1,6 +1,6 @@
 # macOS 桌面原生模块
 
-[desktop-macos.mm](desktop-macos.mm) 是主进程加载的 C Node-API 扩展，管理自有表面层级、应用元数据与 AX 窗口操作。接口由源码和 [desktop-macos.ts](../main/shared/desktop-macos.ts) 定义，模式状态仍归[主进程宿主](../main/lifecycle/desktop-macos-host.ts)；不修改 Finder、Dock 或其他进程的系统配置。
+[desktop-macos.mm](desktop-macos.mm) 只装配 C Node-API 导出：共享状态与工具在 [host.hpp](host.hpp)/[host.mm](host.mm)，桌面表面与 Space 在 [surfaces.mm](surfaces.mm)，应用与窗口读取在 [windows.mm](windows.mm)，激活与关闭在 [actions.mm](actions.mm)。模块管理自有表面层级、应用元数据与 AX 窗口操作。接口由源码和 [desktop-macos.ts](../main/shared/desktop-macos.ts) 定义，模式状态仍归[主进程宿主](../main/lifecycle/desktop-macos-host.ts)；不修改 Finder、Dock 或其他进程的系统配置。
 
 ## 线程与生命周期
 

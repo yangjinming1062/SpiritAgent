@@ -25,7 +25,12 @@ export interface ReceiptLog {
 export function createReceiptLog(acknowledger: Acknowledger, isDisposed: () => boolean): ReceiptLog {
   const settled = new Set<string>()
 
-  const send: ReceiptLog['send'] = (media, status, error, failureLabel = 'Desktop background acknowledgment failed') => {
+  const send: ReceiptLog['send'] = (
+    media,
+    status,
+    error,
+    failureLabel = 'Desktop background acknowledgment failed'
+  ) => {
     if (!media.playId || isDisposed()) {
       return
     }

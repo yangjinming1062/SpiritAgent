@@ -40,7 +40,9 @@ export function createRecoveryJournal(userData: string, log: (message: string) =
   }
 
   const interrupted = (): boolean =>
-    existsSync(interruptedFile) || existsSync(mainInterruptedFile) || (process.platform === 'darwin' && existsSync(macosActiveFile))
+    existsSync(interruptedFile) ||
+    existsSync(mainInterruptedFile) ||
+    (process.platform === 'darwin' && existsSync(macosActiveFile))
 
   return {
     journalPath: journalFile,

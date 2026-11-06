@@ -14,7 +14,10 @@ export interface EligibilitySnapshot {
   isDesktopSender: (sender: WebContents) => boolean
 }
 
-export function assertDesktopSender(snapshot: Pick<EligibilitySnapshot, 'disposed' | 'isDesktopSender'>, sender: WebContents): void {
+export function assertDesktopSender(
+  snapshot: Pick<EligibilitySnapshot, 'disposed' | 'isDesktopSender'>,
+  sender: WebContents
+): void {
   if (snapshot.disposed) {
     throw new Error('桌面呈现已关闭。')
   }
@@ -25,7 +28,9 @@ export function assertDesktopSender(snapshot: Pick<EligibilitySnapshot, 'dispose
 }
 
 export function assertSettingsSender(
-  snapshot: Pick<EligibilitySnapshot, 'disposed' | 'isDesktopSender'> & { isSettingsSender: (sender: WebContents) => boolean },
+  snapshot: Pick<EligibilitySnapshot, 'disposed' | 'isDesktopSender'> & {
+    isSettingsSender: (sender: WebContents) => boolean
+  },
   sender: WebContents
 ): void {
   if (snapshot.disposed) {

@@ -51,11 +51,7 @@ export function createActorLayer({
   let element: HTMLVideoElement | null = null
   let layout: DesktopStageLayout = DEFAULT_STAGE_LAYOUT
 
-  const acknowledge = (
-    media: DesktopBackground,
-    status: DesktopBackgroundPlayback['status'],
-    error?: string
-  ): void => {
+  const acknowledge = (media: DesktopBackground, status: DesktopBackgroundPlayback['status'], error?: string): void => {
     if (isDisposed() || media.playTarget !== 'actor' || !media.playId || receipts.has(media.playId)) {
       return
     }

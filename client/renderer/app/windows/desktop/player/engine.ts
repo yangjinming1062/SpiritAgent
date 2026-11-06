@@ -3,7 +3,12 @@ import { RENDERER_TIMINGS } from '@/shared/constants'
 import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { backgroundMedia } from '@/shared/platform/desktop'
 import { DEFAULT_STAGE_LAYOUT } from '@ipc/contracts'
-import type { DesktopBackground, DesktopBackgroundPlayback, DesktopStageLayer, DesktopStageLayout } from '@ipc/contracts'
+import type {
+  DesktopBackground,
+  DesktopBackgroundPlayback,
+  DesktopStageLayer,
+  DesktopStageLayout
+} from '@ipc/contracts'
 
 import { createActorLayer } from './actor-layer'
 import {
@@ -87,7 +92,12 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
   const transition = createTransitionLayer(transitionCanvas, filterFor)
 
   const applyOrder = (layout: DesktopStageLayout): void =>
-    applyLayerOrder(layout, { actorContainer, actorPoster: actorStill, scenePoster: still, transition: transitionCanvas })
+    applyLayerOrder(layout, {
+      actorContainer,
+      actorPoster: actorStill,
+      scenePoster: still,
+      transition: transitionCanvas
+    })
 
   const layerZ = (layer: DesktopStageLayer): string => layerZIndex(actorLayout, layer)
 
@@ -344,7 +354,11 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       finishReturn(index)
     } else {
       // 寻帧前登记首帧回调；seeked 触发时该帧可能已呈现，暂停状态不会再产生下一帧。
-      waitForFrame(slot, () => disposed, () => finishReturn(index))
+      waitForFrame(
+        slot,
+        () => disposed,
+        () => finishReturn(index)
+      )
       slot.element.currentTime = 0
     }
   }
@@ -374,8 +388,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       reset(slot)
 
       if (active !== null) {
-        slots[active].element.loop =
-          slots[active].media?.kind === 'loop' && slots[active].media?.transition !== 'fade'
+        slots[active].element.loop = slots[active].media?.kind === 'loop' && slots[active].media?.transition !== 'fade'
         start(slots[active])
       }
 
@@ -441,12 +454,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
         slot.timeout = setTimeout(
           () => {
             if (pending === index) {
-              acknowledgeSlot(
-                slot,
-                'failed',
-                'Playback request expired while waiting for the loop boundary',
-                receipts
-              )
+              acknowledgeSlot(slot, 'failed', 'Playback request expired while waiting for the loop boundary', receipts)
               reset(slot)
             }
           },
@@ -803,7 +811,11 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       }
     }, RENDERER_TIMINGS.desktopBackgroundMediaTimeoutMs)
     slot.element.load()
-    waitForFrame(slot, () => disposed, () => onLoaded(next))
+    waitForFrame(
+      slot,
+      () => disposed,
+      () => onLoaded(next)
+    )
 
     if (active !== null && paused) {
       slots[active].element.pause()

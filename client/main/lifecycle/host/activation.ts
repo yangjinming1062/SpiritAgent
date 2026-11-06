@@ -140,9 +140,11 @@ export function createExternalActivation(runtime: ActivationRuntime) {
           }
         }
 
-        void runtime.waitForExit(grant, 2_000).then(stopped =>
-          reject(new Error(stopped ? reason : `${reason}; foreground grant helper could not be stopped`))
-        )
+        void runtime
+          .waitForExit(grant, 2_000)
+          .then(stopped =>
+            reject(new Error(stopped ? reason : `${reason}; foreground grant helper could not be stopped`))
+          )
       }
 
       activation.cancelGrant = () => finishFailure('前台授权请求已失效。')
@@ -212,9 +214,7 @@ export function createExternalActivation(runtime: ActivationRuntime) {
   }
 
   const failAuthorization = (activation: ExternalActivation, focus: ExternalFocusRequest, error: unknown): void => {
-    runtime.log(
-      `[desktop] foreground authorization failed: ${error instanceof Error ? error.message : String(error)}`
-    )
+    runtime.log(`[desktop] foreground authorization failed: ${error instanceof Error ? error.message : String(error)}`)
 
     if (!current(activation, focus)) {
       return

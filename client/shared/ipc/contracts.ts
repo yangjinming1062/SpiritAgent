@@ -1,8 +1,3 @@
-import type { ApiInput, ApiOperationKey, ApiResponse } from '../../../shared/api'
-import type { API_OPERATIONS } from '../../../shared/api.generated'
-import type { GatewayEvent, RpcRequest } from '../../../shared/gateway'
-import type { RunnerRequest, RunnerTools } from '../../../shared/runner'
-
 import type {
   AppNavigationTarget,
   DesktopAccount,
@@ -17,13 +12,16 @@ import type {
   PresentationState,
   StageActivity
 } from './desktop-presentation'
-import type {
-  CompanionEditorUiSnapshot,
-  DiaryUiSnapshot,
-  LifeUiSnapshot,
-  MainConversationDraftSnapshot,
-  VisualsUiSnapshot
-} from './ui-state'
+
+
+export * from './contracts/account'
+export * from './contracts/desktop'
+export * from './contracts/media'
+export * from './contracts/runner'
+
+export * from './contracts/session'
+export * from './contracts/ui-state'
+export * from './contracts/update'
 export {
   APP_PAGES,
   COMPANION_SECTIONS,
@@ -74,387 +72,68 @@ export type {
   SettingsTab,
   StageActivity
 } from './desktop-presentation'
-export type {
-  CompanionEditorUiSnapshot,
-  DiaryUiSnapshot,
-  LifeUiSnapshot,
-  StudioUiSnapshot,
-  VisualsUiSnapshot
-} from './ui-state'
+export type { CompanionEditorUiSnapshot, DiaryUiSnapshot, LifeUiSnapshot, StudioUiSnapshot, VisualsUiSnapshot } from './ui-state'
 export { isCompanionEditorUiSnapshot, isDiaryUiSnapshot, isLifeUiSnapshot, isVisualsUiSnapshot } from './ui-state'
 
-// SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
-
-export type MemoryToolScope = NonNullable<RunnerRequest<'tools.execute'>['skill_scope']>
-
-export interface DesktopVersionInfo {
-  appVersion: string
-  electronVersion: string
-  nodeVersion: string
-  platform: string
-}
-
-export interface DesktopUpdateInfo {
-  releaseDate?: string
-  version: string
-}
-
-/** 会话历史磁盘快照；实时交付位置由主进程网关持有。 */
-export interface SessionHistorySnapshot {
-  info?: Record<string, unknown>
-  messages: unknown[]
-  writtenAt: number
-}
-
-export interface VoicePlaybackRecord {
-  listened: boolean
-  positionSeconds: number
-}
-
-export interface VoicePlaybackSnapshot {
-  records: Record<string, VoicePlaybackRecord>
-  revision: number
-}
-
-export interface VoicePlaybackScope {
-  authSessionId: string
-  sessionId: string
-}
-
-export interface VoicePlaybackUpdate extends VoicePlaybackScope, VoicePlaybackRecord {
-  messageId: string
-  bubbleIndex: number
-}
-
-export interface VoicePlaybackRemoval extends VoicePlaybackScope {
-  messageIds?: string[]
-}
-
-export interface VoicePlaybackChanged extends VoicePlaybackScope {
-  snapshot: VoicePlaybackSnapshot
-}
-
-export function voicePlaybackKey(messageId: string, bubbleIndex: number): string {
-  return `${messageId}:${bubbleIndex}`
-}
-
-export interface DesktopUpdateProgress {
-  percent: number
-  total: number
-  transferred: number
-}
-
-export type DesktopUpdatePhase = 'check' | 'download' | 'install'
-
-// preparing：安装包已下载，正在预取并校验同版本 Runner 资产；downloaded 表示两者均已就绪，可重启安装。
-export type DesktopUpdateEvent =
-  | { info?: DesktopUpdateInfo; type: 'available' }
-  | { info?: DesktopUpdateInfo; type: 'downloaded' }
-  | { info?: DesktopUpdateInfo; type: 'none' }
-  | { info?: DesktopUpdateInfo; type: 'preparing' }
-  | { message: string; phase: DesktopUpdatePhase; type: 'error' }
-  | { progress: DesktopUpdateProgress; type: 'progress' }
-  | { type: 'checking' }
-
-export type DesktopRunnerStatusEvent =
-  | { tools: RunnerTools; type: 'runner_ready' | 'running' }
-  | { type: 'error' | 'stopped' | 'stopping' }
-
-export type DesktopRunnerPhase = 'error' | 'idle' | 'running' | 'starting' | 'stopped' | 'stopping'
-
-export interface DesktopRunnerState {
-  phase: DesktopRunnerPhase
-}
-
-/** 模型派发的一次 Runner 工具调用，按 `callId` 查询、认领调用日志并可单独取消。 */
-export interface RunnerCallRequest {
-  args: Record<string, unknown>
-  callId: string
-  name: string
-  skillScope?: MemoryToolScope
-}
-
-/** Runner 调用结局（PROTOCOL「调用日志与未知结果」）：`failed` 是 Runner 明确报告的工具失败或执行前拒绝；`not_executed` 是请求发出前 Runner 未连接；超时、取消、断连、他处持有与日志判定未知都归 `unknown`。 */
-export type RunnerCallOutcome =
-  | { error: string; status: 'failed' }
-  | { result: unknown; status: 'completed' }
-  | { status: 'not_executed' }
-  | { status: 'unknown' }
-
-export type SpiritAgentUiPalette = 'night' | 'day'
-export type SpiritAgentUiEffect = 'solid' | 'clear'
-export type SpiritAgentUiTheme = 'night' | 'day' | 'night-clear' | 'day-clear'
-
-// 主进程侧校验白名单——契约是跨进程唯一真理源；主题名称与描述在渲染层文案字典。
-export const SPIRITAGENT_UI_THEMES = [
-  'night',
-  'day',
-  'night-clear',
-  'day-clear'
-] as const satisfies readonly SpiritAgentUiTheme[]
-
-export function getUiPalette(theme: SpiritAgentUiTheme): SpiritAgentUiPalette {
-  return theme === 'night' || theme === 'night-clear' ? 'night' : 'day'
-}
-
-export function getUiEffect(theme: SpiritAgentUiTheme): SpiritAgentUiEffect {
-  return theme === 'night-clear' || theme === 'day-clear' ? 'clear' : 'solid'
-}
-
-export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
-  return raw === 'night' || raw === 'day' || raw === 'night-clear' ? raw : 'day-clear'
-}
-
-/** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */
-export const UI_THEME_URL_PARAM = 'ui_theme'
-
-export type DesktopSurfaceOpenPayload = AppNavigationTarget
-
-export interface MainUiStateData {
-  navigation: AppNavigationTarget
-  life: LifeUiSnapshot
-  diary: DiaryUiSnapshot
-  conversation: MainConversationDraftSnapshot
-  visuals: VisualsUiSnapshot
-  companionEditors: CompanionEditorUiSnapshot
-}
-
-export interface MainUiStateSnapshot extends MainUiStateData {
-  accountId: string
-  authSessionId: string
-  revision: number
-}
-
-export interface MainUiStateUpdate extends MainUiStateData {
-  authSessionId: string
-}
-
-export interface UiInputBusyState {
-  recording: boolean
-  uploading: boolean
-}
-
-export type UiStateRequest =
-  | { kind: 'capture'; requestId: string; authSessionId: string }
-  | { kind: 'restore'; requestId: string; authSessionId: string; snapshot: MainUiStateSnapshot }
-
-export type UiStateReply =
-  | { kind: 'capture'; requestId: string; authSessionId: string; data: MainUiStateData }
-  | { kind: 'capture'; requestId: string; authSessionId: string; error: string }
-  | { kind: 'restore'; requestId: string; authSessionId: string; error?: string }
-
-export type SurfaceCompanionSide = 'left' | 'right'
-
-export interface SurfaceCompanionPreference {
-  enabled: boolean
-  side: SurfaceCompanionSide
-}
-
-export interface SurfaceCompanionState {
-  preference: SurfaceCompanionPreference
-  visible: boolean
-  hiddenReason: 'layout' | 'minimized' | 'screen-locked' | 'window-hidden' | null
-}
-
-export interface DesktopSurfaceChangedEvent {
-  companion: SurfaceCompanionState
-  open: boolean
-  openVisible: boolean
-  revision: number
-  screenLocked: boolean
-  /** 桌面精灵窗实际可见：窗口存在、未隐藏且未最小化；完整入口收起舞台不改变此值。 */
-  spriteVisible: boolean
-}
-
-export interface DesktopUiThemeBroadcast {
-  theme: SpiritAgentUiTheme
-}
-
-export interface DesktopSpriteScalePayload {
-  scale: number
-}
-
-export interface DesktopSpritePosition {
-  x: number
-  y: number
-}
-
-export interface DesktopSpriteRestPosition extends DesktopSpritePosition {
-  origin?: { x: number; y: number }
-}
-
-export const SPRITE_SCALE_LIMITS = { max: 3, min: 0.3 } as const
-
-// 渲染层偏好写穿透：key 为点键（companion.voice_id / ui.theme 等），value 原样入云同步管道。
-export interface SpiritAgentPrefsSet {
-  key: string
-  value: unknown
-}
-
-export interface DesktopServerVoiceSelection {
-  accountId: string
-  authSessionId: string
-  voiceId: string
-}
-
-export interface DesktopShortcutsConfig {
-  openMain: string
-  toggleVisibility: string
-}
-
-export const DEFAULT_SHORTCUTS: Readonly<DesktopShortcutsConfig> = {
-  openMain: 'Alt+Shift+L',
-  toggleVisibility: 'Alt+Shift+H'
-} as const
-
-export interface ShortcutRegistrationStatus {
-  error?: string
-  registered: boolean
-}
-
-export interface DesktopShortcutsState {
-  config: DesktopShortcutsConfig
-  status: Record<keyof DesktopShortcutsConfig, ShortcutRegistrationStatus>
-}
-
-export interface DesktopShortcutsSetPayload {
-  shortcuts: Partial<DesktopShortcutsConfig>
-}
-
-// 云端配置水合广播：只携带渲染层需要回写的伙伴偏好与语言。主题与快捷键由主进程各自的专用同步通道处理。
-export interface DesktopPrefsHydrated {
-  accountId: string | null
-  companion: Record<string, unknown>
-  // 顶层原始值同步键（PROTOCOL「配置所有权与云同步」），从 user_settings.language 透传过来；null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
-  language?: null | string
-}
-
-export interface DesktopAuthSnapshot {
-  accountId: string
-  baseUrl: null | string
-  hasToken: boolean
-  sessionId: string
-  tokenExpiresAt: null | number
-  user: null | { username: string }
-}
-
-export interface DesktopActivatePayload {
-  code: string
-}
-
-export interface DesktopAuthBroadcast {
-  authenticated: boolean
-  /** 仅明确移除账户时携带；各窗口删除该账户的持久缓存。 */
-  removedAccountId?: string
-  snapshot: DesktopAuthSnapshot | null
-}
-
-export type DesktopApiOperationKey = {
-  [Operation in ApiOperationKey]: (typeof API_OPERATIONS)[Operation]['ipc'] extends true ? Operation : never
-}[ApiOperationKey]
-
-export interface SpiritAgentApiRequest<Operation extends DesktopApiOperationKey = DesktopApiOperationKey> {
-  authSessionId: string
-  operation: Operation
-  input: ApiInput<Operation>
-}
-
-export type DesktopApiInvoke = <Operation extends DesktopApiOperationKey>(
-  request: SpiritAgentApiRequest<Operation>
-) => Promise<DesktopApiResult<ApiResponse<Operation>>>
-
-export interface SpiritAgentSelectPathsOptions {
-  directories?: boolean
-  filters?: Array<{ extensions: string[]; name: string }>
-  title: string
-}
-
-export interface SkillItem {
-  category: string
-  compatible: boolean
-  description?: string
-  enabled: boolean
-  name: string
-  platforms?: null | string[]
-}
-
-export interface ToolsetItem {
-  enabled: boolean
-  id: string
-  toolNames: string[]
-}
-
-export interface RunnerConfigPatch {
-  path: readonly (number | string)[]
-  value: unknown
-}
-
-export interface AudioUploadPayload {
-  authSessionId: string
-  dataUrl: string
-  filename: string
-  sessionId: string
-}
-
-export interface AudioUploadResult {
-  url: string
-  mime_type: string
-  duration: number
-}
-
-export interface VoiceSampleUploadPayload {
-  authSessionId: string
-  dataUrl: string
-  filename: string
-}
-
-export interface VoiceSampleUploadResult extends AudioUploadResult {
-  sample_id: string
-}
-
-export interface MediaTtsPayload {
-  context?: null | string
-  /** 是否把合成结果按内容寻址落盘，供离线复用。 */
-  persist: boolean
-  text: string
-  voice?: string
-}
-
-export interface AttachmentVideoUploadPayload {
-  authSessionId: string
-  path: string
-  sessionId: string
-}
-
-export interface AttachmentVideoUploadResult {
-  url: string
-}
-
-export type DesktopGatewayState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
-
-export interface DesktopGatewaySnapshot {
-  state: DesktopGatewayState
-  error: string | null
-  hasConnected: boolean
-  activeToolCount: number
-  recovery: 'replayed' | 'snapshot_required' | null
-  streamId: string | null
-}
-
-export type DesktopGatewayEvent = GatewayEvent
-
-export type DesktopApiResult<T = unknown> =
-  | { ok: true; value: T }
-  | {
-      ok: false
-      status: number | null
-      error: { code: string; message: string; details: unknown; request_id: string }
-    }
-
-export interface DesktopPresenceRequest {
-  authSessionId: string
-  signal: RpcRequest<'companion.signal'>
-}
+import type {
+  DesktopActivatePayload,
+  DesktopApiInvoke,
+  DesktopAuthBroadcast,
+  DesktopAuthSnapshot,
+  SpiritAgentSelectPathsOptions
+} from './contracts/account'
+import type {
+  DesktopPrefsHydrated,
+  DesktopServerVoiceSelection,
+  DesktopShortcutsSetPayload,
+  DesktopShortcutsState,
+  DesktopSpritePosition,
+  DesktopSpriteRestPosition,
+  DesktopSpriteScalePayload,
+  DesktopSurfaceChangedEvent,
+  DesktopUiThemeBroadcast,
+  DesktopVersionInfo,
+  SpiritAgentPrefsSet,
+  SpiritAgentUiTheme,
+  SurfaceCompanionPreference
+} from './contracts/desktop'
+import type {
+  AttachmentVideoUploadPayload,
+  AttachmentVideoUploadResult,
+  AudioUploadPayload,
+  AudioUploadResult,
+  MediaTtsPayload,
+  VoicePlaybackChanged,
+  VoicePlaybackRemoval,
+  VoicePlaybackScope,
+  VoicePlaybackSnapshot,
+  VoicePlaybackUpdate,
+  VoiceSampleUploadPayload,
+  VoiceSampleUploadResult
+} from './contracts/media'
+import type {
+  DesktopRunnerState,
+  DesktopRunnerStatusEvent,
+  RunnerConfigPatch,
+  SkillItem,
+  ToolsetItem
+} from './contracts/runner'
+import type {
+  DesktopApiResult,
+  DesktopGatewayEvent,
+  DesktopGatewaySnapshot,
+  DesktopPresenceRequest,
+  SessionHistorySnapshot
+} from './contracts/session'
+import type {
+  DesktopSurfaceOpenPayload,
+  MainUiStateSnapshot,
+  MainUiStateUpdate,
+  UiInputBusyState,
+  UiStateReply,
+  UiStateRequest
+} from './contracts/ui-state'
+import type { DesktopUpdateEvent } from './contracts/update'
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {

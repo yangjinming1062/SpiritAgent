@@ -57,6 +57,20 @@
 
 媒体终态可先于完成帧，须暂存后合并；重复完成事件的空音频不能覆盖已就绪音频。
 
+## 资源所有权
+
+每类资源只有一个所有者；其他层持有的是派生物或副本，不能各自维护一份业务事实。
+
+| 资源 | 所有者 | 释放时机 |
+|---|---|---|
+| 账户资产字节缓存 | 主进程 [asset-disk-cache.ts](main/ipc/asset-disk-cache.ts) | 删除账户时等待在途下载与写入后清空；有效文件不按容量淘汰 |
+| 桌面背景媒体字节 | 主进程 [desktop-background-runtime.ts](main/lifecycle/desktop-background-runtime.ts) | 换号、退出桌面或账户代次变化时重置并中断在途读取 |
+| 播放临时地址与双缓冲 | 渲染层 [播放器](renderer/app/windows/desktop/player/engine.ts) | 槽位重置、媒体替换、换场完成或窗口卸载时释放；主体静帧由 [actor-layer.ts](renderer/app/windows/desktop/player/actor-layer.ts) 单独释放 |
+| 静态海报合成图 | 播放器 [static-poster.ts](renderer/app/windows/desktop/player/static-poster.ts) | 新海报生效后释放上一张；请求作废时立即释放 |
+| 会话历史磁盘快照 | 主进程 [session-history-disk-cache.ts](main/ipc/session-history-disk-cache.ts) | 删除会话时删对应快照，删除账户时清空目录；实时交付仍归主进程网关 |
+| 语音播放进度 | 主进程 [voice-playback-store.ts](main/ipc/voice-playback-store.ts) | 删除账户时清空；退出前有界等待落盘 |
+| 桌面窗口与原生句柄 | 主进程 [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts) 与 [explorer-desktop-host.ts](main/lifecycle/explorer-desktop-host.ts) | 退出桌面、显示器变化或恢复失败时销毁窗口并释放句柄，恢复互斥与 Drop 顺序不变 |
+
 ## 契约与验证
 
 [bridge.ts](shared/ipc/bridge.ts) 定义普通、背景和文件桥，preload 用 `satisfies` 校验实现；renderer 只经 [desktop.ts](renderer/shared/platform/desktop.ts) 的窄接口消费。修改通道须同步主进程与实际消费者，覆盖换号、断连、迟到回包及资源释放。

@@ -4,10 +4,7 @@ import path from 'node:path'
 import { shell } from 'electron'
 
 import { atomicWriteFile, safeReadJson } from '../../shared/utils'
-import {
-  isMacosApplicationTarget,
-  validateMacosApplicationTarget
-} from '../macos-application-target'
+import { isMacosApplicationTarget, validateMacosApplicationTarget } from '../macos-application-target'
 import { isPackagedAppTarget } from '../windows-installed-apps'
 
 export interface SavedDockEntry {

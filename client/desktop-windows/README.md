@@ -1,6 +1,6 @@
 # Windows 桌面宿主
 
-Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢复；Electron 会话归主进程。[main.rs](src/main.rs) 定义命令，[windows.rs](src/windows.rs) 组织接管事务；窗口、托盘、工作区分别归 `src/windows/` 下对应模块。
+Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢复；Electron 会话归主进程。[main.rs](src/main.rs) 定义命令，[windows.rs](src/windows.rs) 只保留导出与装配；身份与进程核验在 [identity.rs](src/windows/identity.rs)，journal 与恢复标记在 [journal.rs](src/windows/journal.rs)，会话状态机在 [session.rs](src/windows/session.rs)，命令分发在 [command.rs](src/windows/command.rs)，显示器几何在 [geometry.rs](src/windows/geometry.rs)；窗口、托盘、工作区分别归 `src/windows/` 下对应模块。
 
 | 进程模式 | 职责 |
 |---|---|
