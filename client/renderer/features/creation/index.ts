@@ -1,1 +1,1 @@
-export { $creationActivity, $creationBusy, type CreationActivityItem } from './creation-activity'
+export { $creationBusy } from './creation-activity'

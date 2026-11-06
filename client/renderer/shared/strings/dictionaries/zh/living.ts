@@ -12,8 +12,7 @@ export const living = {
       scene: '场景',
       settings: '设置',
       companionFallback: '伙伴',
-      mainNavAria: '功能导航',
-      avatarMood: (name: string) => `${name} 的表情反馈`
+      mainNavAria: '功能导航'
     },
     posts: {
       intro: '查看伙伴分享的文字、图片、视频和语音，也可以留下评论。',
@@ -156,7 +155,6 @@ export const living = {
       notesLabel: '环境描述',
       notesPlaceholder: '例如：傍晚的海边，柔和霞光映在沙滩与海面上。',
       targetSize: (width: number, height: number) => `场景尺寸：${width} × ${height}`,
-      regenerationTargetSize: (width: number, height: number) => `重新生成将使用：${width} × ${height}`,
       generationTargetSize: (width: number, height: number) => `生成目标：${width} × ${height}`,
       sourceSize: (width: number, height: number) => `原图尺寸：${width} × ${height}`,
       imageSize: (width: number, height: number) => `图片尺寸：${width} × ${height}`,
@@ -177,7 +175,6 @@ export const living = {
       openDetails: '查看场景详情',
       backToLibrary: '返回',
       newSceneTitle: '创建背景',
-      searchButton: '搜索',
       imageRegenerate: '重新生成图片',
       saveAndRegenerate: '保存并重新生成',
       imageRegenerating: '正在重做环境图片；当前素材仍可使用。',

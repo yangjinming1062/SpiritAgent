@@ -13,8 +13,7 @@ export const living: Pick<Dictionary, 'living'> = {
       scene: 'Scene',
       settings: 'Settings',
       companionFallback: 'Companion',
-      mainNavAria: 'Main navigation',
-      avatarMood: (name: string) => `${name}'s mood`
+      mainNavAria: 'Main navigation'
     },
     posts: {
       intro: 'Explore the moments your companion shares and leave a comment.',
@@ -176,7 +175,6 @@ export const living: Pick<Dictionary, 'living'> = {
       notesLabel: 'Environment description',
       notesPlaceholder: 'For example: an evening beach with soft sunset light across the sand and sea.',
       targetSize: (width: number, height: number) => `Scene size: ${width} × ${height}`,
-      regenerationTargetSize: (width: number, height: number) => `Regeneration size: ${width} × ${height}`,
       generationTargetSize: (width: number, height: number) => `Generation target: ${width} × ${height}`,
       sourceSize: (width: number, height: number) => `Original image: ${width} × ${height}`,
       imageSize: (width: number, height: number) => `Image size: ${width} × ${height}`,
@@ -199,7 +197,6 @@ export const living: Pick<Dictionary, 'living'> = {
       openDetails: 'View scene details',
       backToLibrary: 'Back',
       newSceneTitle: 'Create background',
-      searchButton: 'Search',
       imageRegenerate: 'Regenerate image',
       saveAndRegenerate: 'Save and regenerate',
       imageRegenerating: 'Regenerating the environment image. The current material stays available.',
