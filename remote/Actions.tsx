@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActionClipKind, ActionDefinition, ActionLibraryGroup, ActionReviewStatus } from '@protocol'
 
 import { composeDescribedInput } from '../shared/described-input'
+import { InterpretationGuard } from '../shared/interpretation-guard'
 import { isRequestConflictError } from '../shared/visuals'
 
 import { ApiError, errorText, type RemoteApi } from './api'
@@ -52,6 +53,8 @@ const EMPTY_COMPOSER: ActionComposer = {
   requestId: null
 }
 
+const interpretation = new InterpretationGuard()
+
 /** 动作编辑：新建与修改都从一句描述开始，先看整理结果再保存并评审。 */
 function ActionEditor({
   action,
@@ -69,7 +72,11 @@ function ActionEditor({
   const { run, busy, error } = useTask()
   const alive = useAlive()
   const [composer, setComposer] = usePageState<ActionComposer>(`action.${action?.id ?? 'new'}.composer`, EMPTY_COMPOSER)
-  const patch = (values: Partial<ActionComposer>): void => setComposer(previous => ({ ...previous, ...values }))
+  const patch = (values: Partial<ActionComposer>): void => {
+    // 草稿任何变化都推进整理修订，在途整理的响应不再落地。
+    interpretation.revise()
+    setComposer(previous => ({ ...previous, ...values }))
+  }
   const readonly = action?.source === 'preset' || action?.status === 'pending' || action?.status === 'reviewing'
   const description = composeDescribedInput(composer.description, composer.refinement)
 
@@ -79,18 +86,28 @@ function ActionEditor({
         return
       }
 
-      const result = await api.invoke('companion_actions.interpret_action', {
-        body: { description, action_id: action?.id ?? null }
-      })
+      // 结果只在请求代次与草稿修订都未变时落地：改描述、换动作或关编辑器都会作废在途整理。
+      const accept = interpretation.begin()
 
-      if (alive()) {
-        patch({
-          description,
-          refinement: '',
-          requestId: null,
-          preview: { draft: result.draft, summary: result.summary, details: result.details },
-          expectedUpdatedAt: result.expected_updated_at ?? composer.expectedUpdatedAt
+      try {
+        const result = await api.invoke('companion_actions.interpret_action', {
+          body: { description, action_id: action?.id ?? null }
         })
+
+        if (alive() && accept()) {
+          patch({
+            description,
+            refinement: '',
+            requestId: null,
+            preview: { draft: result.draft, summary: result.summary, details: result.details },
+            expectedUpdatedAt: result.expected_updated_at ?? composer.expectedUpdatedAt
+          })
+        }
+      } catch (failure) {
+        // 过期失败不替换当前提示，也不清草稿。
+        if (alive() && accept()) {
+          throw failure
+        }
       }
     })
 

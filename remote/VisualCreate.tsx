@@ -4,6 +4,7 @@ import type { ReactElement } from 'react'
 import type { VisualDetail, VisualInterpretation } from '@protocol'
 
 import { composeDescribedInput } from '../shared/described-input'
+import { InterpretationGuard } from '../shared/interpretation-guard'
 import { isStaleDraftError } from '../shared/visuals'
 
 import { ApiError, type RemoteApi } from './api'
@@ -37,6 +38,8 @@ const EMPTY_STUDIO: Studio = {
   uploadDescription: ''
 }
 
+const interpretation = new InterpretationGuard()
+
 const STEP_LABEL: Record<string, string> = {
   create_action: '先创建一个动作',
   create_outfit: '先准备一套造型',
@@ -57,7 +60,15 @@ export function VisualCreate({
   const [file, setFile] = usePageState<File | null>('visuals.uploadFile', null, false)
   const [previewUrl, setPreviewUrl] = useState('')
   const { run, busy, error } = useTask()
-  const patch = (value: Partial<Studio>): void => setStudio(previous => ({ ...previous, ...value }))
+  const patch = (value: Partial<Studio>): void => {
+    // 草稿任何变化都推进整理修订，在途整理的响应不再落地。
+    interpretation.revise()
+    setStudio(previous => ({ ...previous, ...value }))
+  }
+  const reset = (): void => {
+    interpretation.revise()
+    setStudio(EMPTY_STUDIO)
+  }
 
   const describe = async (): Promise<void> => {
     const description = composeDescribedInput(studio.description, studio.refinement)
@@ -66,12 +77,22 @@ export function VisualCreate({
       return
     }
 
-    const result: VisualInterpretation = await api.invoke('companion_visuals.interpret_visual', {
-      body: { description, intent: studio.intent }
-    })
+    // 结果只在请求代次与草稿修订都未变时落地：改描述、换类型或收起面板都会作废在途整理。
+    const accept = interpretation.begin()
 
-    if (alive()) {
-      patch({ description, preview: result, refinement: '', requestId: null })
+    try {
+      const result: VisualInterpretation = await api.invoke('companion_visuals.interpret_visual', {
+        body: { description, intent: studio.intent }
+      })
+
+      if (alive() && accept()) {
+        patch({ description, preview: result, refinement: '', requestId: null })
+      }
+    } catch (failure) {
+      // 过期失败不替换当前提示，也不清草稿。
+      if (alive() && accept()) {
+        throw failure
+      }
     }
   }
 
@@ -96,7 +117,7 @@ export function VisualCreate({
     }
 
     if (alive()) {
-      setStudio(EMPTY_STUDIO)
+      reset()
       setMode('idle')
       await onDone()
     }
@@ -230,7 +251,7 @@ export function VisualCreate({
             <button
               disabled={busy}
               onClick={() => {
-                setStudio(EMPTY_STUDIO)
+                reset()
                 setMode('idle')
               }}
               type="button"

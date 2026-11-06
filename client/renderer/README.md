@@ -63,7 +63,7 @@
 
 `app/runtime` 先订阅再读快照，网关按账户与 `session_id` 把事件路由给保留的 runtime。单一业务功能的事件处理归该功能（[会话](features/conversation/gateway-events.ts)、[角色](features/character/gateway-events.ts)），应用层只做身份检查、分派与跨功能协调：会话事件把精灵脉冲与活动汇总作为表现副作用返回，声音选择同时刷新角色偏好与语音目录。业务请求经 [resource-request.ts](shared/lib/resource-request.ts) 传稳定操作标识，窗口卸载不关闭主进程网络。
 
-- store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 守卫鉴权会话及清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 守卫挂载和请求代次。旧回包不得写入新账户、新查询或新草稿。
+- store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 守卫鉴权会话及清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 守卫挂载和请求代次；描述整理的结果落地另按根 `interpretation-guard.ts` 的请求代次与草稿修订校验。旧回包不得写入新账户、新查询或新草稿。
 - [storage.ts](shared/lib/storage.ts) 登记账户键和恢复回调，换号清内存并重挂载；重置期不回写索引，命名空间就绪后才应用云广播。`runner-status.ts` 的快照不能覆盖较新事件，握手超时须进入可恢复错误态。
 - 用户提交保留稳定请求身份，响应不明先查回执，停止绑定具体回合。挂载先应用快照再按水位合并事件；缺少流基线不应用增量。
 - 未读确认取所属视图的可见性。动态、日记各自消费服务端镜像；[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 仅对合格舞台发气泡或声音，不可见消息仍进入未读，工作会话不跳入轻语。

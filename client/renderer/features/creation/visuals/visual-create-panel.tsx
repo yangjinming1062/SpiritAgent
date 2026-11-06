@@ -15,7 +15,7 @@ import { composeDescribedInput } from '../../../../../shared/described-input'
 import { isStaleDraftError } from '../../../../../shared/visuals'
 
 import { visualsApi } from './api'
-import { $visualsUi, EMPTY_STUDIO, updateVisualsUi } from './visuals-state'
+import { $visualsUi, beginStudioInterpretation, EMPTY_STUDIO, updateStudio } from './visuals-state'
 
 type Intent = 'photo' | 'video' | 'motion'
 
@@ -41,7 +41,7 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
   const fileInput = useRef<HTMLInputElement>(null)
 
   const patch = (next: Partial<typeof studio>): void => {
-    updateVisualsUi({ studio: { ...studio, ...next } })
+    updateStudio(next)
     setError('')
   }
 
@@ -52,14 +52,24 @@ export function VisualCreatePanel({ onDone }: { onDone: (visualId?: string) => P
       return
     }
 
+    // 结果只在请求代次与草稿修订都未变时落地：改描述、换类型或关面板都会作废在途整理。
+    const accept = beginStudioInterpretation()
     setBusy('interpret')
     setError('')
 
     try {
       const result = await visualsApi.interpret({ description, intent: studio.intent })
+
+      if (!accept()) {
+        return
+      }
+
       patch({ preview: result, description, refinement: '' })
     } catch (failure) {
-      setError(failureText(failure, t.interpretFailed))
+      // 过期失败不替换当前提示，也不清草稿。
+      if (accept()) {
+        setError(failureText(failure, t.interpretFailed))
+      }
     } finally {
       setBusy(null)
     }

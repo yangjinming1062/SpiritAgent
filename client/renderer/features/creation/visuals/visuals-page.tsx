@@ -61,7 +61,7 @@ import { VisualJobRow } from './visual-job-row'
 import type { VisualsCopy } from './visual-labels'
 import { isPendingState, visualJobLabel } from './visual-labels'
 import { PlayBadge } from './visual-play-badge'
-import { $visualsUi, EMPTY_STUDIO, updateVisualsUi } from './visuals-state'
+import { $visualsUi, updateStudio, updateVisualsUi } from './visuals-state'
 
 const PAGE_SIZE = 12
 
@@ -259,7 +259,7 @@ export function VisualsPage(): React.JSX.Element {
   }
 
   const openComposer = (mode: 'create' | 'upload'): void => {
-    updateVisualsUi({ studio: { ...(ui.studio ?? EMPTY_STUDIO), mode: mode === 'upload' ? 'upload' : 'describe' } })
+    updateStudio({ mode: mode === 'upload' ? 'upload' : 'describe' })
   }
 
   return (
