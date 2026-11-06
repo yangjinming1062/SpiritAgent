@@ -4,7 +4,7 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { type AppearanceUiSnapshot, isAppearanceUiSnapshot } from '@ipc/contracts'
 
 // 衣柜草稿是会话级状态：跨切页保留、跨模式交接、换号清空，不落盘；详情与制作区开关随组件生命周期。
-export interface AppearanceUiState {
+interface AppearanceUiState {
   text: string
   draftId: string | null
   draftTexts?: Record<string, string>

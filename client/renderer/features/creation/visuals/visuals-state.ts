@@ -35,7 +35,7 @@ export function updateVisualsUi(patch: Partial<Omit<VisualsUiSnapshot, 'studio'>
   ui.set({ ...ui.get(), ...next })
 }
 
-/** 制作草稿唯一写入口：任何变化都推进整理修订，在途整理的响应不再落地。 */
+/** 制作草稿唯一写入口：任何变化都推进整理修订，在途整理的响应不落地。 */
 export function updateStudio(next: Partial<StudioUiSnapshot>): void {
   interpretation.revise()
   const studio = ui.get().studio ?? { ...EMPTY_STUDIO }

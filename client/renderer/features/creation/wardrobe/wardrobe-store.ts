@@ -15,7 +15,7 @@ import { isResourceId } from '../../../../../shared/resource-id'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
-export interface WardrobeOutfit {
+interface WardrobeOutfit {
   id: string
   name: string
   description: string | null
@@ -28,7 +28,7 @@ export interface WardrobeOutfit {
 
 type OutfitResponse = ApiSchemas['OutfitResponse']
 
-export type OutfitPolicy = ApiSchemas['OutfitPolicyResponse']['policy']
+type OutfitPolicy = ApiSchemas['OutfitPolicyResponse']['policy']
 
 type WardrobeSnapshot = ApiSchemas['OutfitListResponse']
 

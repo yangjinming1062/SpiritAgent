@@ -22,7 +22,7 @@ const ENTRIES = [
   { id: 'actions', icon: Activity }
 ] as const
 
-/** 创作页：影像、造型、环境与动作按"一起做什么"组织，素材归属不再是独立入口。 */
+/** 创作页：影像、造型、环境与动作按"一起做什么"组织为四个分区。 */
 export function CreationPage(_props: AppPageProps): React.JSX.Element {
   const section = useStore($creationSection)
   const activity = useStore($creationActivity)

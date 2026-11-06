@@ -8,9 +8,6 @@ export const living: Pick<Dictionary, 'living'> = {
       life: 'Life',
       creation: 'Creation',
       unread: 'Unread content',
-      wardrobe: 'Wardrobe',
-      remote: 'Remote',
-      scene: 'Scene',
       settings: 'Settings',
       companionFallback: 'Companion',
       mainNavAria: 'Main navigation'

@@ -20,7 +20,7 @@ export {
   visualPerformancePorts
 } from './performance'
 export { $performance } from './performance-scheduler'
-export { $stagePlan, deriveStagePlan, type StageLayout, type StagePlan, type StageScenePlan } from './stage-plan'
+export { $stagePlan, deriveStagePlan, type StagePlan, type StageScenePlan } from './stage-plan'
 
 export {
   $visualPlayback,

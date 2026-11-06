@@ -23,7 +23,7 @@ import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
 
-export type InteractionKind = 'look' | 'smile' | 'stretch'
+type InteractionKind = 'look' | 'smile' | 'stretch'
 
 /** 当前常驻循环选择（本地、只读目录内轮换）；null 表示沿用服务端 ambient/composition 投影。 */
 export const $ambientLoopChoice = atom<{ visualId: string; version: number } | null>(null)

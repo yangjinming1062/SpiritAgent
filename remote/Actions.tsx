@@ -73,7 +73,7 @@ function ActionEditor({
   const alive = useAlive()
   const [composer, setComposer] = usePageState<ActionComposer>(`action.${action?.id ?? 'new'}.composer`, EMPTY_COMPOSER)
   const patch = (values: Partial<ActionComposer>): void => {
-    // 草稿任何变化都推进整理修订，在途整理的响应不再落地。
+    // 草稿任何变化都推进整理修订，在途整理的响应不落地。
     interpretation.revise()
     setComposer(previous => ({ ...previous, ...values }))
   }

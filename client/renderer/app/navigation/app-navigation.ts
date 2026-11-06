@@ -44,7 +44,7 @@ const location = definePersistedAtom<AppLocation>({
 /** 定位细节只在本窗口有效，不落盘。 */
 const pageFocus = atom<PageFocus>({ page: 'chat' })
 
-export const $appLocation = location.$atom
+const $appLocation = location.$atom
 export const $appPage = computed($appLocation, value => value.page)
 export const $lifeSection = computed($appLocation, value =>
   value.page === 'life' ? value.section : DEFAULT_SECTION.life

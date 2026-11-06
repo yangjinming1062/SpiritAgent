@@ -4,10 +4,10 @@ import { log } from '@/shared/lib/log'
 
 import type { VisualPlayCommand } from './types'
 
-export type PerformanceSource = 'ambient' | 'life' | 'interaction' | 'manual'
-export type PerformanceState = 'idle' | 'dispatching' | 'waiting' | 'playing' | 'returning'
+type PerformanceSource = 'ambient' | 'life' | 'interaction' | 'manual'
+type PerformanceState = 'idle' | 'dispatching' | 'waiting' | 'playing' | 'returning'
 
-export interface PerformanceRequest {
+interface PerformanceRequest {
   performanceId: string
   source: PerformanceSource
   visualId: string
@@ -21,12 +21,12 @@ export interface PerformanceRequest {
   cooldownMs?: number
 }
 
-export interface PerformanceTask extends PerformanceRequest {
+interface PerformanceTask extends PerformanceRequest {
   priority: number
   playId: string | null
 }
 
-export interface PerformanceSnapshot {
+interface PerformanceSnapshot {
   state: PerformanceState
   current: PerformanceTask | null
   command: VisualPlayCommand | null

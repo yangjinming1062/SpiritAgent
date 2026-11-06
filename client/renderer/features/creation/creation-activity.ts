@@ -7,7 +7,7 @@ import { $pendingScene, $sceneCreationIssue, $sceneRegenerating } from './enviro
 import { $visualsJobs, refreshVisualJobs } from './visuals'
 
 /** 活动条目的用户可读分组：进行中的制作与需要用户处理的事项。 */
-export type CreationActivityGroup = 'working' | 'attention'
+type CreationActivityGroup = 'working' | 'attention'
 
 export interface CreationActivityItem {
   id: string
@@ -58,7 +58,12 @@ export const $creationActivity = computed(
     }
 
     if (creationIssue?.outcome === 'unknown') {
-      items.push({ id: 'environment:creation-unknown', group: 'attention', state: 'creation_unknown', section: 'environment' })
+      items.push({
+        id: 'environment:creation-unknown',
+        group: 'attention',
+        state: 'creation_unknown',
+        section: 'environment'
+      })
     }
 
     const activeScene = pendingScene ?? regeneratingScene
@@ -78,9 +83,7 @@ export const $creationActivity = computed(
 )
 
 /** 只有真正需要用户关注时才显示显著提醒；正常后台制作只保留适度的进行状态。 */
-export const $creationAttention = computed($creationActivity, items =>
-  items.some(item => item.group === 'attention')
-)
+export const $creationAttention = computed($creationActivity, items => items.some(item => item.group === 'attention'))
 
 /** 登录与重连后的任务摘要补读：只触发各模块已有读取入口，失败静默等待事件或页面读取。 */
 export async function hydrateCreationActivity(): Promise<void> {

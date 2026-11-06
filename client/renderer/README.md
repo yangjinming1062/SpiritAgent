@@ -30,7 +30,7 @@
 
 生活与日记的历史搜索共用显式提交表单，查询与结果状态由所属模块持有；文本与日期筛选、日记所选日期及滚动位置参与账户快照。搜索预览不确认日记已读，打开正文后才使用阅读回执。
 
-列表页交互走公共件，不再各页自拼：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表加载/失败重试/内容三态用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](ui/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 单个主创建按钮）；政策开关行用 `PolicyToggleRow`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
+列表页交互走公共件：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表加载/失败重试/内容三态用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](ui/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 单个主创建按钮）；政策开关行用 `PolicyToggleRow`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
 
 | 基础能力 | 适用场景 |
 |---|---|

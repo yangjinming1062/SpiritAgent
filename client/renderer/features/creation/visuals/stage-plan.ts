@@ -8,11 +8,11 @@ import { automaticLoops, contextAllowed, lifeMatchScore, motionAllowed } from '.
 
 type LayerMedia = ApiSchemas['StageLayerMedia']
 type ActorBody = ApiSchemas['ActorClipBody']
-export type StageLayout = ApiSchemas['StageCompositionLayout']
+type StageLayout = ApiSchemas['StageCompositionLayout']
 type SceneReference = ApiSchemas['SceneMediaRef']
 
 /** 窗口/桌面共用的主体层计划：透明视频成品 + 主体元数据。 */
-export interface StageActorPlan {
+interface StageActorPlan {
   visualId: string
   version: number
   url: string

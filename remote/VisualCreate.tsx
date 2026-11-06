@@ -68,7 +68,7 @@ export function VisualCreate({
   const [previewUrl, setPreviewUrl] = useState('')
   const { run, busy, error } = useTask()
   const patch = (value: Partial<Studio>): void => {
-    // 草稿任何变化都推进整理修订，在途整理的响应不再落地。
+    // 草稿任何变化都推进整理修订，在途整理的响应不落地。
     interpretation.revise()
     setStudio(previous => ({ ...previous, ...value }))
   }

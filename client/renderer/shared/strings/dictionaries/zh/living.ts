@@ -7,9 +7,6 @@ export const living = {
       posts: '动态',
       diary: '日记',
       unread: '有未读信息',
-      wardrobe: '衣柜',
-      remote: '远程',
-      scene: '场景',
       settings: '设置',
       companionFallback: '伙伴',
       mainNavAria: '功能导航'

@@ -14,7 +14,7 @@ const interpretation = new InterpretationGuard()
 
 export const $actionsUi = ui
 
-/** 草稿唯一写入口：任何变化都推进整理修订，在途整理的响应不再落地。 */
+/** 草稿唯一写入口：任何变化都推进整理修订，在途整理的响应不落地。 */
 export function updateActionsComposer(
   next: ActionComposerSnapshot | null | ((current: ActionComposerSnapshot | null) => ActionComposerSnapshot | null)
 ): void {

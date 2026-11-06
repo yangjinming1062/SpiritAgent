@@ -88,7 +88,7 @@ export function toScene(row: SceneWire, url: string, imageLoadFailed = false): S
 }
 
 /** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */
-export async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<string> {
+async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<string> {
   const url = row.url || ''
 
   if (url && !url.startsWith('data:') && !url.startsWith('http:') && !url.startsWith('https:')) {
@@ -172,7 +172,7 @@ export function cacheSceneDetails(entries: SceneAsset[], read: number): void {
   $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
-export async function preload(url: string): Promise<void> {
+async function preload(url: string): Promise<void> {
   if (!url) {
     return
   }
