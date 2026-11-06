@@ -3,31 +3,21 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { AppContentPage } from '@/app/components/app-content-page'
-import {
-  $appNavigationRevision,
-  $appNavigationTarget,
-  $appPage,
-  applyAppNavigation
-} from '@/app/navigation/app-navigation'
+import { $appNavigationRevision, $appNavigationTarget, $appPage } from '@/app/navigation/app-navigation'
+import { useMainWindowHydration } from '@/app/workflows/window-hydration'
+import { useSurfaceNavigation } from '@/app/workflows/window-navigation'
 import { PresentationModeButton } from '@/features/character'
 import { CompanionMenu } from '@/features/character/surface-companion'
 import {
   $chatSessionId,
   $companionSessionId,
-  ensureCompanionSession,
   getConversationRuntime,
   pendingMessages,
-  setChatSession,
-  switchSession,
   useConversationUnread
 } from '@/features/conversation'
 import { ConversationPage } from '@/features/conversation/conversation-page'
-import { hydrateScene } from '@/features/creation/environment'
-import { hydrateDiaryUnread } from '@/features/life/diary'
 import { LifeArea, LifeDrawer } from '@/features/life/life-area'
-import { hydratePostsUnread } from '@/features/life/posts'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Home } from '@/shared/lib/icons'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
@@ -45,7 +35,7 @@ import {
 import { $uiStateError, $uiStateReady, retryUiState } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
 import { BTN_SUBTLE, WindowControls } from '@/ui'
-import type { AppNavigationTarget, AppPage } from '@ipc/contracts'
+import type { AppPage } from '@ipc/contracts'
 
 import { MainRail } from './main-rail'
 import styles from './main.module.css'
@@ -53,7 +43,6 @@ import styles from './main.module.css'
 export function MainRoot(): React.JSX.Element {
   useWindowMouseCapture(1, { setIgnoreMouseEvents: shellApi().surface.setIgnoreMouseEvents })
   const shellRef = useRef<HTMLDivElement>(null)
-  const pendingNavigation = useRef<AppNavigationTarget | null>(null)
   useInteractiveRegion('main-shell', shellRef, undefined, undefined, 1)
   const page = useStore($appPage)
   const target = useStore($appNavigationTarget)
@@ -71,7 +60,6 @@ export function MainRoot(): React.JSX.Element {
   const [foreground, setForeground] = useState(() => document.hasFocus())
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible')
   const [overlayOpen, setOverlayOpen] = useState(false)
-  const beginAsync = useAsyncGuard()
   const dict = useStrings()
   const t = dict.living.rail
 
@@ -118,6 +106,17 @@ export function MainRoot(): React.JSX.Element {
       ? { key: target.focus.messageKey, request: navigationRevision }
       : undefined
 
+  useSurfaceNavigation(t.chat)
+  useMainWindowHydration({
+    authenticated,
+    accountId,
+    gatewayState,
+    uiStateReady,
+    visible,
+    foreground,
+    errorLabel: t.chat
+  })
+
   useEffect(() => {
     const updateFocus = (): void => setForeground(document.hasFocus())
     const updateVisibility = (): void => setDocumentVisible(document.visibilityState === 'visible')
@@ -146,79 +145,6 @@ export function MainRoot(): React.JSX.Element {
 
     return () => $mainChatActive.set(false)
   }, [page, active])
-
-  useEffect(() => {
-    const navigate = (next: AppNavigationTarget): void => {
-      if ($auth.get().kind !== 'authenticated' || !$uiStateReady.get()) {
-        pendingNavigation.current = next
-
-        return
-      }
-
-      const isLive = beginAsync()
-      void applyAppNavigation(next).catch(error => {
-        if (isLive()) {
-          notifyError(error, t.chat)
-        }
-      })
-    }
-
-    const stop = shellApi().surface.onNavigate(navigate)
-
-    if (authenticated && uiStateReady && pendingNavigation.current) {
-      const next = pendingNavigation.current
-      pendingNavigation.current = null
-      navigate(next)
-    }
-
-    return stop
-  }, [authenticated, uiStateReady, beginAsync, t.chat])
-
-  useEffect(() => {
-    if (!authenticated || !uiStateReady || gatewayState !== 'open') {
-      return
-    }
-
-    void hydrateScene()
-    const accountCurrent = beginAsync()
-    let disposed = false
-    const isLive = (): boolean => !disposed && accountCurrent() && $uiStateReady.get()
-    void ensureCompanionSession()
-      .then(async sessionId => {
-        if (!isLive()) {
-          return
-        }
-
-        if (sessionId && !$chatSessionId.get()) {
-          setChatSession(sessionId)
-        }
-
-        const selected = $chatSessionId.get()
-
-        if (selected) {
-          await switchSession(selected)
-        }
-      })
-      .catch(error => {
-        if (isLive()) {
-          notifyError(error, t.chat)
-        }
-      })
-
-    return () => {
-      disposed = true
-    }
-  }, [authenticated, uiStateReady, accountId, gatewayState, beginAsync, t.chat])
-
-  // 未读补查：网关连通或界面可见时各查一次；同一轮不重复触发，避免在途结果被自己作废。
-  useEffect(() => {
-    if (!authenticated || (gatewayState !== 'open' && !visible)) {
-      return
-    }
-
-    void hydratePostsUnread()
-    void hydrateDiaryUnread()
-  }, [visible, foreground, authenticated, accountId, gatewayState])
 
   useEffect(() => {
     const element = workspaceRef.current

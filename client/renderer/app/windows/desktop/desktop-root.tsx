@@ -3,41 +3,27 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppContentPage } from '@/app/components/app-content-page'
-import {
-  $appNavigationRevision,
-  $appPage,
-  applyAppNavigation,
-  openCreation,
-  setAppPage
-} from '@/app/navigation/app-navigation'
+import { $appNavigationRevision, $appPage, openCreation, setAppPage } from '@/app/navigation/app-navigation'
+import { useDesktopWindowHydration } from '@/app/workflows/window-hydration'
+import { useDesktopNavigation } from '@/app/workflows/window-navigation'
 import { AccountMenu } from '@/features/accounts/account-menu'
-import { $portraitUrl, hydratePersona, hydratePortrait } from '@/features/character'
+import { $portraitUrl } from '@/features/character'
 import {
-  $chatSessionId,
   $companionSessionId,
-  ensureCompanionSession,
   setChatSession,
   switchSession,
   useConversationUnread
 } from '@/features/conversation'
 import { ConversationPage } from '@/features/conversation/conversation-page'
 import { $creationBusy } from '@/features/creation'
-import { hydrateScene } from '@/features/creation/environment'
-import {
-  $visualsError,
-  $visualsJobs,
-  $visualsPresentation,
-  $visualsPresentationError
-} from '@/features/creation/visuals'
-import { $diaryHasUnread, hydrateDiaryUnread } from '@/features/life/diary'
-import { $postsHasUnread, hydratePostsUnread } from '@/features/life/posts'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { $diaryHasUnread } from '@/features/life/diary'
+import { $postsHasUnread } from '@/features/life/posts'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
-import { $gateway, $gatewayState } from '@/shared/store/gateway'
+import { $gatewayState } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
@@ -52,7 +38,7 @@ import { DesktopCompanionBubble } from './desktop-companion-bubble'
 import { DesktopControls } from './desktop-controls'
 import { useDesktopLayout } from './desktop-layout'
 import { DesktopProductNav } from './desktop-product-nav'
-import { useDesktopVisualWallpaper } from './desktop-visual-wallpaper'
+import { useDesktopVisualWallpaper, useDesktopWallpaperStatus } from './desktop-visual-wallpaper'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
 
@@ -60,13 +46,18 @@ export function DesktopRoot(): React.JSX.Element {
   useDesktopVisualWallpaper()
   const strings = useStrings()
   const t = strings.desktopShell
-  const visuals = strings.visuals
   const auth = useStore($auth)
   const uiStateReady = useStore($uiStateReady)
   const appPage = useStore($appPage)
   const navigationRevision = useStore($appNavigationRevision)
   const gatewayState = useStore($gatewayState)
-  const gateway = useStore($gateway)
+  const { unreadReveal, reveal, clearReveal } = useDesktopNavigation(t.chat)
+  useDesktopWindowHydration({
+    authenticated: auth.kind === 'authenticated',
+    gatewayState,
+    uiStateReady,
+    errorLabel: t.chat
+  })
   const screenLocked = useStore($surfaceScreenLocked)
   const portrait = useStore($portraitUrl)
   const companionSessionId = useStore($companionSessionId)
@@ -74,9 +65,6 @@ export function DesktopRoot(): React.JSX.Element {
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const creationBusy = useStore($creationBusy)
-  const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
-  const beginAsync = useAsyncGuard()
-  const revealRequest = useRef(0)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
   const isMac = desktopPlatform() === 'darwin'
@@ -97,26 +85,7 @@ export function DesktopRoot(): React.JSX.Element {
   const rail = getDesktopRailLayout(Math.max(0, viewport.width - 2 * Math.max(safeLeft, safeRight)))
   const popupBottom = safeBottom + DESKTOP_LAYOUT.bottomInset
 
-  const videoState = useStore($visualsPresentation)
-  const presentationError = useStore($visualsPresentationError)
-  const libraryError = useStore($visualsError)
-  const videoError = presentationError ?? libraryError
-
-  const busyJobs = useStore($visualsJobs).filter(
-    job => job.state === 'running' || job.state === 'queued' || job.state === 'paused'
-  )
-
-  const idleVideo = videoState?.loop_visual ?? videoState?.current_visual
-
-  const wallpaperStatus =
-    videoError ||
-    (busyJobs.length > 0
-      ? busyJobs.some(job => job.state === 'paused')
-        ? visuals.paused
-        : strings.common.actionVariants.statuses.processing
-      : !idleVideo
-        ? visuals.emptyTitle
-        : null)
+  const wallpaper = useDesktopWallpaperStatus()
 
   const [mainChatFocused, setMainChatFocused] = useState(false)
   const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
@@ -129,7 +98,6 @@ export function DesktopRoot(): React.JSX.Element {
     top: DESKTOP_LAYOUT.contentInset
   })
 
-  const initialized = useRef(false)
   const handledNavigationRevision = useRef(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -246,12 +214,18 @@ export function DesktopRoot(): React.JSX.Element {
 
     if (companionSessionId) {
       setChatSession(companionSessionId)
-      setUnreadReveal(firstUnheard ? { key: firstUnheard, request: ++revealRequest.current } : undefined)
+
+      if (firstUnheard) {
+        reveal(firstUnheard)
+      } else {
+        clearReveal()
+      }
+
       void switchSession(companionSessionId)
     } else {
-      setUnreadReveal(undefined)
+      clearReveal()
     }
-  }, [activatePanel, companionSessionId, firstUnheard])
+  }, [activatePanel, clearReveal, companionSessionId, firstUnheard, reveal])
 
   const openAccountMenu = (): void => {
     setOverlay('account')
@@ -262,25 +236,6 @@ export function DesktopRoot(): React.JSX.Element {
   }, [mainChatActive])
 
   useEffect(() => () => $desktopChatActive.set(false), [])
-
-  useEffect(
-    () =>
-      shellApi().desktop.onNavigate(payload => {
-        const isLive = beginAsync()
-        void applyAppNavigation(payload)
-          .then(() => {
-            if (isLive() && payload.focus.page === 'chat' && payload.focus.messageKey) {
-              setUnreadReveal({ key: payload.focus.messageKey, request: ++revealRequest.current })
-            }
-          })
-          .catch(error => {
-            if (isLive()) {
-              notifyError(error, t.chat)
-            }
-          })
-      }),
-    [beginAsync, t.chat]
-  )
 
   useEffect(() => {
     if (!uiStateReady || navigationRevision <= handledNavigationRevision.current) {
@@ -331,50 +286,6 @@ export function DesktopRoot(): React.JSX.Element {
 
     return () => window.removeEventListener('blur', closeMenus)
   }, [desktopVisible])
-
-  useEffect(() => {
-    if (auth.kind !== 'authenticated') {
-      return
-    }
-
-    void hydratePersona()
-    void hydratePortrait()
-    void hydrateScene()
-    void hydratePostsUnread()
-    void hydrateDiaryUnread()
-  }, [auth.kind, gatewayState])
-
-  useEffect(() => {
-    if (gatewayState !== 'open' || !uiStateReady) {
-      return
-    }
-
-    let disposed = false
-    void ensureCompanionSession()
-      .then(id => {
-        if (disposed || !id) {
-          return
-        }
-
-        if (!initialized.current) {
-          initialized.current = true
-          const target = new URLSearchParams(window.location.search).get('sessionId')
-
-          const selected = target || $chatSessionId.get() || id
-          setChatSession(selected)
-          void switchSession(selected)
-        }
-      })
-      .catch(error => {
-        if (!disposed) {
-          notifyError(error, t.chat)
-        }
-      })
-
-    return () => {
-      disposed = true
-    }
-  }, [gateway, gatewayState, uiStateReady, t.chat])
 
   useDismissOnOutside(menuRef, accountOpen, () => setOverlay(null))
 
@@ -549,8 +460,8 @@ export function DesktopRoot(): React.JSX.Element {
         onOpenChange={controlsOpenChange}
         onOpenVisuals={() => void openCreation('visuals')}
         open={overlay === 'controls'}
-        wallpaperError={Boolean(videoError)}
-        wallpaperStatus={wallpaperStatus}
+        wallpaperError={wallpaper.error}
+        wallpaperStatus={wallpaper.status}
       />
     </div>
   )

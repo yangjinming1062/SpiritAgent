@@ -1,18 +1,19 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { deriveVisualPresentationTarget } from '@/app/workflows/visual-presentation'
 import { $motionLevel } from '@/features/character'
 import {
   $performance,
   $stagePlan,
+  $visualsError,
   $visualsJobs,
   $visualsPresentation,
+  $visualsPresentationError,
   bindPresentationDirector,
   claimVisualPlay,
-  deriveStagePlan,
   refreshVisualPresentation,
   refreshVisuals,
-  resolveAmbientLoop,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
@@ -27,22 +28,37 @@ import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
-import type { DesktopBackgroundRequest } from '@ipc/contracts'
+import { useStrings } from '@/shared/strings'
 
 function hasTerminalReceipt(statuses: ReadonlySet<ReceiptStatus> | undefined): boolean {
   return statuses !== undefined && [...statuses].some(status => status !== 'started')
 }
 
-function firstNonBlank(...values: readonly (string | null | undefined)[]): string | null {
-  return values.find(value => typeof value === 'string' && value.trim().length > 0) ?? null
-}
-
-/** 成品展示地址只用于取数；缓存与预加载身份认稳定 ID、成品版本与剥除签名后的不可变路径。 */
-function assetPath(url: string | null | undefined): string | null {
-  return url ? url.split('?')[0] : null
-}
-
 type ReceiptStatus = 'started' | 'finished' | 'failed' | 'interrupted'
+
+// 桌面壁纸状态由呈现事实与任务进度推导，桌面根组件只消费结果。
+export function useDesktopWallpaperStatus(): { error: boolean; status: string | null } {
+  const strings = useStrings()
+  const presentation = useStore($visualsPresentation)
+  const presentationError = useStore($visualsPresentationError)
+  const libraryError = useStore($visualsError)
+  const jobs = useStore($visualsJobs)
+  const error = presentationError ?? libraryError
+  const busy = jobs.filter(job => job.state === 'running' || job.state === 'queued' || job.state === 'paused')
+  const idle = presentation?.loop_visual ?? presentation?.current_visual
+
+  const status = error
+    ? error
+    : busy.length > 0
+      ? busy.some(job => job.state === 'paused')
+        ? strings.visuals.paused
+        : strings.common.actionVariants.statuses.processing
+      : !idle
+        ? strings.visuals.emptyTitle
+        : null
+
+  return { error: Boolean(error), status }
+}
 
 export function useDesktopVisualWallpaper(): void {
   const auth = useStore($auth)
@@ -64,9 +80,6 @@ export function useDesktopVisualWallpaper(): void {
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const publishedKey = useRef('')
   const paused = locked || presentation.fullscreen || reduceMotion
-
-  // 持续画面优先于当前影像；图片即持续画面，视频按 clip_kind 循环或短时播放。
-  const baseline = projection?.loop_visual ?? projection?.current_visual ?? null
 
   const pendingPlay = performance.command
   const staticTarget = pendingPlay ? null : projection?.static_presentation
@@ -356,79 +369,41 @@ export function useDesktopVisualWallpaper(): void {
 
   const stagePlan = useStore($stagePlan)
 
-  const selectedPlan = deriveStagePlan(
-    projection,
-    activeCommand,
-    resolveAmbientLoop(projection),
-    motionLevel === 'subtle',
-    stagePlan.scene
+  const request = useMemo(
+    () =>
+      active && authSessionId
+        ? deriveVisualPresentationTarget({
+            authSessionId,
+            projection,
+            activeCommand,
+            staticTarget,
+            stagePlan,
+            failedCinematic,
+            theme,
+            subtle: motionLevel === 'subtle',
+            motionEnabled: motionLevel !== 'off',
+            reduceMotion,
+            paused
+          })
+        : null,
+    [
+      active,
+      authSessionId,
+      activeCommand,
+      projection,
+      staticTarget,
+      stagePlan,
+      failedCinematic,
+      theme,
+      motionLevel,
+      reduceMotion,
+      paused
+    ]
   )
 
-  const layerActor = selectedPlan.actor
-  const layerScene = selectedPlan.scene
-  const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null
-  const cinematic = selectedPlan.cinematic
-
-  const cinematicKey = full
-    ? `${full.visual_id}:${full.visual_version}`
-    : cinematic
-      ? `${cinematic.visual_id}:${cinematic.version}`
-      : null
-
-  const layered = !cinematicKey || cinematicKey === failedCinematic
-  const sceneCommand = activeCommand?.asset_kind === 'scene' ? activeCommand : null
-  const motionEnabled = motionLevel !== 'off'
-
-  const videoUrl = !motionEnabled
-    ? null
-    : !layered
-      ? assetPath(
-          full?.media_kind === 'video'
-            ? full.media_path
-            : cinematic?.media_kind === 'video'
-              ? cinematic.media_url
-              : null
-        )
-      : assetPath(
-          sceneCommand?.media_kind === 'video' ? sceneCommand.media_path : layerScene?.isVideo ? layerScene.url : null
-        )
-
-  const posterUrl = !layered
-    ? firstNonBlank(
-        assetPath(full?.media_kind === 'image' ? full.media_path : full?.poster_path),
-        assetPath(cinematic?.media_kind === 'image' ? cinematic.media_url : cinematic?.poster_url)
-      )
-    : firstNonBlank(
-        assetPath(sceneCommand?.media_kind === 'image' ? sceneCommand.media_path : sceneCommand?.poster_path),
-        assetPath(layerScene?.isVideo ? layerScene.posterUrl : layerScene?.url),
-        assetPath(staticTarget?.scene?.path),
-        assetPath(projection?.composition?.scene_material?.path),
-        assetPath(projection?.actual.scene_path)
-      )
-
-  const actorUrl = motionEnabled && layered ? assetPath(layerActor?.url) : null
-
-  const outfitUrl = layered
-    ? firstNonBlank(
-        assetPath(activeCommand?.outfit?.path),
-        assetPath(staticTarget?.outfit?.path),
-        assetPath(projection?.composition?.outfit_material?.path),
-        assetPath(projection?.actual.outfit_path)
-      )
-    : null
-
-  const backgroundId = layered
-    ? (sceneCommand?.visual_id ?? layerScene?.visualId ?? null)
-    : (full?.visual_id ?? cinematic?.visual_id ?? null)
-
-  const backgroundVersion = layered
-    ? (sceneCommand?.visual_version ?? layerScene?.version ?? null)
-    : (full?.visual_version ?? cinematic?.version ?? null)
-
-  const phaseMedia = layered && (layerScene?.phaseMatched ?? false)
-
+  // 发布只在目标真正变化时发生；失败保留当前画面并把回执记到认领指令上。
   useEffect(() => {
-    if (!active || !authSessionId) {
+    if (!active || !authSessionId || !request) {
       return
     }
 
@@ -437,46 +412,6 @@ export function useDesktopVisualWallpaper(): void {
 
     if (staticTarget?.retry_at && Date.parse(staticTarget.retry_at) > Date.now()) {
       return
-    }
-
-    const request: DesktopBackgroundRequest = {
-      authSessionId,
-      video: videoUrl ? { url: videoUrl } : null,
-      poster: posterUrl ? { url: posterUrl } : null,
-      outfit: outfitUrl ? { url: outfitUrl } : null,
-      actor: actorUrl ? { url: actorUrl } : null,
-      playId:
-        activeCommand?.play_id ??
-        staticTarget?.request_id ??
-        (!layered && cinematicKey ? `render:cinematic:${cinematicKey}` : null),
-      playTarget: activeCommand?.asset_kind === 'actor' ? 'actor' : 'background',
-      actorBaseKey: stagePlan.actor ? `${stagePlan.actor.visualId}:${stagePlan.actor.version}` : null,
-      layout: {
-        layerOrder: stagePlan.layout.layer_order,
-        fit: stagePlan.layout.fit,
-        actorPosition: stagePlan.layout.actor_position,
-        safeArea: stagePlan.layout.safe_area
-      },
-      visualId: backgroundId,
-      visualVersion: backgroundVersion,
-      actorVisualId: layered ? (layerActor?.visualId ?? null) : null,
-      actorVisualVersion: layered ? (layerActor?.version ?? null) : null,
-      presentationEpoch: staticTarget?.presentation_epoch ?? projection?.presentation_epoch ?? 0,
-      expiresAt: staticTarget ? null : (activeCommand?.expires_at ?? null),
-      kind: activeCommand && activeCommand.asset_kind !== 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
-      // 基础主体层只含循环成品（stage-plan 已滤除 once），仅指令主体可有一次动作。
-      actorKind: activeCommand?.asset_kind === 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
-      // 短动作结束后返回保留的持续画面；独立播放不关联基准。
-      continuity: !layered && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
-      transition: staticTarget ? 'fade' : (activeCommand?.transition ?? 'natural'),
-      geometryMode: 'target',
-      inputImageHash: layered ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
-      theme,
-      reduceMotion: reduceMotion || !motionEnabled,
-      paused: paused || !motionEnabled,
-      backgroundKind: layered ? 'scene' : 'cinematic',
-      phaseMedia,
-      clear: !videoUrl && !posterUrl && !actorUrl
     }
 
     const key = JSON.stringify(request)
@@ -505,35 +440,7 @@ export function useDesktopVisualWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [
-    active,
-    authSessionId,
-    activeCommand,
-    baseline?.input_image_hash,
-    projection?.presentation_epoch,
-    stagePlan,
-    cinematicKey,
-    backgroundId,
-    backgroundVersion,
-    videoUrl,
-    posterUrl,
-    outfitUrl,
-    actorUrl,
-    layered,
-    layerActor?.visualId,
-    layerActor?.version,
-    layerActor?.loop,
-    layerScene,
-    sceneCommand,
-    phaseMedia,
-    staticTarget,
-    theme,
-    motionEnabled,
-    motionLevel,
-    reduceMotion,
-    paused,
-    recordReceipt
-  ])
+  }, [active, authSessionId, request, staticTarget, activeCommand, recordReceipt])
 
   useEffect(() => {
     const scope = captureAuthScope()
