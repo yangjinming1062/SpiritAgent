@@ -35,6 +35,7 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import read_state
 from features.media.visual_semantics import ActionMotionIntensity, ActionPerformanceRole, DayPhase, SemanticTag
 from features.scenes.queries import list_scenes, scene_snapshot
+from features.scenes.query_contracts import SceneSnapshot
 from features.visuals import service as visuals_service
 from features.visuals.interpret import interpret_visual_description
 from features.visuals.queries import creation_request, presentation_state
@@ -519,6 +520,15 @@ class VisualDraftError(ValueError):
         self.code = code
 
 
+def _require_ready_scene(scene: SceneSnapshot | None) -> None:
+    """环境素材必须存在且已就绪；整理出的草稿按同一错误码判断是否需要重新整理。"""
+
+    if scene is None:
+        raise VisualDraftError("material_missing", "所选环境不存在")
+    if scene.status != "ready" or not scene.media_path:
+        raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
+
+
 async def _require_materials(
     user_id: int, *, outfit_id: int | None = None, scene_id: int | None = None, action_id: int | None = None
 ) -> None:
@@ -532,10 +542,7 @@ async def _require_materials(
     if outfit_id is not None and (outfit is None or not outfit.fullbody_url):
         raise VisualDraftError("material_not_ready", "所选造型不存在或尚未就绪")
     if scene_id is not None:
-        if scene is None:
-            raise VisualDraftError("material_missing", "所选环境不存在")
-        if scene.status != "ready" or not scene.media_path:
-            raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
+        _require_ready_scene(scene)
     if action_id is not None:
         if action is None:
             raise VisualDraftError("material_missing", "所选动作不存在")
@@ -617,10 +624,7 @@ async def generate_scene_media_reference(
             return job
         async with SESSION_LOCAL() as db:
             scene = await scene_snapshot(db, user_id, scene_id)
-        if scene is None:
-            raise VisualDraftError("material_missing", "所选环境不存在")
-        if scene.status != "ready" or not scene.media_path:
-            raise VisualDraftError("material_not_ready", "所选环境尚未就绪")
+        _require_ready_scene(scene)
         state = await presentation_state(user_id, with_catalog=False)
         scene_hash = await asyncio.to_thread(_asset_hash, scene.media_path)
         combo = VisualSnapshot(
