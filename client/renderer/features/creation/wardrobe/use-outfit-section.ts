@@ -1,28 +1,18 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { $avatarSeeds, hydrateAvatarSeeds } from '@/features/character'
 import { type PickedImage, resolvePortraitUrl } from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import type { LocalSearch } from '@/shared/hooks/use-local-search'
-import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
-import { currentClearEpoch } from '@/shared/lib/storage'
-import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
 import { $appearanceUi, selectAppearanceDraft, updateAppearanceUi } from './appearance-ui-state'
 import { useOutfitDesignSession } from './design-session'
-import {
-  $outfitPolicy,
-  $outfits,
-  $wardrobeStatus,
-  deleteOutfit,
-  hydrateWardrobe,
-  retryOutfitDescription,
-  setOutfitPolicy
-} from './wardrobe-store'
+import { useOutfitLibrary } from './use-outfit-library'
+import { hydrateWardrobe } from './wardrobe-store'
 
 /** 造型列表与制作共用的状态、会话与命令；视图只消费返回值。 */
 export function useOutfitSection({
@@ -32,64 +22,26 @@ export function useOutfitSection({
   onSelectOutfit: (id: string) => void
   search: LocalSearch
 }) {
-  const outfits = useStore($outfits)
-  const wardrobeStatus = useStore($wardrobeStatus)
-  const outfitPolicy = useStore($outfitPolicy)
-  const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
   const t = dict.living.outfit
   const common = dict.common
   const selfSourceDict = dict.selfSource
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [policyBusy, setPolicyBusy] = useState(false)
-  const [zoomUrl, setZoomUrl] = useState<string | null>(null)
-  const [failedPreview, setFailedPreview] = useState<string | null>(null)
-  const [loadedPreview, setLoadedPreview] = useState<string | null>(null)
+  const avatarSeeds = useStore($avatarSeeds)
   const ui = useStore($appearanceUi)
   const { text, draftId } = ui
   // 制作区与列表滚动位置随组件生命周期，不跨菜单保留。
   const [designing, setDesigning] = useState(false)
-  const libraryRef = useRef<HTMLDivElement>(null)
-  const listScrollRef = useRef(0)
-  const visibleOutfits = outfits.filter(outfit => search.matches(outfit.name, outfit.description))
+  const library = useOutfitLibrary({ restoreKey: designing })
+  const { outfits, wardrobeStatus } = library
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null)
+  const [failedPreview, setFailedPreview] = useState<string | null>(null)
+  const [loadedPreview, setLoadedPreview] = useState<string | null>(null)
   const setText = (next: string): void => updateAppearanceUi({ text: next })
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const begin = useAsyncGuard()
-
-  // 进入列表时恢复上次离开的滚动位置；滚动写入按帧合并。
-  useLayoutEffect(() => {
-    const element = libraryRef.current
-
-    if (element) {
-      element.scrollTop = listScrollRef.current
-    }
-
-    let frame = 0
-
-    const savePosition = (): void => {
-      if (frame !== 0) {
-        return
-      }
-
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        listScrollRef.current = element?.scrollTop ?? 0
-      })
-    }
-
-    element?.addEventListener('scroll', savePosition)
-
-    return () => {
-      element?.removeEventListener('scroll', savePosition)
-
-      if (frame !== 0) {
-        window.cancelAnimationFrame(frame)
-        frame = 0
-      }
-    }
-  }, [designing])
+  const visibleOutfits = outfits.filter(outfit => search.matches(outfit.name, outfit.description))
 
   // 确认入柜后重拉列表——新装转为参考图就绪。
   const session = useOutfitDesignSession(
@@ -158,59 +110,10 @@ export function useOutfitSection({
     messagesRef.current?.scrollTo?.({ top: messagesRef.current.scrollHeight })
   }, [session.messages])
 
-  const withBusy = (id: string, action: () => Promise<unknown>): void => {
-    const epoch = currentClearEpoch()
-    setBusyId(id)
-    void action().finally(() => {
-      if (epoch === currentClearEpoch()) {
-        setBusyId(null)
-      }
-    })
-  }
-
-  const completeDescription = (id: string): void => {
-    const epoch = currentClearEpoch()
-
-    withBusy(id, async () => {
-      try {
-        await retryOutfitDescription(id)
-      } catch (err) {
-        log.warn('outfit', 'retry description failed', err)
-
-        if (epoch === currentClearEpoch()) {
-          notifyError(err, t.descriptionRetryFailed)
-        }
-      }
-    })
-  }
-
-  const removeOutfit = (id: string): void => {
-    withBusy(id, async () => {
-      try {
-        await deleteOutfit(id)
-      } catch (err) {
-        log.warn('outfit', 'delete failed', err)
-        notifyError(err, t.deleteFailed)
-      }
-    })
-  }
-
   const startDesign = (): void => {
     selectAppearanceDraft(null)
     setDesigning(true)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }
-
-  const togglePolicy = async (): Promise<void> => {
-    setPolicyBusy(true)
-    const epoch = currentClearEpoch()
-    const next = outfitPolicy === 'locked' ? 'llm_may_replace' : 'locked'
-    const saved = await setOutfitPolicy(next)
-    setPolicyBusy(false)
-
-    if (!saved && epoch === currentClearEpoch()) {
-      notify({ kind: 'error', message: t.policyFailed, title: t.policyFailed })
-    }
   }
 
   const previewUrl = session.draft?.previewUrl ?? null
@@ -304,10 +207,10 @@ export function useOutfitSection({
 
   return {
     adoptOutfitSelfSource,
-    busyId,
+    busyId: library.busyId,
     onSelectOutfit,
     common,
-    completeDescription,
+    completeDescription: library.completeDescription,
     creationLocked,
     designing,
     dict,
@@ -317,16 +220,16 @@ export function useOutfitSection({
     hydrateAvatarSeeds,
     inputRef,
     latestMessage,
-    libraryRef,
+    libraryRef: library.libraryRef,
     loadedPreview,
     messagesRef,
-    outfitPolicy,
+    outfitPolicy: library.outfitPolicy,
     outfitSelfSourceOpen,
     outfitSelfSourceReferences,
-    policyBusy,
+    policyBusy: library.policyBusy,
     previewFailed,
     previewUrl,
-    removeOutfit,
+    removeOutfit: library.removeOutfit,
     search,
     selfSourceDict,
     sendCreation,
@@ -341,7 +244,7 @@ export function useOutfitSection({
     startDesign,
     t,
     text,
-    togglePolicy,
+    togglePolicy: library.togglePolicy,
     viewWardrobe,
     visibleOutfits,
     wardrobeStatus,

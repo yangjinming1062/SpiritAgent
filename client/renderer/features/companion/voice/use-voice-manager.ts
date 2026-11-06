@@ -1,24 +1,17 @@
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { $companionVoiceId, applyServerCompanionVoiceId, setCompanionVoiceId } from '@/features/character'
-import { playDataUrl } from '@/features/speech'
-import { speakScripted } from '@/features/speech'
+import { $companionVoiceId } from '@/features/character'
 import {
   $voiceCatalogRevision,
   fetchVoiceCatalogRaw,
   matchVoicePreference,
-  sampleLine,
   type VoiceCatalog,
   type VoiceDesignPreview,
   voiceSelectionId
 } from '@/features/speech'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { failureText, isClientErrorIpc } from '@/shared/lib/ipc-error'
-import { log } from '@/shared/lib/log'
-import { requestResource } from '@/shared/lib/resource-request'
-import { backendApi } from '@/shared/platform/desktop'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { $surfaceRole, $surfaceScreenLocked, $surfaceSpriteVisible } from '@/shared/store/surfaces'
@@ -26,14 +19,10 @@ import { useStrings } from '@/shared/strings'
 import { type CreationFeedbackState } from '@/ui'
 
 import { useVoiceSample } from '../use-voice-sample'
-import {
-  $voiceCreation,
-  beginVoiceConfirmation,
-  cancelVoiceCreation,
-  createDesignedVoice,
-  updateVoiceCreation,
-  type VoiceTab
-} from '../voice-creation-store'
+import { $voiceCreation, createDesignedVoice, updateVoiceCreation, type VoiceTab } from '../voice-creation-store'
+
+import { useVoiceOperations, type VoiceSelectionHandler } from './use-voice-operations'
+import { useVoicePreview } from './use-voice-preview'
 
 export interface VoiceManagerProps {
   name: string
@@ -41,12 +30,7 @@ export interface VoiceManagerProps {
   compact?: boolean
   preference?: string
   disabled?: boolean
-  onVoiceSelected?: (
-    voiceId: string,
-    label: string,
-    serverConfirmed: boolean,
-    isSelectionCurrent?: () => boolean
-  ) => Promise<boolean | void>
+  onVoiceSelected?: VoiceSelectionHandler
 }
 
 export function useVoiceManager({
@@ -83,6 +67,7 @@ export function useVoiceManager({
       activeRef.current = false
     }
   }, [active])
+
   const begin = useAsyncGuard()
   const [catalog, setCatalog] = useState<VoiceCatalog | null>(null)
   const [catalogStatus, setCatalogStatus] = useState<'loading' | 'error' | 'ready'>('loading')
@@ -105,11 +90,6 @@ export function useVoiceManager({
 
   const [genderFilter, setGenderFilter] = useState('')
   const [showAll, setShowAll] = useState(false)
-  const [playbackError, setPlaybackError] = useState<string | null>(null)
-  const [playing, setPlaying] = useState<string | null>(null)
-  const previewAbort = useRef<AbortController | null>(null)
-  const playbackGeneration = useRef(0)
-  const operation = useRef<ReturnType<typeof beginVoiceConfirmation>>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const sample = useVoiceSample(active && tab === 'clone')
   const selectedSample = sample.sample
@@ -118,33 +98,35 @@ export function useVoiceManager({
   const blocked = disabled || busy || outcome === 'unknown' || sample.busy || !active
   const playbackBlocked = disabled || sample.recording || !active || operationState === 'cancelling'
 
+  const preview = useVoicePreview({
+    active,
+    name,
+    onBeforePlay: sample.clearError,
+    viewEligible
+  })
+
+  const operations = useVoiceOperations({
+    active,
+    begin,
+    clearPlaybackError: () => preview.setPlaybackError(null),
+    clearSampleError: sample.clearError,
+    disabled,
+    locale,
+    onCatalog: setCatalog,
+    onSaved: () => setReload(value => value + 1),
+    onVoiceSelected,
+    sampleBusy: sample.busy,
+    stopPreview: preview.stop,
+    t,
+    viewEligible
+  })
+
   useEffect(() => {
     const onVisibility = (): void => setDocumentVisible(document.visibilityState === 'visible')
     document.addEventListener('visibilitychange', onVisibility)
 
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [])
-
-  const stopPlayback = useCallback(() => {
-    playbackGeneration.current += 1
-    previewAbort.current?.abort()
-    previewAbort.current = null
-    setPlaying(null)
-  }, [])
-
-  useEffect(() => {
-    if (!active) {
-      stopPlayback()
-      operation.current?.invalidate()
-      operation.current = null
-    }
-
-    return () => {
-      stopPlayback()
-      operation.current?.invalidate()
-      operation.current = null
-    }
-  }, [active, stopPlayback])
 
   useEffect(() => {
     if (!active || gateway !== 'open') {
@@ -208,267 +190,8 @@ export function useVoiceManager({
     }
   }, [active, gateway, locale, reload, preference, catalogRevision, t.loadFailed, begin])
 
-  const beginPlayback = (): AbortSignal | null => {
-    if (!viewEligible()) {
-      return null
-    }
-
-    stopPlayback()
-    const controller = new AbortController()
-    previewAbort.current = controller
-
-    return controller.signal
-  }
-
-  const playPreview = async (
-    key: string,
-    play: (signal: AbortSignal, live: () => boolean) => Promise<void>
-  ): Promise<void> => {
-    if (playing === key) {
-      stopPlayback()
-
-      return
-    }
-
-    const signal = beginPlayback()
-
-    if (!signal) {
-      return
-    }
-
-    const mounted = begin()
-    const live = (): boolean => !signal.aborted && mounted() && viewEligible()
-    setPlaybackError(null)
-    sample.clearError()
-    setPlaying(key)
-
-    try {
-      await play(signal, live)
-    } catch (failure) {
-      if (live()) {
-        setPlaybackError(failureText(failure, t.previewFailed))
-      }
-    } finally {
-      if (live()) {
-        setPlaying(null)
-      }
-    }
-  }
-
-  const previewAudio = (url: string): Promise<void> =>
-    playPreview(url, async (signal, live) => {
-      const dataUrl = url.startsWith('data:') ? url : await backendApi().apiAsset({ url, preferCache: true })
-
-      if (!dataUrl) {
-        throw new Error(t.previewFailed)
-      }
-
-      if (live() && (await playDataUrl(dataUrl, { signal })) === 'failed') {
-        throw new Error(t.previewFailed)
-      }
-    })
-
-  const previewFixed = (id: string): Promise<void> =>
-    playPreview(id, async signal => {
-      await speakScripted(sampleLine(name), id, 'voice.preview', signal)
-    })
-
-  const stopOperation = async (): Promise<void> => {
-    stopPlayback()
-    await cancelVoiceCreation()
-  }
-
-  const runOperation = async (action: (live: () => boolean) => Promise<void>, recovering = false): Promise<void> => {
-    if (disabled || sample.busy || !viewEligible() || operation.current) {
-      return
-    }
-
-    const claim = beginVoiceConfirmation(recovering)
-
-    if (!claim) {
-      return
-    }
-
-    operation.current = claim
-    const mounted = begin()
-    const live = (): boolean => mounted() && viewEligible() && operation.current === claim && claim.live()
-    stopPlayback()
-    setPlaybackError(null)
-    sample.clearError()
-
-    try {
-      await action(live)
-    } catch (failure) {
-      log.warn('voice-manager', 'Voice confirmation failed', failure)
-
-      if (live()) {
-        const definiteRejection = isClientErrorIpc(failure)
-        const unknown = !definiteRejection && $voiceCreation.get().confirmation !== null
-        const rejected = definiteRejection ? $voiceCreation.get().confirmation?.preview : null
-
-        updateVoiceCreation({
-          outcome: unknown ? 'unknown' : null,
-          error: failureText(failure, t.saveFailed),
-          ...(rejected
-            ? {
-                confirmation: null,
-                confirmationChecked: false,
-                ...(rejected.kind === 'design' ? { designPreview: null } : { clonePreview: null, cloneSampleId: null })
-              }
-            : {})
-        })
-      }
-    } finally {
-      claim.finish()
-
-      if (operation.current === claim) {
-        operation.current = null
-      }
-    }
-  }
-
-  const previewCreation = (create: () => Promise<VoiceDesignPreview | null>): void => {
-    if (blocked) {
-      return
-    }
-
-    stopPlayback()
-    setPlaybackError(null)
-    sample.clearError()
-    const mounted = begin()
-    const playbackVersion = playbackGeneration.current
-    void create().then(preview => {
-      if (preview && mounted() && viewEligible() && playbackVersion === playbackGeneration.current) {
-        void previewAudio(preview.trialAudioDataUrl)
-      }
-    })
-  }
-
   const runDesign = (mode: 'auto' | 'feedback' | 'preview'): void => {
-    previewCreation(() => createDesignedVoice(mode, name, preference))
-  }
-
-  const applyVoice = async (
-    id: string,
-    label: string,
-    serverConfirmed: boolean,
-    live: () => boolean
-  ): Promise<void> => {
-    if (onVoiceSelected) {
-      if ((await onVoiceSelected(id, label, serverConfirmed, live)) === false) {
-        throw new Error(t.saveFailed)
-      }
-    } else if (serverConfirmed) {
-      await applyServerCompanionVoiceId(id)
-    } else {
-      setCompanionVoiceId(id)
-    }
-  }
-
-  const adoptVoice = (id: string, label: string, preview?: VoiceDesignPreview, recovering = false): void => {
-    if (preview) {
-      const latest = $voiceCreation.get()
-
-      const candidate = recovering
-        ? latest.confirmation?.preview
-        : preview.kind === 'design'
-          ? latest.designPreview
-          : latest.clonePreview
-
-      const matchingInput =
-        recovering ||
-        (preview.kind === 'design'
-          ? latest.prompt.trim() === preview.prompt
-          : Boolean(latest.cloneSampleId && latest.cloneSampleId === latest.sample?.sample_id))
-
-      if (
-        !matchingInput ||
-        candidate?.candidateId !== preview.candidateId ||
-        candidate.expectedVersion !== preview.expectedVersion ||
-        candidate.voiceId !== id
-      ) {
-        return
-      }
-    }
-
-    void runOperation(async live => {
-      let voiceId = id
-
-      if (preview) {
-        updateVoiceCreation({ confirmation: { id, label, preview } })
-
-        const result = await requestResource('voices.post_voice_confirmation', {
-          path: { candidate_id: preview.candidateId },
-          body: {
-            expected_version: preview.expectedVersion
-          }
-        })
-
-        if (!live()) {
-          return
-        }
-
-        voiceId = result.voice_id
-      }
-
-      await applyVoice(voiceId, label, Boolean(preview), live)
-
-      if (live()) {
-        updateVoiceCreation({
-          confirmation: null,
-          outcome: 'saved',
-          ...(preview?.kind === 'design'
-            ? { designPreview: null }
-            : preview?.kind === 'clone'
-              ? { clonePreview: null }
-              : {})
-        })
-
-        setReload(value => value + 1)
-      }
-    }, recovering)
-  }
-
-  const checkConfirmation = async (): Promise<void> => {
-    const pending = $voiceCreation.get().confirmation
-
-    if (!pending) {
-      return
-    }
-
-    await runOperation(async live => {
-      updateVoiceCreation({ confirmationChecked: false })
-      const result = await fetchVoiceCatalogRaw(locale)
-
-      if (!live()) {
-        return
-      }
-
-      if (!result.ok) {
-        throw new Error(t.loadFailed)
-      }
-
-      setCatalog(result.catalog)
-
-      if (result.catalog.customVoices.some(voice => voice.voice_id === pending.id)) {
-        await requestResource('voices.post_voice_confirmation', {
-          path: { candidate_id: pending.preview.candidateId },
-          body: { expected_version: pending.preview.expectedVersion }
-        })
-
-        if (!live()) {
-          return
-        }
-
-        await applyVoice(pending.id, pending.label, true, live)
-
-        if (live()) {
-          updateVoiceCreation({ confirmation: null, designPreview: null, clonePreview: null, outcome: 'saved' })
-        }
-      } else {
-        updateVoiceCreation({ confirmationChecked: true, outcome: 'unknown' })
-      }
-    }, true)
+    preview.previewCreation(blocked, () => createDesignedVoice(mode, name, preference))
   }
 
   const chooseTab = (value: VoiceTab): void => {
@@ -476,8 +199,8 @@ export function useVoiceManager({
       return
     }
 
-    stopPlayback()
-    setPlaybackError(null)
+    preview.stop()
+    preview.setPlaybackError(null)
 
     const latest = $voiceCreation.get()
     updateVoiceCreation({
@@ -557,22 +280,10 @@ export function useVoiceManager({
   return {
     dict,
     t,
-    locale,
-    gateway,
-    catalogRevision,
     currentVoice,
-    panelActive,
-    screenLocked,
-    surfaceRole,
-    spriteVisible,
-    documentVisible,
     active,
-    activeRef,
-    viewEligible,
-    begin,
     catalog,
     catalogStatus,
-    reload,
     setReload,
     creation,
     tab,
@@ -590,12 +301,9 @@ export function useVoiceManager({
     setGenderFilter,
     showAll,
     setShowAll,
-    playbackError,
-    setPlaybackError,
-    playing,
-    previewAbort,
-    playbackGeneration,
-    operation,
+    playbackError: preview.playbackError,
+    setPlaybackError: preview.setPlaybackError,
+    playing: preview.playing,
     inputRef,
     sample,
     selectedSample,
@@ -603,18 +311,14 @@ export function useVoiceManager({
     confirming,
     blocked,
     playbackBlocked,
-    stopPlayback,
-    beginPlayback,
-    playPreview,
-    previewAudio,
-    previewFixed,
-    stopOperation,
-    runOperation,
-    previewCreation,
+    stopPlayback: preview.stop,
+    previewAudio: preview.previewAudio,
+    previewFixed: preview.previewFixed,
+    previewCreation: (create: () => Promise<VoiceDesignPreview | null>) => preview.previewCreation(blocked, create),
+    stopOperation: operations.stopOperation,
     runDesign,
-    applyVoice,
-    adoptVoice,
-    checkConfirmation,
+    adoptVoice: operations.adoptVoice,
+    checkConfirmation: operations.checkConfirmation,
     chooseTab,
     voices,
     displayedVoices,
