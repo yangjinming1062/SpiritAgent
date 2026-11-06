@@ -92,25 +92,6 @@ export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/con
 export { triggerFootGlowPulse } from './sprite/foot-glow'
 export { $spritePointerHeld } from './sprite/gesture'
 export { isCharacterMediaVisible, isCharacterStageVisible, observeCharacterStageVisibility } from './stage-visibility'
-
 export { clearVfx, emitVfx } from './vfx'
-
-export {
-  $designSessions,
-  applyDesignSessionSnapshot,
-  readDesignSessionSnapshot,
-  useOutfitDesignSession
-} from './wardrobe/design-session'
-export { $stageOutfitPresented, setStageOutfitSource } from './wardrobe/stage-source'
-
-export {
-  $outfitPolicy,
-  $outfits,
-  $presentedOutfit,
-  $wardrobeStatus,
-  deleteOutfit,
-  hydrateWardrobe,
-  retryOutfitDescription,
-  setOutfitPolicy
-} from './wardrobe/wardrobe-store'
+export { $stageOutfit, $stageOutfitPresented, setStageOutfitSource } from './wardrobe/stage-source'
 export { $windowActorMedia, $windowActorPlayback } from './window-media'

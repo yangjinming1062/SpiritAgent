@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $presentedOutfit, hydrateWardrobe } from '@/features/character'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { failureText } from '@/shared/lib/ipc-error'
@@ -33,6 +32,7 @@ import { composeDescribedInput } from '../../../../../shared/described-input'
 import { visualsApi } from '../visuals/api'
 import { $visualsPresentation } from '../visuals/state'
 import { type ActionDefinition, type ActionLibraryGroup, type ActionMediaEntry } from '../visuals/types'
+import { $presentedOutfit, hydrateWardrobe } from '../wardrobe/wardrobe-store'
 
 import {
   actionGroups,

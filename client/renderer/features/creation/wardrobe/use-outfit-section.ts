@@ -3,16 +3,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { $avatarSeeds, hydrateAvatarSeeds } from '@/features/character'
 import { type PickedImage, resolvePortraitUrl } from '@/features/character'
-import { useOutfitDesignSession } from '@/features/character'
-import {
-  $outfitPolicy,
-  $outfits,
-  $wardrobeStatus,
-  deleteOutfit,
-  hydrateWardrobe,
-  retryOutfitDescription,
-  setOutfitPolicy
-} from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import type { LocalSearch } from '@/shared/hooks/use-local-search'
 import { log } from '@/shared/lib/log'
@@ -23,6 +13,16 @@ import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
 import { $appearanceUi, selectAppearanceDraft, updateAppearanceUi } from './appearance-ui-state'
+import { useOutfitDesignSession } from './design-session'
+import {
+  $outfitPolicy,
+  $outfits,
+  $wardrobeStatus,
+  deleteOutfit,
+  hydrateWardrobe,
+  retryOutfitDescription,
+  setOutfitPolicy
+} from './wardrobe-store'
 
 /** 造型列表与制作共用的状态、会话与命令；视图只消费返回值。 */
 export function useOutfitSection({

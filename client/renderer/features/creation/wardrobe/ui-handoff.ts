@@ -1,7 +1,7 @@
-import { $designSessions, applyDesignSessionSnapshot, readDesignSessionSnapshot } from '@/features/character'
 import type { UiStateHandoff } from '@/shared/types/ui-handoff'
 
 import { $appearanceUi, exportAppearanceUiSnapshot, importAppearanceUiSnapshot } from './appearance-ui-state'
+import { $designSessions, applyDesignSessionSnapshot, readDesignSessionSnapshot } from './design-session'
 
 export const appearanceUiHandoff: UiStateHandoff<'appearance'> = {
   key: 'appearance',

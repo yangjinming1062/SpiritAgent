@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react'
 
 import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import { hydrateAvatarSeeds } from '@/features/character'
-import { $outfits, hydrateWardrobe } from '@/features/character'
 import { useLocalSearch } from '@/shared/hooks/use-local-search'
 import { $auth } from '@/shared/store/auth'
 
 import { OutfitDetail } from './outfit-detail'
 import { OutfitSection } from './outfit-section'
+import { $outfits, hydrateWardrobe } from './wardrobe-store'
 
 export function AppearancePage(): React.JSX.Element {
   const authKind = useStore($auth).kind

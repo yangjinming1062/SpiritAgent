@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
 import { useCallback, useEffect } from 'react'
 
+import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import {
@@ -20,7 +21,6 @@ import type { ImageReviseMode } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { ApiError } from '../../../../../shared/errors'
-import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 
 import { $outfits, $wardrobeStatus, hydrateWardrobe } from './wardrobe-store'
 

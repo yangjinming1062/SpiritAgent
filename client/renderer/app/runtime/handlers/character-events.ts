@@ -3,7 +3,6 @@ import {
   $companionMood,
   applyServerCompanionVoiceId,
   hydrateFullbodyReference,
-  hydrateWardrobe,
   refreshAvatarSeeds
 } from '@/features/character'
 import { invalidateVoiceCatalog } from '@/features/speech'
@@ -47,13 +46,6 @@ export function handleCharacterEvent(event: GatewayEvent): void {
           })
           .catch(error => log.warn('avatar-seeds', 'Refresh failed', error))
       }
-
-      break
-    }
-
-    case 'companion.outfit.updated': {
-      // 衣柜状态变化（重绘草稿/确认转正/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
-      void hydrateWardrobe({ force: true })
 
       break
     }

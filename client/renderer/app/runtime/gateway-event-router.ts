@@ -4,6 +4,7 @@ import {
   onSessionListChanged,
   onTopicFeedbackUpdated
 } from '@/features/conversation'
+import { onOutfitEvent } from '@/features/creation'
 import { refreshActionGroups } from '@/features/creation/actions'
 import { onSceneEvent } from '@/features/creation/environment'
 import {
@@ -175,9 +176,13 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'companion.visual_identity.updated':
 
     case 'companion.appearance_preparation.updated':
+      handleCharacterEvent(event)
+
+      break
 
     case 'companion.outfit.updated':
-      handleCharacterEvent(event)
+      // 衣柜状态变化（重绘草稿/确认转正/穿着翻转/删除）只作刷新触发，列表端点仍是真相源。
+      onOutfitEvent()
 
       break
 

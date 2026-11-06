@@ -2,12 +2,13 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
-import { $outfits, deleteOutfit, hydrateWardrobe, retryOutfitDescription } from '@/features/character'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { PortraitLightbox } from '@/ui'
 import { BTN_GHOST, BTN_SUBTLE, confirmAction, SettingCard, SettingsContent } from '@/ui'
+
+import { $outfits, deleteOutfit, hydrateWardrobe, retryOutfitDescription } from './wardrobe-store'
 
 export function OutfitDetail({ outfitId, onBack }: { outfitId: string; onBack: () => void }): React.JSX.Element {
   const outfit = useStore($outfits).find(item => item.id === outfitId)

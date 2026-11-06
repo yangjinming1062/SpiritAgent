@@ -1,5 +1,6 @@
 import { atom, computed } from 'nanostores'
 
+import { $stageOutfit } from '@/features/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
@@ -11,8 +12,6 @@ import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { isResourceId } from '../../../../../shared/resource-id'
-
-import { $stageOutfit } from './stage-source'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
@@ -60,6 +59,7 @@ function isOutfitResponse(value: unknown): value is OutfitResponse {
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
+/** 当前舞台实际呈现的造型；只用于素材页的默认造型，不参与制作流程。 */
 export const $presentedOutfit = computed(
   [$outfits, $stageOutfit],
   (outfits, presented) =>
@@ -236,4 +236,9 @@ export async function deleteOutfit(outfitId: string): Promise<void> {
 export async function retryOutfitDescription(outfitId: string): Promise<void> {
   await requestResource('companion.post_retry_outfit_description', { path: { outfit_id: outfitId } })
   await hydrateWardrobe({ force: true })
+}
+
+/** 衣柜变化事件只作刷新触发；列表端点仍是真相源。 */
+export function onOutfitEvent(): void {
+  void hydrateWardrobe({ force: true })
 }

@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 
 import { openChat } from '@/app/navigation/app-navigation'
 import { useDetailFlow } from '@/app/navigation/use-detail-flow'
-import { $outfits, hydrateWardrobe } from '@/features/character'
 import { ensureCompanionSession } from '@/features/conversation'
 import { useResolvedMediaSrc } from '@/features/media'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
@@ -33,6 +32,7 @@ import { LibraryToolbar } from '@/ui/asset-library-header'
 
 import { $actions, refreshActions } from '../actions/actions-store'
 import { $sceneLibrary, loadSceneLibrary } from '../environment'
+import { $outfits, hydrateWardrobe } from '../wardrobe/wardrobe-store'
 
 import { visualsApi } from './api'
 import {
