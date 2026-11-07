@@ -187,7 +187,7 @@ def _changed_fields(design: ActionAssetDesign, baseline: ActionAssetView) -> set
 
 
 def _details(design: ActionAssetDesign, language: str, changes: set[str] | None = None) -> list[DescribedDetail]:
-    """新建展示完整定义；修改只展示相对原定义实际变化的维度。"""
+    """新建展示完整定义，空条件不列；修改只展示相对原定义实际变化的维度。"""
     labels = _LABELS.get(language, _LABELS["zh"])
 
     def show(field: str) -> bool:
@@ -210,15 +210,14 @@ def _details(design: ActionAssetDesign, language: str, changes: set[str] | None 
         items.append(
             DescribedDetail(label=labels["form"], value=f"{form} · {design.duration_seconds}{labels['seconds']}")
         )
-    if changes is not None:
-        if show("semantic_tags"):
-            tags = " · ".join(labels["tag_values"][tag] for tag in design.semantic_tags) or labels["cleared"]
-            items.append(DescribedDetail(label=labels["tags"], value=tags))
-        if show("allowed_triggers"):
-            triggers = " · ".join(labels["trigger_values"][trigger] for trigger in design.triggers)
-            items.append(DescribedDetail(label=labels["triggers"], value=triggers))
-        if show("performance_role"):
-            items.append(DescribedDetail(label=labels["role"], value=labels["roles"][design.performance_role]))
+    if show("semantic_tags") and (design.semantic_tags or changes is not None):
+        tags = " · ".join(labels["tag_values"][tag] for tag in design.semantic_tags) or labels["cleared"]
+        items.append(DescribedDetail(label=labels["tags"], value=tags))
+    if show("allowed_triggers"):
+        triggers = " · ".join(labels["trigger_values"][trigger] for trigger in design.triggers)
+        items.append(DescribedDetail(label=labels["triggers"], value=triggers))
+    if show("performance_role"):
+        items.append(DescribedDetail(label=labels["role"], value=labels["roles"][design.performance_role]))
     if show("motion_intensity"):
         items.append(DescribedDetail(label=labels["intensity"], value=labels["intensities"][design.motion_intensity]))
     if show("interruptible"):

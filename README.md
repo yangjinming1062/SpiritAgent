@@ -14,7 +14,7 @@
 ![Windows 与 macOS](https://img.shields.io/badge/桌面-Windows%20%7C%20macOS-5877a6?style=flat-square)
 ![自行部署](https://img.shields.io/badge/后端-自行部署-6b826b?style=flat-square)
 
-[实机演示](#实机演示) · [界面预览](#界面预览) · [功能与特点](#功能与特点) · [开始使用](#开始使用) · [从源码启动](#从源码启动) · [工程文档](#工程文档)
+[实机演示](#实机演示) · [功能与特点](#功能与特点) · [开始使用](#开始使用) · [从源码启动](#从源码启动) · [工程文档](#工程文档)
 
 </div>
 
@@ -27,43 +27,6 @@
 [▶ 观看完整实机演示](docs/media/demo.mp4) · 3 分 45 秒 · 1080p · 中文口播与字幕
 
 视频展示伙伴创建、素材管理、交流及 Windows 桌面动作。[素材来源与范围](docs/media/README.md)。
-
-## 界面预览
-
-**见证生活：看看伙伴正在继续的事，以及最近留下的进展。**
-
-![生活页：按状态浏览事项、查看近期变化，右侧生活区展示当前活动、心情与聚焦事项](docs/media/life.png)
-
-**日常陪伴：一句一句地交流，聊天时也能看见它的近况。**
-
-![日色主题的陪伴对话：会话列表、逐句气泡，以及独立显示的生活区](docs/media/chat.png)
-
-> 截图均于 2026-10-26 从当前客户端组件采集，使用虚构演示数据与图标占位形象，展示界面布局；不代表真实跨日生活、生成效果或原生桌面验收。[来源与范围](docs/media/README.md)。
-
-<details>
-<summary><strong>查看事项详情、桌面模式与更多功能</strong></summary>
-
-**一件事如何继续：了解缘由、进展与下一步，展开阅读笔记，查看来源和成果入口。**
-
-![事项详情：布置阅读角的缘由与进展、带来源和阅读范围的笔记，以及已保存环境的查看入口](docs/media/life-detail.png)
-
-**桌面模式：生活与聊天可并列打开，底栏集中提供日常入口。**
-
-![Windows 桌面组件：并列的生活与聊天面板，居中头像及生活、创作、伙伴和设置入口；未加载桌面背景媒体](docs/media/desktop.png)
-
-**一起做事：文案秘书使用专业对话，执行详情按需展开。**
-
-![夜色主题的文案秘书：独立任务会话、完整回复和执行详情入口](docs/media/work.png)
-
-**动作素材：浏览内置动作，按“已入库 / 未入库”管理，入库后可用于制作影像。**
-
-![伙伴动作页：已入库与未入库分组、搜索与新建入口，以及安静相伴、专注做事等内置动作](docs/media/actions.png)
-
-**控制相处的距离：选择打扰档位；语音、资讯来源、主题和伙伴显示各有设置入口。**
-
-![设置：分类菜单，陪伴方式中的只回应我、偶尔主动问候、自由互动三档与动态创作开关](docs/media/settings.png)
-
-</details>
 
 ## 功能与特点
 
@@ -186,6 +149,6 @@ pnpm --dir client dev
 | [ARCHITECTURE](docs/ARCHITECTURE.md)：模块、状态与信任边界 · [架构图谱](docs/ARCHITECTURE_MAP.md)：拓扑、分层与部署图示 | [Backend](backend/README.md) · [Client](client/README.md) · [Remote](remote/README.md) |
 | [DESIGN](docs/DESIGN.md)：产品目标、体验取舍与故障表现 | [Runner](runner/README.md) · [Installer](installer/README.md) |
 | [PROTOCOL](docs/PROTOCOL.md)：通信、交付、隔离与恢复 | [Scripts](scripts/README.md)：检查、调试、构建与发布 |
-| [PIPELINE](docs/PIPELINE.md)：参考、生成、透明处理与质量复核 | [素材说明](docs/media/README.md)：展示图的来源与更新 |
+| [PIPELINE](docs/PIPELINE.md)：参考、生成、透明处理与质量复核 | [素材说明](docs/media/README.md)：演示素材的来源与更新 |
 
 数据库关系、删除与测量依据见 [DATABASE](docs/DATABASE.md)，字段语义和源码定位见 [DATABASE_FIELDS](docs/DATABASE_FIELDS.md)。

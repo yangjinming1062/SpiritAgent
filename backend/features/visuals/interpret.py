@@ -179,10 +179,11 @@ async def interpret_visual_description(
             ],
         )
 
+    # 库里该类候选为零才是真缺；有候选只是没匹配上时按未匹配提示，不引导重复新建。
     if outfit is None:
-        return _infeasible(labels["no_outfit"], "create_outfit")
+        return _infeasible(labels["no_outfit"] if not outfits_by_id else labels["mismatch"], "create_outfit")
     if action is None:
-        return _infeasible(labels["no_action"], "create_action")
+        return _infeasible(labels["no_action"] if not actions_by_id else labels["mismatch"], "create_action")
 
     if intent == "motion":
         draft = VisualPlanDraft(
@@ -206,7 +207,7 @@ async def interpret_visual_description(
         )
 
     if scene is None:
-        return _infeasible(labels["no_scene"], "create_scene")
+        return _infeasible(labels["no_scene"] if not scenes_by_id else labels["mismatch"], "create_scene")
 
     draft = VisualPlanDraft(
         asset_kind="cinematic",
