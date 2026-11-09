@@ -225,6 +225,8 @@ async def _new_scene(
             await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
         await _event(db, persona.user_id, "companion.scene.updated", row.id)
         await db.commit()
+        # 响应出口在会话外读取初始与重做任务，新建行需先取回关系，否则脱离会话后无法补查。
+        await db.refresh(row)
         return row
 
 

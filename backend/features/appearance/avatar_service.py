@@ -560,6 +560,8 @@ async def _write_avatar_step(
             if generation_job_id is None or asset_url.startswith("temp-media/"):
                 delete_portrait_file(asset_url)
             raise
+        # 响应出口在会话外读取制作任务，新建行需先取回关系，否则脱离会话后无法补查。
+        await db.refresh(asset)
 
     if persist and previous_url is not None and previous_url.startswith("temp-media/"):
         delete_portrait_file(previous_url)
