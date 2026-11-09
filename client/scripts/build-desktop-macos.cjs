@@ -58,6 +58,19 @@ function run(command, args) {
   }
 }
 
+function assertInternalDefinitions(filename) {
+  const result = spawnSync('xcrun', ['nm', '-u', '-C', filename], { encoding: 'utf8' })
+  if (result.status !== 0)
+    throw new Error(`xcrun nm failed: ${result.error?.message || `exit ${result.status ?? 'unknown'}`}`)
+  // dynamic_lookup 让缺失的内部符号只在运行时加载时暴露，构建期先拦下来。
+  const missing = (result.stdout || '')
+    .split('\n')
+    .filter(line => line.includes('desktop_macos::'))
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (missing.length) throw new Error(`macOS desktop component has undefined internal symbols:\n${missing.join('\n')}`)
+}
+
 function hasNodeHeaders(directory) {
   return ['node_api.h', 'node_api_types.h', 'js_native_api.h', 'js_native_api_types.h'].every(file =>
     fs.existsSync(path.join(directory, file))
@@ -176,6 +189,7 @@ function buildDesktopMacos(arch = process.arch, { ifNeeded = false } = {}) {
       '-o',
       temporary
     ])
+    assertInternalDefinitions(temporary)
     if (readMacosArchitectures(temporary).join() !== arch)
       throw new Error(`macOS desktop component architecture does not match ${arch}`)
     fs.renameSync(temporary, output)

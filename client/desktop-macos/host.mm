@@ -166,6 +166,41 @@ void Job::Current() const {
   if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("应用响应超时；已提交的系统操作可能仍会完成，请检查窗口状态。");
 }
 
+napi_value Queue(napi_env env, std::unique_ptr<Job> job, const char *name) {
+  napi_value promise; Check(napi_create_promise(env, &job->deferred, &promise));
+  napi_value resource = Text(env, name);
+  Check(napi_create_async_work(env, nullptr, resource, [](napi_env, void *data) {
+    Job &job = *static_cast<Job *>(data);
+    @autoreleasepool {
+      try {
+        std::unique_lock<std::mutex> lock(accessibilityMutex, std::defer_lock);
+        if (job.serialAX) lock.lock();
+        job.Current(); job.execute(job); job.Current();
+      }
+      catch (const std::exception &error) { job.error = error.what(); }
+    }
+  }, [](napi_env env, napi_status status, void *data) {
+    std::unique_ptr<Job> job(static_cast<Job *>(data));
+    @autoreleasepool {
+      try {
+        if (status != napi_ok) throw std::runtime_error("macOS 窗口请求已取消。");
+        if (!job->error.empty()) throw std::runtime_error(job->error);
+        job->Current();
+        napi_value result = job->complete ? job->complete(env, *job) : Undefined(env);
+        Check(napi_resolve_deferred(env, job->deferred, result));
+      } catch (const std::exception &error) {
+        napi_value reason; napi_create_error(env, nullptr, Text(env, error.what()), &reason);
+        napi_reject_deferred(env, job->deferred, reason);
+      }
+      napi_delete_async_work(env, job->work);
+    }
+  }, job.get(), &job->work));
+  const napi_status queued = napi_queue_async_work(env, job->work);
+  if (queued != napi_ok) { napi_delete_async_work(env, job->work); Check(queued); }
+  job.release();
+  return promise;
+}
+
 void Trusted() {
   if (!AXIsProcessTrusted()) throw std::runtime_error("需要在系统设置的隐私与安全性中授予辅助功能权限。");
 }
@@ -175,7 +210,7 @@ std::string AXFailure(AXError error, const char *action) {
   return std::string(action) + "失败（辅助功能错误 " + std::to_string(error) + "）。";
 }
 
-CFTypeRef CopyAttribute(Job &job, AXUIElementRef element, CFStringRef key, CFValue &output, bool optional = false) {
+CFTypeRef CopyAttribute(Job &job, AXUIElementRef element, CFStringRef key, CFValue &output, bool optional) {
   job.Current();
   AXError error = AXUIElementCopyAttributeValue(element, key, &output.value);
   if (error == kAXErrorSuccess) return output.value;
@@ -183,12 +218,12 @@ CFTypeRef CopyAttribute(Job &job, AXUIElementRef element, CFStringRef key, CFVal
   throw std::runtime_error(AXFailure(error, "读取窗口"));
 }
 
-std::string AXText(Job &job, AXUIElementRef element, CFStringRef key, bool optional = true) {
+std::string AXText(Job &job, AXUIElementRef element, CFStringRef key, bool optional) {
   CFValue value; CopyAttribute(job, element, key, value, optional);
   return value.value && CFGetTypeID(value.value) == CFStringGetTypeID() ? Utf8((__bridge NSString *)value.value) : "";
 }
 
-bool AXBool(Job &job, AXUIElementRef element, CFStringRef key, bool fallback = false) {
+bool AXBool(Job &job, AXUIElementRef element, CFStringRef key, bool fallback) {
   CFValue value; CopyAttribute(job, element, key, value, true);
   return value.value && CFGetTypeID(value.value) == CFBooleanGetTypeID() ? CFBooleanGetValue((CFBooleanRef)value.value) : fallback;
 }
