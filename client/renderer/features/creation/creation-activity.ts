@@ -2,7 +2,7 @@ import { computed } from 'nanostores'
 
 import type { CreationSection } from '@ipc/contracts'
 
-import { actionGroups, refreshActions } from './actions'
+import { $actionActivity, refreshActionActivity } from './actions'
 import { $pendingScene, $sceneCreationIssue, $sceneRegenerating } from './environment'
 import { $visualsJobs, refreshVisualJobs } from './visuals'
 
@@ -26,7 +26,7 @@ export interface CreationActivityItem {
  * 归入“需要处理”，不与正常制作混在同一个进行中分组。
  */
 export const $creationActivity = computed(
-  [actionGroups.not_in_library.rows, $visualsJobs, $pendingScene, $sceneRegenerating, $sceneCreationIssue],
+  [$actionActivity, $visualsJobs, $pendingScene, $sceneRegenerating, $sceneCreationIssue],
   (unlistedActions, jobs, pendingScene, regeneratingScene, creationIssue) => {
     const items: CreationActivityItem[] = []
 
@@ -87,5 +87,5 @@ export const $creationAttention = computed($creationActivity, items => items.som
 
 /** 登录与重连后的任务摘要补读：只触发各模块已有读取入口，失败静默等待事件或页面读取。 */
 export async function hydrateCreationActivity(): Promise<void> {
-  await Promise.allSettled([refreshVisualJobs(), refreshActions(undefined, false, 'not_in_library')])
+  await Promise.allSettled([refreshVisualJobs(), refreshActionActivity()])
 }

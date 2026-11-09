@@ -539,28 +539,37 @@ def _action_view(item: ActionAssetView) -> dict[str, Any]:
 async def _load_visual_candidates(
     db: AsyncSession, user_id: int, description: str
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    """按描述关键词先筛候选再交模型；每类至多 _CANDIDATE_LIMIT 条。
+    """按描述关键词先筛候选再交模型；每类候选至多两页 _CANDIDATE_LIMIT。
 
-    检索为空但该类素材总数非零时补读最新一页，避免把未命中误判成素材不存在；
-    此时目录标记为不完整，由模型在 reason 里说明未列全。
+    关键词命中还有更多，或命中未覆盖该类全部素材时补读最新一页并标记目录不完整，
+    由模型在 reason 里说明未列全，不把检索未命中误判成素材不存在。
     """
 
     keywords = _description_keywords(description)
-    outfits = await search_outfit_snapshots(db, user_id, keywords, limit=_CANDIDATE_LIMIT)
-    scenes, _total, _cursor = await list_scenes(db, user_id, keywords=keywords, ready_only=True, limit=_CANDIDATE_LIMIT)
+    outfits, outfits_more = await search_outfit_snapshots(db, user_id, keywords, limit=_CANDIDATE_LIMIT)
+    scenes, _total, scenes_cursor = await list_scenes(
+        db, user_id, keywords=keywords, ready_only=True, limit=_CANDIDATE_LIMIT
+    )
     actions = await action_queries.list_actions(
         db, user_id, group="in_library", keywords=keywords, limit=_CANDIDATE_LIMIT
     )
 
-    truncated = False
-    if not outfits and await count_ready_outfits(db, user_id):
-        outfits = await ready_outfit_snapshots(db, user_id, limit=_CANDIDATE_LIMIT)
+    truncated = outfits_more or scenes_cursor is not None or actions.has_more
+
+    if not outfits_more and await count_ready_outfits(db, user_id) > len(outfits):
+        latest = await ready_outfit_snapshots(db, user_id, limit=_CANDIDATE_LIMIT)
+        seen = {item.id for item in outfits}
+        outfits = outfits + [item for item in latest if item.id not in seen]
         truncated = True
-    if not scenes and await count_ready_scenes(db, user_id):
-        scenes, _t, _c = await list_scenes(db, user_id, ready_only=True, limit=_CANDIDATE_LIMIT)
+    if scenes_cursor is None and await count_ready_scenes(db, user_id) > len(scenes):
+        latest, _t, _c = await list_scenes(db, user_id, ready_only=True, limit=_CANDIDATE_LIMIT)
+        seen = {item.id for item in scenes}
+        scenes = scenes + [item for item in latest if item.id not in seen]
         truncated = True
-    if not actions.actions and await action_queries.count_library_actions(db, user_id):
-        actions = await action_queries.list_actions(db, user_id, group="in_library", limit=_CANDIDATE_LIMIT)
+    if not actions.has_more and await action_queries.count_library_actions(db, user_id) > len(actions.actions):
+        latest = await action_queries.list_actions(db, user_id, group="in_library", limit=_CANDIDATE_LIMIT)
+        seen = {item.id for item in actions.actions}
+        actions.actions = actions.actions + [item for item in latest.actions if item.id not in seen]
         truncated = True
 
     catalog: dict[str, list[dict[str, Any]]] = {

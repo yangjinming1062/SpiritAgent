@@ -20,6 +20,7 @@ import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { PortraitLightbox } from '@/ui'
 import { confirmAction, SettingsContent } from '@/ui'
+import type { SceneMotionDraft } from '@ipc/contracts'
 
 import {
   $pendingScene,
@@ -77,6 +78,7 @@ export function ScenePage(): React.JSX.Element {
   const query = useStore($sceneQuery)
   const policy = useStore($scenePolicy)
   const status = useStore($sceneTaskStatus)
+  const sceneUi = useStore($sceneUi)
   const dict = useStrings()
   const tToasts = dict.living.toasts
 
@@ -101,8 +103,9 @@ export function ScenePage(): React.JSX.Element {
   const [referenceLoading, setReferenceLoading] = useState(true)
   const [referenceImportRevision, setReferenceImportRevision] = useState(0)
   const referenceRevision = useRef(0)
-  const createDraft: SceneCreateDraft = { notes: $sceneUi.get().notes, reference }
-  const editDrafts = $sceneUi.get().editDrafts
+  const createDraft: SceneCreateDraft = { notes: sceneUi.notes, reference }
+  const editDrafts = sceneUi.editDrafts
+  const motionDrafts = sceneUi.motionDrafts
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
@@ -218,9 +221,17 @@ export function ScenePage(): React.JSX.Element {
   const returnToLibrary = (): void => openView({ kind: 'library' })
 
   const dropEditDraft = (sceneId: string): void => {
-    const next = { ...$sceneUi.get().editDrafts }
-    delete next[sceneId]
-    updateSceneUi({ editDrafts: next })
+    const editNext = { ...$sceneUi.get().editDrafts }
+    delete editNext[sceneId]
+    const motionNext = { ...$sceneUi.get().motionDrafts }
+    delete motionNext[sceneId]
+    updateSceneUi({ editDrafts: editNext, motionDrafts: motionNext })
+  }
+
+  const changeMotionDraft = (sceneId: string, next: Partial<SceneMotionDraft>): void => {
+    const current = $sceneUi.get().motionDrafts
+    const base: SceneMotionDraft = current[sceneId] ?? { description: '', phase: '', plan: null }
+    updateSceneUi({ motionDrafts: { ...current, [sceneId]: { ...base, ...next } } })
   }
 
   const saveInfo = async (sceneId: string): Promise<boolean> => {
@@ -401,12 +412,15 @@ export function ScenePage(): React.JSX.Element {
           key={view.sceneId}
           loadError={detailLoadError}
           loading={detailLoading}
+          motionDraft={motionDrafts[view.sceneId]}
           onBack={returnToLibrary}
           onCancelEdit={() => dropEditDraft(view.sceneId)}
           onCancelTask={async sceneId => {
             await cancelSceneTask(sceneId)
           }}
           onChangeDraft={next => changeEditDraft(view.sceneId, next)}
+          onChangeMotion={next => changeMotionDraft(view.sceneId, next)}
+          onClearMotion={() => changeMotionDraft(view.sceneId, { description: '', plan: null })}
           onDelete={async scene => {
             const confirmed = await confirmAction({
               confirmLabel: dict.living.scene.historyDeleteLabel,

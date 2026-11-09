@@ -6,6 +6,8 @@ import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/s
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { type ActionDefinition, type ActionLibraryGroup, actionsApi } from '../visuals'
 
+import { refreshActionActivity } from './activity-store'
+
 function newRequestId(): string {
   return typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `action:${Date.now()}:${Math.random()}`
 }
@@ -118,6 +120,7 @@ export async function refreshActions(
 /** 动作目录变化事件只作刷新触发。 */
 export function onActionEvent(): void {
   void refreshActionGroups()
+  void refreshActionActivity()
 }
 
 export async function refreshActionGroups(): Promise<void> {

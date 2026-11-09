@@ -101,8 +101,11 @@ async def count_ready_outfits(db: AsyncSession, user_id: int) -> int:
 
 async def search_outfit_snapshots(
     db: AsyncSession, user_id: int, keywords: list[str], *, limit: int = 30
-) -> list[OutfitSnapshot]:
-    """按名称或描述命中任一关键词检索已就绪造型；无关键词时返回最新一页。"""
+) -> tuple[list[OutfitSnapshot], bool]:
+    """按名称或描述命中任一关键词检索已就绪造型；无关键词时返回最新一页。
+
+    第二个返回值表示关键词命中是否还有更多，供候选目录判断截断。
+    """
 
     limit = max(1, min(limit, 100))
     conditions: list[Any] = [CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready"]
@@ -118,5 +121,9 @@ async def search_outfit_snapshots(
                 ]
             )
         )
-    rows = await db.scalars(select(CompanionOutfit).where(*conditions).order_by(CompanionOutfit.id.desc()).limit(limit))
-    return [OutfitSnapshot.model_validate(row) for row in rows]
+    rows = list(
+        await db.scalars(
+            select(CompanionOutfit).where(*conditions).order_by(CompanionOutfit.id.desc()).limit(limit + 1)
+        )
+    )
+    return [OutfitSnapshot.model_validate(row) for row in rows[:limit]], len(rows) > limit

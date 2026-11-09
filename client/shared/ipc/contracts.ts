@@ -79,6 +79,8 @@ export type {
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
   LifeUiSnapshot,
+  SceneMotionDraft,
+  SceneMotionPlan,
   SceneUiSnapshot,
   StudioUiSnapshot,
   VisualsUiSnapshot,

@@ -55,6 +55,48 @@ const EMPTY_COMPOSER: ActionComposer = {
 
 const interpretation = new InterpretationGuard()
 
+/** 提交的动作定义字段：核对与设计视图共用，客户端不解析字段语义。 */
+const ACTION_DESIGN_KEYS = [
+  'name',
+  'motion_description',
+  'use_when',
+  'avoid_when',
+  'allowed_triggers',
+  'clip_kind',
+  'duration_seconds',
+  'semantic_tags',
+  'performance_role',
+  'motion_intensity',
+  'interruptible',
+  'reason'
+] as const
+
+/** 按 ActionAssetView 的对外字段名读取设计值；字段缺失时用视图里的既有语义兜底。 */
+function designValue(design: Record<string, unknown>, key: (typeof ACTION_DESIGN_KEYS)[number]): unknown {
+  const value = design[key]
+
+  // 允许触发缺省时由视图按默认触发方式投影；其余缺省值与后端默认一致，读回比较不受影响。
+  if (value === undefined && key === 'allowed_triggers') {
+    return ['chat', 'manual']
+  }
+
+  return value
+}
+
+/** 字段值相等：列表字段按逐项内容比较，其余用严格相等。 */
+function sameDesignValue(latest: unknown, design: unknown): boolean {
+  if (Array.isArray(latest) && Array.isArray(design)) {
+    return latest.length === design.length && latest.every((item, index) => item === design[index])
+  }
+
+  return latest === design
+}
+
+/** 写入结果核对：视图与提交设计在全部定义字段上一致，才确认写入已生效。 */
+function actionDesignApplied(latest: ActionDefinition, design: Record<string, unknown>): boolean {
+  return ACTION_DESIGN_KEYS.every(key => sameDesignValue(latest[key], designValue(design, key)))
+}
+
 /** 动作编辑：新建与修改都从一句描述开始，先看整理结果再保存并评审。 */
 function ActionEditor({
   action,
@@ -131,9 +173,7 @@ function ActionEditor({
               body: { design: plan.draft, expected_updated_at: composer.expectedUpdatedAt ?? action.updated_at }
             }),
           read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
-          matches: latest =>
-            latest.name === String(plan.draft.name ?? '') &&
-            latest.motion_description === String(plan.draft.motion_description ?? ''),
+          matches: latest => actionDesignApplied(latest, plan.draft),
           isCurrent: alive,
           onUnconfirmed: latest => {
             if (latest) {

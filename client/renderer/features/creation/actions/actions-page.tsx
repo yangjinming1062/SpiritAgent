@@ -2,10 +2,12 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $appNavigationTarget } from '@/app/navigation/app-navigation'
+import { $appNavigationRevision, $appNavigationTarget } from '@/app/navigation/app-navigation'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { failureText } from '@/shared/lib/ipc-error'
+import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import {
@@ -36,6 +38,7 @@ import {
   type ActionDefinition,
   type ActionLibraryGroup,
   type ActionMediaEntry,
+  actionsApi,
   visualsApi
 } from '../visuals'
 import { $presentedOutfit, hydrateWardrobe } from '../wardrobe'
@@ -52,6 +55,7 @@ import {
   retryActionReview,
   updateAction
 } from './actions-store'
+import { refreshActionActivity } from './activity-store'
 
 const EMPTY_COMPOSER: ActionComposerSnapshot = {
   actionId: null,
@@ -121,8 +125,14 @@ function ActionsPageContent(): React.JSX.Element {
   const studio = dict.studio
   const auth = useStore($auth)
   const navigationTarget = useStore($appNavigationTarget)
+  const navigationRevision = useStore($appNavigationRevision)
   const focusActionId = navigationTarget.focus.page === 'creation' ? navigationTarget.focus.actionId : undefined
   const [group, setGroup] = useState<ActionLibraryGroup>(focusActionId ? 'not_in_library' : 'in_library')
+  const [focusTarget, setFocusTarget] = useState<ActionDefinition | null>(null)
+  const [focusError, setFocusError] = useState<string | null>(null)
+  const focusConsumedRef = useRef(-1)
+  // 焦点行滚动定位只做一次：列表重挂载或刷新后不再把用户拉回该行。
+  const focusScrolledRef = useRef<string | null>(null)
   const actions = useStore(actionGroups[group].rows)
   const loading = useStore(actionGroups[group].loading)
   const loaded = useStore(actionGroups[group].loaded)
@@ -133,14 +143,41 @@ function ActionsPageContent(): React.JSX.Element {
   const [interpreting, setInterpreting] = useState(false)
   const [composerError, setComposerError] = useState('')
 
-  // 活动条目定位到具体动作时切到未入库分组；依赖导航目标整体，重复点击同一条目仍生效。
+  // 消费动作定位焦点：清掉会滤掉目标的搜索，读取该动作并切到它所在的分组；
+  // 依赖导航修订，重复点击同一条提醒仍会重新定位；已删除的动作给出提示。
   useEffect(() => {
-    const focus = navigationTarget.focus
-
-    if (focus.page === 'creation' && focus.actionId) {
-      setGroup('not_in_library')
+    if (focusConsumedRef.current === navigationRevision) {
+      return
     }
-  }, [navigationTarget])
+
+    focusConsumedRef.current = navigationRevision
+    const actionId = navigationTarget.focus.page === 'creation' ? navigationTarget.focus.actionId : undefined
+
+    // 重复点击同一条提醒也重新滚动定位一次。
+    focusScrolledRef.current = null
+    setFocusTarget(null)
+    setFocusError(null)
+
+    if (!actionId) {
+      return
+    }
+
+    setQuery('')
+    const scope = captureAuthScope()
+    void actionsApi
+      .get(actionId)
+      .then(action => {
+        if (scope?.() && focusConsumedRef.current === navigationRevision) {
+          setFocusTarget(action)
+          setGroup(action.status === 'approved' ? 'in_library' : 'not_in_library')
+        }
+      })
+      .catch(error => {
+        if (scope?.() && focusConsumedRef.current === navigationRevision) {
+          setFocusError(failureText(error, t.loadFailed))
+        }
+      })
+  }, [navigationRevision, navigationTarget, t.loadFailed])
   const { run, busy, busyKey } = usePanelAction()
   const defaultOutfit = useStore($presentedOutfit)
   const presentation = useStore($visualsPresentation)
@@ -192,6 +229,8 @@ function ActionsPageContent(): React.JSX.Element {
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
         void refreshActionGroups()
+        // WS 离线时事件不可达，评审状态变化也要反映到全局创作提醒。
+        void refreshActionActivity()
       }
     }, RENDERER_TIMINGS.actionReviewPollMs)
 
@@ -347,9 +386,17 @@ function ActionsPageContent(): React.JSX.Element {
     void run(() => retryActionReview(action), { failure: t.retryFailed, key: `retry:${action.id}` })
   }
 
+  const focusRowRef = (node: HTMLDivElement | null): void => {
+    if (node && focusActionId && focusScrolledRef.current !== focusActionId) {
+      focusScrolledRef.current = focusActionId
+      node.scrollIntoView({ block: 'center' })
+    }
+  }
+
   return (
     <SettingsContent>
       <SettingsSectionIntro hint={t.intro} title={t.title} />
+      {focusError && <ErrorBanner message={focusError} />}
       <div className="mb-3">
         <CapsuleTabs
           ariaLabel={t.title}
@@ -372,6 +419,31 @@ function ActionsPageContent(): React.JSX.Element {
         />
       </div>
       {error && <ErrorBanner message={t.loadFailed} />}
+      {focusTarget && !composer && (
+        <SettingCard className="mb-3">
+          <div className="flex flex-col gap-2 p-4">
+            <span className="text-sm font-medium text-strong">{focusTarget.name}</span>
+            <span className="text-[11px] text-faint">{t.statusLabels[focusTarget.status]}</span>
+            {focusTarget.source !== 'preset' && focusTarget.status !== 'approved' && (
+              <button
+                className={BTN_SUBTLE}
+                onClick={() =>
+                  updateActionsComposer({
+                    actionId: focusTarget.id,
+                    expectedUpdatedAt: focusTarget.updated_at,
+                    description: '',
+                    refinement: '',
+                    preview: null
+                  })
+                }
+                type="button"
+              >
+                {t.edit}
+              </button>
+            )}
+          </div>
+        </SettingCard>
+      )}
       {composer && (
         <SettingCard className="mb-3">
           <div className="flex flex-col gap-3 p-4">
@@ -468,7 +540,14 @@ function ActionsPageContent(): React.JSX.Element {
       ) : (
         <SettingCard divided={false}>
           {actions.map(action => (
-            <div className="flex flex-col gap-2 border-b border-line-hairline p-4 last:border-b-0" key={action.id}>
+            <div
+              className={cn(
+                'flex flex-col gap-2 border-b border-line-hairline p-4 last:border-b-0',
+                action.id === focusActionId && 'rounded-lg bg-fill-faint'
+              )}
+              key={action.id}
+              ref={action.id === focusActionId ? focusRowRef : undefined}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium text-strong">{action.name}</span>
                 <Badge>{action.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>

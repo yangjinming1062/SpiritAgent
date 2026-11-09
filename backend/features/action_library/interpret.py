@@ -67,6 +67,7 @@ _LABELS: dict[str, dict[str, Any]] = {
         "yes": "是",
         "no": "否",
         "cleared": "已清空",
+        "reason_basis": "整理依据",
         "unavailable": "整理描述所需的模型服务尚未配置，请联系管理员。",
         "not_found": "未找到该动作素材",
         "no_change": "没有识别出要修改的内容，请换一种说法再试试。",
@@ -107,6 +108,7 @@ _LABELS: dict[str, dict[str, Any]] = {
         "yes": "Yes",
         "no": "No",
         "cleared": "Cleared",
+        "reason_basis": "Basis",
         "unavailable": "The model service needed to interpret descriptions is not configured.",
         "not_found": "Action material not found.",
         "no_change": "No change to apply was identified. Describe the change differently.",
@@ -181,6 +183,7 @@ def _changed_fields(design: ActionAssetDesign, baseline: ActionAssetView) -> set
             ("performance_role", design.performance_role, baseline.performance_role),
             ("motion_intensity", design.motion_intensity, baseline.motion_intensity),
             ("interruptible", design.interruptible, baseline.interruptible),
+            ("reason", design.reason, baseline.reason),
         )
         if value != original
     }
@@ -226,6 +229,8 @@ def _details(design: ActionAssetDesign, language: str, changes: set[str] | None 
                 label=labels["interruptible"], value=labels["yes"] if design.interruptible else labels["no"]
             )
         )
+    if design.reason and show("reason"):
+        items.append(DescribedDetail(label=labels["reason_basis"], value=design.reason))
     return items
 
 

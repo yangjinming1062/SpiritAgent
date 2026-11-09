@@ -15,4 +15,6 @@ export {
   updateAction
 } from './actions-store'
 
+export { $actionActivity, refreshActionActivity } from './activity-store'
+
 export { actionsUiHandoff } from './ui-handoff'

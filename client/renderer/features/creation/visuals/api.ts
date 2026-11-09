@@ -127,6 +127,8 @@ export const actionsApi = {
   list: (
     query: { query?: string; cursor?: string; limit?: number; group?: ActionLibraryGroup } = {}
   ): Promise<ActionListResponse> => requestResource('companion_actions.list_actions', { query }),
+  get: (actionId: string): Promise<ActionDefinition> =>
+    requestResource('companion_actions.get_action', { path: { action_id: actionId } }),
   interpret: (body: ApiSchemas['ActionInterpretRequest']): Promise<ApiSchemas['ActionInterpretation']> =>
     requestResource('companion_actions.interpret_action', { body }),
   create: (body: ApiSchemas['ActionCreateRequest']): Promise<ActionDefinition> =>

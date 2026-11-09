@@ -1,6 +1,7 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
+import type { MotionPlanInputs } from '../../../shared/visuals'
 import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
@@ -250,10 +251,39 @@ export function isAppearanceUiSnapshot(value: unknown): value is AppearanceUiSna
   )
 }
 
-/** 环境创建说明与各场景未提交的编辑草稿。 */
+/** 环境动态整理计划：预览与生成时冻结的输入绑定；表单变化后作废，必须重新整理。 */
+export interface SceneMotionPlan {
+  preview: { draft: Record<string, unknown> | null; summary: string }
+  inputs: MotionPlanInputs
+}
+
+/** 环境动态制作草稿：描述、时段与待确认的整理计划。 */
+export interface SceneMotionDraft {
+  description: string
+  phase: '' | 'dawn' | 'day' | 'dusk' | 'night'
+  plan: SceneMotionPlan | null
+}
+
+/** 环境创建说明与各场景未提交的编辑、动态制作草稿。 */
 export interface SceneUiSnapshot {
   notes: string
   editDrafts: Record<string, { title: string; description: string }>
+  motionDrafts: Record<string, SceneMotionDraft>
+}
+
+const MOTION_PHASES = ['', 'dawn', 'day', 'dusk', 'night'] as const
+
+function isSceneMotionPlan(value: unknown): value is SceneMotionPlan {
+  return (
+    isRecord(value) &&
+    isRecord(value.preview) &&
+    (value.preview.draft === null || isRecord(value.preview.draft)) &&
+    typeof value.preview.summary === 'string' &&
+    isRecord(value.inputs) &&
+    typeof value.inputs.description === 'string' &&
+    typeof value.inputs.sceneId === 'string' &&
+    MOTION_PHASES.includes(value.inputs.phase as (typeof MOTION_PHASES)[number])
+  )
 }
 
 export function isSceneUiSnapshot(value: unknown): value is SceneUiSnapshot {
@@ -263,6 +293,14 @@ export function isSceneUiSnapshot(value: unknown): value is SceneUiSnapshot {
     isRecord(value.editDrafts) &&
     Object.values(value.editDrafts).every(
       draft => isRecord(draft) && typeof draft.title === 'string' && typeof draft.description === 'string'
+    ) &&
+    isRecord(value.motionDrafts) &&
+    Object.values(value.motionDrafts).every(
+      draft =>
+        isRecord(draft) &&
+        typeof draft.description === 'string' &&
+        MOTION_PHASES.includes(draft.phase as (typeof MOTION_PHASES)[number]) &&
+        (draft.plan === null || isSceneMotionPlan(draft.plan))
     )
   )
 }

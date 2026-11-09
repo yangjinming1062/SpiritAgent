@@ -9,9 +9,10 @@ export type ScenePageView = { kind: 'create' } | { kind: 'detail'; sceneId: stri
 interface SceneUiState {
   notes: string
   editDrafts: Record<string, { title: string; description: string }>
+  motionDrafts: SceneUiSnapshot['motionDrafts']
 }
 
-const FALLBACK: SceneUiState = { notes: '', editDrafts: {} }
+const FALLBACK: SceneUiState = { notes: '', editDrafts: {}, motionDrafts: {} }
 
 const state = atom<SceneUiState>(FALLBACK)
 
@@ -19,9 +20,9 @@ export const $sceneUi = state
 export const updateSceneUi = (patch: Partial<SceneUiState>): void => state.set({ ...state.get(), ...patch })
 
 export function exportSceneUiSnapshot(): SceneUiSnapshot {
-  const { notes, editDrafts } = state.get()
+  const { notes, editDrafts, motionDrafts } = state.get()
 
-  return { notes, editDrafts: structuredClone(editDrafts) }
+  return { notes, editDrafts: structuredClone(editDrafts), motionDrafts: structuredClone(motionDrafts) }
 }
 
 export function importSceneUiSnapshot(snapshot: SceneUiSnapshot): void {

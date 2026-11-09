@@ -7,7 +7,6 @@ import { MediaReviewButton } from '@/features/media-review'
 import { RENDERER_LIMITS } from '@/shared/constants'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import type { DayPhase } from '@/shared/lib/day-phase'
 import { ArrowLeft, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
 import { failureText, ipcErrorCode, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
@@ -25,7 +24,7 @@ import {
   SettingCard,
   Spinner
 } from '@/ui'
-import type { VisualInterpretation } from '@protocol'
+import type { SceneMotionDraft } from '@ipc/contracts'
 
 import {
   isRequestConflictError,
@@ -49,18 +48,15 @@ export interface SceneEditDraft {
   description: string
 }
 
-/** 环境动态整理结果与生成时输入的绑定；表单变化后草稿作废，必须重新整理。 */
-interface MotionPlan {
-  preview: VisualInterpretation
-  inputs: MotionPlanInputs
-}
-
 interface SceneDetailViewProps {
   busy: boolean
   detail: SceneAsset | null
   draft?: SceneEditDraft
   loadError: string | null
   loading: boolean
+  motionDraft: SceneMotionDraft | undefined
+  onChangeMotion: (next: Partial<SceneMotionDraft>) => void
+  onClearMotion: () => void
   onBack: () => void
   onCancelEdit: () => void
   onCancelTask: (sceneId: string) => Promise<void>
@@ -82,6 +78,9 @@ export function SceneDetailView({
   draft,
   loadError,
   loading,
+  motionDraft,
+  onChangeMotion,
+  onClearMotion,
   onBack,
   onCancelEdit,
   onCancelTask,
@@ -119,9 +118,11 @@ export function SceneDetailView({
   const [motionBusy, setMotionBusy] = useState(false)
   const [motionError, setMotionError] = useState<string | null>(null)
   const [motionNotice, setMotionNotice] = useState<string | null>(null)
-  const [motionPhase, setMotionPhase] = useState<'' | DayPhase>('')
-  const [motionDescription, setMotionDescription] = useState('')
-  const [motionPlan, setMotionPlan] = useState<MotionPlan | null>(null)
+  // 动态制作草稿由页面持有并随会话保留；组件本地只保留瞬态 busy/错误/提示。
+  const motion = motionDraft ?? { description: '', phase: '' as const, plan: null }
+  const motionPhase = motion.phase
+  const motionDescription = motion.description
+  const motionPlan = motion.plan
   const begin = useAsyncGuard()
   const actionBusy = actionKind !== null || motionBusy
   const canMakeMotion = Boolean(detail?.status === 'ready' && detail.assetUrl && detail.id)
@@ -140,7 +141,7 @@ export function SceneDetailView({
   // 表单变化立即废弃已有整理结果，提示重新整理。
   const discardMotionPlan = (): void => {
     if (motionPlan) {
-      setMotionPlan(null)
+      onChangeMotion({ plan: null })
       setMotionNotice(t.makeMotionRedo)
     }
   }
@@ -149,11 +150,11 @@ export function SceneDetailView({
     const code = ipcErrorCode(error)
 
     if (isStaleDraftError(code)) {
-      setMotionPlan(null)
+      onChangeMotion({ plan: null })
       setMotionError(strings.studio.invalidated)
     } else {
       if (isRequestConflictError(code)) {
-        setMotionPlan(null)
+        onChangeMotion({ plan: null })
       }
 
       setMotionError(failureText(error, t.makeMotionFailed))
@@ -174,7 +175,7 @@ export function SceneDetailView({
     setActionError(null)
     setMotionError(null)
     setMotionNotice(null)
-    setMotionPlan(null)
+    onChangeMotion({ plan: null })
     void visualsApi
       .interpret({
         description: inputs.description,
@@ -187,7 +188,9 @@ export function SceneDetailView({
           if (!result.feasible) {
             setMotionError(result.reason || t.makeMotionFailed)
           } else {
-            setMotionPlan({ preview: result, inputs })
+            onChangeMotion({
+              plan: { preview: { draft: result.draft ?? null, summary: result.summary }, inputs }
+            })
           }
         }
       })
@@ -204,9 +207,14 @@ export function SceneDetailView({
   }
 
   const confirmMotion = (): void => {
-    const plan = motionConfirmable && motionPlan?.preview.draft ? motionPlan : null
+    if (!detail || actionBusy || !motionConfirmable) {
+      return
+    }
 
-    if (!detail || actionBusy || !plan) {
+    const plan = motionPlan
+    const draft = plan?.preview.draft
+
+    if (!plan || !draft) {
       return
     }
 
@@ -217,14 +225,13 @@ export function SceneDetailView({
     setActionError(null)
     setMotionError(null)
     void visualsApi
-      .create(plan.preview.draft as Record<string, unknown>)
+      .create(draft)
       .then(() => {
         if (scope?.() && live()) {
           setActionError(null)
           // 提示按实际提交的冻结草稿给出，不读取可能已修改的表单值。
           setMotionNotice(plan.inputs.phase ? t.makeMotionPhaseDone : t.makeMotionDone)
-          setMotionPlan(null)
-          setMotionDescription('')
+          onClearMotion()
         }
       })
       .catch(error => {
@@ -584,7 +591,7 @@ export function SceneDetailView({
               className={INPUT_CLASS}
               disabled={actionBusy || Boolean(uncertain)}
               onChange={event => {
-                setMotionDescription(event.currentTarget.value)
+                onChangeMotion({ description: event.currentTarget.value })
                 discardMotionPlan()
               }}
               placeholder={t.makeMotion}
@@ -602,7 +609,7 @@ export function SceneDetailView({
               ariaLabel={t.makeMotionPhaseLabel}
               disabled={actionBusy || Boolean(uncertain)}
               onChange={value => {
-                setMotionPhase(value)
+                onChangeMotion({ phase: value })
                 discardMotionPlan()
               }}
               options={[
