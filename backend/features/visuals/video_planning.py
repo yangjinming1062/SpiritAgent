@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 from infrastructure.ai.providers.base import VideoGenProvider
-from infrastructure.media_geometry import resolution_fit_key
+from infrastructure.media_geometry import centered_crop_box
 
 from features.media.chain import FrozenMediaProvider
 
@@ -69,16 +69,13 @@ def nearest_visual_video_resolution(
     for resolution in provider.available_resolutions(duration=duration, first_frame=first_frame, last_frame=last_frame):
         width, height = provider.resolution_size(resolution, native_ratio)
         try:
-            fit = resolution_fit_key(
-                width,
-                height,
-                target_width,
-                target_height,
-                keep_aspect=False,
-                output_aspect=(ratio.numerator, ratio.denominator),
-                alignment=2,
-            )
+            left, top, right, bottom = centered_crop_box(width, height, ratio.numerator, ratio.denominator, alignment=2)
         except ValueError:
             continue
-        choices.append(VisualVideoResolution(resolution=resolution, fit=fit))
+        # 有满足目标的原生档位时先保住细节；不能因低一档数值更近而要求客户端放大。
+        shortfall = max(0.0, target_width / (right - left) - 1, target_height / (bottom - top) - 1)
+        loss = 1 - (right - left) * (bottom - top) / (width * height)
+        choices.append(
+            VisualVideoResolution(resolution=resolution, fit=(round(shortfall, 12), width * height, round(loss, 12)))
+        )
     return min(choices, key=lambda choice: choice.fit, default=None)

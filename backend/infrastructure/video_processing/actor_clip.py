@@ -19,10 +19,10 @@ from infrastructure.video_processing.ffmpeg import (
     probe_video,
     run_ffmpeg,
 )
-from infrastructure.video_processing.matting import ForegroundMatte, require_matting_model
+from infrastructure.video_processing.matting import ForegroundMatte, refine_foreground_edges, require_matting_model
 
 _FRAME_RATE = 24
-_MAX_EDGE = 1024
+_MAX_EDGE = 2048
 
 
 @dataclass(frozen=True)
@@ -143,7 +143,11 @@ def prepare_actor_clip(
         matte = ForegroundMatte(model) if model is not None else None
         for index, path in enumerate(frames):
             with Image.open(path) as frame:
-                rgba = matte.apply(frame.convert("RGB")) if matte is not None else frame.convert("RGBA")
+                if matte is not None:
+                    rgb = frame.convert("RGB")
+                    rgba = refine_foreground_edges(rgb, matte.apply(rgb))
+                else:
+                    rgba = frame.convert("RGBA")
             alpha = np.asarray(rgba.getchannel("A"))
             _validate_alpha(alpha)
             bounds = _bounds(alpha)
@@ -200,7 +204,7 @@ def prepare_actor_clip(
                 "-b:v",
                 "0",
                 "-crf",
-                "32",
+                "16",
                 str(dst),
             ],
             label="透明主体视频编码",

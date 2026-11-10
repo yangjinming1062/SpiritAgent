@@ -99,7 +99,7 @@ from .creation import (
     read_visual_reference,
     review_existing_opening,
 )
-from .geometry import probe_visual_image, visual_aspect_matches, visual_aspect_ratio
+from .geometry import actor_reference_frame, probe_visual_image, visual_aspect_matches, visual_aspect_ratio
 from .life import restart_visual_steps, settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
@@ -744,7 +744,8 @@ async def _prepare_pose(
         environment = snapshot.scene.path
     progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
     progress.aspect_ratio = _delivery_aspect(progress)
-    editing = bool(previous)
+    # 主体起始图重画仍直接读取原始身份与造型，避免在派生图上逐轮丢失面部细节。
+    editing = bool(previous) and snapshot.kind != "actor"
     if editing:
         reference = await asyncio.to_thread(read_valid_image_data_uri, previous)
         if not reference:
@@ -758,6 +759,30 @@ async def _prepare_pose(
             outfit = await _aligned_outfit_reference(
                 user_id, job.id, snapshot, progress, directory, identity, identity_outfit
             )
+        if (
+            snapshot.kind == "actor"
+            and not progress.image_chain_json
+            and not progress.repair_reason
+            and not progress.regenerate_image
+        ):
+            resolved = resolve_asset_reference(outfit)
+            if resolved is None:
+                raise VisualStateError("角色造型参考无法读取")
+            original = await asyncio.to_thread(resolved[0].read_bytes)
+            frame = await asyncio.to_thread(
+                actor_reference_frame, original, progress.target_width, progress.target_height
+            )
+            progress.pose_path = await save_image_chain_input_asset_async(
+                frame,
+                user_id=user_id,
+                generation_id=progress.generation_id,
+                label="outfit_opening",
+                ext="png",
+                directory=directory,
+            )
+            await _prepare_geometry(progress, frame)
+            await _save_progress(user_id, job.id, progress, stage="image")
+            return
         if snapshot.kind == "actor":
             # 透明主体动画的起始图在干净幕布上单独呈现角色，便于逐帧抠像保留真实轮廓。
             prompt = ACTOR_POSE_IMAGE_TEMPLATE.format(
@@ -786,6 +811,22 @@ async def _prepare_pose(
         progress.image_chain_json = value.model_dump_json()
         await _save_progress(user_id, job.id, progress, stage="image")
 
+    image_width, image_height = progress.target_width, progress.target_height
+    if snapshot.kind == "actor" and progress.video_chain_json and state.inputs is None:
+        video_chain = MediaChainState.model_validate_json(progress.video_chain_json)
+        if video_chain.providers:
+            frozen = video_chain.providers[0]
+            if frozen.video_resolution is None or frozen.video_aspect_ratio is None:
+                raise VisualStateError("视频制作任务缺少冻结尺寸，请重新制作")
+            config = await resolve_frozen_media_provider(user_id, "video_gen", frozen)
+            if config is None:
+                raise VisualStateError(video_failure_message("provider_unavailable"))
+            video_provider = build_provider(config, VideoGenProvider)
+            native_width, native_height = video_provider.resolution_size(
+                frozen.video_resolution, frozen.video_aspect_ratio
+            )
+            scale = max(1.0, native_width / image_width, native_height / image_height)
+            image_width, image_height = round(image_width * scale), round(image_height * scale)
     try:
         paths = await generate_reviewed_images(
             prompt,
@@ -800,11 +841,11 @@ async def _prepare_pose(
             identity_reference_mode=reference_mode,
             image_edit=editing,
             goal_review="required",
-            size=f"{progress.target_width}x{progress.target_height}",
+            size=f"{image_width}x{image_height}",
             aspect_ratio=progress.aspect_ratio,
-            target_width=progress.target_width,
-            target_height=progress.target_height,
-            nearest_resolution=True,
+            target_width=image_width,
+            target_height=image_height,
+            nearest_resolution=snapshot.kind != "actor",
             size_enforced=True,
             state=state,
             save_progress=save_image,
@@ -1142,7 +1183,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         identity_references = await _references(source)
         identity_review = await review_character_frames_with_references(
             user_id,
-            (*identity_references, reference),
+            identity_references,
             uris,
             visual_source_reference_prompt(source.identity_reference_role) + VISUAL_VIDEO_IDENTITY_REVIEW,
             task=AiTaskKey.visuals,

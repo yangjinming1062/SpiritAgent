@@ -1,4 +1,4 @@
-"""角色静态图片透明化：细化 alpha 与前景颜色。"""
+"""角色图片与视频帧透明化：细化 alpha 与前景颜色。"""
 
 import math
 from pathlib import Path
@@ -52,8 +52,8 @@ class ForegroundMatte:
         return Image.fromarray(np.round(rgba * 255).astype(np.uint8))
 
 
-def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Image:
-    """分割只提供已知区域；静态图边缘另估计覆盖率与未混入背景的前景颜色。"""
+def refine_foreground_edges(image: Image.Image, segmented: Image.Image) -> Image.Image:
+    """分割只提供已知区域；边缘另估计覆盖率与未混入背景的前景颜色。"""
     # 首次导入会编译数值内核，只在图片处理线程中加载，避免阻塞服务启动。
     from pymatting import estimate_alpha_cf, estimate_foreground_ml
 
@@ -84,7 +84,7 @@ def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Ima
     # 确定背景不收缩，保留肢体、把手及发丝之间的细窄空隙。
     background = np.asarray(work_mask) <= 5
     if not foreground.any() or not background.any():
-        raise VideoProcessError("图片透明边缘缺少可靠前景或背景，请更换清晰完整的图片")
+        raise VideoProcessError("主体透明边缘缺少可靠前景或背景，请更换清晰完整的素材")
     trimap = np.full((size[1], size[0]), 0.5, dtype=np.float64)
     trimap[foreground], trimap[background] = 1.0, 0.0
     try:
@@ -99,7 +99,7 @@ def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Ima
         if colors.shape != original.shape or not np.isfinite(colors).all():
             raise ValueError("invalid image foreground")
     except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
-        raise VideoProcessError("图片透明边缘处理失败，请重试已有图片", internal=str(exc)) from exc
+        raise VideoProcessError("主体透明边缘处理失败，请重试处理原素材", internal=str(exc)) from exc
     # 不对确定的不透明主体做颜色重建，避免改变白色衣物、道具及实体细节。
     colors[alpha >= 1 - 1e-6] = original[alpha >= 1 - 1e-6]
     colors[alpha == 0] = 0
@@ -111,4 +111,4 @@ def _refine_image_edges(image: Image.Image, segmented: Image.Image) -> Image.Ima
 
 def matte_image(image: Image.Image, model_path: Path) -> Image.Image:
     """静态图片以 ISNet 建立三分图，再求解 alpha 与前景颜色；保留原画布。"""
-    return _refine_image_edges(image, ForegroundMatte(model_path).apply(image))
+    return refine_foreground_edges(image, ForegroundMatte(model_path).apply(image))
