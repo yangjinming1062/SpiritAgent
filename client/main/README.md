@@ -136,7 +136,7 @@ Electron 使用 `net.fetch`、`net.WebSocket` 保持系统代理和证书语义�
 
 ## 构建产物
 
-tsup 构建 main / preload，共享 IPC 经 alias 解析；开发监听 main 与 shared。主窗口 `main.html` 由 `renderer-paths.ts` 和产物检查共同引用，改入口须核对实际文件名及 `package.json` 的 main。开发 CSP 与生产策略分开，不为开发白屏放宽生产；mac entitlements 见 [security](security/)。
+tsup 构建 main / preload，共享 IPC 经 alias 解析；开发监听 main 与 shared。`Electron.*` 只存在于类型声明，运行时取类必须从 `electron` 导入具体值；类型检查不会报错，缺失值只在实际使用该分支时抛 `ReferenceError`。主窗口 `main.html` 由 `renderer-paths.ts` 和产物检查共同引用，改入口须核对实际文件名及 `package.json` 的 main。开发 CSP 与生产策略分开，不为开发白屏放宽生产；mac entitlements 见 [security](security/)。
 
 ## 验证入口
 

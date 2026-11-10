@@ -1,4 +1,4 @@
-import { screen } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 
 import type { PresentationDisplay } from '@ipc/contracts'
 
@@ -44,7 +44,7 @@ export function resolveDisplay(
   displays: Electron.Display[],
   preferredId: number | null,
   sender: Electron.WebContents | undefined,
-  mainWindow: Electron.BrowserWindow | null
+  mainWindow: BrowserWindow | null
 ): Electron.Display | undefined {
   const preferred = displays.find(display => display.id === preferredId)
 
@@ -52,7 +52,7 @@ export function resolveDisplay(
     return preferred
   }
 
-  const source = sender ? Electron.BrowserWindow.fromWebContents(sender) : mainWindow
+  const source = sender ? BrowserWindow.fromWebContents(sender) : mainWindow
 
   const currentId =
     source && !source.isDestroyed() && (sender || source.isVisible() || source.isMinimized())
