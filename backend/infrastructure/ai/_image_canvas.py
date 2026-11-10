@@ -64,16 +64,6 @@ _GROK_ASPECTS = (
     "21:9",
     "5:2",
 )
-_MINIMAX_FIXED: dict[str, tuple[int, int]] = {
-    "1:1": (1024, 1024),
-    "16:9": (1280, 720),
-    "4:3": (1152, 864),
-    "3:2": (1248, 832),
-    "2:3": (832, 1248),
-    "3:4": (864, 1152),
-    "9:16": (720, 1280),
-    "21:9": (1344, 576),
-}
 _QWEN_FIXED: dict[str, tuple[int, int]] = {
     "1:1": (1024, 1024),
     "16:9": (1280, 720),
@@ -218,22 +208,10 @@ def select_image_canvas(config: ProviderConfig, width: int, height: int, *, near
         w, h = _QWEN_FIXED[aspect]
         return ImageCanvas(size=f"{w}x{h}", exact_size=True, native_width=w, native_height=h)
     if provider == "minimax":
-        if model == "image-01":
-            return _pixel_canvas(
-                width, height, step=8, min_area=512**2, max_ratio=4, min_edge=512, max_edge=2048, nearest=nearest
-            )
-        if nearest:
-            return _closest_canvas(
-                [
-                    ImageCanvas(size=aspect, aspect_ratio=aspect, native_width=w, native_height=h)
-                    for aspect, (w, h) in _MINIMAX_FIXED.items()
-                ],
-                width,
-                height,
-            )
-        aspect = _nearest_ratio(width, height, tuple(_MINIMAX_FIXED))
-        w, h = _MINIMAX_FIXED[aspect]
-        return ImageCanvas(size=aspect, aspect_ratio=aspect, native_width=w, native_height=h)
+        # 支持任意宽高，只约束输出面积与宽高比；像素档随任务冻结。
+        return _pixel_canvas(
+            width, height, step=8, min_area=655_360, max_area=20_000_000, max_ratio=3, min_edge=512, nearest=nearest
+        )
     if provider == "local":
         return _pixel_canvas(width, height, step=32, min_area=512**2, nearest=nearest)
     if provider == "gemini":
