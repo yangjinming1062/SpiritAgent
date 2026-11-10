@@ -21,14 +21,15 @@ export function SettingsContent({
   )
 }
 
-export type PillTone = 'muted' | 'primary' | 'accent' | 'success' | 'warning'
+export type PillTone = 'muted' | 'primary' | 'accent' | 'success' | 'warning' | 'danger'
 
 const PILL_TONE: Record<PillTone, string> = {
   muted: CHIP,
   primary: CHIP_FILTER_ACTIVE,
   accent: 'inline-flex shrink-0 items-center rounded-full bg-accent/15 px-2.5 py-1 text-[10px] text-accent',
   success: 'inline-flex shrink-0 items-center rounded-full bg-success/15 px-2.5 py-1 text-[10px] text-success',
-  warning: 'inline-flex shrink-0 items-center rounded-full bg-warning/15 px-2.5 py-1 text-[10px] text-warning'
+  warning: 'inline-flex shrink-0 items-center rounded-full bg-warning/15 px-2.5 py-1 text-[10px] text-warning',
+  danger: 'inline-flex shrink-0 items-center rounded-full bg-danger-bg px-2.5 py-1 text-[10px] text-danger-fg'
 }
 
 export function Pill({

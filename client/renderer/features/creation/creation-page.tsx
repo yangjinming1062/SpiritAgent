@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 
 import { $creationSection, openCreation } from '@/app/navigation/app-navigation'
+import { MediaViewerOverlay, MediaViewHost } from '@/features/media'
 import { Activity, Home, Shirt, Video } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
@@ -23,7 +24,7 @@ const ENTRIES = [
 ] as const
 
 /** 创作页：影像、造型、环境与动作按"一起做什么"组织为四个分区。 */
-export function CreationPage(_props: AppPageProps): React.JSX.Element {
+export function CreationPage({ containerRef, mediaViewId }: AppPageProps): React.JSX.Element {
   const section = useStore($creationSection)
   const activity = useStore($creationActivity)
   const strings = useStrings()
@@ -70,31 +71,34 @@ export function CreationPage(_props: AppPageProps): React.JSX.Element {
   }
 
   return (
-    <SectionShell
-      activeId={section}
-      ariaLabel={strings.settings.persona.categoriesAria}
-      bounded
-      entries={ENTRIES.map(({ id, icon }) => ({ id, icon, label: labels[id] }))}
-      onSelect={next => void openCreation(next)}
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        {attention.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warning/60 bg-warning/10 px-3 py-2">
-            <span className="text-[11px] font-medium text-warning">{studio.attentionTitle}</span>
-            {attention.slice(0, 4).map(chip)}
-            {attention.length > 4 && <span className="text-[11px] text-muted">+{attention.length - 4}</span>}
-          </div>
-        )}
-        {working.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line-hairline bg-fill-faint/40 px-3 py-2">
-            <span className="text-[11px] font-medium text-muted">{studio.activityTitle}</span>
-            {working.slice(0, 4).map(chip)}
-            {working.length > 4 && <span className="text-[11px] text-muted">+{working.length - 4}</span>}
-          </div>
-        )}
-        <div className="flex min-h-0 flex-1 flex-col">{content(section)}</div>
-      </div>
-    </SectionShell>
+    <MediaViewHost viewId={mediaViewId}>
+      <SectionShell
+        activeId={section}
+        ariaLabel={strings.settings.persona.categoriesAria}
+        bounded
+        entries={ENTRIES.map(({ id, icon }) => ({ id, icon, label: labels[id] }))}
+        onSelect={next => void openCreation(next)}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          {attention.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-warning/60 bg-warning/10 px-3 py-2">
+              <span className="text-[11px] font-medium text-warning">{studio.attentionTitle}</span>
+              {attention.slice(0, 4).map(chip)}
+              {attention.length > 4 && <span className="text-[11px] text-muted">+{attention.length - 4}</span>}
+            </div>
+          )}
+          {working.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line-hairline bg-fill-faint/40 px-3 py-2">
+              <span className="text-[11px] font-medium text-muted">{studio.activityTitle}</span>
+              {working.slice(0, 4).map(chip)}
+              {working.length > 4 && <span className="text-[11px] text-muted">+{working.length - 4}</span>}
+            </div>
+          )}
+          <div className="flex min-h-0 flex-1 flex-col">{content(section)}</div>
+        </div>
+      </SectionShell>
+      <MediaViewerOverlay containerRef={containerRef} viewId={mediaViewId} windowId={1} />
+    </MediaViewHost>
   )
 }
 

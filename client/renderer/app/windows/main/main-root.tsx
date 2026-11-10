@@ -269,7 +269,7 @@ export function MainRoot(): React.JSX.Element {
                     <AppContentPage
                       containerRef={shellRef}
                       foreground={active}
-                      mediaViewId="main-posts"
+                      mediaViewId={`main-${page}`}
                       page={page}
                       visible={visible && authenticated && uiStateReady}
                     />

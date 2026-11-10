@@ -317,7 +317,7 @@ export function DesktopRoot(): React.JSX.Element {
       <AppContentPage
         containerRef={rootRef}
         foreground={reading}
-        mediaViewId="desktop-posts"
+        mediaViewId={`desktop-${id}`}
         page={id}
         visible={visible && desktopVisible && uiStateReady && auth.kind === 'authenticated'}
       />

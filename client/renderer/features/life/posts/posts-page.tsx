@@ -4,8 +4,7 @@ import type { RefObject } from 'react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { $persona } from '@/features/character'
-import { InlineMedia } from '@/features/media'
-import { MediaViewerOverlay, openMediaViewer } from '@/features/media'
+import { InlineMedia, MediaViewerOverlay, MediaViewHost, openMediaViewer } from '@/features/media'
 import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
@@ -57,10 +56,12 @@ export function PostsPage({
   const strings = useStrings()
 
   return (
-    <ReadingPage hint={strings.living.posts.intro} title={strings.living.rail.posts}>
-      <PostsContent foreground={foreground} mediaViewId={mediaViewId} />
-      <MediaViewerOverlay containerRef={containerRef} viewId={mediaViewId} windowId={1} />
-    </ReadingPage>
+    <MediaViewHost viewId={mediaViewId}>
+      <ReadingPage hint={strings.living.posts.intro} title={strings.living.rail.posts}>
+        <PostsContent foreground={foreground} mediaViewId={mediaViewId} />
+        <MediaViewerOverlay containerRef={containerRef} viewId={mediaViewId} windowId={1} />
+      </ReadingPage>
+    </MediaViewHost>
   )
 }
 

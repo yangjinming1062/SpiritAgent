@@ -44,7 +44,7 @@
 
 ## 装配与状态归属
 
-窗口通过 `app/bootstrap` 装配账户、网关和 Provider，共用 `features`、`app/navigation` 与 [app-content-page.tsx](app/components/app-content-page.tsx)。[bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在首次渲染前注入窄端口，未绑定端口调用立即失败；不能借 barrel 导入副作用装配资源。
+窗口通过 `app/bootstrap` 装配账户、网关和 Provider，共用 `features`、`app/navigation` 与 [app-content-page.tsx](app/components/app-content-page.tsx)。[bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在首次渲染前注入窄端口，未绑定端口调用立即失败；不能借 barrel 导入副作用装配资源。媒体查看器按视图归属：内容页挂载 `MediaViewerOverlay` 时用 `MediaViewHost` 声明同一 `mediaViewId`，功能内的预览入口经 `useMediaViewId` 取该标识，多窗口并存时不互相弹出预览。
 
 | 状态 | 所有者 |
 |---|---|

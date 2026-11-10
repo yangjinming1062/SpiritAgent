@@ -1,5 +1,6 @@
 export { InlineMedia } from './inline-media'
 export { MediaPreview } from './media-preview'
 export { useResolvedMediaSrc } from './media-src'
+export { MediaViewHost, useMediaViewId } from './media-view-host'
 export { MediaViewerOverlay, openMediaViewer } from './media-viewer-overlay'
 export { createMediaObjectUrl } from './object-url'

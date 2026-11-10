@@ -3,7 +3,7 @@ import type React from 'react'
 import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 
 import { enqueueInteraction } from '@/features/creation/visuals'
-import { MediaViewerOverlay } from '@/features/media'
+import { MediaViewerOverlay, MediaViewHost } from '@/features/media'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { createFocusCycleHandler } from '@/shared/lib/focus-cycle'
@@ -132,106 +132,108 @@ export function ConversationPage({
   }, [active, visible, foreground, companion])
 
   return (
-    <PanelActivityProvider active={active && visible && foreground}>
-      <div className={styles.layout} data-narrow={narrow} ref={layoutRef}>
-        {sidebarOpen && (
-          <>
-            {narrow && (
-              <button
-                aria-label={t.hideConversations}
-                className={styles.backdrop}
-                onClick={closeSidebar}
-                type="button"
-              />
-            )}
-            <div
-              aria-label={narrow ? t.showConversations : undefined}
-              aria-modal={narrow ? true : undefined}
-              className={styles.sidebar}
-              id={sidebarId}
-              onKeyDown={event => {
-                if (narrow) {
-                  cycleFocus(event)
-                }
-              }}
-              ref={sidebarRef}
-              role={narrow ? 'dialog' : undefined}
-            >
-              <SessionSidebar
-                companionSessionId={companionSessionId}
-                companionUnread={companionUnread}
-                headerAction={
-                  <button
-                    aria-label={t.hideConversations}
-                    className={styles.toolbarButton}
-                    onClick={closeSidebar}
-                    title={t.hideConversations}
-                    type="button"
-                  >
-                    <ArrowLeft size={16} />
-                  </button>
-                }
-                onSessionSelected={() => {
+    <MediaViewHost viewId={viewId}>
+      <PanelActivityProvider active={active && visible && foreground}>
+        <div className={styles.layout} data-narrow={narrow} ref={layoutRef}>
+          {sidebarOpen && (
+            <>
+              {narrow && (
+                <button
+                  aria-label={t.hideConversations}
+                  className={styles.backdrop}
+                  onClick={closeSidebar}
+                  type="button"
+                />
+              )}
+              <div
+                aria-label={narrow ? t.showConversations : undefined}
+                aria-modal={narrow ? true : undefined}
+                className={styles.sidebar}
+                id={sidebarId}
+                onKeyDown={event => {
                   if (narrow) {
-                    closeSidebar()
+                    cycleFocus(event)
                   }
                 }}
-              />
-            </div>
-          </>
-        )}
-        <ConversationViewProvider
-          active={active && !(narrow && sidebarOpen) && !railOpen}
-          draftScope="main"
-          foreground={foreground}
-          receiveExternalAttachments={receiveExternalAttachments}
-          sessionId={sessionId}
-          viewId={viewId}
-          visible={visible}
-        >
-          <MainChat
-            companion={companion}
-            headingActions={
-              <button
-                aria-controls={sidebarId}
-                aria-expanded={sidebarOpen}
-                aria-label={sidebarOpen ? t.hideConversations : t.showConversations}
-                className={styles.toolbarButton}
-                onClick={() => (narrow ? setDrawerOpen(!drawerOpen) : sidebarCollapsed.set(!collapsed))}
-                ref={sidebarToggle}
-                title={sidebarOpen ? t.hideConversations : t.showConversations}
-                type="button"
+                ref={sidebarRef}
+                role={narrow ? 'dialog' : undefined}
               >
-                <List size={18} />
-              </button>
-            }
-            railAction={
-              !companion && (
-                <button
-                  aria-controls={railId}
-                  aria-expanded={railOpen}
-                  className={styles.detailButton}
-                  data-active={railOpen}
-                  onClick={() => setRailOpen(!railOpen)}
-                  ref={railToggle}
-                  type="button"
-                >
-                  {t.execution}
-                </button>
-              )
-            }
-            reveal={reveal}
-          />
-          {railOpen && !companion && (
-            <>
-              <button aria-label={t.closeExecution} className={styles.backdrop} onClick={closeRail} type="button" />
-              <RunRail closeLabel={t.closeExecution} id={railId} onClose={closeRail} title={t.execution} />
+                <SessionSidebar
+                  companionSessionId={companionSessionId}
+                  companionUnread={companionUnread}
+                  headerAction={
+                    <button
+                      aria-label={t.hideConversations}
+                      className={styles.toolbarButton}
+                      onClick={closeSidebar}
+                      title={t.hideConversations}
+                      type="button"
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                  }
+                  onSessionSelected={() => {
+                    if (narrow) {
+                      closeSidebar()
+                    }
+                  }}
+                />
+              </div>
             </>
           )}
-          <MediaViewerOverlay containerRef={containerRef} viewId={viewId} windowId={1} />
-        </ConversationViewProvider>
-      </div>
-    </PanelActivityProvider>
+          <ConversationViewProvider
+            active={active && !(narrow && sidebarOpen) && !railOpen}
+            draftScope="main"
+            foreground={foreground}
+            receiveExternalAttachments={receiveExternalAttachments}
+            sessionId={sessionId}
+            viewId={viewId}
+            visible={visible}
+          >
+            <MainChat
+              companion={companion}
+              headingActions={
+                <button
+                  aria-controls={sidebarId}
+                  aria-expanded={sidebarOpen}
+                  aria-label={sidebarOpen ? t.hideConversations : t.showConversations}
+                  className={styles.toolbarButton}
+                  onClick={() => (narrow ? setDrawerOpen(!drawerOpen) : sidebarCollapsed.set(!collapsed))}
+                  ref={sidebarToggle}
+                  title={sidebarOpen ? t.hideConversations : t.showConversations}
+                  type="button"
+                >
+                  <List size={18} />
+                </button>
+              }
+              railAction={
+                !companion && (
+                  <button
+                    aria-controls={railId}
+                    aria-expanded={railOpen}
+                    className={styles.detailButton}
+                    data-active={railOpen}
+                    onClick={() => setRailOpen(!railOpen)}
+                    ref={railToggle}
+                    type="button"
+                  >
+                    {t.execution}
+                  </button>
+                )
+              }
+              reveal={reveal}
+            />
+            {railOpen && !companion && (
+              <>
+                <button aria-label={t.closeExecution} className={styles.backdrop} onClick={closeRail} type="button" />
+                <RunRail closeLabel={t.closeExecution} id={railId} onClose={closeRail} title={t.execution} />
+              </>
+            )}
+            <MediaViewerOverlay containerRef={containerRef} viewId={viewId} windowId={1} />
+          </ConversationViewProvider>
+        </div>
+      </PanelActivityProvider>
+    </MediaViewHost>
   )
 }
 

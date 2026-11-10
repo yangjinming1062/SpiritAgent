@@ -35,10 +35,70 @@ _QR_EXPIRY: dict[str, datetime] = {}
 _QR_EXPIRY_LIMIT = 128
 # web 前端的 WBI 密钥混淆表；签名必须与网页端算法一致，否则接口直接拒绝请求。
 _WBI_MIXIN = (
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
-    27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
-    37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
-    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52,
 )
 
 
@@ -56,21 +116,23 @@ async def _get(
     if before_request is not None:
         await before_request()
     try:
-        async with safe_outbound_async_client(
-            timeout=httpx.Timeout(30, connect=10, pool=10),
-            follow_redirects=False,
-            headers={"user-agent": _USER_AGENT, "referer": "https://www.bilibili.com/"},
-        ) as client:
-            async with client.stream("GET", base + path, params=params, cookies=cookies) as response:
-                status_code = response.status_code
-                body = await read_capped_response(
-                    response,
-                    max_bytes=_MAX_RESPONSE_BYTES,
-                    too_large=SocialSourceError(
-                        "Bilibili response exceeded its limit", code=422, reason="response_invalid"
-                    ),
-                )
-                delivered = dict(response.cookies.items())
+        async with (
+            safe_outbound_async_client(
+                timeout=httpx.Timeout(30, connect=10, pool=10),
+                follow_redirects=False,
+                headers={"user-agent": _USER_AGENT, "referer": "https://www.bilibili.com/"},
+            ) as client,
+            client.stream("GET", base + path, params=params, cookies=cookies) as response,
+        ):
+            status_code = response.status_code
+            body = await read_capped_response(
+                response,
+                max_bytes=_MAX_RESPONSE_BYTES,
+                too_large=SocialSourceError(
+                    "Bilibili response exceeded its limit", code=422, reason="response_invalid"
+                ),
+            )
+            delivered = dict(response.cookies.items())
     except (httpx.HTTPError, TimeoutError):
         raise SocialSourceError("Bilibili source network error", reason="network_error") from None
     if not 200 <= status_code < 300:
@@ -154,7 +216,11 @@ class BilibiliWebClient:
             before_request,
         )
         payload, _ = await _get(
-            _API_BASE, "/x/web-interface/wbi/search/type", params=params, cookies=self._cookies, before_request=before_request
+            _API_BASE,
+            "/x/web-interface/wbi/search/type",
+            params=params,
+            cookies=self._cookies,
+            before_request=before_request,
         )
         return _result(payload)[0]
 
