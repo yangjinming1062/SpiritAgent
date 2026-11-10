@@ -30,4 +30,6 @@ dependencies = [
     "onnxruntime>=1.20.0",
     "twscrape==0.20.1",
     "beautifulsoup4>=4.15.0",
+    # 扫码登录的二维码本地渲染；纯 Python，图像输出复用依赖中的 Pillow
+    "qrcode>=8.2",
 ]

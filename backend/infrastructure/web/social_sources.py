@@ -7,8 +7,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, JsonValue
 
+from .bilibili import BilibiliLoginClient
+from .bilibili_source import BilibiliSource
 from .social_content import RequestGuard, SocialContent, SocialSearchPage
-from .social_credentials import XCredentials, XiaohongshuCredentials
+from .social_credentials import BilibiliCredentials, XCredentials, XiaohongshuCredentials
 from .social_login import SocialLoginClient
 from .social_platforms import get_social_platform
 from .x_source import XSource
@@ -56,11 +58,16 @@ def _xiaohongshu_source(credentials: dict[str, JsonValue]) -> XiaohongshuSource:
     )
 
 
+def _bilibili_source(credentials: dict[str, JsonValue]) -> BilibiliSource:
+    return BilibiliSource(cookies=BilibiliCredentials.model_validate(credentials).cookies)
+
+
 SOCIAL_ADAPTERS: dict[str, PlatformAdapter] = {
     "x": PlatformAdapter(credentials=XCredentials, source=_x_source, manual_credentials=_x_manual_credentials),
     "xiaohongshu": PlatformAdapter(
         credentials=XiaohongshuCredentials, source=_xiaohongshu_source, login=XiaohongshuServiceClient
     ),
+    "bilibili": PlatformAdapter(credentials=BilibiliCredentials, source=_bilibili_source, login=BilibiliLoginClient),
 }
 
 

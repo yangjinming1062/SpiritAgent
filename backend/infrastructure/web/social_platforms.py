@@ -34,6 +34,13 @@ SOCIAL_PLATFORMS: dict[str, PlatformDefinition] = {
         path_pattern=r"/(?:explore|discovery/item)/{source_id}",
         query_keys=("xsec_token", "xsec_source"),
     ),
+    "bilibili": PlatformDefinition(
+        id="bilibili",
+        auth_kind="qr",
+        labels={"zh": "哔哩哔哩", "en": "Bilibili"},
+        hosts=("bilibili.com", "www.bilibili.com"),
+        path_pattern=r"/video/{source_id}",
+    ),
 }
 
 

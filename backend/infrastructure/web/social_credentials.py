@@ -148,3 +148,28 @@ class XiaohongshuCredentials(BaseModel):
         if len(self.model_dump_json(exclude_none=True).encode("utf-8")) > 100000:
             raise ValueError("Xiaohongshu Cookie data is too large")
         return self
+
+
+class BilibiliCredentials(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    cookies: dict[str, str] = Field(max_length=24, repr=False)
+
+    @field_validator("cookies")
+    @classmethod
+    def require_login_cookie(cls, value: dict[str, str]) -> dict[str, str]:
+        if not value.get("SESSDATA") or any(
+            not re.fullmatch(r"[!#$%&'*+\-.^_`|~A-Za-z0-9]+", name)
+            or not entry
+            or len(entry) > 4096
+            or any(ord(character) < 32 or ord(character) == 127 or character == ";" for character in entry)
+            for name, entry in value.items()
+        ):
+            raise ValueError("Bilibili 登录 Cookie 无效或缺少 SESSDATA")
+        return value
+
+    @model_validator(mode="after")
+    def validate_size(self) -> "BilibiliCredentials":
+        if len(self.model_dump_json(exclude_none=True).encode("utf-8")) > 16000:
+            raise ValueError("Bilibili Cookie data is too large")
+        return self

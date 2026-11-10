@@ -131,7 +131,7 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 ### 免费社交资讯来源
 
-客户端「设置 → 资讯来源」管理个人登录。X 接受含 `auth_token`、`ct0` 的 Cookie 请求头或导出 JSON，仅保存需要的字段；保存成功表示结构有效，平台拒绝后需重新配置。小红书使用扫码及按需短信验证。
+客户端「设置 → 资讯来源」管理个人登录。登录方式由平台注册表的 `auth_kind` 决定：cookie 平台接受 Cookie 请求头或浏览器导出的 Cookie JSON，仅保存需要的字段，保存成功表示结构有效，平台拒绝后需重新配置；qr 平台使用扫码登录，必要时补充短信验证码。
 
 小红书服务随 Compose 启动，Backend 固定连接 `http://xiaohongshu-mcp:18060`，无地址或访问令牌配置，也不发布宿主机端口。修改该服务时执行 `docker compose up -d --build backend xiaohongshu-mcp`；后端启动不依赖其健康检查，健康只证明进程可访问。
 
