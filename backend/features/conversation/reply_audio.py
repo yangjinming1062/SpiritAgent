@@ -1,4 +1,6 @@
 import asyncio
+import io
+import wave
 from collections.abc import Awaitable, Callable
 from typing import Any
 from weakref import WeakValueDictionary
@@ -105,6 +107,26 @@ async def discard_reply_audio(reply: CompanionReply) -> None:
         if isinstance(bubble, VoiceBubble) and bubble.audio:
             await asyncio.to_thread(asset_store.unlink_companion_asset, bubble.audio.url)
             bubble.audio = None
+
+
+async def save_stream_reply_audio(user_id: int, reply: CompanionReply, pcm: bytes, *, sample_rate: int) -> ReplyAudio:
+    """Persist the PCM that was sent to the call before its playback is confirmed."""
+    if not pcm or len(pcm) % 2 or sample_rate <= 0:
+        raise ValueError("Streaming reply audio is invalid")
+    if reply.audio_directory is None:
+        async with session_scope() as db:
+            timezone = await resolve_user_timezone(db, user_id) or "UTC"
+        reply.audio_directory = dated_asset_directory(utc_now(), timezone=timezone)
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+    path = await save_companion_asset_async(
+        output.getvalue(), user_id=user_id, label="chat-voice-stream", ext="wav", directory=reply.audio_directory
+    )
+    return ReplyAudio(url=path, duration=len(pcm) / (sample_rate * 2))
 
 
 async def _discard_unconsumed(pending: dict[int, asyncio.Task[ReplyAudio]], consumed: set[int]) -> None:

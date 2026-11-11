@@ -100,12 +100,14 @@ def provider_input_modalities(service: ServiceType | str, name: str) -> frozense
     return frozenset(supported)
 
 
-def provider_supports_streaming(service: ServiceType | str, name: str) -> bool:
+def provider_supports_streaming(service: ServiceType | str, name: str, config: ProviderConfig | None = None) -> bool:
     """返回供应商是否明确声明了可用于实时路径的增量能力。"""
     cls = try_resolve(ServiceType(service), name)
     if cls is None:
         return False
-    if issubclass(cls, (STTProvider, TTSProvider)):
+    if issubclass(cls, STTProvider):
+        return cls.supports_streaming_config(config) if config is not None else cls.supports_streaming
+    if issubclass(cls, TTSProvider):
         return cls.supports_streaming
     return False
 

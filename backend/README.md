@@ -98,7 +98,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 回退、可重试错误与未知结果由 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py) 处理。聊天与独立调用共用 [response_validation.py](infrastructure/ai/response_validation.py) 校验响应终态，业务输出仍由各自契约校验。
 
-实时语音的增量能力由 [providers/base.py](infrastructure/ai/providers/base.py) 的 `supports_streaming` 与 `provider_supports_streaming` 显式声明；`stream_transcribe_audio` 和 `stream_synthesize_speech` 只选择已声明的供应商。Qwen 实时 ASR 要求工作区专用 DashScope WebSocket 端点和 streaming 模型，MiniMax TTS 通过官方 T2A WebSocket `task_start → task_continue → task_finish` 输出 24 kHz PCM 分片，并沿用已绑定的音色与演绎参数。现有整段适配器不会被伪装成流式实现，也不会在不可重放的音频输入中途切换供应商；未配置流式能力时返回明确的 `ProviderCapabilityError`。
+实时语音的增量能力由 [providers/base.py](infrastructure/ai/providers/base.py) 的 `supports_streaming` 与 `provider_supports_streaming` 显式声明；`stream_transcribe_audio` 和 `stream_synthesize_speech` 只选择已声明且与当前模型、协议、端点匹配的供应商。语音链在未指定固定音色时优先排列 Mimo、MiniMax；流式筛选后由实际支持增量的 MiniMax 承担 PCM 输出，Mimo 保留为整段路径或兼容回退。Qwen 适配器目前只支持 `qwen-audio-3.1-asr-flash-streaming` 与 `qwen-audio-3.0-asr-flash-streaming` 的任务式 WebSocket 协议，要求工作区专用 DashScope 端点，并把通话的 24 kHz PCM 按流转换为供应商请求的 16 kHz；`qwen3-asr-flash-realtime` 等其它实时协议不会误路由到此适配器。MiniMax TTS 通过官方 T2A WebSocket `task_start → task_continue → task_finish` 输出 24 kHz PCM 分片，并沿用已绑定的音色与演绎参数。现有整段适配器不会被伪装成流式实现，也不会在不可重放的音频输入中途切换供应商；未配置流式能力时返回明确的 `ProviderCapabilityError`。
 
 [network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。DDGS 使用 `DDGS_PROXY`。
 

@@ -22,7 +22,7 @@ from runtime.chat_accounts import acquire_account_runtime, release_account_runti
 from runtime.desktop.connection import MANAGER
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.user_maintenance import is_user_in_maintenance
-from workflows.realtime_voice import RealtimeVoicePipeline
+from workflows.realtime_voice import CallInputOverflowError, RealtimeVoicePipeline
 
 from entrypoints.http.routing import get_router
 
@@ -123,7 +123,14 @@ async def realtime_voice_websocket(
                             raise ValueError("Invalid audio rate or frame size")
                         try:
                             pipeline.receive_audio(pcm)
+                        except CallInputOverflowError:
+                            await pipeline.cancel_input()
+                            await session.emit(
+                                "error",
+                                {"message": "语音接收过载，请重新开始发言", "fatal": False},
+                            )
                         except ValueError:
+                            await pipeline.cancel_input()
                             await session.emit("error", {"message": "发言过长，请缩短后重试", "fatal": False})
                         continue
                     raw = message.get("text")

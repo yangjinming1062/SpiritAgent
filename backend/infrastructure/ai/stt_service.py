@@ -40,7 +40,9 @@ async def stream_transcribe_audio(
         chain = await resolve_provider_chain(db, user_id, ServiceType.stt, task=AiTaskKey.speech_input)
     if not chain:
         raise MissingLlmConfigError("no STT provider configured")
-    streaming = [config for config in chain if provider_supports_streaming(ServiceType.stt, config.provider_name)]
+    streaming = [
+        config for config in chain if provider_supports_streaming(ServiceType.stt, config.provider_name, config)
+    ]
     if not streaming:
         raise ProviderCapabilityError("configured STT providers do not support streaming")
     provider = build_provider(streaming[0], STTProvider)

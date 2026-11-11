@@ -10,13 +10,18 @@ from uuid import uuid4
 
 from features.conversation.http_contracts import PromptSubmitRequest
 from features.conversation.replies import CompanionReply, TextBubble, VoiceBubble
-from features.conversation.reply_audio import client_reply_bubbles, discard_reply_audio, prepare_reply_audio
+from features.conversation.reply_audio import (
+    client_reply_bubbles,
+    discard_reply_audio,
+    prepare_reply_audio,
+    save_stream_reply_audio,
+)
+from features.media.speech import stream_synthesize_speech
 from features.realtime_voice.contracts import MAX_INPUT_BYTES, SAMPLE_RATE, TurnVersion
 from features.realtime_voice.session import CallSession
 from infrastructure.ai.providers.base import ProviderCapabilityError
 from infrastructure.ai.stt_service import stream_transcribe_audio, transcribe_audio
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.tts_service import stream_synthesize_speech
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.async_io import cancel_and_wait, run_blocking, wait_for_task
@@ -82,6 +87,10 @@ class _PartialAudioError(RuntimeError):
     """流式 TTS 已经发出部分声音，不能再回退到另一份音频。"""
 
 
+class CallInputOverflowError(ValueError):
+    """实时识别输入队列溢出；当前发言必须作废并重新开始。"""
+
+
 class RealtimeVoicePipeline:
     def __init__(self, session: CallSession, actor: BusinessActor) -> None:
         self.session = session
@@ -95,7 +104,10 @@ class RealtimeVoicePipeline:
         self._finish_task: asyncio.Task[None] | None = None
         self._cancel_task: asyncio.Task[None] | None = None
         self._turn: CallTurn | None = None
-        self._partial_texts: list[str] = []
+        # Keep incremental delivery identity by bubble position.  Matching the
+        # text itself can incorrectly collapse two distinct, identical bubbles.
+        self._partial_texts: dict[int, str] = {}
+        self._input_error: str | None = None
 
     async def begin_input(self, version: TurnVersion) -> None:
         if not await self.session.begin_input(version):
@@ -105,6 +117,7 @@ class RealtimeVoicePipeline:
         # therefore always receive the end sentinel without blocking the socket.
         self._input_queue = asyncio.Queue(maxsize=4096)
         self._input_finished = False
+        self._input_error = None
         self._partial_texts.clear()
         # Stop the previous turn without holding the websocket receive loop.  The
         # next recognition task waits for this settlement before admission, so
@@ -133,6 +146,7 @@ class RealtimeVoicePipeline:
         self._input = None
         self._input_queue = None
         self._input_finished = True
+        self._input_error = None
         finish_task = self._finish_task
         self._finish_task = None
         await self._cancel_refs(finish_task, None)
@@ -144,11 +158,24 @@ class RealtimeVoicePipeline:
             return
         if len(self._input) + len(pcm) > MAX_INPUT_BYTES:
             self._input = None
+            self._input_finished = True
+            self._input_error = "duration"
+            self._input_queue = None
+            if self._finish_task is not None:
+                self._finish_task.cancel()
             raise ValueError("单次发言超过 60 秒，请缩短后重试")
         self._input.extend(pcm)
         if self._input_queue is not None:
-            with contextlib.suppress(asyncio.QueueFull):
+            try:
                 self._input_queue.put_nowait(pcm)
+            except asyncio.QueueFull as exc:
+                self._input = None
+                self._input_finished = True
+                self._input_error = "backpressure"
+                self._input_queue = None
+                if self._finish_task is not None:
+                    self._finish_task.cancel()
+                raise CallInputOverflowError("实时识别输入过载，请重新开始发言") from exc
 
     async def finish_input(self, version: TurnVersion) -> None:
         if not self.session.current(version) or self._input is None or self._input_finished:
@@ -157,15 +184,23 @@ class RealtimeVoicePipeline:
         pcm_length = len(self._input)
         queue = self._input_queue
         if queue is not None:
-            while True:
-                try:
-                    queue.put_nowait(None)
-                    break
-                except asyncio.QueueFull:
-                    # The full PCM copy remains available for the explicit buffered
-                    # fallback; make sure a slow streaming provider still sees end-of-input.
-                    with contextlib.suppress(asyncio.QueueEmpty):
-                        queue.get_nowait()
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                # Dropping an older frame would make the final transcript
+                # unknowingly depend on a hole in the recording. Invalidate the
+                # input and stop recognition instead of forcing a bad fallback.
+                self._input = None
+                self._input_queue = None
+                self._input_error = "backpressure"
+                finish_task = self._finish_task
+                self._finish_task = None
+                await cancel_and_wait([finish_task])
+                await self.session.set_state("listening", version)
+                await self.session.emit(
+                    "error", {"message": "语音接收过载，请重新开始发言", "fatal": False}, version=version
+                )
+                return
         if pcm_length < SAMPLE_RATE // 5:  # 少于 100ms 的声音不能形成有效发言。
             if self._finish_task is not None:
                 self._finish_task.cancel()
@@ -193,7 +228,25 @@ class RealtimeVoicePipeline:
     async def _stream_text(self, queue: asyncio.Queue[bytes | None], version: TurnVersion) -> str:
         final_sentences: dict[int, str] = {}
         current_sentence = ""
+        current_sentence_id: int | None = None
         next_sentence_id = 0
+
+        def join_sentences(parts: list[str]) -> str:
+            result = ""
+            punctuation = "，。！？；：,.!?;:)]}»、"
+            for part in parts:
+                if not part:
+                    continue
+                if not result:
+                    result = part
+                elif result.endswith((" ", "\n")) or part[0] in punctuation:
+                    result += part
+                elif result[-1].isascii() and part[0].isascii() and (result[-1].isalnum() or part[0].isalnum()):
+                    result += " " + part
+                else:
+                    result += part
+            return result
+
         events = stream_transcribe_audio(
             self.actor.user_id, self._input_chunks(queue), mime_type="audio/pcm;rate=24000"
         )
@@ -205,18 +258,25 @@ class RealtimeVoicePipeline:
                     continue
                 sentence_id = event.sentence_id
                 if sentence_id is None:
-                    next_sentence_id += 1
-                    sentence_id = next_sentence_id
+                    if current_sentence_id is None:
+                        next_sentence_id += 1
+                        current_sentence_id = next_sentence_id
+                    sentence_id = current_sentence_id
                 if event.final:
                     final_sentences[sentence_id] = event.text.strip()
                     current_sentence = ""
+                    current_sentence_id = None
                 else:
                     current_sentence = event.text.strip()
-                latest = "".join(final_sentences[index] for index in sorted(final_sentences)) + current_sentence
+                latest = join_sentences(
+                    [*(final_sentences[index] for index in sorted(final_sentences)), current_sentence]
+                )
                 await self.session.emit("transcript.partial", {"text": latest, "final": event.final}, version=version)
         finally:
             await events.aclose()
-        return "".join(final_sentences[index] for index in sorted(final_sentences)) or current_sentence
+        # Interim recognition is UI feedback only. A sentence without a final
+        # event must not become a user message when the stream closes.
+        return join_sentences([final_sentences[index] for index in sorted(final_sentences)])
 
     async def _recognize(self, version: TurnVersion, queue: asyncio.Queue[bytes | None]) -> None:
         try:
@@ -230,6 +290,9 @@ class RealtimeVoicePipeline:
                 pcm = bytes(self._input or b"")
                 await self.session.set_state("thinking", version)
                 text = (await transcribe_audio(self.actor.user_id, pcm_wav(pcm), "audio/wav")).strip()
+            if self._input_error is not None:
+                await self.session.set_state("listening", version)
+                return
             if not self.session.current(version):
                 return
             if self.session.muted:
@@ -297,15 +360,16 @@ class RealtimeVoicePipeline:
         turn = self._turn
         if turn is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
-        if any(text == validated.text for text in self._partial_texts):
+        if self._partial_texts.get(index) == validated.text:
             return
         await self.session.deliver_part(index, validated.model_dump(), turn.version)
-        self._partial_texts.append(validated.text)
+        self._partial_texts[index] = validated.text
         await self.session.emit("transcript.assistant", {"text": validated.text}, version=turn.version)
 
-    async def _deliver_stream_voice(self, bubble: VoiceBubble, version: TurnVersion) -> None:
+    async def _deliver_stream_voice(self, part: CompanionReply, bubble: VoiceBubble, version: TurnVersion) -> None:
         sent = False
-        sequence = 0
+        last_sequence: int | None = None
+        audio_parts: list[bytes] = []
         try:
             await self.session.set_state("speaking", version)
             async for chunk in stream_synthesize_speech(
@@ -319,16 +383,27 @@ class RealtimeVoicePipeline:
             ):
                 if not chunk.audio or not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
                     raise ValueError("Streaming TTS returned invalid PCM")
+                audio_parts.append(chunk.audio)
                 for offset in range(0, len(chunk.audio), 9600):
-                    await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
+                    last_sequence = await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
                     sent = True
-                    sequence += 1
-            if sequence == 0:
+            if last_sequence is None:
                 raise ProviderCapabilityError("Streaming TTS returned no audio")
-            await self.session.wait_played(sequence, version)
+            bubble.audio = await save_stream_reply_audio(
+                self.actor.user_id, part, b"".join(audio_parts), sample_rate=SAMPLE_RATE
+            )
+            # ``send_audio`` owns the call-wide sequence.  Waiting on the last
+            # returned sequence prevents a later bubble from acknowledging an
+            # earlier local counter.
+            await self.session.wait_played(last_sequence, version)
         except asyncio.CancelledError:
             raise
-        except ProviderCapabilityError:
+        except ProviderCapabilityError as exc:
+            # A provider may discover an unsupported mode after opening the
+            # stream.  Once bytes crossed the transport boundary, replaying via
+            # the full TTS path would make the user hear the same bubble twice.
+            if sent:
+                raise _PartialAudioError("Streaming TTS became unavailable after audio was sent") from exc
             raise
         except Exception as exc:
             if sent:
@@ -341,10 +416,12 @@ class RealtimeVoicePipeline:
             raise RuntimeError("Call voice synthesis failed")
         pcm = await run_blocking(asset_pcm, self.actor.user_id, bubble.audio.url)
         await self.session.set_state("speaking", version)
-        sequence = 0
+        last_sequence: int | None = None
         for offset in range(0, len(pcm), 9600):
-            sequence = await self.session.send_audio(pcm[offset : offset + 9600], version)
-        await self.session.wait_played(sequence, version)
+            last_sequence = await self.session.send_audio(pcm[offset : offset + 9600], version)
+        if last_sequence is None:
+            raise RuntimeError("Voice asset is empty")
+        await self.session.wait_played(last_sequence, version)
 
     async def _deliver_text_fallback(self, reply: CompanionReply, index: int, version: TurnVersion) -> None:
         if not self.session.current(version):
@@ -357,22 +434,26 @@ class RealtimeVoicePipeline:
         turn = self._turn
         if turn is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
-        partial_texts = list(self._partial_texts)
+        partial_texts = dict(self._partial_texts)
         self._partial_texts.clear()
         for index, bubble in enumerate(reply.bubbles):
             if not self.session.current(turn.version):
                 raise asyncio.CancelledError
-            if isinstance(bubble, TextBubble) and bubble.text in partial_texts:
-                partial_texts.remove(bubble.text)
+            if isinstance(bubble, TextBubble) and partial_texts.get(index) == bubble.text:
+                partial_texts.pop(index)
                 self.confirmed_indices.append(index)
                 continue
             if isinstance(bubble, VoiceBubble):
                 # 原始音色和演绎冻结在已验证气泡中，复用普通语音合成及资产保护。
                 part = reply.model_copy(update={"bubbles": [bubble]})
                 existing_audio = bubble.audio
+                stream_succeeded = False
                 try:
-                    await self._deliver_stream_voice(bubble, turn.version)
+                    await self._deliver_stream_voice(part, bubble, turn.version)
+                    stream_succeeded = True
                 except _PartialAudioError:
+                    if existing_audio is None:
+                        await discard_reply_audio(part)
                     raise
                 except ProviderCapabilityError:
                     try:
@@ -385,6 +466,8 @@ class RealtimeVoicePipeline:
                         if existing_audio is None:
                             await discard_reply_audio(part)
                         await self._deliver_text_fallback(reply, index, turn.version)
+                        self.confirmed_indices.append(index)
+                        await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
                     else:
                         # 完整语音播放确认后才发布台词。被打断的半句没有可靠字词时间戳，不当成已说完。
                         bubble.audio = part.bubbles[0].audio
@@ -409,9 +492,17 @@ class RealtimeVoicePipeline:
                     )
                     await self.session.deliver_part(index, client_reply_bubbles(reply)[index], turn.version)
                     self.confirmed_indices.append(index)
+                    await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
+                if stream_succeeded:
+                    # Only audio that reached the transport and passed the
+                    # playback receipt is part of the confirmed history.
+                    self.confirmed_indices.append(index)
+                    await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
             else:
                 await self.session.deliver_part(index, client_reply_bubbles(reply)[index], turn.version)
                 self.confirmed_indices.append(index)
+                if isinstance(bubble, TextBubble):
+                    await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
 
     async def push_event(self, event_type: str, payload: Any = None, session_id: str | None = None) -> None:
         await self._base.push_event(event_type, payload, session_id=session_id)

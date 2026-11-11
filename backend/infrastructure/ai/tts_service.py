@@ -22,6 +22,19 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.voice_catalog import pick_voice_id, voices_for_provider
 from infrastructure.database import SESSION_LOCAL
 
+PREFERRED_VOICE_PROVIDERS: tuple[str, ...] = ("mimo", "minimax")
+
+
+def _prioritize_voice_providers(chain: list[ProviderConfig]) -> list[ProviderConfig]:
+    """Prefer the voice providers used by calls while preserving configured fallback order."""
+    rank = {name: index for index, name in enumerate(PREFERRED_VOICE_PROVIDERS)}
+    return [
+        config
+        for _, config in sorted(
+            enumerate(chain), key=lambda item: (rank.get(item[1].provider_name, len(rank)), item[0])
+        )
+    ]
+
 
 def _route_selected_voice(
     voice: str,
@@ -120,6 +133,8 @@ async def resolve_reply_voice(
         design_prompt=design_prompt,
         reference_audio=reference_audio,
     )
+    if not provider_name and not selected_provider:
+        chain = _prioritize_voice_providers(chain)
     if not provider_name:
         chain = _builtin_voice_chain(chain)
     if not chain or chain[0].provider_name not in {"mimo", "minimax"}:
@@ -175,6 +190,8 @@ async def synthesize_speech(
         design_prompt=design_prompt,
         reference_audio=reference_audio,
     )
+    if not provider_name and not selected_provider:
+        chain = _prioritize_voice_providers(chain)
     if not provider_name:
         chain = _builtin_voice_chain(chain)
     if not chain:
@@ -248,6 +265,8 @@ async def stream_synthesize_speech(
         design_prompt=design_prompt,
         reference_audio=reference_audio,
     )
+    if not provider_name and not selected_provider:
+        chain = _prioritize_voice_providers(chain)
     if not provider_name:
         chain = _builtin_voice_chain(chain)
     if preserve_performance and speech_style is not None:

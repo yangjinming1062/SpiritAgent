@@ -1,12 +1,14 @@
 """所有语音消费方共用的音色解析；供应商只消费校验后的声音输入。"""
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import replace
 
-from infrastructure.ai.providers.base import ProviderConfig, TTSResult, VoiceReferenceAudio
+from infrastructure.ai.providers.base import ProviderConfig, TTSResult, TTSStreamChunk, VoiceReferenceAudio
 from infrastructure.ai.speech_contracts import SpeechStyle
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.tts_service import resolve_reply_voice as resolve_provider_voice
+from infrastructure.ai.tts_service import stream_synthesize_speech as stream_provider_speech
 from infrastructure.ai.tts_service import synthesize_speech as synthesize_provider_speech
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
@@ -98,3 +100,47 @@ async def synthesize_speech(
         design_prompt=snapshot.prompt,
     )
     return replace(result, voice=voice)
+
+
+async def stream_synthesize_speech(
+    user_id: int,
+    text: str,
+    voice: str = "",
+    language: str = "",
+    speech_style: SpeechStyle | None = None,
+    *,
+    task: AiTaskKey,
+    preserve_performance: bool = False,
+) -> AsyncIterator[TTSStreamChunk]:
+    """使用与整段语音相同的自定义音色解析入口，再进入供应商流式接口。"""
+    async with session_scope() as db:
+        snapshot = await resolve_custom_voice(db, user_id, voice)
+    if snapshot is None:
+        async for chunk in stream_provider_speech(
+            user_id,
+            text,
+            voice,
+            language,
+            speech_style,
+            task=task,
+            preserve_performance=preserve_performance,
+        ):
+            yield chunk
+        return
+
+    reference = await _protect_reference(user_id, snapshot)
+    async for chunk in stream_provider_speech(
+        user_id,
+        text,
+        snapshot.provider_voice_id,
+        language,
+        speech_style,
+        task=task,
+        preserve_performance=preserve_performance,
+        reference_audio=reference,
+        provider_name=snapshot.provider,
+        model=snapshot.model,
+        model_card_id=snapshot.model_card_id,
+        design_prompt=snapshot.prompt,
+    ):
+        yield chunk

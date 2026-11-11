@@ -453,6 +453,23 @@ async def _generate_llm_response(
     completed_response: Any = None
     text_emitted = False
 
+    def _recover_incremental_text() -> bool:
+        """Turn already displayed text bubbles into a terminal reply after a stream error."""
+        nonlocal pending_text, reply
+        if tool_call_started or tool_calls_list or not partial_bubbles:
+            return False
+        values = [TextBubble.model_validate(bubble) for bubble in partial_bubbles if bubble.get("type") == "text"]
+        if not values:
+            return False
+        normalized = [value.model_dump(mode="json") for value in values]
+        reply = CompanionReply(bubbles=values)
+        pending_text = [json.dumps(normalized, ensure_ascii=False)]
+        logger.warning(
+            "Companion reply stream failed after incremental text delivery; preserving delivered bubbles",
+            extra={"bubble_count": len(values)},
+        )
+        return True
+
     def _record_usage(usage: Any) -> None:
         """非流式终态与流式 completed 事件共用同一次用量记录。"""
         nonlocal final_prompt_tokens, final_completion_tokens, final_usage_payload
@@ -671,9 +688,13 @@ async def _generate_llm_response(
                 )
 
         except LLMRuntimeError as exc:
-            if _has_final_reply(completed_response) and not isinstance(exc, FinalReplyStreamError):
-                raise FinalReplyStreamError(exc.classified) from exc
-            raise
+            if not _recover_incremental_text():
+                if _has_final_reply(completed_response) and not isinstance(exc, FinalReplyStreamError):
+                    raise FinalReplyStreamError(exc.classified) from exc
+                raise
+        except IncompleteResponseError:
+            if not _recover_incremental_text():
+                raise
         finally:
             try:
                 await response.aclose()
@@ -731,16 +752,25 @@ async def _generate_llm_response(
                     raise
                 # 已经实际展示的文字必须有可恢复的事实记录；若后续对象让终态校验失败，
                 # 把这些独立验证过的文字泡降级为本轮可持久化回复，避免出现“说过但历史没有”的事实。
-                partial_text_bubbles = [TextBubble.model_validate(bubble) for bubble in partial_bubbles]
+                # The incremental sink may support more than text in the future.  Terminal
+                # recovery is deliberately text-only: it must never try to turn a voice/media
+                # object into a different bubble type or persist an unverified asset.
+                partial_text_bubbles = [
+                    TextBubble.model_validate(bubble) for bubble in partial_bubbles if bubble.get("type") == "text"
+                ]
+                if not partial_text_bubbles:
+                    _log_reply_format_failure(exc)
+                    raise
                 reply = CompanionReply(bubbles=partial_text_bubbles)
-                text = json.dumps(partial_bubbles, ensure_ascii=False)
+                partial_text = [bubble.model_dump(mode="json") for bubble in partial_text_bubbles]
+                text = json.dumps(partial_text, ensure_ascii=False)
                 pending_text = [text]
                 logger.warning(
                     "Companion reply terminal validation failed after incremental delivery; preserving text bubbles",
                     extra={"bubble_count": len(partial_text_bubbles)},
                 )
                 resolved = None
-            if resolved.degraded:
+            if resolved is not None and resolved.degraded:
                 logger.warning(
                     "Companion reply degraded after the repair budget was used",
                     extra={

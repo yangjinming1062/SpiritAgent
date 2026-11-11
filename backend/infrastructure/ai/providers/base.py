@@ -487,6 +487,15 @@ class STTProvider(BaseProvider):
     # 默认关闭：整段 multipart/chat 适配器不得被误用于通话实时路径。
     supports_streaming: ClassVar[bool] = False
 
+    @classmethod
+    def supports_streaming_config(cls, _config: ProviderConfig) -> bool:
+        """返回配置的模型与协议是否可用于实时增量识别。
+
+        供应商的静态能力不足以判断实时协议；适配器可按模型、端点和其它配置
+        约束覆写此方法。默认行为保持已有的静态能力声明。
+        """
+        return cls.supports_streaming
+
     @abstractmethod
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult: ...
 
