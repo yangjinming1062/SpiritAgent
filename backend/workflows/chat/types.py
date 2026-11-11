@@ -17,10 +17,12 @@ class TerminalReplyDelivery(Protocol):
 
 
 class IncrementalReplyDelivery(Protocol):
-    """Optional validated-bubble sink used by streaming companion replies.
+    """Optional normalized-bubble sink used by streaming companion replies.
 
-    The sink receives the raw closed JSON bubble.  It must validate and normalize it before
-    producing any user-visible audio or text; terminal persistence still uses the complete reply.
+    The sink receives a closed dialogue bubble after the normal sentence split, speech binding,
+    and reply validation. Terminal persistence still uses the complete reply.
     """
 
     async def deliver_partial(self, index: int, bubble: dict[str, Any]) -> None: ...
+
+    def partial_reply(self) -> tuple[CompanionReply, str] | None: ...

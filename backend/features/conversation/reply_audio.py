@@ -110,7 +110,7 @@ async def discard_reply_audio(reply: CompanionReply) -> None:
 
 
 async def save_stream_reply_audio(user_id: int, reply: CompanionReply, pcm: bytes, *, sample_rate: int) -> ReplyAudio:
-    """Persist the PCM that was sent to the call before its playback is confirmed."""
+    """Persist the PCM that was sent to the call after playback confirmation."""
     if not pcm or len(pcm) % 2 or sample_rate <= 0:
         raise ValueError("Streaming reply audio is invalid")
     if reply.audio_directory is None:

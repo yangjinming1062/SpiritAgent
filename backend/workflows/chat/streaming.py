@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from features.conversation.replies import CompanionReply, LinkBubble, TextBubble
+from features.conversation.replies import CompanionReply, LinkBubble, VoiceBubble
 from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
@@ -45,7 +45,11 @@ from workflows.chat.prompts import (
     FINAL_REPLY_REQUEST_LABELS,
     FINAL_REPLY_RETRY_GUIDANCES,
 )
-from workflows.chat.reply_delivery import companion_reply_schema, resolve_companion_reply
+from workflows.chat.reply_delivery import (
+    companion_reply_schema,
+    normalize_incremental_dialogue_bubble,
+    resolve_companion_reply,
+)
 from workflows.chat.reply_links import ReplyReferences, reply_reference_texts
 from workflows.chat.system_prompt import refresh_volatile_header_in_prompt
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
@@ -446,6 +450,8 @@ async def _generate_llm_response(
     pending_text: list[str] = []
     partial_bubbles: list[dict[str, Any]] = []
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
+    incremental_index = 0
+    incremental_blocked = False
 
     bubbles = BubbleSplitter()
 
@@ -453,20 +459,32 @@ async def _generate_llm_response(
     completed_response: Any = None
     text_emitted = False
 
-    def _recover_incremental_text() -> bool:
-        """Turn already displayed text bubbles into a terminal reply after a stream error."""
+    def _recover_incremental_reply() -> bool:
+        """Turn independently normalized, delivered bubbles into a terminal reply."""
         nonlocal pending_text, reply
         if tool_call_started or tool_calls_list or not partial_bubbles:
             return False
-        values = [TextBubble.model_validate(bubble) for bubble in partial_bubbles if bubble.get("type") == "text"]
-        if not values:
+        values = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
+        if len(values) != len(partial_bubbles):
             return False
-        normalized = [value.model_dump(mode="json") for value in values]
-        reply = CompanionReply(bubbles=values)
-        pending_text = [json.dumps(normalized, ensure_ascii=False)]
+        try:
+            reply = CompanionReply.model_validate({"bubbles": values})
+        except ValueError:
+            return False
+        source: list[dict[str, Any]] = []
+        for value in reply.bubbles:
+            item = value.model_dump(mode="json")
+            if isinstance(value, VoiceBubble):
+                item["speech"].pop("provider", None)
+                item["speech"].pop("model", None)
+                item.pop("voice_id", None)
+                item.pop("language", None)
+                item.pop("audio", None)
+            source.append(item)
+        pending_text = [json.dumps(source, ensure_ascii=False)]
         logger.warning(
-            "Companion reply stream failed after incremental text delivery; preserving delivered bubbles",
-            extra={"bubble_count": len(values)},
+            "Companion reply stream failed after incremental delivery; preserving delivered bubbles",
+            extra={"bubble_count": len(source)},
         )
         return True
 
@@ -541,25 +559,45 @@ async def _generate_llm_response(
                 await _send_text(event.text)
 
     async def _emit_reply_bubbles(text: str) -> None:
-        nonlocal text_emitted
+        nonlocal incremental_blocked, incremental_index, text_emitted
         if reply_extractor is None or reply_bubble_sink is None:
             return
-        for index, bubble in reply_extractor.feed(text):
-            # Media and link objects depend on the complete turn's authorized context.  They are
-            # deliberately left for terminal validation; dialogue objects can be independently
-            # validated by the delivery consumer before spoken output.
+        if incremental_blocked:
+            return
+        references = ReplyReferences.from_texts(reference_texts)
+        for _, bubble in reply_extractor.feed(text):
+            # A media/link bubble, or an invalid dialogue bubble, blocks later bubbles so an
+            # incomplete prefix can never be skipped by an independently delivered suffix.
             if bubble.get("type") not in {"text", "voice"}:
+                incremental_blocked = True
                 continue
             try:
-                await reply_bubble_sink(index, bubble)
+                normalized = normalize_incremental_dialogue_bubble(
+                    bubble,
+                    speech_config=speech_config,
+                    voice_id=voice_id,
+                    language=lang,
+                    media_turn=media_turn,
+                    references=references,
+                    topic_cards=context.get("topic_cards", {}),
+                )
+                if not normalized:
+                    incremental_blocked = True
+                    continue
+                for item in normalized:
+                    await reply_bubble_sink(incremental_index, item)
+                    partial_bubbles.append(item)
+                    incremental_index += 1
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # Partial delivery is an optimization.  A single invalid or unavailable bubble
                 # must leave the terminal response available for normal validation/fallback.
-                logger.warning("Incremental companion bubble delivery failed", extra={"bubble_index": index})
+                incremental_blocked = True
+                logger.warning(
+                    "Incremental companion bubble delivery failed", extra={"bubble_index": incremental_index}
+                )
                 continue
-            partial_bubbles.append(bubble)
             if not text_emitted and on_text_delivered is not None:
                 on_text_delivered()
             text_emitted = True
@@ -688,12 +726,12 @@ async def _generate_llm_response(
                 )
 
         except LLMRuntimeError as exc:
-            if not _recover_incremental_text():
+            if not _recover_incremental_reply():
                 if _has_final_reply(completed_response) and not isinstance(exc, FinalReplyStreamError):
                     raise FinalReplyStreamError(exc.classified) from exc
                 raise
         except IncompleteResponseError:
-            if not _recover_incremental_text():
+            if not _recover_incremental_reply():
                 raise
         finally:
             try:
@@ -750,24 +788,29 @@ async def _generate_llm_response(
                 if reply_bubble_sink is None or not partial_bubbles:
                     _log_reply_format_failure(exc)
                     raise
-                # 已经实际展示的文字必须有可恢复的事实记录；若后续对象让终态校验失败，
-                # 把这些独立验证过的文字泡降级为本轮可持久化回复，避免出现“说过但历史没有”的事实。
-                # The incremental sink may support more than text in the future.  Terminal
-                # recovery is deliberately text-only: it must never try to turn a voice/media
-                # object into a different bubble type or persist an unverified asset.
-                partial_text_bubbles = [
-                    TextBubble.model_validate(bubble) for bubble in partial_bubbles if bubble.get("type") == "text"
-                ]
-                if not partial_text_bubbles:
+                # 已经实际交付的标准化对话气泡必须有可恢复的事实记录；若后续对象让终态校验失败，
+                # 保留这些独立验证过的气泡，避免出现“说过但历史没有”的事实。
+                partial_reply = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
+                if len(partial_reply) != len(partial_bubbles):
                     _log_reply_format_failure(exc)
                     raise
-                reply = CompanionReply(bubbles=partial_text_bubbles)
-                partial_text = [bubble.model_dump(mode="json") for bubble in partial_text_bubbles]
+                recovered = CompanionReply.model_validate({"bubbles": partial_reply})
+                reply = recovered
+                partial_text: list[dict[str, Any]] = []
+                for value in recovered.bubbles:
+                    item = value.model_dump(mode="json")
+                    if isinstance(value, VoiceBubble):
+                        item["speech"].pop("provider", None)
+                        item["speech"].pop("model", None)
+                        item.pop("voice_id", None)
+                        item.pop("language", None)
+                        item.pop("audio", None)
+                    partial_text.append(item)
                 text = json.dumps(partial_text, ensure_ascii=False)
                 pending_text = [text]
                 logger.warning(
-                    "Companion reply terminal validation failed after incremental delivery; preserving text bubbles",
-                    extra={"bubble_count": len(partial_text_bubbles)},
+                    "Companion reply terminal validation failed after incremental delivery; preserving bubbles",
+                    extra={"bubble_count": len(partial_reply)},
                 )
                 resolved = None
             if resolved is not None and resolved.degraded:

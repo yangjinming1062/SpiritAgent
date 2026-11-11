@@ -668,7 +668,15 @@ async def _run_chat_turn(
                     schemas=active_schemas,
                     request=req.message.content,
                     delivery=turn.delivery,
-                    reply_bubble_sink=reply_bubble_sink if callable(reply_bubble_sink) else None,
+                    # A tool-enabled turn cannot safely expose speculative dialogue: a later
+                    # function call would make the already spoken bubble part of the wrong turn.
+                    # Tool-free turns and final-reply-only turns retain ordered
+                    # incremental text/voice delivery.
+                    reply_bubble_sink=(
+                        reply_bubble_sink
+                        if callable(reply_bubble_sink) and (not active_schemas or reply_only)
+                        else None
+                    ),
                     allow_silence=ephemeral and media_turn.structured_reply,
                     pace_bubbles=has_viewer and not headless and setup.replacement is None,
                     final_reply_only=reply_only,

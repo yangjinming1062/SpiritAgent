@@ -8,7 +8,7 @@ from features.companion.mood import update_mood_from_companion_turn
 from features.companion.reaction import emit_companion_reaction
 from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import build_session_messages, client_media_entries
-from features.conversation.replies import LinkBubble, MediaBubble
+from features.conversation.replies import LinkBubble, MediaBubble, TextBubble
 from features.conversation.reply_audio import (
     cancel_reply_audio,
     client_reply_bubbles,
@@ -183,8 +183,16 @@ async def _persist_assistant_no_tool_turn(
             await settle_task(cleanup)
         if selected:
             delivered_reply = result.reply.model_copy(update={"bubbles": selected})
+            delivered_source: list[dict[str, Any]] = []
+            for index, bubble in zip(indices, selected, strict=True):
+                source_item = source[index]
+                if isinstance(bubble, TextBubble) and source_item.get("type") != "text":
+                    source_item = {"type": "text", "text": bubble.text}
+                delivered_source.append(source_item)
             delivered = replace(
-                result, reply=delivered_reply, turn_content=json.dumps([source[i] for i in indices], ensure_ascii=False)
+                result,
+                reply=delivered_reply,
+                turn_content=json.dumps(delivered_source, ensure_ascii=False),
             )
             # 插话取消也须先保存已确认片段，再释放会话锁。新回合读到的正是实际交付内容。
             saving = asyncio.create_task(

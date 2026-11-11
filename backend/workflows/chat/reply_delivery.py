@@ -546,6 +546,38 @@ def parse_companion_reply(
     return CompanionReply(bubbles=bubbles, used_topic_ids=sorted(selected_topics))
 
 
+def normalize_incremental_dialogue_bubble(
+    bubble: dict[str, JsonValue],
+    *,
+    speech_config: ProviderConfig | None,
+    voice_id: str,
+    language: str,
+    media_turn: MediaTurnState,
+    references: ReplyReferences = ReplyReferences(),
+    topic_cards: Mapping[int, LinkBubble] | None = None,
+) -> list[dict[str, JsonValue]]:
+    """Normalize one closed dialogue bubble with the same rules as terminal delivery."""
+    if bubble.get("type") not in {"text", "voice"}:
+        raise ValueError("Only dialogue bubbles can be normalized incrementally")
+    raw = json.dumps({"kind": "dialogue", "bubbles": [bubble]}, ensure_ascii=False)
+    content, kind, used_topic_ids = decode_companion_reply(raw, references=references)
+    reply = parse_companion_reply(
+        content,
+        speech_config=speech_config,
+        voice_id=voice_id,
+        language=language,
+        allow_silence=False,
+        media_turn=media_turn,
+        references=references,
+        kind=kind,
+        topic_cards=topic_cards,
+        used_topic_ids=used_topic_ids,
+    )
+    if reply is None:
+        return []
+    return [item.model_dump(mode="json") for item in reply.bubbles]
+
+
 def fallback_companion_voice_reply(
     raw: str,
     *,

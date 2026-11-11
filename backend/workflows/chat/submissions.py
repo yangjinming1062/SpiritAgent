@@ -10,9 +10,11 @@ from features.companion.proactive_runtime import user_turn_activity
 from features.conversation.edit import EditNotAllowedError
 from features.conversation.http_contracts import PromptSubmitRequest
 from features.conversation.replacement import ReplyReplacementNotAllowedError
+from features.conversation.reply_audio import client_reply_bubbles
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.retry import ReplyRetryNotAllowedError
 from features.conversation.session_operations import edit_message_input, replacement_reply_input, retry_message_text
+from features.conversation.store_contracts import AssistantTurnData
 from features.conversation.submissions import (
     SubmissionConflictError,
     find_submission,
@@ -20,7 +22,9 @@ from features.conversation.submissions import (
     record_submission_state,
     reserve_submission,
 )
+from features.conversation.turn_store import persist_assistant_message
 from infrastructure.api_ids import parse_resource_id
+from infrastructure.async_io import wait_for_task
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -215,6 +219,41 @@ def create_submission_handler(
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
             except asyncio.CancelledError:
+                partial_getter = getattr(reply_delivery, "partial_reply", None)
+                if callable(partial_getter):
+                    try:
+                        partial = partial_getter()
+                        if partial is not None:
+                            partial_reply, partial_content = partial
+                            partial_data = AssistantTurnData(
+                                content=partial_content,
+                                tool_calls=[],
+                                reasoning=None,
+                                prompt_tokens=0,
+                                completion_tokens=0,
+                                duration_ms=0,
+                                reply=partial_reply,
+                            )
+                            persist_task = asyncio.create_task(
+                                persist_assistant_message(runtime.conversation_id, user_id, partial_data, None),
+                                name="chat.persist-interrupted-reply",
+                            )
+                            message_id = await wait_for_task(persist_task)
+                            await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
+                            await emitter.send_json(
+                                {
+                                    "type": "message.complete",
+                                    "bubbles": client_reply_bubbles(partial_reply),
+                                    "reply": partial_reply.model_dump(mode="json"),
+                                    "content": partial_content,
+                                    "message_id": message_id,
+                                }
+                            )
+                            clear_partial = getattr(reply_delivery, "clear_partial_reply", None)
+                            if callable(clear_partial):
+                                clear_partial()
+                    except Exception:
+                        logger.exception("Interrupted incremental reply persistence failed", extra={"user_id": user_id})
                 if runtime.cancel_requested:
                     status = "cancelled"
                 else:
