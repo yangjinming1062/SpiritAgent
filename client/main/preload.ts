@@ -170,6 +170,11 @@ const desktopBridge = {
   gatewayPresence: (payload: InvokePayload<typeof IPC.invoke.gatewayPresence>) =>
     invoke(IPC.invoke.gatewayPresence, payload),
   gatewayGetState: (authSessionId: string) => invoke(IPC.invoke.gatewayGetState, authSessionId),
+  voiceConnect: (payload: InvokePayload<typeof IPC.invoke.voiceConnect>) => invoke(IPC.invoke.voiceConnect, payload),
+  voiceSend: (callKey: string, data: string | Uint8Array) => invoke(IPC.invoke.voiceSend, callKey, data),
+  voiceClose: (callKey: string) => invoke(IPC.invoke.voiceClose, callKey),
+  voiceBusy: () => invoke(IPC.invoke.voiceBusy),
+  onVoiceEvent: (callback: EventCallback<typeof IPC.event.voiceEvent>) => subscribe(IPC.event.voiceEvent, callback),
   onGatewayStateChanged: (cb: EventCallback<typeof IPC.event.gatewayStateChanged>) =>
     subscribe(IPC.event.gatewayStateChanged, cb),
   onGatewayEvent: (cb: EventCallback<typeof IPC.event.gatewayEvent>) => subscribe(IPC.event.gatewayEvent, cb),

@@ -537,6 +537,27 @@ export function createDesktopGateway(options: GatewayOptions) {
     presence: async (sessionId: string, signal: RpcRequest<'companion.signal'>): Promise<void> => {
       await authorize(sessionId).client.request('companion.signal', signal)
     },
+    matchesAuth: (sessionId: string): boolean => sessionId === options.getCurrentAuth()?.sessionId,
+    realtimeUrl: async (authSessionId: string, sessionId: string): Promise<string> => {
+      if (!/^[1-9]\d{0,18}$/.test(sessionId) || authSessionId !== options.getCurrentAuth()?.sessionId) {
+        throw new Error('Gateway authentication changed')
+      }
+
+      const backend = await options.ensureBackend()
+      const current = options.getCurrentAuth()
+
+      if (!current || current.sessionId !== authSessionId || current.token !== backend.token) {
+        throw new Error('Gateway authentication changed')
+      }
+
+      const ticket = await options.mintWsTicket(backend.baseUrl, current.token, `realtime:${sessionId}`)
+
+      if (options.getCurrentAuth()?.sessionId !== authSessionId) {
+        throw new Error('Gateway authentication changed')
+      }
+
+      return `${backend.baseUrl.replace(/^http/, 'ws')}/api/realtime_voice/${encodeURIComponent(sessionId)}?ticket=${encodeURIComponent(ticket)}`
+    },
     synchronize: (sessionId: string, conversationId: string, load: (streamId?: string) => Promise<SessionSnapshot>) =>
       authorize(sessionId).client.synchronize(conversationId, load),
     close: (): void => {

@@ -56,6 +56,8 @@ Runner 的源码和安装版共用一个 Python 包及 wheel，[bootstrap](../ru
 
 业务操作统一使用 HTTP，事件、连接控制和设备指令使用 WS；HTTP 不依赖 WS 在线。本地 OS IPC 承载 Client/Runner 的 WebSocket 帧，避免标准输出污染和额外 TCP 端口，仍须端点权限及启动 token。
 
+实时通话使用独立的二进制音频 WebSocket，与 JSON-RPC 网关分离；Client 主进程持有媒体连接和票据，Renderer 只持有采集、播放和代次投影，Backend 的 `realtime_voice` 领域拥有会话生命周期。连续音频不成为网关事件或普通附件的权威副本，确认的回复片段经播放回执后才进入普通会话历史。
+
 Remote 由 Backend 同源托管，使用独立设备身份；云端功能不依赖桌面在线，本机步骤仍通过 Client/Runner。身份和会话恢复分别见 [通信契约](PROTOCOL.md#通信与连接身份)与[远程访问](PROTOCOL.md#远程访问)。
 
 ### 工具与表达

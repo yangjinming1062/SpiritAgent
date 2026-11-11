@@ -1,4 +1,5 @@
 export { playDataUrl } from './audio-track'
+export { type RealtimeCallControls, useRealtimeCall } from './realtime-call-service'
 export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
 export { useVoiceRecorder } from './use-voice-recorder'
 export {

@@ -62,6 +62,11 @@ export interface DesktopBridge {
   }
   gatewayPresence: AsyncIpc<IpcInvokeContract['spiritagent:gateway:presence']>
   gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
+  voiceConnect: AsyncIpc<IpcInvokeContract['spiritagent:voice:connect']>
+  voiceSend: AsyncIpc<IpcInvokeContract['spiritagent:voice:send']>
+  voiceClose: AsyncIpc<IpcInvokeContract['spiritagent:voice:close']>
+  voiceBusy: AsyncIpc<IpcInvokeContract['spiritagent:voice:busy']>
+  onVoiceEvent: EventSubscription<'spiritagent:voice:event'>
   onGatewayStateChanged: EventSubscription<'spiritagent:gateway:state-changed'>
   onGatewayEvent: EventSubscription<'spiritagent:gateway:event'>
   activate: AsyncIpc<IpcInvokeContract['spiritagent:auth:activate']>

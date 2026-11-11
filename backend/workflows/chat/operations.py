@@ -18,10 +18,12 @@ from runtime.business_actor import BusinessActor
 from runtime.conversation import RuntimeSession, new_runtime_session
 from runtime.desktop.connection import MANAGER, UserEventPublisher
 
+from workflows.chat.emitter import EventPublisher
 from workflows.chat.history_commands import _do_compress_history, compression_command_result, compression_context
 from workflows.chat.inputs import _require_owned_conv
 from workflows.chat.session_resources import session_runtime_info
 from workflows.chat.submissions import create_submission_handler
+from workflows.chat.types import TerminalReplyDelivery
 
 logger = get_logger(__name__)
 
@@ -37,10 +39,15 @@ class ChatOperations:
     command: Callable[[dict[str, Any]], Awaitable[dict]]
 
 
-def chat_operations(actor: BusinessActor) -> ChatOperations:
+def chat_operations(
+    actor: BusinessActor,
+    *,
+    event_publisher: EventPublisher | None = None,
+    reply_delivery: TerminalReplyDelivery | None = None,
+) -> ChatOperations:
     user_id = actor.user_id
     runtime_sessions = actor.account.runtime_sessions
-    publisher = UserEventPublisher(user_id)
+    publisher = event_publisher or UserEventPublisher(user_id)
 
     def _mount_runtime(conv: ConversationSnapshot) -> RuntimeSession:
         """历史同步复用已有 runtime，不能取消其他视图正在消费的回合。"""
@@ -244,7 +251,9 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
 
     return ChatOperations(
         snapshot=session_snapshot,
-        submit=create_submission_handler(actor, _require_runtime, publish_history_change),
+        submit=create_submission_handler(
+            actor, _require_runtime, publish_history_change, publisher=publisher, reply_delivery=reply_delivery
+        ),
         receipt=turn_receipt,
         cancel=cancel_turn,
         undo=session_undo_to_message,

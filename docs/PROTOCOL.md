@@ -38,6 +38,14 @@ HTTP 受理聊天提交、停止、快照、命令和资源操作；WS 交付事
 
 ## 会话与消息
 
+### 全双工实时语音通话
+
+实时通话使用独立的 `/api/realtime_voice/{session_id}` WebSocket，不占用 JSON-RPC 网关。连接先使用现有 `gateway.gateway_ticket` 取得一次性票据；JSON 控制帧负责建立、静音、插话、心跳和结束，连续音频使用独立二进制帧。通话按账户与会话互斥，仍复用该会话的人设、记忆、工具、预设和已确认音色。
+
+客户端持续采集和播放，Backend 以最终确认的发言提交现有 Chat Orchestrator；音频传输使用有界 PCM 帧和播放回执。当前供应商是整段 STT/TTS：发言结束后才产生最终转写，已验证语音泡按 200ms 帧播放。临时转写、未校验的模型片段、未确认播放和被打断的半句不得写入历史或触发记忆；只有最终确认的用户转写与已完整播放的伙伴台词进入普通会话。原始连续录音不持久化。
+
+每个输出帧携带 `turn_seq` 与 `playback_epoch`。有效插话会递增回合和播放代次，取消尚未交付的 LLM/TTS 工作并清空客户端缓冲；迟到的控制或音频帧必须丢弃。已经执行的工具操作不因插话而假定撤销。断线、锁屏、切换账户和结束通话释放采集、播放、模型任务与 WebSocket；连续原始录音默认不持久化。
+
 ### 会话种类与历史修改
 
 `kind` 区分系统与普通会话，取值只有 `special` 与 `standard`；任务会话是 `standard` 加自动化标志，不构成第三种取值。`special` 对应每用户唯一的陪伴主会话，其他预设不自动创建会话；手动创建的会话均为普通会话，包括陪伴预设。`system_preset_id` 决定不可变的预设和记忆域；自动化任务使用专属预设。创建须显式选择有效预设，挂载以服务端返回为准。预设目录是跨端约定的唯一来源，目录项决定提示词体、记忆域与工具边界。定义见 [presets](../backend/runtime/presets.py)、[models](../backend/features/conversation/models.py) 与 [schemas](../backend/features/conversation/schemas.py)。

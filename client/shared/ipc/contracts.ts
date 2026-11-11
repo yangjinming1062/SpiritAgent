@@ -16,6 +16,8 @@ import type {
 export * from './contracts/account'
 export * from './contracts/desktop'
 export * from './contracts/media'
+export * from './contracts/realtime'
+import type { VoiceConnectionEvent, VoiceConnectionRequest } from './contracts/realtime'
 export * from './contracts/runner'
 
 export * from './contracts/session'
@@ -200,6 +202,10 @@ export interface IpcInvokeContract {
   // 连接与启动
   'spiritagent:gateway:presence': (request: DesktopPresenceRequest) => Promise<void>
   'spiritagent:gateway:get-state': (authSessionId: string) => DesktopGatewaySnapshot | Promise<DesktopGatewaySnapshot>
+  'spiritagent:voice:connect': (payload: VoiceConnectionRequest) => Promise<void>
+  'spiritagent:voice:send': (callKey: string, data: string | Uint8Array) => Promise<void>
+  'spiritagent:voice:close': (callKey: string) => void
+  'spiritagent:voice:busy': () => boolean
 
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
@@ -384,6 +390,7 @@ export interface IpcEventContract {
   'spiritagent:update-event': [payload: DesktopUpdateEvent]
   'spiritagent:gateway:state-changed': [payload: DesktopGatewaySnapshot & { authSessionId: string }]
   'spiritagent:gateway:event': [payload: { event: DesktopGatewayEvent; authSessionId: string }]
+  'spiritagent:voice:event': [payload: VoiceConnectionEvent]
 }
 
 // 3. 渲染进程向主进程单向发送消息（通过 ipcRenderer.send / ipcMain.on）
@@ -442,6 +449,10 @@ export const IPC = {
     authGetSession: 'spiritagent:auth:get-session',
     gatewayPresence: 'spiritagent:gateway:presence',
     gatewayGetState: 'spiritagent:gateway:get-state',
+    voiceConnect: 'spiritagent:voice:connect',
+    voiceSend: 'spiritagent:voice:send',
+    voiceClose: 'spiritagent:voice:close',
+    voiceBusy: 'spiritagent:voice:busy',
     api: 'spiritagent:api',
     apiAsset: 'spiritagent:api:asset',
     apiAssetBuffer: 'spiritagent:api:asset-buffer',
@@ -526,6 +537,7 @@ export const IPC = {
     trayResetPosition: 'spiritagent:tray:reset-position',
     uiThemeChanged: 'spiritagent:ui-theme-changed',
     updateEvent: 'spiritagent:update-event',
+    voiceEvent: 'spiritagent:voice:event',
     gatewayStateChanged: 'spiritagent:gateway:state-changed',
     gatewayEvent: 'spiritagent:gateway:event'
   } as const satisfies Record<string, IpcEventChannel>,

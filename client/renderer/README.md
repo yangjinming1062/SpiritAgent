@@ -137,6 +137,8 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 语音直接经 HTMLAudioElement 输出；[audio-track.ts](features/speech/audio-track.ts) 通过 IPC 共享主进程的输出就绪结果。启动预热及运行期间的静音保活归主进程，渲染窗口不按播放或闲置时间重复预热。尚未就绪时保留 loading 和原断点，不报告台词进度或已听，取消照常释放本次播放。实际蓝牙首字听感须在对应设备验收，媒体时间轴检查不能证明硬件已出声。预制反馈和试听使用 `speakScripted`。
 
+实时通话使用独立的 [realtime-call.ts](features/speech/realtime-call.ts)、[realtime-call-service.ts](features/speech/realtime-call-service.ts) 和 [realtime-audio.ts](features/speech/realtime-audio.ts)。主进程经 `voiceConnect` 复用现有票据并独占媒体 WebSocket，渲染层的 `useRealtimeCall` 管理连接、AudioWorklet、静音和结束；AudioWorklet 持续采集/播放并以回声消除、降噪、自动增益和 VAD 产生输入回合。实时二进制音频不进入普通语音气泡的播放队列；插话、锁屏、换号和卸载时必须停止桥接并丢弃旧代次。
+
 ### 媒体查看
 
 查看器按窗口挂载，经端口打开，图片共用灯箱并限制在所属内容面板。正文按原文展示，媒体从结构化字段读取。图片卡和查看器共享同 URL 的解析，失败可重试；对象 URL 按 MIME 建立并随所有者释放。

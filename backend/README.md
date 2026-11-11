@@ -7,6 +7,7 @@
 | 修改任务 | 入口 |
 |---|---|
 | 对话、语音、上下文与工具循环 | [对话编排](workflows/chat/README.md) |
+| 全双工实时通话 | [实时语音](features/realtime_voice/README.md)、[realtime_voice.py](entrypoints/http/routes/realtime_voice.py) |
 | 持续生活、执行与经历回流 | [生活](features/life/README.md) |
 | 记忆、证据、编辑与遗忘 | [记忆](features/memory/README.md) |
 | 头像、视觉身份、衣柜与环境 | [外观](features/appearance/README.md)、[场景](features/scenes/README.md) |

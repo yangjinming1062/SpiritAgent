@@ -41,6 +41,8 @@ export {
   IconDeviceDesktop as Monitor,
   IconPalette as Palette,
   IconPencil as Pencil,
+  IconPhone as Phone,
+  IconPhoneOff as PhoneOff,
   IconPinned as Pin,
   IconPinnedOff as PinOff,
   IconPlus as Plus,

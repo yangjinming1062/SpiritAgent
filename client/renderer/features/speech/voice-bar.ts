@@ -15,6 +15,7 @@ import type { VoicePlaybackRecord } from '@ipc/contracts'
 import type { ReplyAudio } from '@protocol'
 
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
+import { $callAudioBusy, bindCallAudioFocus } from './call-audio-focus'
 
 export interface VoiceBarProjection {
   isActive?(messageId?: string): boolean | undefined
@@ -55,7 +56,12 @@ function voiceProjection(): VoiceBarProjection {
 }
 
 function isVoiceSurfaceVisible(messageId?: string): boolean {
-  if (recording || $auth.get().kind !== 'authenticated' || presentationPorts().$screenLocked.get()) {
+  if (
+    $callAudioBusy.get() ||
+    recording ||
+    $auth.get().kind !== 'authenticated' ||
+    presentationPorts().$screenLocked.get()
+  ) {
     return false
   }
 
@@ -293,6 +299,8 @@ export function bindVoiceBarListeners(): () => void {
   }
 
   const disposers = [
+    bindCallAudioFocus(),
+    $callAudioBusy.listen(cancelIfHidden),
     presentationPorts().$screenLocked.listen(cancelIfHidden),
     $surfaceOpen.listen(cancelIfHidden),
     $surfaceOpenVisible.listen(cancelIfHidden),

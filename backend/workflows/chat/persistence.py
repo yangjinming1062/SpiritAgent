@@ -9,7 +9,12 @@ from features.companion.reaction import emit_companion_reaction
 from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import build_session_messages, client_media_entries
 from features.conversation.replies import LinkBubble, MediaBubble
-from features.conversation.reply_audio import cancel_reply_audio, client_reply_bubbles, synthesize_reply_audio
+from features.conversation.reply_audio import (
+    cancel_reply_audio,
+    client_reply_bubbles,
+    discard_reply_audio,
+    synthesize_reply_audio,
+)
 from features.conversation.reply_media import plain_media_delivery_reply
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.store_contracts import AssistantTurnData
@@ -45,7 +50,7 @@ from workflows.chat.tool_dispatch import (
     matched_tool_names,
 )
 from workflows.chat.turn_inputs import parse_temperature
-from workflows.chat.types import TrackTask
+from workflows.chat.types import TerminalReplyDelivery, TrackTask
 
 logger = get_logger(__name__)
 
@@ -157,8 +162,58 @@ async def _persist_assistant_no_tool_turn(
     replace_reply_message_id: int | None = None,
     submission_request_id: str | None = None,
     media_request_scope: str | None = None,
+    reply_delivery: TerminalReplyDelivery | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
+    if reply_delivery is not None:
+        if result.reply is None:
+            raise ValueError("A call requires a validated companion reply")
+        failure: BaseException | None = None
+        try:
+            await reply_delivery.deliver(result.reply)
+        except (asyncio.CancelledError, Exception) as exc:
+            failure = exc
+        indices = reply_delivery.confirmed_indices
+        source = json.loads(result.turn_content)
+        selected = [result.reply.bubbles[i] for i in indices]
+        rejected = [bubble for i, bubble in enumerate(result.reply.bubbles) if i not in indices]
+        # 未播放的音频只属于本次交付，不得成为历史资产或下次回合证据。
+        if rejected:
+            cleanup = asyncio.create_task(discard_reply_audio(result.reply.model_copy(update={"bubbles": rejected})))
+            await settle_task(cleanup)
+        if selected:
+            delivered_reply = result.reply.model_copy(update={"bubbles": selected})
+            delivered = replace(
+                result, reply=delivered_reply, turn_content=json.dumps([source[i] for i in indices], ensure_ascii=False)
+            )
+            # 插话取消也须先保存已确认片段，再释放会话锁。新回合读到的正是实际交付内容。
+            saving = asyncio.create_task(
+                _persist_assistant_no_tool_turn(
+                    conv,
+                    user_id,
+                    delivered,
+                    task=task,
+                    emitter=emitter,
+                    effective_settings=effective_settings,
+                    user_text=user_text,
+                    first_user_msg_content=first_user_msg_content,
+                    memory_scope=memory_scope,
+                    media=media,
+                    turn_reasoning=turn_reasoning,
+                    cache_usage=cache_usage,
+                    persist=persist,
+                    track_task=track_task,
+                    submission_request_id=submission_request_id,
+                    media_request_scope=media_request_scope,
+                ),
+                name="chat.persist-call-reply",
+            )
+            await _wait_persistence_write(saving)
+        if failure is not None:
+            raise failure
+        if not selected:
+            raise RuntimeError("Call reply was not delivered")
+        return
     reply = result.reply
     turn_content = result.turn_content
     turn_data = _turn_data(result)

@@ -1,5 +1,7 @@
 import { log } from '@/shared/lib/log'
-import { mediaApi } from '@/shared/platform/desktop'
+import { gatewayApi, mediaApi } from '@/shared/platform/desktop'
+
+import { $callAudioBusy } from './call-audio-focus'
 
 export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
 
@@ -30,7 +32,15 @@ export function isLatestGen(gen: number): boolean {
 }
 
 export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions = {}): Promise<AudioPlaybackResult> {
-  if (options.signal?.aborted) {
+  let callBusy = false
+
+  try {
+    callBusy = await gatewayApi().voiceBusy()
+  } catch {
+    callBusy = false
+  }
+
+  if ($callAudioBusy.get() || options.signal?.aborted || callBusy) {
     return 'interrupted'
   }
 
@@ -92,6 +102,14 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
 
   currentDone = stopDone
   options.signal?.addEventListener('abort', stopDone, { once: true })
+
+  const releaseCallListener = $callAudioBusy.listen(busy => {
+    if (busy) {
+      stopDone()
+    }
+  })
+
+  void playbackEnded.then(releaseCallListener)
 
   audio.addEventListener('ended', () => fireDone('completed'), { signal })
   audio.addEventListener('error', () => fireDone('failed'), { signal })

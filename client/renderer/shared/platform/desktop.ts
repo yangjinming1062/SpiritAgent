@@ -19,7 +19,15 @@ type AccountPort = Pick<
 >
 type GatewayPort = Pick<
   DesktopBridge,
-  'gatewayPresence' | 'gatewayGetState' | 'onGatewayStateChanged' | 'onGatewayEvent'
+  | 'gatewayPresence'
+  | 'gatewayGetState'
+  | 'onGatewayStateChanged'
+  | 'onGatewayEvent'
+  | 'voiceConnect'
+  | 'voiceSend'
+  | 'voiceClose'
+  | 'voiceBusy'
+  | 'onVoiceEvent'
 >
 type RunnerPort = Pick<
   DesktopBridge,

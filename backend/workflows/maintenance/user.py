@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from features.realtime_voice.session import CALL_MANAGER
 from runtime.channels import terminate_remote_sessions, terminate_user_gateway
 from runtime.chat_accounts import wait_user_turns
 from runtime.events.contracts import COMPANION_TURN_EVENT
@@ -20,6 +21,7 @@ from runtime.user_maintenance import (
 
 async def _stop_user_runtime(user_id: int) -> None:
     """停稳连接与主动回合，等待用户回合后再清理后台任务。"""
+    await CALL_MANAGER.end_all(user_id)
     results = await asyncio.gather(
         terminate_user_gateway(user_id),
         terminate_remote_sessions(user_id),

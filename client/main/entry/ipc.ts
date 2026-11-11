@@ -9,6 +9,7 @@ import { registerGatewayIpc } from '../ipc/gateway'
 import { registerLogIpc } from '../ipc/log'
 import { registerOnboardingAudioIpc } from '../ipc/onboarding-audio'
 import { registerPrefsIpc } from '../ipc/prefs'
+import { registerVoiceCallIpc } from '../ipc/realtime-voice'
 import { registerRunnerConfigIpc } from '../ipc/runner-config'
 import { registerSessionHistoryIpc } from '../ipc/session-history'
 import { registerShortcutsIpc } from '../ipc/shortcuts'
@@ -122,6 +123,17 @@ export function registerEntryIpc(services: EntryServices): ReturnType<typeof reg
     ipcMain,
     gateway: gatewayRuntime!,
     isPresenceSender: sender => isSenderWindow(sender, getMainWindow())
+  })
+
+  registerVoiceCallIpc({
+    ipcMain,
+    gateway: gatewayRuntime!,
+    isSender: sender =>
+      Boolean(
+        isSenderWindow(sender, getMainWindow()) ||
+        surfaces?.isSurfaceSender(sender) ||
+        presentation?.isDesktopSender(sender)
+      )
   })
 
   const authActions = registerAuthIpc({

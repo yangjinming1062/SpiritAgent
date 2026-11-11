@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from 'react'
 
-import { useVoiceRecorder } from '@/features/speech'
+import { useRealtimeCall, useVoiceRecorder } from '@/features/speech'
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
@@ -52,6 +52,12 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
 
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const chatSessionId = useStore($chatSessionId)
+
+  const realtimeCall = useRealtimeCall({
+    sessionId: chatSessionId,
+    eligible: view.eligible && view.visible && !isReadOnlySession
+  })
+
   const turnInFlight = useStore($chatTurnInFlight)
   const lastStreaming = useStore($lastAssistantStreaming)
   const pendingBatchLen = useStore($pendingPromptBatch).length
@@ -233,6 +239,7 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     onStop: () => {
       void submit.handleStop()
     },
+    realtimeCall,
     submit: submitState
   }
 

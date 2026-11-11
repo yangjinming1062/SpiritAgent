@@ -14,6 +14,7 @@ from .gateway import router as gateway_router
 from .media import router as media_router
 from .onboarding import router as onboarding_router
 from .page import router as page_router
+from .realtime_voice import router as realtime_voice_router
 from .remote import router as remote_router
 from .resource_catalog import router as resource_catalog_router
 from .sessions import router as sessions_router
@@ -41,6 +42,7 @@ ROUTERS = (
     media_router,
     page_router,
     remote_router,
+    realtime_voice_router,
     sessions_router,
     social_accounts_router,
     update_router,

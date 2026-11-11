@@ -74,7 +74,7 @@ from workflows.chat.turn_inputs import (
     resolve_inference_settings,
     user_text_item,
 )
-from workflows.chat.types import TrackTask
+from workflows.chat.types import TerminalReplyDelivery, TrackTask
 from workflows.companion_actions import build_action_view
 from workflows.tool_availability import unavailable_action_tool_names
 
@@ -170,6 +170,7 @@ async def run_chat_turn(
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
+    reply_delivery: TerminalReplyDelivery | None = None,
 ) -> None:
     """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。``task_override`` 供委派子回合继承父回合任务。"""
     async with conversation_lock(req.session_id):
@@ -190,6 +191,7 @@ async def run_chat_turn(
                 headless=headless,
                 has_viewer=has_viewer,
                 excluded_tool_names=excluded_tool_names,
+                reply_delivery=reply_delivery,
             )
 
 
@@ -561,6 +563,7 @@ async def _run_chat_turn(
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
+    reply_delivery: TerminalReplyDelivery | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     with ExitStack() as turn_scope:
@@ -714,6 +717,7 @@ async def _run_chat_turn(
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=submission_request_id,
                     media_request_scope=media_turn.request_scope,
+                    reply_delivery=reply_delivery,
                 )
                 break
 

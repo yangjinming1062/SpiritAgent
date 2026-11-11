@@ -20,6 +20,7 @@ from features.media.manual_reviews import recover_manual_operations
 from features.media.video_jobs import cleanup_user_video_jobs
 from features.media.video_queue.service import cleanup_video_queue
 from features.posts.publication import gc_autonomous_publications
+from features.realtime_voice.session import CALL_MANAGER
 from infrastructure.ai.providers.http import aclose_all
 from infrastructure.async_io import run_blocking
 from infrastructure.attachments import attachment_root
@@ -124,6 +125,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
         # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
         await RUNTIME_LIFECYCLE.stop_producers()
+
+        await _best_effort("realtime voice calls", CALL_MANAGER.end_all())
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await _best_effort("runtime tasks", RUNTIME_LIFECYCLE.drain())

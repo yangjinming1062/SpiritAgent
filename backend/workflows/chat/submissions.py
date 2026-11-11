@@ -30,7 +30,7 @@ from runtime.desktop.connection import UserEventPublisher
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
 
-from workflows.chat.emitter import ChatEventEmitter
+from workflows.chat.emitter import ChatEventEmitter, EventPublisher
 from workflows.chat.inputs import (
     _reject_read_only_session,
     _require_owned_conv,
@@ -38,6 +38,7 @@ from workflows.chat.inputs import (
     conversation_history_lock,
 )
 from workflows.chat.orchestrator import run_chat_turn
+from workflows.chat.types import TerminalReplyDelivery
 
 
 class PublishHistoryChange(Protocol):
@@ -51,9 +52,12 @@ def create_submission_handler(
     actor: BusinessActor,
     require_runtime: Callable[[dict[str, Any]], Awaitable[RuntimeSession]],
     publish_history_change: PublishHistoryChange,
+    *,
+    publisher: EventPublisher | None = None,
+    reply_delivery: TerminalReplyDelivery | None = None,
 ) -> Callable[[str, PromptSubmitRequest], Awaitable[dict]]:
     user_id = actor.user_id
-    publisher = UserEventPublisher(user_id)
+    publisher = publisher or UserEventPublisher(user_id)
     _require_runtime = require_runtime
 
     async def _submit_prompt(
@@ -206,6 +210,7 @@ def create_submission_handler(
                     final_reply_only=retry_message_id is not None or replacement is not None,
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=params["request_id"],
+                    reply_delivery=reply_delivery,
                 )
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error

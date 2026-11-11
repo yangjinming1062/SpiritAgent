@@ -13,7 +13,21 @@ import {
   useState
 } from 'react'
 
-import { FileText, FolderOpen, ImageIcon, Mic, Plus, Send, Slash, SquareFilled, Video, X } from '@/shared/lib/icons'
+import type { RealtimeCallControls } from '@/features/speech'
+import {
+  FileText,
+  FolderOpen,
+  ImageIcon,
+  Mic,
+  Phone,
+  PhoneOff,
+  Plus,
+  Send,
+  Slash,
+  SquareFilled,
+  Video,
+  X
+} from '@/shared/lib/icons'
 import {
   $slashCommandMeta,
   fetchSlashCommandMeta,
@@ -57,6 +71,7 @@ export interface ConversationInputProps {
   onSetPending: Dispatch<SetStateAction<PendingAttachment | null>>
   onSetText: (next: string) => void
   onStop: () => void
+  realtimeCall?: RealtimeCallControls
   submit: ChatSubmitState
   variant?: ConversationVariant
 }
@@ -90,6 +105,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     onSetPending,
     onSetText,
     onStop,
+    realtimeCall,
     submit,
     variant = 'companion'
   } = props
@@ -115,6 +131,29 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
   const dict = useStrings()
   const slashMeta = useStore($slashCommandMeta)
+  const callPart = realtimeCall?.snapshot.part
+  const receiveCallPart = realtimeCall?.receivedPart
+  useEffect(() => {
+    if (eligible && callPart) {
+      receiveCallPart?.(callPart)
+    }
+  }, [eligible, callPart, receiveCallPart])
+  const callState = realtimeCall?.snapshot.state ?? 'idle'
+  const callActive = callState !== 'idle' && callState !== 'stopped' && callState !== 'error'
+
+  const callLabel = realtimeCall?.muted
+    ? dict.chat.input.realtimeCallMuted
+    : callActive
+      ? callState === 'connecting'
+        ? dict.chat.input.realtimeCallConnecting
+        : callState === 'thinking'
+          ? dict.chat.input.realtimeCallThinking
+          : callState === 'speaking'
+            ? dict.chat.input.realtimeCallSpeaking
+            : dict.chat.input.realtimeCallListening
+      : callState === 'error'
+        ? dict.chat.input.realtimeCallError
+        : dict.chat.input.startRealtimeCall
 
   // 专业对话输入在编辑或有附件时展开。
   const expanded =
@@ -328,6 +367,15 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     >
       {isReadOnlySession && <p className="text-center text-[10px] text-faint">{dict.chat.input.readOnlyHint}</p>}
 
+      {realtimeCall && (callActive || realtimeCall.snapshot.error) ? (
+        <div className="max-h-40 overflow-y-auto px-1 text-xs text-muted" role="status">
+          {realtimeCall.snapshot.error ? <p className="text-danger-fg">{realtimeCall.snapshot.error}</p> : null}
+          {realtimeCall.snapshot.transcript ? <p>{realtimeCall.snapshot.transcript}</p> : null}
+          {realtimeCall.snapshot.assistant ? <p>{realtimeCall.snapshot.assistant}</p> : null}
+          {callPart ? <p className="whitespace-pre-wrap">{callPart.text}</p> : null}
+        </div>
+      ) : null}
+
       {pending && (
         <div className="px-1">
           <PendingAttachmentView
@@ -460,13 +508,58 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
               <X className="size-4" />
             </button>
           )}
+          {variant === 'companion' && realtimeCall ? (
+            <>
+              {callActive ? (
+                <span className="max-w-36 truncate text-[10px] text-muted" role="status">
+                  {callLabel} · {Math.floor((realtimeCall?.seconds ?? 0) / 60)}:
+                  {String((realtimeCall?.seconds ?? 0) % 60).padStart(2, '0')}
+                </span>
+              ) : null}
+              {callActive ? (
+                <button
+                  aria-label={
+                    realtimeCall.muted ? dict.chat.input.unmuteRealtimeCall : dict.chat.input.muteRealtimeCall
+                  }
+                  className={cn(
+                    'inline-flex size-7 items-center justify-center rounded-full border border-line-hairline bg-fill-faint text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40',
+                    realtimeCall.muted && 'border-rose-400/70 bg-rose-500/25 text-rose-300'
+                  )}
+                  onClick={realtimeCall.toggleMute}
+                  title={realtimeCall.muted ? dict.chat.input.unmuteRealtimeCall : dict.chat.input.muteRealtimeCall}
+                  type="button"
+                >
+                  <Mic className="size-3.5" />
+                </button>
+              ) : null}
+              <button
+                aria-label={callActive ? dict.chat.input.stopRealtimeCall : callLabel}
+                className={cn(
+                  'inline-flex size-7 items-center justify-center rounded-full border border-line-hairline bg-fill-faint text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40',
+                  callActive && 'border-accent-line bg-accent-soft text-accent'
+                )}
+                disabled={!eligible || isReadOnlySession || (!callActive && (recording || isGenerating || isEditing))}
+                onClick={() => {
+                  if (callActive) {
+                    void realtimeCall.stop()
+                  } else {
+                    void realtimeCall.start()
+                  }
+                }}
+                title={callActive ? dict.chat.input.stopRealtimeCall : callLabel}
+                type="button"
+              >
+                {callActive ? <PhoneOff className="size-3.5" /> : <Phone className="size-3.5" />}
+              </button>
+            </>
+          ) : null}
           <button
             className={cn(
               'inline-flex size-7 items-center justify-center rounded-full border border-line-hairline bg-fill-faint text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40',
               isEditing && 'hidden',
               recording && 'border-rose-400/70 bg-rose-500/25 text-rose-300 animate-pulse'
             )}
-            disabled={isReadOnlySession}
+            disabled={isReadOnlySession || callActive}
             onPointerCancel={onRecordingPointerCancel}
             onPointerDown={onRecordingPointerDown}
             onPointerUp={onRecordingPointerUp}

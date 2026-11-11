@@ -1,0 +1,9 @@
+# 实时语音通话
+
+本模块拥有实时通话的传输协议、会话生命周期和音频回合代次。它与普通语音消息的录音上传、整段 STT、TTS 播放分开；连续音频只在内存中经过通话回调，不直接写入会话历史。
+
+`contracts.py` 定义 JSON 控制事件、二进制音频帧和通话状态；`session.py` 的 `CallManager` 保证同一账户只有一通活动通话，`turn_seq` 标识用户回合，`playback_epoch` 标识当前有效播放，并限制输入速率、输出积压和播放确认。插话会同时推进两者，使迟到的模型或媒体结果失效。`workflows/realtime_voice.py` 把最终转写提交到现有 Chat Orchestrator，并把已经播放确认的语音泡交给历史持久化；工具执行的真实副作用不由通话中断回滚。
+
+`workflows/realtime_voice.py` 复用普通事件发布器和聊天提交入口；通话断开不会让已受理的普通回合失败。
+
+HTTP 入口在 `backend/entrypoints/http/routes/realtime_voice.py`，复用网关一次性票据和会话归属校验，JSON 控制帧与二进制音频帧不混入现有 JSON-RPC 网关。模型适配和历史保存必须继续遵守 `docs/PROTOCOL.md` 的实时通话契约。
