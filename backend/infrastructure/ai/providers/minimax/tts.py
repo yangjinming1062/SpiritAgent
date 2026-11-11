@@ -1,6 +1,22 @@
+import asyncio
+import contextlib
+import json
+from collections.abc import AsyncIterator
 from typing import ClassVar
+from urllib.parse import urlsplit
 
-from infrastructure.ai.providers.base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult
+from websockets.asyncio.client import ClientConnection, connect
+
+from infrastructure.ai.providers.base import (
+    ProviderCapabilityError,
+    ProviderConfig,
+    ProviderError,
+    TTSProvider,
+    TTSResult,
+    TTSStreamChunk,
+    VoiceDesignResult,
+    VoiceReferenceAudio,
+)
 from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.minimax._errors import extract_minimax_audio, raise_for_minimax_response
 from infrastructure.ai.providers.speech_style import speech_style_matches, styled_speech_text
@@ -8,10 +24,11 @@ from infrastructure.ai.speech_contracts import MiniMaxSpeechStyle, SpeechStyle
 
 
 class MiniMaxTTSProvider(TTSProvider):
-    """通过 MiniMax 同步 POST /v1/t2a_v2 提供 TTS（{model,text,voice_setting:{voice_id,speed,vol},audio_setting:{format,sample_rate}}，data.audio 为 hex 编码音频，本模块解码回字节）；异步长文本 /v1/t2a_async_v2 未封装，chat 回复足够短，落在 10000 字符同步上限内。"""
+    """通过 MiniMax HTTP T2A 提供整段音频，并通过官方 WebSocket T2A v2 提供 24 kHz PCM 分片。"""
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
+    supports_streaming: ClassVar[bool] = True
     VOICE_DESIGN_GUIDE = """\
 用一段简洁的文字描述声音，突出性别和年龄感、声线与音色质感、习惯语气、语速与节奏。
 特征应具体且协调，例如清亮柔和的声线、温柔自信的语气、缓慢沉稳的节奏。\
@@ -698,6 +715,102 @@ class MiniMaxTTSProvider(TTSProvider):
         resp = await self._client.post("/v1/t2a_v2", json=payload)
         audio = extract_minimax_audio(raise_for_minimax_response(resp))
         return TTSResult(audio=audio, mime="audio/mpeg", voice=payload["voice_setting"]["voice_id"])
+
+    def _stream_url(self) -> str:
+        parsed = urlsplit(self.config.base_url)
+        if not parsed.netloc:
+            raise ProviderError("MiniMax streaming TTS requires an absolute provider endpoint", status_code=400)
+        scheme = "wss" if parsed.scheme in {"https", "wss"} else "ws"
+        return f"{scheme}://{parsed.netloc}/ws/v1/t2a_v2"
+
+    @staticmethod
+    def _json_message(raw: str | bytes) -> dict:
+        try:
+            value = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ProviderError("MiniMax streaming TTS returned invalid JSON", status_code=502) from exc
+        if not isinstance(value, dict):
+            raise ProviderError("MiniMax streaming TTS returned an invalid event", status_code=502)
+        return value
+
+    @staticmethod
+    def _check_event(event: dict, expected: str) -> None:
+        base = event.get("base_resp")
+        status = base.get("status_code", 0) if isinstance(base, dict) else 0
+        if status not in (0, "0"):
+            detail = base.get("status_msg", "unknown error") if isinstance(base, dict) else "unknown error"
+            raise ProviderError(f"MiniMax streaming TTS {expected} failed: {detail}", status_code=502, body=base)
+        if event.get("event") != expected:
+            detail = event.get("event") or "unknown event"
+            raise ProviderError(f"MiniMax streaming TTS expected {expected}, got {detail}", status_code=502, body=event)
+
+    async def _start_stream(self, websocket: ClientConnection, voice: str, speech_style: SpeechStyle | None) -> None:
+        payload = self._request_payload("", voice, speech_style)
+        payload.pop("text", None)
+        # 通话层需要可直接进入 PCM 播放队列的分片；MiniMax WebSocket T2A 支持 PCM 流式输出。
+        payload["event"] = "task_start"
+        payload["audio_setting"] = {"sample_rate": 24000, "bitrate": 384000, "format": "pcm", "channel": 1}
+        await websocket.send(json.dumps(payload, ensure_ascii=False))
+        async with asyncio.timeout(30):
+            started = self._json_message(await websocket.recv())
+        self._check_event(started, "task_started")
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        *,
+        voice: str,
+        speech_style: SpeechStyle | None,
+        design_prompt: str = "",
+        reference_audio: VoiceReferenceAudio | None = None,
+    ) -> AsyncIterator[TTSStreamChunk]:
+        if reference_audio is not None:
+            raise ProviderCapabilityError("MiniMax streaming TTS does not support reference audio")
+        if not text.strip():
+            raise ValueError("MiniMax streaming TTS text is empty")
+        payload = self._request_payload(text, voice, speech_style)
+        stream_text = payload.pop("text", text)
+        websocket: ClientConnection | None = None
+        try:
+            websocket = await connect(
+                self._stream_url(),
+                additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                open_timeout=30,
+            )
+            async with asyncio.timeout(30):
+                connected = self._json_message(await websocket.recv())
+            self._check_event(connected, "connected_success")
+            await self._start_stream(websocket, voice, speech_style)
+            await websocket.send(json.dumps({"event": "task_continue", "text": stream_text}, ensure_ascii=False))
+            while True:
+                async with asyncio.timeout(120):
+                    event = self._json_message(await websocket.recv())
+                if event.get("event") == "task_failed":
+                    self._check_event(event, "task_continued")
+                self._check_event(event, "task_continued")
+                data = event.get("data")
+                audio_hex = data.get("audio") if isinstance(data, dict) else None
+                if audio_hex:
+                    try:
+                        audio = bytes.fromhex(audio_hex)
+                    except (TypeError, ValueError) as exc:
+                        raise ProviderError(
+                            "MiniMax streaming TTS returned invalid audio hex", status_code=502
+                        ) from exc
+                    if audio:
+                        yield TTSStreamChunk(
+                            audio=audio,
+                            mime="audio/pcm;rate=24000",
+                            final=bool(event.get("is_final")),
+                            voice=payload["voice_setting"]["voice_id"],
+                        )
+                if event.get("is_final"):
+                    break
+            await websocket.send(json.dumps({"event": "task_finish"}))
+        finally:
+            if websocket is not None:
+                with contextlib.suppress(Exception):
+                    await websocket.close()
 
     async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
         payload: dict = {"prompt": prompt, "preview_text": preview_text}

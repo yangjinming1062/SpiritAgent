@@ -26,6 +26,7 @@ export class RealtimeAudioBridge {
   private voicedMs = 0
   private quietMs = 0
   private speakingMs = 0
+  private noiseFloor = 0.008
   private preRoll: Float32Array[] = []
   private acknowledgements = new Set<ReturnType<typeof setTimeout>>()
   constructor(private readonly controller: RealtimeCallController) {}
@@ -128,6 +129,7 @@ export class RealtimeAudioBridge {
     this.preRoll = []
     this.voicedMs = 0
     this.quietMs = 0
+    this.noiseFloor = 0.008
     this.controller.mute(muted)
   }
   async stop(): Promise<void> {
@@ -155,9 +157,14 @@ export class RealtimeAudioBridge {
 
     this.preRoll = []
     this.speaking = false
+    this.noiseFloor = 0.008
   }
   private capture(samples: Float32Array): void {
     if (!this.started || this.controller.muted || this.controller.snapshot().state === 'connecting') {
+      return
+    }
+
+    if (samples.length === 0) {
       return
     }
 
@@ -167,9 +174,18 @@ export class RealtimeAudioBridge {
       energy += value * value
     }
 
-    const voiced = Math.sqrt(energy / samples.length) >= 0.018
+    const level = Math.sqrt(energy / samples.length)
+    const threshold = Math.min(0.05, Math.max(0.018, this.noiseFloor * 2.8))
+    const voiced = level >= (this.speaking ? Math.max(0.012, threshold * 0.65) : threshold)
 
     if (!this.speaking) {
+      if (!voiced) {
+        // Track the local noise floor only while the gate is closed.  The
+        // minimum threshold keeps keyboard clicks and low-level echo from
+        // opening a turn, while the adaptive component handles quiet rooms.
+        this.noiseFloor = Math.min(0.04, this.noiseFloor * 0.96 + level * 0.04)
+      }
+
       this.preRoll.push(samples)
 
       if (this.preRoll.length > 15) {
@@ -178,7 +194,7 @@ export class RealtimeAudioBridge {
 
       this.voicedMs = voiced ? this.voicedMs + 20 : 0
 
-      if (this.voicedMs < 120) {
+      if (this.voicedMs < 160) {
         return
       }
 

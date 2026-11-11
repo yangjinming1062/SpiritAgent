@@ -98,6 +98,8 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 回退、可重试错误与未知结果由 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py) 和 [providers/http.py](infrastructure/ai/providers/http.py) 处理。聊天与独立调用共用 [response_validation.py](infrastructure/ai/response_validation.py) 校验响应终态，业务输出仍由各自契约校验。
 
+实时语音的增量能力由 [providers/base.py](infrastructure/ai/providers/base.py) 的 `supports_streaming` 与 `provider_supports_streaming` 显式声明；`stream_transcribe_audio` 和 `stream_synthesize_speech` 只选择已声明的供应商。Qwen 实时 ASR 要求工作区专用 DashScope WebSocket 端点和 streaming 模型，MiniMax TTS 通过官方 T2A WebSocket `task_start → task_continue → task_finish` 输出 24 kHz PCM 分片，并沿用已绑定的音色与演绎参数。现有整段适配器不会被伪装成流式实现，也不会在不可重放的音频输入中途切换供应商；未配置流式能力时返回明确的 `ProviderCapabilityError`。
+
 [network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。DDGS 使用 `DDGS_PROXY`。
 
 `SSRF_GUARD_ENABLED` 默认关闭以适配 fake-IP 等代理，可在后台调整。开启后保留网段拒绝规则受 `SSRF_ALLOWED_CIDRS` 有限豁免，域名黑名单、云元数据和 CGNAT 不可豁免。代理地址同样校验，实际代理建连由代理端限制；`NO_PROXY` 不取消守卫，协议、大小和 HTTPS 降级检查始终生效。

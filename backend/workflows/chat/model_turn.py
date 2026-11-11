@@ -19,6 +19,7 @@ from workflows.chat.chat_emitter import Emitter
 from workflows.chat.streaming import _generate_llm_response, _LLMTurnResult, _reply_repair_history
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
 from workflows.chat.turn_inputs import InferenceSettings, TurnInputs
+from workflows.chat.types import ReplyBubbleSink
 
 logger = get_logger(__name__)
 
@@ -35,7 +36,8 @@ async def generate_turn_response(
     media_turn: MediaTurnState,
     schemas: list[dict],
     request: str,
-    delivery: Literal["stream", "buffered", "complete"],
+    delivery: Literal["stream", "buffered", "complete", "reply_stream"],
+    reply_bubble_sink: ReplyBubbleSink | None = None,
     allow_silence: bool,
     pace_bubbles: bool,
     final_reply_only: bool,
@@ -74,6 +76,7 @@ async def generate_turn_response(
                         provider,
                         delivery=delivery,
                         on_text_delivered=set_text_delivered,
+                        reply_bubble_sink=reply_bubble_sink,
                         reasoning_effort=inference.reasoning_effort,
                         temperature=inference.temperature,
                         turn_request=request,

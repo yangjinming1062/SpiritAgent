@@ -137,12 +137,12 @@ async def realtime_voice_websocket(
                     elif control.type == "input.start":
                         await pipeline.begin_input(control.version)
                     elif control.type == "input.end":
-                        pipeline.finish_input(control.version)
+                        await pipeline.finish_input(control.version)
                     elif control.type == "mute":
                         session.muted = control.muted
                         if control.muted:
                             # 静音只撤销未提交的麦克风内容，不中止伙伴正在说的话。
-                            pipeline.discard_input()
+                            await pipeline.cancel_input()
                         await session.emit("state")
                     elif control.type == "audio.played":
                         await session.acknowledge_audio(control.sequence, control.version)

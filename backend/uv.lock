@@ -1374,6 +1374,7 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "twscrape" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -1403,6 +1404,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "twscrape", specifier = "==0.20.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ from infrastructure.ai.providers.base import (
     ImageGenProvider,
     ProviderConfig,
     ServiceType,
+    STTProvider,
     TTSProvider,
     VideoGenProvider,
 )
@@ -97,6 +98,16 @@ def provider_input_modalities(service: ServiceType | str, name: str) -> frozense
     if issubclass(cls, TTSProvider) and cls.VOICE_CLONE_MODEL is not None:
         supported.add(ModelModality.audio)
     return frozenset(supported)
+
+
+def provider_supports_streaming(service: ServiceType | str, name: str) -> bool:
+    """返回供应商是否明确声明了可用于实时路径的增量能力。"""
+    cls = try_resolve(ServiceType(service), name)
+    if cls is None:
+        return False
+    if issubclass(cls, (STTProvider, TTSProvider)):
+        return cls.supports_streaming
+    return False
 
 
 def effective_input_modalities(config: ProviderConfig) -> frozenset[ModelModality]:

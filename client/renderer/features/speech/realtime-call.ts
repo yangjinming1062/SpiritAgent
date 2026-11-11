@@ -297,6 +297,13 @@ export class RealtimeCallController {
 
         break
 
+      case 'transcript.partial':
+        if (typeof payload.text === 'string') {
+          this.value.transcript = payload.text
+        }
+
+        break
+
       case 'transcript.final':
         if (typeof payload.text === 'string') {
           this.value.transcript = payload.text

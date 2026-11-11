@@ -1,12 +1,22 @@
 """TTS 供应商链调用：REST 合成端点共用的服务层。"""
 
+from collections.abc import AsyncIterator
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.ai.llm_client import MissingLlmConfigError, build_provider, resolve_provider_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.models import ModelModality
-from infrastructure.ai.providers.base import ProviderConfig, ServiceType, TTSProvider, TTSResult, VoiceReferenceAudio
-from infrastructure.ai.providers.registry import try_resolve
+from infrastructure.ai.providers.base import (
+    ProviderCapabilityError,
+    ProviderConfig,
+    ServiceType,
+    TTSProvider,
+    TTSResult,
+    TTSStreamChunk,
+    VoiceReferenceAudio,
+)
+from infrastructure.ai.providers.registry import provider_supports_streaming, try_resolve
 from infrastructure.ai.speech_contracts import SpeechStyle
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.voice_catalog import pick_voice_id, voices_for_provider
@@ -196,3 +206,73 @@ async def synthesize_speech(
         return await provider.synthesize(text, speech_style=speech_style, voice=selected_voice)
 
     return await execute_with_fallback(chain, TTSProvider, synthesize, user_id=user_id)
+
+
+async def stream_synthesize_speech(
+    user_id: int,
+    text: str,
+    voice: str = "",
+    language: str = "",
+    speech_style: SpeechStyle | None = None,
+    *,
+    task: AiTaskKey,
+    preserve_performance: bool = False,
+    reference_audio: VoiceReferenceAudio | None = None,
+    provider_name: str = "",
+    model: str = "",
+    model_card_id: str = "",
+    design_prompt: str = "",
+) -> AsyncIterator[TTSStreamChunk]:
+    """流式 TTS 入口；只选择明确声明增量能力的配置，不把整段接口伪装为流式。"""
+    async with SESSION_LOCAL() as db:
+        chain = await resolve_provider_chain(db, user_id, ServiceType.tts, task=task)
+    if not chain:
+        raise MissingLlmConfigError()
+    if preserve_performance:
+        if speech_style is None:
+            raise ValueError("Voice message requires speech performance")
+        chain = [
+            config
+            for config in chain
+            if config.provider_name == speech_style.provider and config.model == speech_style.model
+        ]
+        if not chain:
+            raise ValueError("Voice message TTS configuration is no longer available")
+    voice, chain, selected_provider = _route_selected_voice(
+        voice,
+        chain,
+        language,
+        provider_name=provider_name,
+        model=model,
+        model_card_id=model_card_id,
+        design_prompt=design_prompt,
+        reference_audio=reference_audio,
+    )
+    if not provider_name:
+        chain = _builtin_voice_chain(chain)
+    if preserve_performance and speech_style is not None:
+        config = chain[0] if chain else None
+        if (
+            config is None
+            or config.provider_name != speech_style.provider
+            or config.model != speech_style.model
+            or selected_provider != speech_style.provider
+        ):
+            raise ValueError("Voice message TTS configuration is no longer available")
+        chain = [config]
+    streaming = [config for config in chain if provider_supports_streaming(ServiceType.tts, config.provider_name)]
+    if not streaming:
+        raise ProviderCapabilityError("configured TTS providers do not support streaming")
+    config = streaming[0]
+    provider = build_provider(config, TTSProvider)
+    selected_voice = (
+        voice if provider.provider_name == selected_provider else pick_voice_id(voice, provider.provider_name, language)
+    )
+    async for chunk in provider.synthesize_stream(
+        text,
+        voice=selected_voice,
+        speech_style=speech_style,
+        design_prompt=design_prompt,
+        reference_audio=reference_audio,
+    ):
+        yield chunk

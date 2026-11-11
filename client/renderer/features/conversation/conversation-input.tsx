@@ -234,7 +234,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     (!showStop &&
       (sending ||
         (!text.trim() && !pending && externalPaths.length === 0) ||
-        (pending?.type === 'video' && pending.status !== 'ready')))
+        (pending?.type === 'video' && pending.status !== 'ready') ||
+        callActive))
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     if (!eligible) {

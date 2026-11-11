@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar, Literal
@@ -125,6 +125,10 @@ class ProviderError(Exception):
         self.status_code = status_code
         self.body = body or {}
         self.retry_after_seconds = retry_after_seconds
+
+
+class ProviderCapabilityError(ProviderError):
+    """供应商已注册但未声明/实现本次调用需要的能力。"""
 
 
 class ChatProvider(BaseProvider):
@@ -406,6 +410,16 @@ class VoiceDesignResult:
     provider: str
 
 
+@dataclass(frozen=True, slots=True)
+class TTSStreamChunk:
+    """流式合成的一段音频；audio 只包含当前分片，不代表完整成品。"""
+
+    audio: bytes
+    mime: str
+    final: bool = False
+    voice: str = ""
+
+
 class TTSProvider(BaseProvider):
     service_type: ServiceType = ServiceType.tts
 
@@ -415,10 +429,26 @@ class TTSProvider(BaseProvider):
     VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持音色设计；非空字符串表示支持并作为面向用户的撰写指引
     VOICE_DESIGN_MODEL: ClassVar[str | None] = None  # 需要特定模型的音色设计；None 表示没有额外模型限制
     VOICE_CLONE_MODEL: ClassVar[str | None] = None  # 非空表示支持参考音频克隆，并限定所需模型
+    # 默认关闭：只有真实支持增量音频并完成音色/演绎验证的适配器才能打开。
+    supports_streaming: ClassVar[bool] = False
 
     @abstractmethod
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         """合成 MP3 音频。"""
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        *,
+        voice: str,
+        speech_style: SpeechStyle | None,
+        design_prompt: str = "",
+        reference_audio: VoiceReferenceAudio | None = None,
+    ) -> AsyncIterator[TTSStreamChunk]:
+        """增量合成音频；默认显式拒绝，避免把整段接口伪装成流式能力。"""
+        raise ProviderCapabilityError(f"{self.provider_name} does not support streaming TTS")
+        if False:  # pragma: no cover - 保持该方法为 async generator，供调用方 async for
+            yield TTSStreamChunk(audio=b"", mime="application/octet-stream")
 
     async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
         raise NotImplementedError(f"{self.provider_name} does not support voice design")
@@ -441,11 +471,36 @@ class STTResult:
     text: str
 
 
+@dataclass(frozen=True, slots=True)
+class STTStreamEvent:
+    """流式识别事件；text 是截至当前的完整假设，不是增量差分。"""
+
+    text: str
+    final: bool = False
+    language: str | None = None
+    confidence: float | None = None
+    sentence_id: int | None = None
+
+
 class STTProvider(BaseProvider):
     service_type: ServiceType = ServiceType.stt
+    # 默认关闭：整段 multipart/chat 适配器不得被误用于通话实时路径。
+    supports_streaming: ClassVar[bool] = False
 
     @abstractmethod
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult: ...
+
+    async def transcribe_stream(
+        self,
+        audio: AsyncIterable[bytes],
+        *,
+        mime_type: str = "audio/pcm;rate=24000",
+        language: str = "auto",
+    ) -> AsyncIterator[STTStreamEvent]:
+        """持续接收音频并报告临时/最终识别；默认显式拒绝整段适配器。"""
+        raise ProviderCapabilityError(f"{self.provider_name} does not support streaming STT")
+        if False:  # pragma: no cover - 保持该方法为 async generator，供调用方 async for
+            yield STTStreamEvent(text="")
 
 
 class EmbeddingProvider(BaseProvider):

@@ -219,7 +219,7 @@ class _TurnContext:
     dispatch_ctx: _ToolDispatchContext
     active_tool_names: set[str]
     inference: InferenceSettings
-    delivery: Literal["stream", "buffered", "complete"]
+    delivery: Literal["stream", "buffered", "complete", "reply_stream"]
 
 
 async def _load_turn_setup(
@@ -312,6 +312,7 @@ async def _prepare_turn(
     submission_request_id: str | None,
     excluded_tool_names: frozenset[str],
     memory_embedding: QueryEmbedding | None,
+    reply_delivery: TerminalReplyDelivery | None,
 ) -> _TurnContext | None:
     """上下文阶段：召回与工具装配、自动压缩、截断与媒体状态；`None` 表示已发错误帧结束本轮。"""
     async with session_scope() as db:
@@ -488,7 +489,10 @@ async def _prepare_turn(
     )
 
     buffer_text = companion_reply or headless or not has_viewer or setup.final_reply_only
-    delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
+    partial_reply = companion_reply and callable(getattr(reply_delivery, "deliver_partial", None))
+    delivery = (
+        "reply_stream" if partial_reply else "complete" if companion_reply else "buffered" if buffer_text else "stream"
+    )
     if buffer_text:
         await emitter.send_json({"type": "message.start"})
     return _TurnContext(
@@ -597,6 +601,7 @@ async def _run_chat_turn(
             submission_request_id=submission_request_id,
             excluded_tool_names=excluded_tool_names,
             memory_embedding=memory_embedding,
+            reply_delivery=reply_delivery,
         )
         if turn is None:
             return
@@ -608,6 +613,7 @@ async def _run_chat_turn(
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
+        reply_bubble_sink = getattr(reply_delivery, "deliver_partial", None)
         while True:
             action_tools_not_ready = await _refresh_turn_material(
                 setup.conv,
@@ -662,6 +668,7 @@ async def _run_chat_turn(
                     schemas=active_schemas,
                     request=req.message.content,
                     delivery=turn.delivery,
+                    reply_bubble_sink=reply_bubble_sink if callable(reply_bubble_sink) else None,
                     allow_silence=ephemeral and media_turn.structured_reply,
                     pace_bubbles=has_viewer and not headless and setup.replacement is None,
                     final_reply_only=reply_only,

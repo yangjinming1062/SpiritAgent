@@ -2,12 +2,13 @@ import asyncio
 import contextlib
 import json
 import random
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from features.conversation.replies import CompanionReply, LinkBubble
+from features.conversation.replies import CompanionReply, LinkBubble, TextBubble
 from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
@@ -48,12 +49,86 @@ from workflows.chat.reply_delivery import companion_reply_schema, resolve_compan
 from workflows.chat.reply_links import ReplyReferences, reply_reference_texts
 from workflows.chat.system_prompt import refresh_volatile_header_in_prompt
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
+from workflows.chat.types import ReplyBubbleSink
 
 logger = get_logger(__name__)
 
 # 连续助手气泡之间的交付节奏。
 BUBBLE_BREAK_MIN_SECONDS = 0.5
 BUBBLE_BREAK_MAX_SECONDS = 1.5
+
+
+class _ReplyBubbleExtractor:
+    """Extract closed objects from a streamed companion ``bubbles`` array.
+
+    Extraction is deliberately syntax-only.  A caller must still run the object through the
+    normal reply validator before presenting it as spoken content; malformed or incomplete
+    objects remain buffered until the terminal response is validated.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._search_from = 0
+        self._array_start: int | None = None
+        self._cursor = 0
+        self._index = 0
+
+    def feed(self, text: str) -> list[tuple[int, dict[str, Any]]]:
+        self._buffer += text
+        if self._array_start is None:
+            marker = re.search(r'(?:^|[,{])\s*"bubbles"\s*:\s*\[', self._buffer[self._search_from :])
+            if marker is None:
+                self._search_from = max(0, len(self._buffer) - 12)
+                return []
+            self._array_start = self._search_from + marker.end()
+            self._cursor = self._array_start
+
+        result: list[tuple[int, dict[str, Any]]] = []
+        while True:
+            while self._cursor < len(self._buffer) and self._buffer[self._cursor] in " \t\r\n,":
+                self._cursor += 1
+            if self._cursor >= len(self._buffer) or self._buffer[self._cursor] == "]":
+                return result
+            if self._buffer[self._cursor] != "{":
+                # The terminal validator owns the detailed error; stop extracting on unexpected syntax.
+                return result
+            end = self._object_end(self._cursor)
+            if end is None:
+                return result
+            raw = self._buffer[self._cursor : end]
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                return result
+            if not isinstance(value, dict):
+                return result
+            result.append((self._index, value))
+            self._index += 1
+            self._cursor = end
+
+    def _object_end(self, start: int) -> int | None:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(self._buffer)):
+            char = self._buffer[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+        return None
 
 
 class _StreamErrorEvent(RuntimeError):
@@ -162,8 +237,9 @@ async def _generate_llm_response(
     ctx_length: int,
     provider: ChatProvider,
     *,
-    delivery: Literal["stream", "buffered", "complete"],
+    delivery: Literal["stream", "buffered", "complete", "reply_stream"],
     on_text_delivered: Callable[[], None] | None,
+    reply_bubble_sink: ReplyBubbleSink | None,
     reasoning_effort: str,
     temperature: float,
     turn_request: str,
@@ -368,6 +444,8 @@ async def _generate_llm_response(
     final_prompt_tokens = final_completion_tokens = 0
     final_usage_payload: dict | None = None
     pending_text: list[str] = []
+    partial_bubbles: list[dict[str, Any]] = []
+    reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
 
     bubbles = BubbleSplitter()
 
@@ -444,6 +522,30 @@ async def _generate_llm_response(
             elif event.text:
                 bubble_parts.append(event.text)
                 await _send_text(event.text)
+
+    async def _emit_reply_bubbles(text: str) -> None:
+        nonlocal text_emitted
+        if reply_extractor is None or reply_bubble_sink is None:
+            return
+        for index, bubble in reply_extractor.feed(text):
+            # Media and link objects depend on the complete turn's authorized context.  They are
+            # deliberately left for terminal validation; dialogue objects can be independently
+            # validated by the delivery consumer before spoken output.
+            if bubble.get("type") not in {"text", "voice"}:
+                continue
+            try:
+                await reply_bubble_sink(index, bubble)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Partial delivery is an optimization.  A single invalid or unavailable bubble
+                # must leave the terminal response available for normal validation/fallback.
+                logger.warning("Incremental companion bubble delivery failed", extra={"bubble_index": index})
+                continue
+            partial_bubbles.append(bubble)
+            if not text_emitted and on_text_delivered is not None:
+                on_text_delivered()
+            text_emitted = True
 
     def _check_refusal(items: list[Any], *, final_reply: bool) -> None:
         try:
@@ -526,8 +628,10 @@ async def _generate_llm_response(
             async for chunk in response:
                 event_type = str(getattr(chunk, "type", ""))
                 if event_type == "response.output_text.delta":
-                    if delivery == "buffered":
+                    if delivery in {"buffered", "reply_stream"}:
                         pending_text.append(chunk.delta)
+                        if delivery == "reply_stream":
+                            await _emit_reply_bubbles(chunk.delta)
                     else:
                         await _emit_bubble_events(bubbles.feed(chunk.delta))
                 elif event_type in (
@@ -622,8 +726,20 @@ async def _generate_llm_response(
                     repair=reply_format_error,
                 )
             except CompanionReplyFormatError as exc:
-                _log_reply_format_failure(exc)
-                raise
+                if reply_bubble_sink is None or not partial_bubbles:
+                    _log_reply_format_failure(exc)
+                    raise
+                # 已经实际展示的文字必须有可恢复的事实记录；若后续对象让终态校验失败，
+                # 把这些独立验证过的文字泡降级为本轮可持久化回复，避免出现“说过但历史没有”的事实。
+                partial_text_bubbles = [TextBubble.model_validate(bubble) for bubble in partial_bubbles]
+                reply = CompanionReply(bubbles=partial_text_bubbles)
+                text = json.dumps(partial_bubbles, ensure_ascii=False)
+                pending_text = [text]
+                logger.warning(
+                    "Companion reply terminal validation failed after incremental delivery; preserving text bubbles",
+                    extra={"bubble_count": len(partial_text_bubbles)},
+                )
+                resolved = None
             if resolved.degraded:
                 logger.warning(
                     "Companion reply degraded after the repair budget was used",
@@ -633,8 +749,9 @@ async def _generate_llm_response(
                         "response_id": getattr(completed_response, "id", None),
                     },
                 )
-            text, reply = resolved.text, resolved.reply
-            pending_text = [text]
+            if resolved is not None:
+                text, reply = resolved.text, resolved.reply
+                pending_text = [text]
         else:
             await _emit_bubble_events(bubbles.feed(text))
             await _emit_bubble_events(bubbles.flush())
