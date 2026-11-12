@@ -98,6 +98,7 @@ class RealtimeVoicePipeline:
         self.session = session
         self.actor = actor
         self.confirmed_indices: list[int] = []
+        self._confirmed_turn_id: str | None = None
         self._base = UserEventPublisher(actor.user_id)
         self._operations = chat_operations(actor, event_publisher=self, reply_delivery=self)
         self._input: bytearray | None = None
@@ -316,7 +317,7 @@ class RealtimeVoicePipeline:
             await self.session.emit("transcript.final", {"text": text}, version=version)
             turn = CallTurn(str(uuid4()), version)
             self._turn = turn
-            self._start_partial_worker(turn.version)
+            self._start_partial_worker(turn)
             # 受理任务沿用账户所有权；取消调用方仍先等待账本确认，再定向取消原请求。
             submitted = asyncio.create_task(
                 self._operations.submit(
@@ -378,13 +379,18 @@ class RealtimeVoicePipeline:
             "language": bubble.language,
         }
 
-    def _start_partial_worker(self, version: TurnVersion) -> None:
+    def _start_partial_worker(self, turn: CallTurn) -> None:
+        # The confirmation ledger belongs to the submitted turn. Reset it
+        # before the new worker can fail, so persistence cannot observe indices
+        # left by the previous turn.
+        self.confirmed_indices = []
+        self._confirmed_turn_id = turn.request_id
         self._partial_queue = asyncio.Queue(maxsize=4)
         self._partial_futures.clear()
         self._partial_worker_done = asyncio.Event()
         self._partial_worker_error = None
         self._partial_worker = asyncio.create_task(
-            self._run_partial_worker(self._partial_queue, version), name="call.reply-delivery"
+            self._run_partial_worker(self._partial_queue, turn.version), name="call.reply-delivery"
         )
         self.actor.account.track(self._partial_worker)
 
@@ -529,8 +535,8 @@ class RealtimeVoicePipeline:
         if not self._partial_delivered:
             return None
         indices = sorted(self._partial_delivered)
-        if indices != list(range(len(indices))):
-            return None
+        # Earlier confirmed bubbles may already have been persisted and
+        # removed. Remaining indices retain their original identity and order.
         bubbles = [self._partial_delivered[index] for index in indices]
         reply = CompanionReply(bubbles=bubbles)
         return reply, companion_reply_source(reply)
@@ -539,8 +545,16 @@ class RealtimeVoicePipeline:
         self._partial_delivered.clear()
 
     def mark_persisted(self, indices: list[int]) -> None:
+        persisted = set(indices)
+        self.confirmed_indices = [index for index in self.confirmed_indices if index not in persisted]
         for index in indices:
             self._partial_delivered.pop(index, None)
+
+    def confirmed_indices_for(self, request_id: str | None = None) -> list[int]:
+        """Return confirmations only for the ledger associated with a request."""
+        if request_id is not None and request_id != self._confirmed_turn_id:
+            return []
+        return list(self.confirmed_indices)
 
     async def _deliver_stream_voice(
         self,
@@ -642,11 +656,19 @@ class RealtimeVoicePipeline:
         await self.session.deliver_part(index, payload, version)
 
     async def deliver(self, reply: CompanionReply) -> None:
-        await self._finish_partial_worker()
-        self.confirmed_indices = []
         turn = self._turn
+        # Clear stale state before waiting for the incremental worker. If the
+        # worker exits with an error, persistence must see an empty ledger for
+        # this turn rather than the previous turn's indices.
+        self.confirmed_indices = []
+        self._confirmed_turn_id = turn.request_id if turn is not None else None
         if turn is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
+        try:
+            await self._finish_partial_worker()
+        except BaseException:
+            self.confirmed_indices = []
+            raise
         partial_delivered = dict(self._partial_delivered)
         for index, bubble in enumerate(reply.bubbles):
             if not self.session.current(turn.version):

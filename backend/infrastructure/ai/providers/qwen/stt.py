@@ -168,7 +168,7 @@ class QwenSTTProvider(STTProvider):
                 self._stream_url(),
                 additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
-                proxy=configured_websocket_proxy(),
+                proxy=configured_websocket_proxy(self._stream_url()),
             )
             await websocket.send(
                 json.dumps(

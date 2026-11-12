@@ -780,7 +780,7 @@ class MiniMaxTTSProvider(TTSProvider):
                 self._stream_url(),
                 additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
-                proxy=configured_websocket_proxy(),
+                proxy=configured_websocket_proxy(self._stream_url()),
             )
             async with asyncio.timeout(30):
                 connected = self._json_message(await websocket.recv())

@@ -237,9 +237,70 @@ class _ProxySettings(BaseSettings):
     )
 
 
-def configured_websocket_proxy() -> str | None:
-    """返回模型 WebSocket 应使用的显式代理，避免 websockets 自动读取系统 SOCKS 代理。"""
+def _proxy_bypass_config(
+    no_proxy: str,
+) -> tuple[bool, list[URLPattern], list[ipaddress.IPv4Network | ipaddress.IPv6Network]]:
+    entries = [entry.strip() for entry in no_proxy.split(",")]
+    bypass_all = "*" in entries
+    patterns: list[URLPattern] = []
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for entry in entries:
+        if bypass_all:
+            break
+        if not entry:
+            continue
+        if "/" in entry and "://" not in entry:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+            continue
+        if "://" in entry:
+            pattern = entry
+        else:
+            try:
+                address = ipaddress.ip_address(entry.strip("[]"))
+            except ValueError:
+                pattern = f"all://{entry if entry.startswith(('*', '[')) else '*' + entry}"
+            else:
+                networks.append(ipaddress.ip_network(str(address)))
+                continue
+        pattern_url = httpx.URL(pattern)
+        try:
+            address = ipaddress.ip_address(pattern_url.host)
+        except ValueError:
+            pass
+        else:
+            pattern = str(pattern_url.copy_with(host=str(address)))
+        patterns.append(URLPattern(pattern))
+    return bypass_all, patterns, networks
+
+
+def _proxy_bypassed(
+    url: httpx.URL,
+    bypass_all: bool,
+    patterns: list[URLPattern],
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network],
+) -> bool:
+    if bypass_all:
+        return True
+    try:
+        address = ipaddress.ip_address(url.host)
+    except ValueError:
+        return any(pattern.matches(url) for pattern in patterns)
+    url = url.copy_with(host=str(address))
+    if any(pattern.matches(url) for pattern in patterns):
+        return True
+    addresses = [address]
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        addresses.append(address.ipv4_mapped)
+    return any(candidate in network for candidate in addresses for network in networks)
+
+
+def configured_websocket_proxy(url: str | None = None) -> str | None:
+    """返回模型 WebSocket 的显式代理，并遵守同一份 NO_PROXY 配置。"""
     proxies = _ProxySettings().model_dump()
+    if url is not None:
+        bypass_all, patterns, networks = _proxy_bypass_config(proxies.get("no_proxy", ""))
+        if _proxy_bypassed(httpx.URL(url), bypass_all, patterns, networks):
+            return None
     for key in ("https_proxy", "http_proxy", "all_proxy"):
         if proxy := proxies.get(key):
             return proxy if "://" in proxy else f"http://{proxy}"
@@ -253,36 +314,9 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
         self._trusted_origin = trusted_origin
         trusted_endpoint = (trusted_origin[1], trusted_origin[2]) if trusted_origin else None
         proxies = _ProxySettings().model_dump() if trust_env else {}
-        entries = [entry.strip() for entry in proxies.get("no_proxy", "").split(",")]
-        self._bypass_all = "*" in entries
-        self._bypass_patterns: list[URLPattern] = []
-        self._bypass_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-        for entry in entries:
-            if self._bypass_all:
-                break
-            if not entry:
-                continue
-            if "/" in entry and "://" not in entry:
-                self._bypass_networks.append(ipaddress.ip_network(entry, strict=False))
-                continue
-            if "://" in entry:
-                pattern = entry
-            else:
-                try:
-                    address = ipaddress.ip_address(entry.strip("[]"))
-                except ValueError:
-                    pattern = f"all://{entry if entry.startswith(('*', '[')) else '*' + entry}"
-                else:
-                    self._bypass_networks.append(ipaddress.ip_network(str(address)))
-                    continue
-            pattern_url = httpx.URL(pattern)
-            try:
-                address = ipaddress.ip_address(pattern_url.host)
-            except ValueError:
-                pass
-            else:
-                pattern = str(pattern_url.copy_with(host=str(address)))
-            self._bypass_patterns.append(URLPattern(pattern))
+        self._bypass_all, self._bypass_patterns, self._bypass_networks = _proxy_bypass_config(
+            proxies.get("no_proxy", "")
+        )
 
         self._direct = _SafeOutboundAsyncTransport(trust_env=trust_env, trusted_endpoint=trusted_endpoint)
         self._proxies: dict[str, _SafeOutboundAsyncTransport] = {}
@@ -295,19 +329,7 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
                     )
 
     def _bypass_proxy(self, url: httpx.URL) -> bool:
-        if self._bypass_all:
-            return True
-        try:
-            address = ipaddress.ip_address(url.host)
-        except ValueError:
-            return any(pattern.matches(url) for pattern in self._bypass_patterns)
-        url = url.copy_with(host=str(address))
-        if any(pattern.matches(url) for pattern in self._bypass_patterns):
-            return True
-        addresses = [address]
-        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-            addresses.append(address.ipv4_mapped)
-        return any(candidate in network for candidate in addresses for network in self._bypass_networks)
+        return _proxy_bypassed(url, self._bypass_all, self._bypass_patterns, self._bypass_networks)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         origin = (

@@ -1,6 +1,7 @@
 import {
   IconArrowLeft,
   IconMicrophone,
+  IconMicrophoneOff,
   IconPhoneCall,
   IconPhoto,
   IconPlus,
@@ -196,6 +197,13 @@ export function Chat({
     realtimeCall.snapshot.state !== 'idle' &&
     realtimeCall.snapshot.state !== 'stopped' &&
     realtimeCall.snapshot.state !== 'error'
+  const callPart = realtimeCall.snapshot.part
+  const receiveCallPart = realtimeCall.receivedPart
+  useEffect(() => {
+    if (callActive && callPart) {
+      receiveCallPart(callPart)
+    }
+  }, [callActive, callPart, receiveCallPart])
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const navigation = useRef(0)
@@ -1176,6 +1184,21 @@ export function Chat({
               ● 实时通话 · {realtimeCall.snapshot.state === 'speaking' ? '精灵正在讲话' : '正在倾听'}
               {realtimeCall.snapshot.transcript ? <span> · {realtimeCall.snapshot.transcript}</span> : null}
               {realtimeCall.snapshot.assistant ? <span> · {realtimeCall.snapshot.assistant}</span> : null}
+              {callPart ? (
+                <span className="call-part" role="status">
+                  {' '}
+                  · {callPart.text}
+                </span>
+              ) : null}
+              <button
+                aria-label={realtimeCall.muted ? '取消静音' : '静音通话'}
+                className="subtle"
+                onClick={() => realtimeCall.toggleMute()}
+                title={realtimeCall.muted ? '取消静音' : '静音通话'}
+                type="button"
+              >
+                {realtimeCall.muted ? <IconMicrophoneOff size={16} /> : <IconMicrophone size={16} />}
+              </button>
               <button onClick={() => void realtimeCall.stop()} type="button">
                 结束
               </button>
@@ -1220,12 +1243,18 @@ export function Chat({
               aria-label={callActive ? '结束实时通话' : '开始实时通话'}
               className={`icon-button ${callActive ? 'recording' : ''}`}
               disabled={
-                !connected ||
-                !selected ||
-                selectedSession?.system_preset_id !== 'companion' ||
-                readOnly ||
-                recording ||
-                transcribing
+                callActive
+                  ? false
+                  : !connected ||
+                    !selected ||
+                    selectedSession?.system_preset_id !== 'companion' ||
+                    readOnly ||
+                    busy ||
+                    Boolean(turn?.running) ||
+                    Boolean(pending.current) ||
+                    Boolean(stoppingId) ||
+                    recording ||
+                    transcribing
               }
               onClick={() => void (callActive ? realtimeCall.stop() : realtimeCall.start())}
               title={realtimeCall.snapshot.error || undefined}

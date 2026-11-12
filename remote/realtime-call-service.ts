@@ -18,6 +18,7 @@ interface ActiveCall {
   controller: RealtimeCallController
   audio: RealtimeAudioBridge
   dispose: () => void
+  cancelStart: () => void
 }
 
 const IDLE: RealtimeCallSnapshot = {
@@ -52,6 +53,7 @@ export function useRemoteRealtimeCall({
     active.current = null
     socket.current = null
     if (current) {
+      current.cancelStart()
       current.controller.stop()
       current.dispose()
       await current.audio.stop()
@@ -63,13 +65,17 @@ export function useRemoteRealtimeCall({
       return
     }
     const attempt = ++revision.current
+    const startAbort = new AbortController()
     let audio: RealtimeAudioBridge
     let currentSocket: WebSocket | null = null
     let dispose = (): void => {}
     const controller = new RealtimeCallController({
       transport: {
         connect: async () => {
-          const url = await api.realtimeUrl(sessionId)
+          const url = await api.realtimeUrl(sessionId, { signal: startAbort.signal, timeoutMs: 15_000 })
+          if (startAbort.signal.aborted || revision.current !== attempt) {
+            throw new DOMException('通话启动已取消', 'AbortError')
+          }
           await new Promise<void>((resolve, reject) => {
             const next = new WebSocket(url)
             currentSocket = next
@@ -91,7 +97,7 @@ export function useRemoteRealtimeCall({
           if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) {
             return Promise.reject(new Error('通话连接尚未打开'))
           }
-          currentSocket.send(typeof data === 'string' ? data : (data.buffer as ArrayBuffer))
+          currentSocket.send(typeof data === 'string' ? data : (data.slice().buffer as ArrayBuffer))
           return Promise.resolve()
         },
         close: () => {
@@ -109,6 +115,7 @@ export function useRemoteRealtimeCall({
       onAudioFrame: (frame, meta) => audio.enqueueAudio(frame, meta),
       onClear: () => audio?.clearOutput(),
       onEnded: () => {
+        startAbort.abort()
         dispose()
         void audio.stop()
         if (active.current?.controller === controller) {
@@ -118,7 +125,7 @@ export function useRemoteRealtimeCall({
     })
 
     audio = new RealtimeAudioBridge(controller)
-    const current: ActiveCall = { controller, audio, dispose }
+    const current: ActiveCall = { controller, audio, dispose, cancelStart: () => startAbort.abort() }
     active.current = current
     setSeconds(0)
 

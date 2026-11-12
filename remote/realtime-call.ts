@@ -196,12 +196,13 @@ export class RealtimeCallController {
       })
     }
   }
-  receive(data: string | Uint8Array): void {
+  receive(data: string | ArrayBuffer | Uint8Array): void {
     if (this.closed) {
       return
     }
 
     if (typeof data !== 'string') {
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data
       const header = this.pending
       this.pending = null
 
@@ -209,13 +210,14 @@ export class RealtimeCallController {
         return
       }
 
-      if (data.byteLength !== header.bytes) {
+      if (bytes.byteLength !== header.bytes) {
         this.fail('通话音频帧损坏')
 
         return
       }
 
-      this.options.onAudioFrame(data.slice().buffer, header)
+      const frame = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      this.options.onAudioFrame(frame as ArrayBuffer, header)
 
       return
     }

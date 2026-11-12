@@ -1,4 +1,4 @@
-import type { ApiArguments, ApiOperationKey, ApiResponse, ApiTransport } from '../shared/api'
+import type { ApiArguments, ApiOperationKey, ApiResponse, ApiTransport, HttpCallOptions } from '../shared/api'
 import { createHttpClient } from '../shared/api'
 import { ApiError } from '../shared/errors'
 import { GatewayConnection, type GatewayEvent, type SessionSnapshot } from '../shared/gateway'
@@ -69,10 +69,14 @@ export class RemoteApi implements ApiTransport {
     }
   }
 
-  async realtimeUrl(sessionId: string): Promise<string> {
-    const { ticket } = await this.invoke('gateway.gateway_ticket', {
-      body: { stream_id: `realtime:${sessionId}` }
-    })
+  async realtimeUrl(sessionId: string, options?: HttpCallOptions): Promise<string> {
+    const { ticket } = await this.invoke(
+      'gateway.gateway_ticket',
+      {
+        body: { stream_id: `realtime:${sessionId}` }
+      },
+      options
+    )
     const url = new URL(`/api/realtime_voice/${encodeURIComponent(sessionId)}`, location.origin)
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     url.searchParams.set('ticket', ticket)
