@@ -7,6 +7,7 @@
 | 改动 | 入口 |
 |---|---|
 | 登录、退出、连接和请求 | [App.tsx](App.tsx)、[api.ts](api.ts) |
+| 实时通话、麦克风和播放 | [realtime-call-service.ts](realtime-call-service.ts)、[realtime-audio.ts](realtime-audio.ts)、[realtime-worklet.ts](realtime-worklet.ts) |
 | 会话、提交与话题反馈 | [Chat.tsx](Chat.tsx)、[TopicLink.tsx](TopicLink.tsx) |
 | 动态、日记与已读 | [Feed.tsx](Feed.tsx) |
 | 生活近况、事项与阅读成果 | [LifeSummary.tsx](LifeSummary.tsx)，由 [Life.tsx](Life.tsx) 装配 |
@@ -17,7 +18,7 @@
 
 ## 请求与状态边界
 
-与 Client 共用根 `shared/` 的生成契约、HTTP、WS 核心及中性文案／错误归类，不导入 Electron 桥、桌面 store 或窗口组件。业务操作经 `RemoteApi.invoke`，适配层管理同源 Cookie、CSRF、撤销与登录失效；切换身份先废弃旧请求，迟到结果不得更新新账户。HTTP 操作不依赖 WS 当前是否在线。
+与 Client 共用根 `shared/` 的生成契约、HTTP、WS 核心及中性文案／错误归类，不导入 Electron 桥、桌面 store 或窗口组件。业务操作经 `RemoteApi.invoke`，适配层管理同源 Cookie、CSRF、撤销与登录失效；切换身份先废弃旧请求，迟到结果不得更新新账户。HTTP 操作不依赖 WS 当前是否在线。实时通话复用 `/api/realtime_voice/{session_id}` 协议和一次性票据，浏览器使用 AudioWorklet 将麦克风重采样为 24 kHz PCM 并播放服务端 PCM 帧；页面切换、身份失效和连接关闭会停止采集、清空播放队列并释放音频设备。
 
 `RemoteGateway` 只协调事件、连接状态和会话快照。聊天先缓冲事件再应用基线，按水位合并；重放成功保留已有基线，失效才回源。未确认提交保留请求身份并先查询回执，不能借重连重复提交。话题反馈按会话去重和分批读取，同一话题共用反馈与保存状态。
 

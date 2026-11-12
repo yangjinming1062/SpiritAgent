@@ -1,4 +1,13 @@
-import { IconArrowLeft, IconMicrophone, IconPhoto, IconPlus, IconSend, IconSquare, IconX } from '@tabler/icons-react'
+import {
+  IconArrowLeft,
+  IconMicrophone,
+  IconPhoneCall,
+  IconPhoto,
+  IconPlus,
+  IconSend,
+  IconSquare,
+  IconX
+} from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -13,6 +22,7 @@ import { ApiError, errorText, readImage } from './api'
 import { newRequestId } from './browser'
 import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
 import { MediaReviewButton } from './MediaReviewButton'
+import { useRemoteRealtimeCall } from './realtime-call-service'
 import { TopicFeedbackProvider, TopicLink } from './TopicLink'
 import type {
   ActiveTurn,
@@ -176,6 +186,16 @@ export function Chat({
       : !window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder
         ? '当前浏览器不支持录音'
         : ''
+  const selectedSession = selected ? sessions.find(session => session.id === selected) : undefined
+  const realtimeCall = useRemoteRealtimeCall({
+    api,
+    sessionId: selected,
+    eligible: connected && selectedSession?.system_preset_id === 'companion' && !readOnly
+  })
+  const callActive =
+    realtimeCall.snapshot.state !== 'idle' &&
+    realtimeCall.snapshot.state !== 'stopped' &&
+    realtimeCall.snapshot.state !== 'error'
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const navigation = useRef(0)
@@ -1151,11 +1171,24 @@ export function Chat({
               </button>
             </div>
           ) : null}
+          {callActive ? (
+            <div className="recording-status">
+              ● 实时通话 · {realtimeCall.snapshot.state === 'speaking' ? '精灵正在讲话' : '正在倾听'}
+              {realtimeCall.snapshot.transcript ? <span> · {realtimeCall.snapshot.transcript}</span> : null}
+              {realtimeCall.snapshot.assistant ? <span> · {realtimeCall.snapshot.assistant}</span> : null}
+              <button onClick={() => void realtimeCall.stop()} type="button">
+                结束
+              </button>
+            </div>
+          ) : null}
+          {!callActive && realtimeCall.snapshot.error ? (
+            <span className="muted">{realtimeCall.snapshot.error}</span>
+          ) : null}
           <div className="composer-row">
             <button
               aria-label="添加图片"
               className="icon-button"
-              disabled={busy || recording}
+              disabled={busy || recording || callActive}
               onClick={() => fileRef.current?.click()}
               type="button"
             >
@@ -1176,7 +1209,7 @@ export function Chat({
             <button
               aria-label={recording ? '完成录音' : '录制语音'}
               className={`icon-button ${recording ? 'recording' : ''}`}
-              disabled={transcribing || Boolean(recordingUnavailable)}
+              disabled={callActive || transcribing || Boolean(recordingUnavailable)}
               onClick={() => run(recordVoice)}
               title={recordingUnavailable || undefined}
               type="button"
@@ -1184,10 +1217,28 @@ export function Chat({
               {recording ? <IconSquare size={18} /> : <IconMicrophone />}
             </button>
             <button
+              aria-label={callActive ? '结束实时通话' : '开始实时通话'}
+              className={`icon-button ${callActive ? 'recording' : ''}`}
+              disabled={
+                !connected ||
+                !selected ||
+                selectedSession?.system_preset_id !== 'companion' ||
+                readOnly ||
+                recording ||
+                transcribing
+              }
+              onClick={() => void (callActive ? realtimeCall.stop() : realtimeCall.start())}
+              title={realtimeCall.snapshot.error || undefined}
+              type="button"
+            >
+              <IconPhoneCall size={18} />
+            </button>
+            <button
               aria-label="发送"
               className="send-button"
               disabled={
                 busy ||
+                callActive ||
                 Boolean(turn?.running) ||
                 recording ||
                 transcribing ||

@@ -68,6 +68,16 @@ export class RemoteApi implements ApiTransport {
       throw error
     }
   }
+
+  async realtimeUrl(sessionId: string): Promise<string> {
+    const { ticket } = await this.invoke('gateway.gateway_ticket', {
+      body: { stream_id: `realtime:${sessionId}` }
+    })
+    const url = new URL(`/api/realtime_voice/${encodeURIComponent(sessionId)}`, location.origin)
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set('ticket', ticket)
+    return url.href
+  }
 }
 
 export class RemoteGateway {
