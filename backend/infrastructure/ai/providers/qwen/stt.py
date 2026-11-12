@@ -19,6 +19,7 @@ from infrastructure.ai.providers.base import (
     STTStreamEvent,
 )
 from infrastructure.ai.providers.openai_compat import transcribe_input_audio
+from infrastructure.network import configured_websocket_proxy
 
 
 class QwenSTTProvider(STTProvider):
@@ -167,6 +168,7 @@ class QwenSTTProvider(STTProvider):
                 self._stream_url(),
                 additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
+                proxy=configured_websocket_proxy(),
             )
             await websocket.send(
                 json.dumps(

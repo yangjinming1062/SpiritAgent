@@ -237,6 +237,15 @@ class _ProxySettings(BaseSettings):
     )
 
 
+def configured_websocket_proxy() -> str | None:
+    """返回模型 WebSocket 应使用的显式代理，避免 websockets 自动读取系统 SOCKS 代理。"""
+    proxies = _ProxySettings().model_dump()
+    for key in ("https_proxy", "http_proxy", "all_proxy"):
+        if proxy := proxies.get(key):
+            return proxy if "://" in proxy else f"http://{proxy}"
+    return None
+
+
 class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
     """按环境代理和 NO_PROXY 路由；CIDR 匹配 URL 中的 IP，域名沿用 HTTPX 匹配规则。"""
 

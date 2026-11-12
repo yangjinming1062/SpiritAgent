@@ -218,6 +218,9 @@ async def _persist_assistant_no_tool_turn(
                 name="chat.persist-call-reply",
             )
             await _wait_persistence_write(saving)
+            mark_persisted = getattr(reply_delivery, "mark_persisted", None)
+            if callable(mark_persisted):
+                mark_persisted(indices)
         if failure is not None:
             raise failure
         if not selected:

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import io
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -111,6 +112,8 @@ class RealtimeVoicePipeline:
         self._partial_queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]] | None] | None = None
         self._partial_worker: asyncio.Task[None] | None = None
         self._partial_futures: dict[int, asyncio.Future[None]] = {}
+        self._partial_worker_done: asyncio.Event | None = None
+        self._partial_worker_error: BaseException | None = None
         self._input_error: str | None = None
 
     async def begin_input(self, version: TurnVersion) -> None:
@@ -313,6 +316,7 @@ class RealtimeVoicePipeline:
             await self.session.emit("transcript.final", {"text": text}, version=version)
             turn = CallTurn(str(uuid4()), version)
             self._turn = turn
+            self._start_partial_worker(turn.version)
             # 受理任务沿用账户所有权；取消调用方仍先等待账本确认，再定向取消原请求。
             submitted = asyncio.create_task(
                 self._operations.submit(
@@ -321,10 +325,10 @@ class RealtimeVoicePipeline:
                 )
             )
             await wait_for_task(submitted)
-            self._start_partial_worker(turn.version)
         except asyncio.CancelledError:
             raise
         except Exception:
+            await self._cancel_partial_worker()
             logger.exception("Call transcription or admission failed", extra={"user_id": self.actor.user_id})
             await self.session.emit(
                 "error", {"message": "本次语音未能处理，请重新说一次", "fatal": False}, version=version
@@ -377,6 +381,8 @@ class RealtimeVoicePipeline:
     def _start_partial_worker(self, version: TurnVersion) -> None:
         self._partial_queue = asyncio.Queue(maxsize=4)
         self._partial_futures.clear()
+        self._partial_worker_done = asyncio.Event()
+        self._partial_worker_error = None
         self._partial_worker = asyncio.create_task(
             self._run_partial_worker(self._partial_queue, version), name="call.reply-delivery"
         )
@@ -385,55 +391,74 @@ class RealtimeVoicePipeline:
     async def _run_partial_worker(
         self, queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]] | None], version: TurnVersion
     ) -> None:
-        while True:
-            item = await queue.get()
-            if item is None:
-                return
-            index, bubble, future = item
-            try:
-                await self._deliver_partial_now(index, bubble, version)
-            except asyncio.CancelledError:
-                if not future.done():
-                    future.cancel()
-                raise
-            except Exception as exc:
-                if not future.done():
-                    future.set_exception(exc)
-                # A capability error lets terminal delivery use the full-asset
-                # fallback; any other error invalidates the remaining queue.
-                if isinstance(exc, ProviderCapabilityError):
-                    continue
-                while True:
-                    try:
-                        pending = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    if pending is not None and not pending[2].done():
-                        pending[2].set_exception(exc)
-                return
-            else:
-                if not future.done():
-                    future.set_result(None)
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+                index, bubble, future = item
+                try:
+                    await self._deliver_partial_now(index, bubble, version)
+                except asyncio.CancelledError:
+                    if not future.done():
+                        future.cancel()
+                    raise
+                except Exception as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+                    self._partial_worker_error = exc
+                    return
+                else:
+                    if not future.done():
+                        future.set_result(None)
+        finally:
+            if self._partial_worker_done is not None:
+                self._partial_worker_done.set()
+            while True:
+                try:
+                    pending = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if pending is not None and not pending[2].done():
+                    if self._partial_worker_error is not None:
+                        pending[2].set_exception(self._partial_worker_error)
+                    else:
+                        pending[2].cancel()
 
     async def enqueue_partial(self, index: int, bubble: dict[str, Any]) -> asyncio.Future[None]:
         turn = self._turn
         queue = self._partial_queue
         if turn is None or queue is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
+        done = self._partial_worker_done
+        if done is None or done.is_set():
+            raise self._partial_worker_error or asyncio.CancelledError
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._partial_futures[index] = future
-        await queue.put((index, bubble, future))
+        put_task = asyncio.create_task(queue.put((index, bubble, future)))
+        done_task = asyncio.create_task(done.wait())
+        finished, _ = await asyncio.wait({put_task, done_task}, return_when=asyncio.FIRST_COMPLETED)
+        if done_task in finished and not put_task.done():
+            put_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await put_task
+            raise self._partial_worker_error or asyncio.CancelledError
+        done_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await done_task
         return future
 
     async def _finish_partial_worker(self) -> None:
         queue, worker = self._partial_queue, self._partial_worker
         if queue is None or worker is None:
             return
-        await queue.put(None)
+        if self._partial_worker_done is None or not self._partial_worker_done.is_set():
+            await queue.put(None)
         await wait_for_task(worker)
         self._partial_queue = None
         self._partial_worker = None
+        self._partial_worker_done = None
         errors = [
             future.exception() for future in self._partial_futures.values() if future.done() and not future.cancelled()
         ]
@@ -446,9 +471,11 @@ class RealtimeVoicePipeline:
         worker = self._partial_worker
         self._partial_worker = None
         self._partial_queue = None
+        self._partial_worker_error = asyncio.CancelledError()
         self._partial_futures.clear()
         if worker is not None:
             await cancel_and_wait([worker])
+        self._partial_worker_done = None
 
     async def _deliver_partial_now(self, index: int, bubble: dict[str, Any], version: TurnVersion) -> None:
         """交付已经按终态规则标准化且保持顺序的文字或语音气泡。"""
@@ -466,7 +493,12 @@ class RealtimeVoicePipeline:
         if isinstance(validated, VoiceBubble):
             part = CompanionReply(bubbles=[validated])
             try:
-                await self._deliver_stream_voice(part, validated, version)
+                await self._deliver_stream_voice(
+                    part,
+                    validated,
+                    version,
+                    on_played=lambda: self._partial_delivered.__setitem__(index, validated),
+                )
             except ProviderCapabilityError:
                 # Leave non-streaming providers to terminal delivery, where the
                 # regular full-asset path preserves its exact fallback.
@@ -506,7 +538,17 @@ class RealtimeVoicePipeline:
     def clear_partial_reply(self) -> None:
         self._partial_delivered.clear()
 
-    async def _deliver_stream_voice(self, part: CompanionReply, bubble: VoiceBubble, version: TurnVersion) -> None:
+    def mark_persisted(self, indices: list[int]) -> None:
+        for index in indices:
+            self._partial_delivered.pop(index, None)
+
+    async def _deliver_stream_voice(
+        self,
+        part: CompanionReply,
+        bubble: VoiceBubble,
+        version: TurnVersion,
+        on_played: Callable[[], None] | None = None,
+    ) -> None:
         sent = False
         last_sequence: int | None = None
         audio_parts: list[bytes] = []
@@ -521,7 +563,11 @@ class RealtimeVoicePipeline:
                 task=AiTaskKey.companion_voice,
                 preserve_performance=True,
             ):
-                if not chunk.audio or not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
+                if not chunk.audio:
+                    if chunk.final:
+                        continue
+                    raise ValueError("Streaming TTS returned an empty non-terminal PCM chunk")
+                if not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
                     raise ValueError("Streaming TTS returned invalid PCM")
                 audio_parts.append(chunk.audio)
                 for offset in range(0, len(chunk.audio), 9600):
@@ -533,6 +579,8 @@ class RealtimeVoicePipeline:
             # returned sequence prevents a later bubble from acknowledging an
             # earlier local counter.
             await self.session.wait_played(last_sequence, version)
+            if on_played is not None:
+                on_played()
             # Playback is the communication fact. Asset persistence is best
             # effort after that fact and must not erase a confirmed utterance.
             try:
@@ -615,7 +663,12 @@ class RealtimeVoicePipeline:
                 existing_audio = bubble.audio
                 stream_succeeded = False
                 try:
-                    await self._deliver_stream_voice(part, bubble, turn.version)
+                    await self._deliver_stream_voice(
+                        part,
+                        bubble,
+                        turn.version,
+                        on_played=lambda: self._partial_delivered.__setitem__(index, bubble),
+                    )
                     stream_succeeded = True
                 except _PartialAudioError:
                     if existing_audio is None:

@@ -613,6 +613,7 @@ async def _run_chat_turn(
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
+        force_final_reply = False
         reply_bubble_sink = getattr(reply_delivery, "enqueue_partial", None) or getattr(
             reply_delivery, "deliver_partial", None
         )
@@ -656,7 +657,9 @@ async def _run_chat_turn(
                 setup.final_reply_only
                 or (media_turn.structured_reply and media_turn.final_reply_due())
                 or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
+                or force_final_reply
             )
+            planner_pass = callable(reply_bubble_sink) and bool(active_schemas) and not reply_only
             try:
                 llm_result = await generate_turn_response(
                     generation_emitter,
@@ -688,6 +691,29 @@ async def _run_chat_turn(
                     transcripts=audio_transcripts,
                     usage=turn_usage,
                 )
+                if planner_pass and not llm_result.tool_calls_list:
+                    llm_result = await generate_turn_response(
+                        generation_emitter,
+                        user_id=user_id,
+                        session_id=str(setup.conv.id),
+                        task=setup.task,
+                        context=current_context,
+                        inputs=inputs,
+                        inference=turn.inference,
+                        media_turn=media_turn,
+                        schemas=active_schemas,
+                        request=req.message.content,
+                        delivery=turn.delivery,
+                        reply_bubble_sink=reply_bubble_sink,
+                        allow_silence=ephemeral and media_turn.structured_reply,
+                        pace_bubbles=has_viewer and not headless and setup.replacement is None,
+                        final_reply_only=True,
+                        selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
+                        if setup.replacement
+                        else None,
+                        transcripts=audio_transcripts,
+                        usage=turn_usage,
+                    )
             except LLMRuntimeError as exc:
                 logger.warning(
                     "LLM turn failed",
@@ -743,6 +769,8 @@ async def _run_chat_turn(
                 if isinstance(name, str) and name:
                     active_tool_names.add(name)
             _assign_tool_call_ids(llm_result.tool_calls_list)
+            if reply_delivery is not None:
+                force_final_reply = True
             await _persist_assistant_with_tool_calls_and_results(
                 setup.conv,
                 llm_result,

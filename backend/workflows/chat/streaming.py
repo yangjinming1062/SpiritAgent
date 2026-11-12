@@ -85,6 +85,10 @@ class _ReplyBubbleExtractor:
             kind = re.search(r'(?:^|[,{])\s*"kind"\s*:\s*"(dialogue|written)"', self._buffer)
             if kind is not None:
                 self.kind = kind.group(1)
+        if self.kind is None:
+            return []
+        if self.kind == "written":
+            return []
         if self._array_start is None:
             marker = re.search(r'(?:^|[,{])\s*"bubbles"\s*:\s*\[', self._buffer[self._search_from :])
             if marker is None:

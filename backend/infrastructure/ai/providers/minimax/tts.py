@@ -21,6 +21,7 @@ from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.minimax._errors import extract_minimax_audio, raise_for_minimax_response
 from infrastructure.ai.providers.speech_style import speech_style_matches, styled_speech_text
 from infrastructure.ai.speech_contracts import MiniMaxSpeechStyle, SpeechStyle
+from infrastructure.network import configured_websocket_proxy
 
 
 class MiniMaxTTSProvider(TTSProvider):
@@ -749,7 +750,10 @@ class MiniMaxTTSProvider(TTSProvider):
         payload.pop("text", None)
         # 通话层需要可直接进入 PCM 播放队列的分片；MiniMax WebSocket T2A 支持 PCM 流式输出。
         payload["event"] = "task_start"
-        payload["audio_setting"] = {"sample_rate": 24000, "bitrate": 384000, "format": "pcm", "channel": 1}
+        # MiniMax accepts 32/64/128/256 kbps for bitrate.  The field is ignored
+        # for PCM by the service, but an out-of-range value still rejects the
+        # whole task before streaming starts.
+        payload["audio_setting"] = {"sample_rate": 24000, "bitrate": 128000, "format": "pcm", "channel": 1}
         await websocket.send(json.dumps(payload, ensure_ascii=False))
         async with asyncio.timeout(30):
             started = self._json_message(await websocket.recv())
@@ -776,6 +780,7 @@ class MiniMaxTTSProvider(TTSProvider):
                 self._stream_url(),
                 additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
+                proxy=configured_websocket_proxy(),
             )
             async with asyncio.timeout(30):
                 connected = self._json_message(await websocket.recv())
@@ -790,6 +795,7 @@ class MiniMaxTTSProvider(TTSProvider):
                 self._check_event(event, "task_continued")
                 data = event.get("data")
                 audio_hex = data.get("audio") if isinstance(data, dict) else None
+                emitted_audio = False
                 if audio_hex:
                     try:
                         audio = bytes.fromhex(audio_hex)
@@ -798,6 +804,7 @@ class MiniMaxTTSProvider(TTSProvider):
                             "MiniMax streaming TTS returned invalid audio hex", status_code=502
                         ) from exc
                     if audio:
+                        emitted_audio = True
                         yield TTSStreamChunk(
                             audio=audio,
                             mime="audio/pcm;rate=24000",
@@ -805,6 +812,15 @@ class MiniMaxTTSProvider(TTSProvider):
                             voice=payload["voice_setting"]["voice_id"],
                         )
                 if event.get("is_final"):
+                    if not emitted_audio:
+                        # MiniMax sends the terminal marker as a separate event; preserve
+                        # the stream contract even when the last audio frame arrived before it.
+                        yield TTSStreamChunk(
+                            audio=b"",
+                            mime="audio/pcm;rate=24000",
+                            final=True,
+                            voice=payload["voice_setting"]["voice_id"],
+                        )
                     break
             await websocket.send(json.dumps({"event": "task_finish"}))
         finally:
