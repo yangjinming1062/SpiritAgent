@@ -159,7 +159,7 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 `local` 提供 Responses、embedding 和 ComfyUI，默认地址以 [适配器](infrastructure/ai/providers/local/) 为准。信息库端点须从 Backend 容器可达，不同地址分别登记；无鉴权服务可空密钥，启用 SSRF 守卫时私网仍须满足允许规则。
 
 - LLM 卡片填写真实部署模型及实际上下文/输出窗口。[chat.py](infrastructure/ai/providers/local/chat.py) 按 `/props` 缓存识别 llama.cpp/Strata，选择对应无工具结构输出与推理参数；未识别服务依提示词和应用校验。温度按 1:1 下发。
-- embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回。
+- embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回。Qwen3-Embedding 按模型名在查询侧补官方检索指令，入库向量不加。
 
 ### 运营参数
 
