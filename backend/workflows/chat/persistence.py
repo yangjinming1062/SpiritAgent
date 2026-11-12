@@ -194,6 +194,7 @@ async def _persist_assistant_no_tool_turn(
                 reply=delivered_reply,
                 turn_content=json.dumps(delivered_source, ensure_ascii=False),
             )
+            delivered_reply.validate_content(delivered.turn_content)
             # 插话取消也须先保存已确认片段，再释放会话锁。新回合读到的正是实际交付内容。
             saving = asyncio.create_task(
                 _persist_assistant_no_tool_turn(

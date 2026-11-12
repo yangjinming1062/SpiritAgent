@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from features.conversation.replies import CompanionReply
 
 TrackTask = Callable[[asyncio.Task], None]
-ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[None]]
+ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[Any]]
 
 
 class TerminalReplyDelivery(Protocol):

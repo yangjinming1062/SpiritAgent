@@ -613,7 +613,9 @@ async def _run_chat_turn(
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
-        reply_bubble_sink = getattr(reply_delivery, "deliver_partial", None)
+        reply_bubble_sink = getattr(reply_delivery, "enqueue_partial", None) or getattr(
+            reply_delivery, "deliver_partial", None
+        )
         while True:
             action_tools_not_ready = await _refresh_turn_material(
                 setup.conv,

@@ -7,14 +7,14 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from features.companion.proactive_runtime import user_turn_activity
+from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
 from features.conversation.http_contracts import PromptSubmitRequest
+from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.replacement import ReplyReplacementNotAllowedError
-from features.conversation.reply_audio import client_reply_bubbles
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.retry import ReplyRetryNotAllowedError
 from features.conversation.session_operations import edit_message_input, replacement_reply_input, retry_message_text
-from features.conversation.store_contracts import AssistantTurnData
 from features.conversation.submissions import (
     SubmissionConflictError,
     find_submission,
@@ -22,7 +22,7 @@ from features.conversation.submissions import (
     record_submission_state,
     reserve_submission,
 )
-from features.conversation.turn_store import persist_assistant_message
+from infrastructure.ai.usage import CacheUsageSummary
 from infrastructure.api_ids import parse_resource_id
 from infrastructure.async_io import wait_for_task
 from infrastructure.config import SETTINGS
@@ -42,6 +42,8 @@ from workflows.chat.inputs import (
     conversation_history_lock,
 )
 from workflows.chat.orchestrator import run_chat_turn
+from workflows.chat.persistence import _persist_assistant_no_tool_turn
+from workflows.chat.streaming import _LLMTurnResult
 from workflows.chat.types import TerminalReplyDelivery
 
 
@@ -196,6 +198,51 @@ def create_submission_handler(
                     if runtime.active_turn is snapshot:
                         runtime.active_turn = None
 
+        async def persist_partial_reply() -> None:
+            partial_getter = getattr(reply_delivery, "partial_reply", None)
+            if not callable(partial_getter):
+                return
+            partial = partial_getter()
+            if partial is None:
+                return
+            partial_reply, partial_content = partial
+            conv = await _require_owned_conv(user_id, runtime.session_id)
+            partial_result = _LLMTurnResult(
+                turn_content=partial_content,
+                tool_calls_list=[],
+                final_prompt_tokens=0,
+                final_completion_tokens=0,
+                final_usage_payload=None,
+                turn_duration_ms=0,
+                reply=partial_reply,
+            )
+            persist_task = asyncio.create_task(
+                _persist_assistant_no_tool_turn(
+                    conv,
+                    user_id,
+                    partial_result,
+                    task=conversation_ai_task(conv),
+                    emitter=emitter,
+                    effective_settings=runtime.settings,
+                    user_text=req.message.content,
+                    first_user_msg_content=req.message.content,
+                    memory_scope=conversation_memory_scope(conv, user_id),
+                    media=None,
+                    turn_reasoning=None,
+                    cache_usage=CacheUsageSummary(0, 0, None, None, None),
+                    persist=True,
+                    track_task=actor.account.track,
+                    submission_request_id=params["request_id"],
+                    reply_delivery=None,
+                ),
+                name="chat.persist-interrupted-reply",
+            )
+            await wait_for_task(persist_task)
+            await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
+            clear_partial = getattr(reply_delivery, "clear_partial_reply", None)
+            if callable(clear_partial):
+                clear_partial()
+
         async def run_turn() -> None:
             nonlocal started
             started = True
@@ -219,47 +266,22 @@ def create_submission_handler(
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
             except asyncio.CancelledError:
-                partial_getter = getattr(reply_delivery, "partial_reply", None)
-                if callable(partial_getter):
-                    try:
-                        partial = partial_getter()
-                        if partial is not None:
-                            partial_reply, partial_content = partial
-                            partial_data = AssistantTurnData(
-                                content=partial_content,
-                                tool_calls=[],
-                                reasoning=None,
-                                prompt_tokens=0,
-                                completion_tokens=0,
-                                duration_ms=0,
-                                reply=partial_reply,
-                            )
-                            persist_task = asyncio.create_task(
-                                persist_assistant_message(runtime.conversation_id, user_id, partial_data, None),
-                                name="chat.persist-interrupted-reply",
-                            )
-                            message_id = await wait_for_task(persist_task)
-                            await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
-                            await emitter.send_json(
-                                {
-                                    "type": "message.complete",
-                                    "bubbles": client_reply_bubbles(partial_reply),
-                                    "reply": partial_reply.model_dump(mode="json"),
-                                    "content": partial_content,
-                                    "message_id": message_id,
-                                }
-                            )
-                            clear_partial = getattr(reply_delivery, "clear_partial_reply", None)
-                            if callable(clear_partial):
-                                clear_partial()
-                    except Exception:
-                        logger.exception("Interrupted incremental reply persistence failed", extra={"user_id": user_id})
+                try:
+                    await persist_partial_reply()
+                except Exception:
+                    logger.exception("Interrupted incremental reply persistence failed", extra={"user_id": user_id})
                 if runtime.cancel_requested:
                     status = "cancelled"
                 else:
                     error = "任务已中断，请核对已执行的操作后再继续。"
                 raise
             except Exception:
+                try:
+                    await persist_partial_reply()
+                except Exception:
+                    logger.exception(
+                        "Failed incremental reply persistence during turn error", extra={"user_id": user_id}
+                    )
                 status = "failed"
                 error = "本次回复未能完成，请稍后重试。"
                 logger.exception("chat turn failed", extra={"user_id": user_id})

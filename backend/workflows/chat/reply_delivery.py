@@ -578,6 +578,27 @@ def normalize_incremental_dialogue_bubble(
     return [item.model_dump(mode="json") for item in reply.bubbles]
 
 
+def companion_reply_source(reply: CompanionReply) -> str:
+    """Serialize the legal model-input form of a validated delivery reply."""
+    values: list[dict[str, JsonValue]] = []
+    for bubble in reply.bubbles:
+        value = bubble.model_dump(mode="json")
+        if isinstance(bubble, VoiceBubble):
+            value["speech"].pop("provider", None)
+            value["speech"].pop("model", None)
+            value.pop("voice_id", None)
+            value.pop("language", None)
+            value.pop("audio", None)
+        elif isinstance(bubble, MediaBubble):
+            value = {"type": bubble.type, "media_id": bubble.media_id}
+        elif isinstance(bubble, LinkBubble):
+            value = {"type": bubble.type, "topic_id": bubble.topic_id}
+        values.append(value)
+    content = json.dumps(values, ensure_ascii=False)
+    reply.validate_content(content)
+    return content
+
+
 def fallback_companion_voice_reply(
     raw: str,
     *,

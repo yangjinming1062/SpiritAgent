@@ -8,11 +8,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from features.conversation.replies import CompanionReply, LinkBubble, VoiceBubble
+from features.conversation.replies import CompanionReply, LinkBubble
 from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
-from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
+from infrastructure.ai.providers.base import ChatProvider, ProviderCapabilityError, ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_style_guidance
 from infrastructure.ai.response_validation import (
     IncompleteLlmResponseError,
@@ -47,6 +47,7 @@ from workflows.chat.prompts import (
 )
 from workflows.chat.reply_delivery import (
     companion_reply_schema,
+    companion_reply_source,
     normalize_incremental_dialogue_bubble,
     resolve_companion_reply,
 )
@@ -76,9 +77,14 @@ class _ReplyBubbleExtractor:
         self._array_start: int | None = None
         self._cursor = 0
         self._index = 0
+        self.kind: str | None = None
 
     def feed(self, text: str) -> list[tuple[int, dict[str, Any]]]:
         self._buffer += text
+        if self.kind is None:
+            kind = re.search(r'(?:^|[,{])\s*"kind"\s*:\s*"(dialogue|written)"', self._buffer)
+            if kind is not None:
+                self.kind = kind.group(1)
         if self._array_start is None:
             marker = re.search(r'(?:^|[,{])\s*"bubbles"\s*:\s*\[', self._buffer[self._search_from :])
             if marker is None:
@@ -449,6 +455,7 @@ async def _generate_llm_response(
     final_usage_payload: dict | None = None
     pending_text: list[str] = []
     partial_bubbles: list[dict[str, Any]] = []
+    incremental_receipts: list[tuple[dict[str, Any], asyncio.Future[None]]] = []
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
     incremental_index = 0
     incremental_blocked = False
@@ -459,9 +466,24 @@ async def _generate_llm_response(
     completed_response: Any = None
     text_emitted = False
 
-    def _recover_incremental_reply() -> bool:
+    async def _settle_incremental_receipts() -> None:
+        for bubble, receipt in incremental_receipts:
+            try:
+                await receipt
+            except asyncio.CancelledError:
+                raise
+            except ProviderCapabilityError:
+                with contextlib.suppress(ValueError):
+                    partial_bubbles.remove(bubble)
+            except Exception:
+                with contextlib.suppress(ValueError):
+                    partial_bubbles.remove(bubble)
+        incremental_receipts.clear()
+
+    async def _recover_incremental_reply() -> bool:
         """Turn independently normalized, delivered bubbles into a terminal reply."""
         nonlocal pending_text, reply
+        await _settle_incremental_receipts()
         if tool_call_started or tool_calls_list or not partial_bubbles:
             return False
         values = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
@@ -471,20 +493,10 @@ async def _generate_llm_response(
             reply = CompanionReply.model_validate({"bubbles": values})
         except ValueError:
             return False
-        source: list[dict[str, Any]] = []
-        for value in reply.bubbles:
-            item = value.model_dump(mode="json")
-            if isinstance(value, VoiceBubble):
-                item["speech"].pop("provider", None)
-                item["speech"].pop("model", None)
-                item.pop("voice_id", None)
-                item.pop("language", None)
-                item.pop("audio", None)
-            source.append(item)
-        pending_text = [json.dumps(source, ensure_ascii=False)]
+        pending_text = [companion_reply_source(reply)]
         logger.warning(
             "Companion reply stream failed after incremental delivery; preserving delivered bubbles",
-            extra={"bubble_count": len(source)},
+            extra={"bubble_count": len(values)},
         )
         return True
 
@@ -565,7 +577,11 @@ async def _generate_llm_response(
         if incremental_blocked:
             return
         references = ReplyReferences.from_texts(reference_texts)
-        for _, bubble in reply_extractor.feed(text):
+        extracted = reply_extractor.feed(text)
+        if reply_extractor.kind == "written":
+            incremental_blocked = True
+            return
+        for _, bubble in extracted:
             # A media/link bubble, or an invalid dialogue bubble, blocks later bubbles so an
             # incomplete prefix can never be skipped by an independently delivered suffix.
             if bubble.get("type") not in {"text", "voice"}:
@@ -585,8 +601,10 @@ async def _generate_llm_response(
                     incremental_blocked = True
                     continue
                 for item in normalized:
-                    await reply_bubble_sink(incremental_index, item)
+                    receipt = await reply_bubble_sink(incremental_index, item)
                     partial_bubbles.append(item)
+                    if isinstance(receipt, asyncio.Future):
+                        incremental_receipts.append((item, receipt))
                     incremental_index += 1
             except asyncio.CancelledError:
                 raise
@@ -726,12 +744,12 @@ async def _generate_llm_response(
                 )
 
         except LLMRuntimeError as exc:
-            if not _recover_incremental_reply():
+            if not await _recover_incremental_reply():
                 if _has_final_reply(completed_response) and not isinstance(exc, FinalReplyStreamError):
                     raise FinalReplyStreamError(exc.classified) from exc
                 raise
         except IncompleteResponseError:
-            if not _recover_incremental_reply():
+            if not await _recover_incremental_reply():
                 raise
         finally:
             try:
@@ -788,6 +806,7 @@ async def _generate_llm_response(
                 if reply_bubble_sink is None or not partial_bubbles:
                     _log_reply_format_failure(exc)
                     raise
+                await _settle_incremental_receipts()
                 # 已经实际交付的标准化对话气泡必须有可恢复的事实记录；若后续对象让终态校验失败，
                 # 保留这些独立验证过的气泡，避免出现“说过但历史没有”的事实。
                 partial_reply = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
@@ -796,17 +815,7 @@ async def _generate_llm_response(
                     raise
                 recovered = CompanionReply.model_validate({"bubbles": partial_reply})
                 reply = recovered
-                partial_text: list[dict[str, Any]] = []
-                for value in recovered.bubbles:
-                    item = value.model_dump(mode="json")
-                    if isinstance(value, VoiceBubble):
-                        item["speech"].pop("provider", None)
-                        item["speech"].pop("model", None)
-                        item.pop("voice_id", None)
-                        item.pop("language", None)
-                        item.pop("audio", None)
-                    partial_text.append(item)
-                text = json.dumps(partial_text, ensure_ascii=False)
+                text = companion_reply_source(recovered)
                 pending_text = [text]
                 logger.warning(
                     "Companion reply terminal validation failed after incremental delivery; preserving bubbles",
