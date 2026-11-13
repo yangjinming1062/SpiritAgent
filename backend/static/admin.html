@@ -10,6 +10,7 @@
     <script src="/admin/admin.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主要内容</a>
 <div id="login">
     <div class="login-orbit" aria-hidden="true"></div>
     <section class="login-card">
@@ -30,49 +31,37 @@
         <aside class="sidebar">
             <div class="side-brand"><span class="brand-mark" aria-hidden="true">S</span><div><strong>SpiritAgent</strong><span class="eyebrow">CONTROL CENTER</span></div></div>
             <nav class="nav" aria-label="主导航">
-                <button class="nav-item active" data-tab="overview" onclick="showTab('overview')"><span data-icon="overview"></span><span>总览</span></button>
-                <button class="nav-item" data-tab="ai" onclick="showTab('ai')"><span data-icon="ai"></span><span>AI 配置</span><span class="nav-badge" id="aiNavBadge" hidden></span><span class="draft-dot" id="aiDraftDot" hidden title="有未保存的 AI 配置"></span></button>
-                <button class="nav-item" data-tab="users" onclick="showTab('users')"><span data-icon="users"></span><span>用户管理</span></button>
+                <button class="nav-item active" data-tab="ai" title="AI 配置" aria-label="AI 配置" aria-current="page" onclick="showTab('ai')"><span data-icon="ai"></span><span>AI 配置</span><span class="nav-badge" id="aiNavBadge" hidden></span><span class="draft-dot" id="aiDraftDot" hidden title="有未保存的 AI 配置"></span></button>
+                <button class="nav-item" data-tab="serviceUpdate" title="服务更新" aria-label="服务更新" onclick="showTab('serviceUpdate')"><span data-icon="versions"></span><span>服务更新</span></button>
+                <button class="nav-item" data-tab="users" title="用户管理" aria-label="用户管理" onclick="showTab('users')"><span data-icon="users"></span><span>用户管理</span></button>
                 <div class="nav-label">系统与运维</div>
-                <button class="nav-item" data-tab="settings" onclick="showTab('settings')"><span data-icon="settings"></span><span>系统参数</span><span class="draft-dot" id="settingsDraftDot" hidden title="有未保存的系统参数"></span></button>
-                <button class="nav-item" data-tab="versions" onclick="showTab('versions')"><span data-icon="versions"></span><span>版本发布</span></button>
-                <button class="nav-item" data-tab="logs" onclick="showTab('logs')"><span data-icon="logs"></span><span>夜间日志</span></button>
-                <button class="nav-item" data-tab="videoQueue" onclick="showTab('videoQueue')"><span data-icon="logs"></span><span>视频队列</span></button>
-                <button class="nav-item" data-tab="serviceUpdate" onclick="showTab('serviceUpdate')"><span data-icon="versions"></span><span>服务更新</span></button>
+                <button class="nav-item" data-tab="settings" title="系统参数" aria-label="系统参数" onclick="showTab('settings')"><span data-icon="settings"></span><span>系统参数</span><span class="draft-dot" id="settingsDraftDot" hidden title="有未保存的系统参数"></span></button>
+                <button class="nav-item" data-tab="versions" title="版本发布" aria-label="版本发布" onclick="showTab('versions')"><span data-icon="versions"></span><span>版本发布</span></button>
+                <button class="nav-item" data-tab="logs" title="夜间日志" aria-label="夜间日志" onclick="showTab('logs')"><span data-icon="logs"></span><span>夜间日志</span></button>
+                <button class="nav-item" data-tab="videoQueue" title="视频队列" aria-label="视频队列" onclick="showTab('videoQueue')"><span data-icon="logs"></span><span>视频队列</span></button>
             </nav>
-            <div class="side-foot"><span class="console-label">管理后台</span><button class="btn btn--ghost" onclick="logout()"><span data-icon="logout"></span>退出登录</button></div>
+            <div class="side-foot"><span class="console-label">管理后台</span><button class="btn btn--ghost" onclick="logout()" aria-label="退出登录"><span data-icon="logout"></span><span>退出登录</span></button></div>
         </aside>
-        <main class="main">
+        <main class="main" id="main">
             <header class="topbar">
-                <div class="topbar-text"><p class="eyebrow">WORKSPACE</p><h1 id="topTitle">总览</h1><p id="topDesc" class="desc"></p></div>
+                <div class="topbar-text"><p class="eyebrow">WORKSPACE</p><h1 id="topTitle">AI 配置</h1><p id="topDesc" class="desc"></p></div>
                 <div class="topbar-actions"><span class="status-chip" id="runtimeChip">连接中</span><div class="save-actions" id="pageSaveActions" hidden><span id="pageDraftStatus" role="status"></span><button class="btn btn--ghost" id="pageDiscardBtn" onclick="discardCurrentPage()">放弃修改</button><button class="btn btn--primary" id="pageSaveBtn" onclick="saveCurrentPage()">保存配置</button></div></div>
             </header>
             <div class="content">
-                <section id="panel-overview" class="panel active">
-                    <div class="stats">
-                        <div class="stat"><span data-icon="check"></span><div><div class="label">配置完整</div><div class="value" id="ovReady">—</div><div class="meta" id="ovReadyMeta"></div></div></div>
-                        <div class="stat"><span data-icon="alert"></span><div><div class="label">待处理问题</div><div class="value" id="ovIssues">—</div><div class="meta" id="ovIssuesMeta"></div></div></div>
-                        <div class="stat"><span data-icon="users"></span><div><div class="label">用户配置覆盖</div><div class="value" id="ovOverrides">—</div><div class="meta" id="ovOverridesMeta"></div></div></div>
-                        <div class="stat"><span data-icon="versions"></span><div><div class="label">当前版本</div><div class="value" id="ovVersion">—</div><div class="meta" id="ovVersionMeta"></div></div></div>
-                    </div>
-                    <div class="section-heading"><div><h2>功能配置</h2><span class="hint">检查模型引用、能力和凭据</span></div><div class="status-legend"><span>● 已配置</span><span>◐ 需完善</span><span>○ 未配置</span></div></div>
-                    <div id="ovGroups" class="function-grid" aria-label="功能组配置状态"></div>
-                    <div class="overview-bottom"><section class="card"><div class="card-head"><h2>待处理</h2><span class="count" id="ovIssueCount"></span></div><div id="ovTodo" class="issue-list"></div></section><section class="card"><div class="card-head"><h2>最近活动</h2><button class="btn btn--text" onclick="showTab('logs')">夜间日志 →</button></div><ul class="timeline" id="ovTimeline"></ul></section></div>
-                </section>
-                <section id="panel-ai" class="panel">
+                <section id="panel-ai" class="panel active" aria-label="AI 配置">
                     <div class="workspace-toolbar"><div class="segmented" id="aiSections"><button data-ai-section="providers" aria-pressed="true">供应商</button><button data-ai-section="models" aria-pressed="false">能力模型</button><button data-ai-section="tasks" aria-pressed="false">任务调用链</button></div><label class="scope-select"><span data-icon="scope"></span><select id="aiScopeSelect" onchange="onAiScopeChange()" aria-label="配置对象"><option value="system">系统配置</option></select></label><button class="btn btn--ghost btn--sm" id="aiPaletteToggle" onclick="toggleAiPalette()" aria-expanded="true">模型库</button><button class="btn btn--text" id="aiDeleteBtn" onclick="deleteModelConfig(aiView.userId)" hidden>清除用户覆盖</button></div>
                     <div class="ai-layout"><nav class="ai-rail" id="aiTree" aria-label="AI 配置分组"></nav><div class="chain-pane"><div class="section-heading"><div><h2 id="aiChainTitle"></h2><span class="hint" id="aiChainCount"></span></div><details class="inline-help"><summary>配置继承 ⓘ</summary><p>用户任务链 → 系统任务链 → 用户默认能力链 → 系统默认能力链。空链继承下一层，预算逐字段继承系统任务配置。</p></details></div><div id="aiChainBody"></div></div><aside class="model-palette" id="aiPalette" aria-label="可用模型库"><div class="palette-head"><h3>可用模型</h3><span class="count" id="aiPaletteCount"></span></div><p class="hint">拖入能力卡片，或点击添加</p><input type="search" id="aiPaletteSearch" placeholder="搜索模型或供应商" aria-label="搜索可用模型" oninput="renderAiPalette()"><div id="aiPaletteList"></div><button class="btn btn--text btn--block" onclick="aiSelectNode(aiService(aiView.group))">管理能力模型 →</button></aside></div>
                 </section>
-                <section id="panel-users" class="panel"><div class="card"><div class="card-head"><h2>用户</h2><span class="count" id="userCount"></span><span class="spacer"></span><input type="search" id="userSearch" placeholder="搜索用户名或 ID" aria-label="搜索用户" oninput="filterUsers()"><button class="btn btn--primary" onclick="showCreateUser()">＋ 创建用户</button></div><div class="table-scroll"><table><thead><tr><th>用户</th><th>状态</th><th>配置覆盖</th><th>创建时间</th><th class="td-actions">操作</th></tr></thead><tbody id="userList"></tbody></table></div></div></section>
-                <section id="panel-settings" class="panel"><div class="settings-layout"><aside class="settings-rail"><input type="search" id="settingsSearch" placeholder="搜索参数…" aria-label="搜索系统参数" oninput="filterSettingsFields()"><nav id="settingsRail" class="rail-nav" aria-label="参数分类"></nav></aside><div class="settings-main"><div id="systemSettingsForm"></div><div class="settings-empty" id="settingsEmpty" hidden>没有匹配的设置项</div></div></div></section>
-                <section id="panel-versions" class="panel"><div class="card"><div class="card-head"><h2>发布新版本</h2><span class="hint">桌面端更新包 · ZIP</span></div><form id="uploadForm" class="upload-grid"><label class="file-drop" id="releaseDrop"><span data-icon="upload"></span><strong>拖入更新包，或点击选择文件</strong><input type="file" id="fileInput" accept=".zip" required><span class="hint" id="fileName"></span></label><div class="upload-row"><input id="releaseNotes" placeholder="更新说明（可选）" aria-label="更新说明"><button type="submit" class="btn btn--primary">上传并发布</button></div><p id="uploadStatus" role="status"></p></form></div><div class="card"><div class="card-head"><h2>版本历史</h2><span class="count" id="versionCount"></span></div><div class="table-scroll"><table><thead><tr><th>版本</th><th>更新说明</th><th>平台</th><th>状态</th><th>发布时间</th><th class="td-actions">操作</th></tr></thead><tbody id="versionList"></tbody></table></div></div></section>
-                <section id="panel-logs" class="panel"><div class="card"><div class="card-head"><h2>夜间活动</h2><span class="count" id="logCount"></span><span class="spacer"></span><input type="number" id="logUserId" placeholder="用户 ID" aria-label="按用户筛选日志" min="1"><input type="date" id="logDate" aria-label="按日期筛选日志"><button class="btn btn--ghost" onclick="loadLogs()">筛选</button></div><div class="table-scroll"><table><thead><tr><th>记录</th><th>用户与摘要</th><th>目标日期</th><th>状态</th><th>更新时间</th><th class="td-actions">操作</th></tr></thead><tbody id="logList"></tbody></table></div></div></section>
-                <section id="panel-videoQueue" class="panel">
+                <section id="panel-users" class="panel" aria-label="用户管理"><div class="card"><div class="card-head"><h2>用户</h2><span class="count" id="userCount"></span><span class="spacer"></span><input type="search" id="userSearch" placeholder="搜索用户名或 ID" aria-label="搜索用户" oninput="filterUsers()"><button class="btn btn--primary" onclick="showCreateUser()">＋ 创建用户</button></div><div class="table-scroll"><table><thead><tr><th scope="col">用户</th><th scope="col">状态</th><th scope="col">配置覆盖</th><th scope="col">创建时间</th><th scope="col" class="td-actions">操作</th></tr></thead><tbody id="userList"></tbody></table></div></div></section>
+                <section id="panel-settings" class="panel" aria-label="系统参数"><div class="settings-layout"><aside class="settings-rail"><input type="search" id="settingsSearch" placeholder="搜索参数…" aria-label="搜索系统参数" oninput="filterSettingsFields()"><nav id="settingsRail" class="rail-nav" aria-label="参数分类"></nav></aside><div class="settings-main"><div id="systemSettingsForm"></div><div class="settings-empty" id="settingsEmpty" hidden>没有匹配的设置项</div></div></div></section>
+                <section id="panel-versions" class="panel" aria-label="版本发布"><div class="card"><div class="card-head"><h2>发布新版本</h2><span class="hint">桌面端更新包 · ZIP</span></div><form id="uploadForm" class="upload-grid"><label class="file-drop" id="releaseDrop"><span data-icon="upload"></span><strong>拖入更新包，或点击选择文件</strong><input type="file" id="fileInput" accept=".zip" required><span class="hint" id="fileName"></span></label><div class="upload-row"><input id="releaseNotes" placeholder="更新说明（可选）" aria-label="更新说明"><button type="submit" class="btn btn--primary">上传并发布</button></div><p id="uploadStatus" role="status"></p></form></div><div class="card"><div class="card-head"><h2>版本历史</h2><span class="count" id="versionCount"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">版本</th><th scope="col">更新说明</th><th scope="col">平台</th><th scope="col">状态</th><th scope="col">发布时间</th><th scope="col" class="td-actions">操作</th></tr></thead><tbody id="versionList"></tbody></table></div></div></section>
+                <section id="panel-logs" class="panel" aria-label="夜间日志"><div class="card"><div class="card-head"><h2>夜间活动</h2><span class="count" id="logCount"></span><span class="spacer"></span><input type="number" id="logUserId" placeholder="用户 ID" aria-label="按用户筛选日志" min="1"><input type="date" id="logDate" aria-label="按日期筛选日志"><button class="btn btn--ghost" onclick="loadLogs()">筛选</button></div><div class="table-scroll"><table><thead><tr><th scope="col">记录</th><th scope="col">用户与摘要</th><th scope="col">目标日期</th><th scope="col">状态</th><th scope="col">更新时间</th><th scope="col" class="td-actions">操作</th></tr></thead><tbody id="logList"></tbody></table></div></div></section>
+                <section id="panel-videoQueue" class="panel" aria-label="视频队列">
                     <div class="section-heading"><div><h2>视频生成队列</h2><span class="hint">同一供应商和密钥共用一个生成名额，不同密钥可同时生成。</span></div><button class="btn btn--ghost" id="videoQueueRefresh" onclick="loadVideoQueue()">刷新</button></div>
                     <p class="hint" id="videoQueueStatus" role="status"></p>
                     <div id="videoQueueList"></div>
                 </section>
-                <section id="panel-serviceUpdate" class="panel">
+                <section id="panel-serviceUpdate" class="panel" aria-label="服务更新">
                     <div class="section-heading">
                         <div><h2>服务更新</h2><span class="hint">检查更新、拉取代码、构建并重启 backend</span></div>
                         <div class="save-actions">
@@ -84,29 +73,29 @@
                     <p class="hint" id="serviceUpdateStatus" role="status">正在读取更新器状态…</p>
                     <div id="serviceUpdateDisabled" class="card" hidden>
                         <div class="card-pad">
-                            <h3 style="margin-bottom:6px;">服务更新器未接入</h3>
+                            <h3>服务更新器未接入</h3>
                             <p class="hint">要在管理页完成一键更新，请先 SSH 到服务器完成一次性接入：</p>
-                            <ol class="hint" style="margin:8px 0 0; padding-left:18px; line-height:1.9;">
+                            <ol class="step-list">
                                 <li>准备部署密钥与 known_hosts，放入仓库旁的 <code>deploy/</code> 目录（只读挂载）。</li>
                                 <li>在 <code>backend/.env</code> 填写 <code>UPDATER_REPO_DIR</code>（仓库绝对路径）等变量。</li>
                                 <li>执行 <code>docker compose --profile updater up -d --build updater</code>。</li>
                             </ol>
-                            <p class="hint" style="margin-top:8px;">详细步骤与首次上线说明见 backend/README「服务更新」。</p>
+                            <p class="hint">详细步骤与首次上线说明见 backend/README「服务更新」。</p>
                         </div>
                     </div>
                     <div id="serviceUpdateBody" hidden>
-                        <div class="stats" style="grid-template-columns: repeat(3, minmax(0,1fr));">
-                            <div class="stat"><span data-icon="versions"></span><div><div class="label">仓库版本</div><div class="value" id="svcRepoCommit" style="font-size:16px;">—</div><div class="meta hint" id="svcRepoBranch"></div></div></div>
-                            <div class="stat"><span data-icon="ai"></span><div><div class="label">可更新提交</div><div class="value" id="svcIncoming" style="font-size:16px;">—</div><div class="meta hint" id="svcIncomingHint"></div></div></div>
-                            <div class="stat"><span data-icon="settings"></span><div><div class="label">服务运行状态</div><div class="value" id="svcHealth" style="font-size:16px;">—</div><div class="meta hint" id="svcRuntime"></div></div></div>
+                        <div class="stats">
+                            <div class="stat"><span data-icon="versions"></span><div><div class="label">仓库版本</div><div class="value small" id="svcRepoCommit">—</div><div class="meta" id="svcRepoBranch"></div></div></div>
+                            <div class="stat"><span data-icon="ai"></span><div><div class="label">可更新提交</div><div class="value small" id="svcIncoming">—</div><div class="meta" id="svcIncomingHint"></div></div></div>
+                            <div class="stat"><span data-icon="settings"></span><div><div class="label">服务运行状态</div><div class="value small" id="svcHealth">—</div><div class="meta" id="svcRuntime"></div></div></div>
                         </div>
                         <div class="card" id="svcPreflightCard" hidden>
                             <div class="card-head"><h2>前置检查未通过</h2></div>
-                            <ul class="timeline" id="svcPreflightList" style="padding:5px 18px 12px;"></ul>
+                            <ul class="timeline timeline--tight" id="svcPreflightList"></ul>
                         </div>
                         <div class="card">
                             <div class="card-head"><h2>更新内容</h2><span class="count" id="svcIncomingCount"></span></div>
-                            <div class="table-scroll"><table><thead><tr><th>提交</th><th>说明</th><th>作者</th><th>时间</th></tr></thead><tbody id="svcIncomingList"></tbody></table></div>
+                            <div class="table-scroll"><table><thead><tr><th scope="col">提交</th><th scope="col">说明</th><th scope="col">作者</th><th scope="col">时间</th></tr></thead><tbody id="svcIncomingList"></tbody></table></div>
                         </div>
                         <div class="card">
                             <div class="card-head"><h2>当前任务</h2><span class="count" id="svcTaskState"></span><span class="spacer"></span><button class="btn btn--ghost btn--sm" id="svcTaskHistoryBtn" onclick="toggleServiceUpdateHistory()">历史任务</button></div>
@@ -116,7 +105,7 @@
                         </div>
                         <div class="card" id="svcHistoryCard" hidden>
                             <div class="card-head"><h2>历史任务</h2></div>
-                            <div class="table-scroll"><table><thead><tr><th>任务</th><th>类型</th><th>状态</th><th>目标提交</th><th>时间</th><th class="td-actions">操作</th></tr></thead><tbody id="svcHistoryList"></tbody></table></div>
+                            <div class="table-scroll"><table><thead><tr><th scope="col">任务</th><th scope="col">类型</th><th scope="col">状态</th><th scope="col">目标提交</th><th scope="col">时间</th><th scope="col" class="td-actions">操作</th></tr></thead><tbody id="svcHistoryList"></tbody></table></div>
                         </div>
                     </div>
                 </section>
@@ -131,7 +120,7 @@
             <button type="button" class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">目标版本 <strong id="svcConfirmTarget" style="font-family:var(--font-mono);"></strong>，共 <strong id="svcConfirmCount"></strong> 个新提交。</p>
+            <p class="modal-note">目标版本 <strong id="svcConfirmTarget" class="mono"></strong>，共 <strong id="svcConfirmCount"></strong> 个新提交。</p>
             <p class="callout">更新会拉取代码、重新构建并重启 <strong>backend</strong>；期间服务将短暂中断（通常一分钟内），手机与桌面连接会自动恢复。构建或启动失败时旧服务继续运行或保留诊断，不会自动回退。</p>
             <p class="hint" id="svcConfirmNote" hidden></p>
         </div>
@@ -173,7 +162,7 @@
                 <div class="hint">嵌入激活码的后端地址，用户激活时客户端将连接此地址。</div>
             </div>
             <label class="checkbox-row"><input type="checkbox" id="nightlyEnabled" checked> 启用夜间自主规划</label>
-            <div class="field" id="regenField" style="display:none; margin-top:0.95rem; padding-top:0.95rem; border-top:1px solid var(--border);">
+            <div class="field field--divider" id="regenField" style="display:none;">
                 <label>激活码</label>
                 <button type="button" class="btn btn--ghost btn--sm" onclick="regenerateToken()">重新生成激活码</button>
                 <div class="hint">重新生成会创建新激活码并在此展示，旧码立即失效；当前激活码可随时在用户列表的「激活码」中查看。</div>
@@ -193,8 +182,8 @@
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">请将此激活码发送给用户，用于客户端激活。</p>
-            <textarea id="activationCodeText" class="mono" readonly rows="5" style="width:100%; resize:vertical; word-break:break-all;"></textarea>
+            <p class="modal-note">请将此激活码发送给用户，用于客户端激活。</p>
+            <textarea id="activationCodeText" class="mono-code" readonly rows="5"></textarea>
         </div>
         <div class="modal-foot">
             <button class="btn btn--ghost" onclick="closeModal('activationModal')">关闭</button>
@@ -214,11 +203,11 @@
             <div class="callout">
                 激活码携带后端服务地址与用户认证令牌。您可以在此随时查看当前激活码并复制发放。后端地址变动时输入新地址点击「更新后端地址」即可，无需重置令牌；如需强制作废旧激活码可点击「重新生成激活码」。
             </div>
-            <div style="margin-top:0.5rem;">
-                <label style="display:block; font-size:0.78rem; font-weight:600; margin-bottom:0.3rem;">当前激活码</label>
-                <textarea id="activationManageCode" class="mono" readonly rows="4" style="width:100%; resize:vertical; word-break:break-all;"></textarea>
+            <div class="field">
+                <label for="activationManageCode">当前激活码</label>
+                <textarea id="activationManageCode" class="mono-code" readonly rows="4"></textarea>
             </div>
-            <div class="field" style="margin-top:1rem;">
+            <div class="field">
                 <label for="activationManageBaseUrl">后端地址</label>
                 <input type="text" id="activationManageBaseUrl" placeholder="例如 https://example.com" autocomplete="off">
                 <div class="hint">更新后端地址会自动重打激活码，不影响用户已有数据与授权。</div>
@@ -240,7 +229,7 @@
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <div id="logStages"></div><details class="raw-log"><summary>原始记录</summary><pre id="logDetailBody" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;max-height:60vh;overflow:auto"></pre></details>
+            <div id="logStages"></div><details class="raw-log"><summary>原始记录</summary><pre id="logDetailBody" class="raw-pre"></pre></details>
         </div>
         <div class="modal-foot">
             <button class="btn btn--ghost" onclick="closeModal('logDetailModal')">关闭</button>
@@ -264,7 +253,7 @@
             </div>
             <div id="aiModelPickerStatus" role="status"></div>
             <div id="aiModelPickerList" class="ai-model-list" onchange="selectAiModelPickerModel(event)"></div>
-            <div class="field" id="aiModelPickerManualField" style="margin-top:1rem">
+            <div class="field" id="aiModelPickerManualField">
                 <label for="aiModelPickerManual">手动填写模型 ID（每行一个）</label>
                 <textarea id="aiModelPickerManual" rows="3" placeholder="列表中没有的模型也可以手动添加" oninput="updateAiModelPickerCount()"></textarea>
                 <p class="hint">已勾选和手填的模型会一起添加，重复项自动跳过。缺失参数可在添加后补全。</p>

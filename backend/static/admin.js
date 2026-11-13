@@ -2,7 +2,6 @@ const TOKEN_KEY = 'spiritagent_admin_token';
 const tabCache = { users: null, models: null, logs: null, versions: null };
 
 const TABS = {
-    overview: { title: '总览', desc: '功能配置与最近活动' },
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
     ai:       { title: 'AI 配置', desc: '按功能组织能力，拖拽编排模型调用链' },
     settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
@@ -122,10 +121,14 @@ function toggleMenu(btn) {
     placeMenuPop(btn, pop);
 }
 
-const TAB_LOADERS = { overview: loadOverview, users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs, videoQueue: loadVideoQueue, serviceUpdate: loadServiceUpdate };
+const TAB_LOADERS = { users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs, videoQueue: loadVideoQueue, serviceUpdate: loadServiceUpdate };
 
 function showTab(name) {
-    $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    $$('.nav-item').forEach(b => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle('active', on);
+        if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
     $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
     const t = TABS[name];
     $('#topTitle').textContent = t.title;
@@ -167,7 +170,7 @@ async function invoke(operation, input = {}, options = {}) {
 function enterApp() {
     $('#login').style.display = 'none';
     $('#app').style.display = 'block';
-    showTab('overview');
+    showTab('ai');
 }
 
 function logout() {
@@ -470,7 +473,6 @@ async function deleteUser(id) {
 }
 
 const ICON_PATHS = {
-    overview: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     ai: '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',
     users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 5v2"/>',
     settings: '<circle cx="12" cy="12" r="4"/><path d="m9 3-1 3-3 1-2 3 2 2-1 4 3 2 3-1 2 4 3-2 1-3 4-1 1-4-3-2 1-4-4-1-2-3-3 1Z"/>',
@@ -533,50 +535,6 @@ function updateAiNavBadge(readiness) {
     const count = readinessIssues(readiness).length;
     $('#aiNavBadge').hidden = !count;
     $('#aiNavBadge').textContent = String(count);
-}
-function renderOverviewGroups(readiness) {
-    const groups = taskGroups();
-    let complete = 0;
-    $('#ovGroups').innerHTML = [...groups].map(([label, definitions]) => {
-        const entries = definitions.flatMap(task => task.services.map(service => ({ target: `task:${task.id}:${service}`, task, service, readiness: readiness[`task:${task.id}:${service}`] })));
-        const ready = entries.filter(item => item.readiness.status === 'ok').length;
-        if (ready === entries.length) complete++;
-        const tone = ready === entries.length ? '' : entries.some(item => item.readiness.status === 'bad') ? 'bad' : 'warn';
-        return `<article class="function-tile"><div class="function-title">${icon(GROUP_ICONS[label])}<button data-open-ai="${entries[0].target}">${esc(label)}</button><span class="function-status ${tone}">${ready}/${entries.length}</span></div><div class="service-statuses">${entries.map(({ target, task, service, readiness: r }) => `<button class="service-status ${r.status === 'ok' ? '' : r.status}" data-open-ai="${target}" title="${esc(`${task.label} · ${READINESS_KEY_LABELS[service]}：${r.status === 'ok' ? '已配置' : r.status === 'warn' ? '需完善' : '未配置可用模型'}`)}" aria-label="${esc(`${task.label} · ${READINESS_KEY_LABELS[service]}，${r.status === 'ok' ? '已配置' : '需处理'}`)}">${icon(service)}<span>${SERVICE_SHORT[service]} ${r.status === 'ok' ? '●' : r.status === 'warn' ? '◐' : '○'}</span></button>`).join('')}</div></article>`;
-    }).join('');
-    $('#ovReady').innerHTML = `${complete}<small>/ ${groups.size} 组</small>`;
-    $('#ovReadyMeta').textContent = `${Object.values(readiness).filter(item => item.status === 'ok').length} / ${Object.keys(readiness).length} 项能力已配置`;
-    const issues = readinessIssues(readiness);
-    $('#ovIssues').textContent = String(issues.length);
-    const affected = new Set(issues.flatMap(issue => [...issue.groups]));
-    $('#ovIssuesMeta').textContent = affected.size ? `影响 ${affected.size} 个功能组` : '配置检查通过';
-    $('#ovIssueCount').textContent = issues.length ? `${issues.length} 项` : '';
-    $('#ovTodo').innerHTML = issues.length ? issues.map(issue => `<div class="issue-item">${icon('alert')}<div class="issue-body"><strong>${esc(issue.label)}</strong><span class="hint" title="${esc([...issue.groups].join('、'))}">影响 ${issue.groups.size} 组 · ${esc([...issue.groups].slice(0, 3).join('、'))}${issue.groups.size > 3 ? '…' : ''}</span></div><button class="btn btn--text" data-open-ai="${esc(issue.target)}">定位 →</button></div>`).join('') : `<div class="issue-item">${icon('check')}<span class="hint">当前没有待处理的配置问题</span></div>`;
-    updateAiNavBadge(readiness);
-}
-async function loadOverview() {
-    try {
-        const [models, versions, logs] = await Promise.all([
-            invoke('admin.list_model_configs'), invoke('update.list_versions'), invoke('admin.list_nightly_activity_logs'),
-        ]);
-        tabCache.models = models;
-        tabCache.versions = versions;
-        renderOverviewGroups(computeReadiness(cloneAiConfig(models.system_ai_config)));
-        const active = getItems(versions).find(version => version.is_active);
-        $('#ovVersion').textContent = active ? `v${active.version}` : '—';
-        $('#ovVersionMeta').textContent = active ? '已上线' : '暂无上线版本';
-        const overrides = models.items.filter(item => Object.values(item.ai_config?.capabilities ?? {}).some(cards => cards.length) || Object.values(item.ai_config?.tasks ?? {}).some(task => Object.values(task.chains ?? {}).some(hasChainOverride)));
-        $('#ovOverrides').textContent = String(overrides.length);
-        $('#ovOverridesMeta').textContent = overrides.length ? '位用户使用独立配置' : '全部继承系统配置';
-        const events = getItems(logs).slice(0, 4).map(log => {
-            const [label, tone] = LOG_STATUS[log.status] ?? [log.status, 'muted'];
-            return { tone, title: `夜间活动 · 用户 ${log.user_id} · ${label}`, meta: `${log.target_date} · ${log.summary || fmtDate(log.updated_at || log.created_at)}` };
-        });
-        if (active) events.push({ tone: '', title: `版本 v${active.version} 已上线`, meta: fmtDate(active.created_at) });
-        $('#ovTimeline').innerHTML = events.length ? events.map(event => `<li><div class="tl-dot ${event.tone}"></div><div class="tl-body"><div class="title">${esc(event.title)}</div><div class="meta">${esc(event.meta)}</div></div></li>`).join('') : '<li class="hint">暂无活动记录</li>';
-    } catch (error) {
-        $('#ovGroups').innerHTML = `<div class="state-msg">加载失败：${esc(error.message)}<button class="btn btn--text" onclick="loadOverview()">重试</button></div>`;
-    }
 }
 
 // AI 编辑器：页面与分组共享作用域草稿，系统参数保持独立。
@@ -733,6 +691,7 @@ async function loadAiView() {
         ]);
         if (revision !== aiLoadRevision) return;
         tabCache.models = models; tabCache.users = users;
+        updateAiNavBadge(computeReadiness(cloneAiConfig(models.system_ai_config)));
         aiCacheStale = false;
         aiEditors.system.support = models.ai_provider_support;
         aiEditors.system.defaults = models.ai_provider_defaults;
@@ -780,7 +739,6 @@ async function saveAiScope() {
         toast('AI 配置已保存并实时生效');
         await refreshAiCache();
         renderAiScope();
-        loadOverviewIfActive();
         return true;
     } catch (error) { toast('保存失败：' + error.message, 'err'); return false; }
     finally { aiSaving = false; $('#panel-ai').inert = false; $('#modelDetailBody').inert = false; updateSaveActions(); }
@@ -790,6 +748,7 @@ async function refreshAiCache() {
     try {
         const models = await invoke('admin.list_model_configs');
         tabCache.models = models;
+        updateAiNavBadge(computeReadiness(cloneAiConfig(models.system_ai_config)));
         aiCacheStale = false;
         if (!aiSystemDirty) { lastSystemAiRaw = structuredClone(models.system_ai_config); aiEditors.system.config = cloneAiConfig(lastSystemAiRaw); }
         if (aiView.scope !== 'system' && !aiUserDirty) showModelConfigForUserSilent(aiView.userId);
@@ -805,7 +764,6 @@ function discardAiEdits() {
     aiActiveEditor().config = cloneAiConfig(aiView.scope === 'system' ? lastSystemAiRaw : lastUserAiRaw);
     clearAiDirty(); renderAiScope();
 }
-function loadOverviewIfActive() { if ($('#panel-overview').classList.contains('active')) void loadOverview(); }
 async function deleteModelConfig(userId) {
     if (!confirm('确定删除此用户的全部覆盖配置？删除后该用户继承系统配置。')) return;
     try { await invoke('admin.delete_model_config', { path: { user_id: resourceId(userId) } }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
