@@ -1,6 +1,8 @@
 import type { CallAudioFrameMeta, RealtimeCallController } from './realtime-call'
 import workletUrl from './realtime-worklet.ts?worker&url'
 
+const MAX_AUDIO_FRAME_BYTES = 9600
+
 function pcm16(samples: Float32Array): ArrayBuffer {
   const bytes = new ArrayBuffer(samples.length * 2),
     view = new DataView(bytes)
@@ -203,8 +205,19 @@ export class RealtimeAudioBridge {
       this.quietMs = 0
       this.controller.beginInputTurn()
 
+      // 把预录样本合并成协议允许的较大帧，避免刚开口就耗尽发送队列。
+      const preRoll = new Float32Array(this.preRoll.reduce((length, frame) => length + frame.length, 0))
+      let offset = 0
+
       for (const frame of this.preRoll) {
-        this.controller.sendAudio(pcm16(frame))
+        preRoll.set(frame, offset)
+        offset += frame.length
+      }
+
+      const pcm = pcm16(preRoll)
+
+      for (let start = 0; start < pcm.byteLength; start += MAX_AUDIO_FRAME_BYTES) {
+        this.controller.sendAudio(pcm.slice(start, start + MAX_AUDIO_FRAME_BYTES))
       }
 
       this.preRoll = []

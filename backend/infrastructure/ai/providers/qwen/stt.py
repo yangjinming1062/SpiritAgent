@@ -3,7 +3,7 @@ import contextlib
 import json
 import re
 import struct
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import ClassVar
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -146,7 +146,7 @@ class QwenSTTProvider(STTProvider):
         *,
         mime_type: str = "audio/pcm;rate=24000",
         language: str = "auto",
-    ) -> AsyncIterator[STTStreamEvent]:
+    ) -> AsyncGenerator[STTStreamEvent]:
         if "pcm" not in mime_type.lower():
             raise ProviderCapabilityError("Qwen realtime STT requires PCM input")
         task_id = str(uuid4())

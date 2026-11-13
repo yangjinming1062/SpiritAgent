@@ -11,7 +11,7 @@ from features.conversation.slash_commands import SlashCommandContext, resolve_sl
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.submissions import get_submission
 from features.conversation.undo import UndoNotAllowedError
-from infrastructure.async_io import cancel_tasks
+from infrastructure.async_io import cancel_tasks, wait_for_tasks
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
@@ -34,6 +34,7 @@ class ChatOperations:
     submit: Callable[[str, PromptSubmitRequest], Awaitable[dict]]
     receipt: Callable[[dict[str, Any]], Awaitable[dict]]
     cancel: Callable[[dict[str, Any]], Awaitable[dict]]
+    cancel_and_settle: Callable[[str, str], Awaitable[None]]
     undo: Callable[[dict[str, Any]], Awaitable[SessionUndoResult]]
     compress: Callable[[dict[str, Any]], Awaitable[dict]]
     command: Callable[[dict[str, Any]], Awaitable[dict]]
@@ -130,7 +131,7 @@ def chat_operations(
             raise RequestError(404, "提交记录不存在", code="not_found")
         return receipt.to_result()
 
-    async def perform_cancellation(params: dict) -> dict:
+    async def perform_cancellation(params: dict, *, settle: bool = False) -> dict:
         conv = await _require_owned_conv(user_id, params["session_id"])
         session_id = str(conv.id)
         requested_id = params["request_id"]
@@ -141,25 +142,28 @@ def chat_operations(
         ]:
             await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
         runtime = runtime_sessions.get(session_id)
+        turn = runtime.active_turn if runtime is not None else None
         cancelled = False
-        if (
-            runtime is not None
-            and runtime.active_turn is not None
-            and runtime.active_turn.request_id == requested_id
-            and runtime.active_turn.running
-            and runtime.chat_task is not None
-            and not runtime.chat_task.done()
-            and not runtime.chat_task.cancelling()
-        ):
-            runtime.cancel_requested = True
-            cancel_tasks((runtime.chat_task,))
-            cancelled = True
+        if runtime is not None and turn is not None and turn.request_id == requested_id:
+            task = runtime.chat_task
+            if turn.running and task is not None and not task.done() and not task.cancelling():
+                runtime.cancel_requested = True
+                cancel_tasks((task,))
+                cancelled = True
+            if settle:
+                if task is not None:
+                    await wait_for_tasks((task,))
+                if runtime.active_turn is turn and runtime.settlement_task is not None:
+                    await wait_for_tasks((runtime.settlement_task,))
         return {"request_id": requested_id, "cancelled": cancelled}
 
     async def cancel_turn(params: dict) -> dict:
         cancellation = asyncio.create_task(perform_cancellation(params))
         actor.account.track(cancellation)
         return await asyncio.shield(cancellation)
+
+    async def cancel_and_settle(session_id: str, request_id: str) -> None:
+        await perform_cancellation({"session_id": session_id, "request_id": request_id}, settle=True)
 
     async def session_compress_context(params: dict) -> dict:
         runtime = await _require_runtime(params)
@@ -256,6 +260,7 @@ def chat_operations(
         ),
         receipt=turn_receipt,
         cancel=cancel_turn,
+        cancel_and_settle=cancel_and_settle,
         undo=session_undo_to_message,
         compress=session_compress_context,
         command=command_dispatch,

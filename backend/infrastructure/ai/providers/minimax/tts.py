@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import ClassVar
 from urllib.parse import urlsplit
 
@@ -767,7 +767,7 @@ class MiniMaxTTSProvider(TTSProvider):
         speech_style: SpeechStyle | None,
         design_prompt: str = "",
         reference_audio: VoiceReferenceAudio | None = None,
-    ) -> AsyncIterator[TTSStreamChunk]:
+    ) -> AsyncGenerator[TTSStreamChunk]:
         if reference_audio is not None:
             raise ProviderCapabilityError("MiniMax streaming TTS does not support reference audio")
         if not text.strip():

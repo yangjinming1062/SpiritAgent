@@ -1,7 +1,8 @@
 """所有语音消费方共用的音色解析；供应商只消费校验后的声音输入。"""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from dataclasses import replace
 
 from infrastructure.ai.providers.base import ProviderConfig, TTSResult, TTSStreamChunk, VoiceReferenceAudio
@@ -45,12 +46,12 @@ async def _protect_reference(user_id: int, snapshot: CustomVoiceSnapshot) -> Voi
 
 
 async def resolve_reply_voice(
-    db: AsyncSession, user_id: int, voice: str, language: str
+    db: AsyncSession, user_id: int, voice: str, language: str, *, prefer_streaming: bool = False
 ) -> tuple[ProviderConfig | None, str]:
     try:
         snapshot = await resolve_custom_voice(db, user_id, voice)
         if snapshot is None:
-            return await resolve_provider_voice(db, user_id, voice, language)
+            return await resolve_provider_voice(db, user_id, voice, language, prefer_streaming=prefer_streaming)
         reference = await _protect_reference(user_id, snapshot)
         return await resolve_provider_voice(
             db,
@@ -111,36 +112,25 @@ async def stream_synthesize_speech(
     *,
     task: AiTaskKey,
     preserve_performance: bool = False,
-) -> AsyncIterator[TTSStreamChunk]:
+) -> AsyncGenerator[TTSStreamChunk]:
     """使用与整段语音相同的自定义音色解析入口，再进入供应商流式接口。"""
     async with session_scope() as db:
         snapshot = await resolve_custom_voice(db, user_id, voice)
-    if snapshot is None:
-        async for chunk in stream_provider_speech(
-            user_id,
-            text,
-            voice,
-            language,
-            speech_style,
-            task=task,
-            preserve_performance=preserve_performance,
-        ):
-            yield chunk
-        return
-
-    reference = await _protect_reference(user_id, snapshot)
-    async for chunk in stream_provider_speech(
+    reference = await _protect_reference(user_id, snapshot) if snapshot is not None else None
+    chunks = stream_provider_speech(
         user_id,
         text,
-        snapshot.provider_voice_id,
+        snapshot.provider_voice_id if snapshot is not None else voice,
         language,
         speech_style,
         task=task,
         preserve_performance=preserve_performance,
         reference_audio=reference,
-        provider_name=snapshot.provider,
-        model=snapshot.model,
-        model_card_id=snapshot.model_card_id,
-        design_prompt=snapshot.prompt,
-    ):
-        yield chunk
+        provider_name=snapshot.provider if snapshot is not None else "",
+        model=snapshot.model if snapshot is not None else "",
+        model_card_id=snapshot.model_card_id if snapshot is not None else "",
+        design_prompt=snapshot.prompt if snapshot is not None else "",
+    )
+    async with aclosing(chunks):
+        async for chunk in chunks:
+            yield chunk

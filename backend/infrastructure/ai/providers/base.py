@@ -1,6 +1,6 @@
 import math
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar, Literal
@@ -444,7 +444,7 @@ class TTSProvider(BaseProvider):
         speech_style: SpeechStyle | None,
         design_prompt: str = "",
         reference_audio: VoiceReferenceAudio | None = None,
-    ) -> AsyncIterator[TTSStreamChunk]:
+    ) -> AsyncGenerator[TTSStreamChunk]:
         """增量合成音频；默认显式拒绝，避免把整段接口伪装成流式能力。"""
         raise ProviderCapabilityError(f"{self.provider_name} does not support streaming TTS")
         if False:  # pragma: no cover - 保持该方法为 async generator，供调用方 async for
@@ -505,7 +505,7 @@ class STTProvider(BaseProvider):
         *,
         mime_type: str = "audio/pcm;rate=24000",
         language: str = "auto",
-    ) -> AsyncIterator[STTStreamEvent]:
+    ) -> AsyncGenerator[STTStreamEvent]:
         """持续接收音频并报告临时/最终识别；默认显式拒绝整段适配器。"""
         raise ProviderCapabilityError(f"{self.provider_name} does not support streaming STT")
         if False:  # pragma: no cover - 保持该方法为 async generator，供调用方 async for

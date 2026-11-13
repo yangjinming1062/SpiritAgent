@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from features.conversation.http_contracts import PromptSubmitRequest
-from features.conversation.replies import CompanionReply, TextBubble, VoiceBubble
+from features.conversation.replies import CompanionReply, LinkBubble, MediaBubble, TextBubble, VoiceBubble
 from features.conversation.reply_audio import (
     client_reply_bubbles,
     discard_reply_audio,
@@ -107,14 +107,12 @@ class RealtimeVoicePipeline:
         self._finish_task: asyncio.Task[None] | None = None
         self._cancel_task: asyncio.Task[None] | None = None
         self._turn: CallTurn | None = None
-        # Store the normalized bubble that was actually delivered so terminal
-        # persistence can reuse its audio asset and identity.
-        self._partial_delivered: dict[int, TextBubble | VoiceBubble] = {}
-        self._partial_queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]] | None] | None = None
+        # 保存已确认气泡的原始位置及音频，供终态持久化和中断恢复共用。
+        self._partial_delivered: dict[int, TextBubble | VoiceBubble | MediaBubble | LinkBubble] = {}
+        self._terminal_reply: CompanionReply | None = None
+        self._partial_queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]] | None = None
         self._partial_worker: asyncio.Task[None] | None = None
-        self._partial_futures: dict[int, asyncio.Future[None]] = {}
-        self._partial_worker_done: asyncio.Event | None = None
-        self._partial_worker_error: BaseException | None = None
+        self._partial_worker_error: Exception | None = None
         self._input_error: str | None = None
 
     async def begin_input(self, version: TurnVersion) -> None:
@@ -138,18 +136,15 @@ class RealtimeVoicePipeline:
             previous = self._cancel_task
 
             async def cancel_previous() -> None:
-                if previous is not None:
-                    with contextlib.suppress(Exception):
-                        await wait_for_task(previous)
-                await self._cancel_refs(finish_task, turn)
-                # The cancelled submission has had a chance to persist its
-                # independently confirmed bubbles before the next turn starts.
-                self._partial_delivered.clear()
+                try:
+                    if previous is not None:
+                        with contextlib.suppress(Exception):
+                            await wait_for_task(previous)
+                finally:
+                    await self._cancel_refs(finish_task, turn)
 
             self._cancel_task = asyncio.create_task(cancel_previous(), name="call.cancel")
             self.actor.account.track(self._cancel_task)
-        else:
-            self._partial_delivered.clear()
         self._finish_task = asyncio.create_task(self._recognize(version, self._input_queue), name="call.transcribe")
         self.actor.account.track(self._finish_task)
 
@@ -159,11 +154,14 @@ class RealtimeVoicePipeline:
         self._input_queue = None
         self._input_finished = True
         self._input_error = None
+        if self._turn is not None:
+            return
         finish_task = self._finish_task
         self._finish_task = None
-        await self._cancel_refs(finish_task, None)
-        if self.session.current(self.session.version) and self.session.state == "thinking":
-            await self.session.set_state("listening", self.session.version)
+        version = self.session.version
+        await cancel_and_wait([finish_task])
+        if self.session.current(version) and self.session.state == "thinking":
+            await self.session.set_state("listening", version)
 
     def receive_audio(self, pcm: bytes) -> None:
         if self._input is None or self._input_finished or self.session.muted:
@@ -226,7 +224,7 @@ class RealtimeVoicePipeline:
         task = self._cancel_task
         if task is None:
             return
-        await wait_for_task(task)
+        await asyncio.shield(task)
         if self._cancel_task is task:
             self._cancel_task = None
 
@@ -329,7 +327,7 @@ class RealtimeVoicePipeline:
         except asyncio.CancelledError:
             raise
         except Exception:
-            await self._cancel_partial_worker()
+            await self.stop_partial_delivery()
             logger.exception("Call transcription or admission failed", extra={"user_id": self.actor.user_id})
             await self.session.emit(
                 "error", {"message": "本次语音未能处理，请重新说一次", "fatal": False}, version=version
@@ -344,17 +342,12 @@ class RealtimeVoicePipeline:
                 self._finish_task = None
 
     async def _cancel_refs(self, finish_task: asyncio.Task[None] | None, turn: CallTurn | None) -> None:
-        await self._cancel_partial_worker()
-        await cancel_and_wait([finish_task])
-        if turn is None:
-            return
-        await self._operations.cancel({"session_id": self.session.session_id, "request_id": turn.request_id})
-        runtime = self.actor.account.runtime_sessions.get(self.session.session_id)
-        # cancel API only requests cancellation; the next turn must await tool/history settlement.
-        if runtime is not None and runtime.chat_task is not None:
-            await wait_for_task(asyncio.gather(runtime.chat_task, return_exceptions=True))
-        if runtime is not None and runtime.settlement_task is not None:
-            await wait_for_task(asyncio.gather(runtime.settlement_task, return_exceptions=True))
+        try:
+            await cancel_and_wait([finish_task])
+            if turn is not None:
+                await self._operations.cancel_and_settle(self.session.session_id, turn.request_id)
+        finally:
+            await self.stop_partial_delivery()
 
     async def cancel_current(self, *, clear_input: bool = True) -> None:
         if clear_input:
@@ -367,121 +360,97 @@ class RealtimeVoicePipeline:
         self._turn = None
         await self._cancel_refs(finish_task, turn)
 
-    @staticmethod
-    def _bubble_identity(bubble: TextBubble | VoiceBubble) -> dict[str, Any]:
-        if isinstance(bubble, TextBubble):
-            return {"type": "text", "text": bubble.text}
-        return {
-            "type": "voice",
-            "text": bubble.text,
-            "speech": bubble.speech.model_dump(mode="json"),
-            "voice_id": bubble.voice_id,
-            "language": bubble.language,
-        }
-
     def _start_partial_worker(self, turn: CallTurn) -> None:
         # The confirmation ledger belongs to the submitted turn. Reset it
         # before the new worker can fail, so persistence cannot observe indices
         # left by the previous turn.
         self.confirmed_indices = []
         self._confirmed_turn_id = turn.request_id
-        self._partial_queue = asyncio.Queue(maxsize=4)
-        self._partial_futures.clear()
-        self._partial_worker_done = asyncio.Event()
+        self._partial_delivered.clear()
+        self._terminal_reply = None
+        queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]] = asyncio.Queue(maxsize=4)
+        self._partial_queue = queue
         self._partial_worker_error = None
         self._partial_worker = asyncio.create_task(
-            self._run_partial_worker(self._partial_queue, turn.version), name="call.reply-delivery"
+            self._run_partial_worker(queue, turn.version), name="call.reply-delivery"
         )
+        self._partial_worker.add_done_callback(lambda _: self._settle_partial_queue(queue))
         self.actor.account.track(self._partial_worker)
 
-    async def _run_partial_worker(
-        self, queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]] | None], version: TurnVersion
-    ) -> None:
-        try:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    return
-                index, bubble, future = item
-                try:
-                    await self._deliver_partial_now(index, bubble, version)
-                except asyncio.CancelledError:
-                    if not future.done():
-                        future.cancel()
-                    raise
-                except Exception as exc:
-                    if not future.done():
-                        future.set_exception(exc)
-                    self._partial_worker_error = exc
-                    return
+    def _settle_partial_queue(self, queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]]) -> None:
+        queue.shutdown()
+        while True:
+            try:
+                _, _, receipt = queue.get_nowait()
+            except asyncio.QueueShutDown:
+                return
+            if not receipt.done():
+                if self._partial_worker_error is not None:
+                    receipt.set_exception(self._partial_worker_error)
                 else:
-                    if not future.done():
-                        future.set_result(None)
-        finally:
-            if self._partial_worker_done is not None:
-                self._partial_worker_done.set()
-            while True:
-                try:
-                    pending = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if pending is not None and not pending[2].done():
-                    if self._partial_worker_error is not None:
-                        pending[2].set_exception(self._partial_worker_error)
-                    else:
-                        pending[2].cancel()
+                    receipt.cancel()
+
+    async def _run_partial_worker(
+        self, queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]], version: TurnVersion
+    ) -> None:
+        while True:
+            try:
+                index, bubble, receipt = await queue.get()
+            except asyncio.QueueShutDown:
+                return
+            try:
+                await self._deliver_partial_now(index, bubble, version)
+            except asyncio.CancelledError:
+                queue.shutdown()
+                if not receipt.done():
+                    receipt.cancel()
+                raise
+            except Exception as exc:
+                self._partial_worker_error = exc
+                queue.shutdown()
+                if not receipt.done():
+                    receipt.set_exception(exc)
+                return
+            else:
+                if not receipt.done():
+                    receipt.set_result(None)
 
     async def enqueue_partial(self, index: int, bubble: dict[str, Any]) -> asyncio.Future[None]:
         turn = self._turn
         queue = self._partial_queue
         if turn is None or queue is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
-        done = self._partial_worker_done
-        if done is None or done.is_set():
-            raise self._partial_worker_error or asyncio.CancelledError
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        self._partial_futures[index] = future
-        put_task = asyncio.create_task(queue.put((index, bubble, future)))
-        done_task = asyncio.create_task(done.wait())
-        finished, _ = await asyncio.wait({put_task, done_task}, return_when=asyncio.FIRST_COMPLETED)
-        if done_task in finished and not put_task.done():
-            put_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await put_task
-            raise self._partial_worker_error or asyncio.CancelledError
-        done_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await done_task
-        return future
+        receipt = asyncio.get_running_loop().create_future()
+        # 回合可能在模型流中断时放弃等待回执，异常仍由交付收尾报告。
+        receipt.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        try:
+            await queue.put((index, bubble, receipt))
+        except asyncio.QueueShutDown:
+            raise self._partial_worker_error or asyncio.CancelledError from None
+        return receipt
 
     async def _finish_partial_worker(self) -> None:
         queue, worker = self._partial_queue, self._partial_worker
         if queue is None or worker is None:
             return
-        if self._partial_worker_done is None or not self._partial_worker_done.is_set():
-            await queue.put(None)
-        await wait_for_task(worker)
+        queue.shutdown()
+        await worker
         self._partial_queue = None
         self._partial_worker = None
-        self._partial_worker_done = None
-        errors = [
-            future.exception() for future in self._partial_futures.values() if future.done() and not future.cancelled()
-        ]
-        self._partial_futures.clear()
-        for error in errors:
-            if error is not None and not isinstance(error, ProviderCapabilityError):
-                raise error
+        if self._partial_worker_error is not None and not isinstance(
+            self._partial_worker_error, ProviderCapabilityError
+        ):
+            raise self._partial_worker_error
 
-    async def _cancel_partial_worker(self) -> None:
+    async def stop_partial_delivery(self) -> None:
         worker = self._partial_worker
-        self._partial_worker = None
-        self._partial_queue = None
-        self._partial_worker_error = asyncio.CancelledError()
-        self._partial_futures.clear()
+        if self._partial_queue is not None:
+            self._partial_queue.shutdown()
         if worker is not None:
             await cancel_and_wait([worker])
-        self._partial_worker_done = None
+        if self._partial_worker is worker:
+            self._partial_worker = None
+            self._partial_queue = None
 
     async def _deliver_partial_now(self, index: int, bubble: dict[str, Any], version: TurnVersion) -> None:
         """交付已经按终态规则标准化且保持顺序的文字或语音气泡。"""
@@ -493,28 +462,14 @@ class RealtimeVoicePipeline:
             raise ValueError("Only normalized dialogue bubbles can be delivered incrementally")
         if not self.session.current(version):
             raise asyncio.CancelledError
-        existing = self._partial_delivered.get(index)
-        if existing is not None and self._bubble_identity(existing) == self._bubble_identity(validated):
-            return
         if isinstance(validated, VoiceBubble):
             part = CompanionReply(bubbles=[validated])
-            try:
-                await self._deliver_stream_voice(
-                    part,
-                    validated,
-                    version,
-                    on_played=lambda: self._partial_delivered.__setitem__(index, validated),
-                )
-            except ProviderCapabilityError:
-                # Leave non-streaming providers to terminal delivery, where the
-                # regular full-asset path preserves its exact fallback.
-                raise
-            except _PartialAudioError:
-                if validated.audio is not None:
-                    await discard_reply_audio(part)
-                # Do not let the LLM continue toward a terminal retry after
-                # audio has already crossed the transport boundary.
-                raise asyncio.CancelledError
+            await self._deliver_stream_voice(
+                part,
+                validated,
+                version,
+                on_played=lambda: self._partial_delivered.__setitem__(index, validated),
+            )
             if validated.audio is not None:
                 bubble["audio"] = validated.audio.model_dump(mode="json")
             self._partial_delivered[index] = validated
@@ -524,25 +479,23 @@ class RealtimeVoicePipeline:
         self._partial_delivered[index] = validated
         await self.session.emit("transcript.assistant", {"text": validated.text}, version=version)
 
-    async def deliver_partial(self, index: int, bubble: dict[str, Any]) -> None:
-        turn = self._turn
-        if turn is None:
-            raise asyncio.CancelledError
-        await self._deliver_partial_now(index, bubble, turn.version)
-
-    def partial_reply(self) -> tuple[CompanionReply, str] | None:
+    def partial_reply(self, request_id: str) -> tuple[CompanionReply, str] | None:
         """Return ordered, already confirmed bubbles for interruption recovery."""
-        if not self._partial_delivered:
+        if request_id != self._confirmed_turn_id or not self._partial_delivered:
             return None
         indices = sorted(self._partial_delivered)
         # Earlier confirmed bubbles may already have been persisted and
         # removed. Remaining indices retain their original identity and order.
         bubbles = [self._partial_delivered[index] for index in indices]
-        reply = CompanionReply(bubbles=bubbles)
+        if self._terminal_reply is None:
+            reply = CompanionReply(bubbles=bubbles)
+        else:
+            reply = self._terminal_reply.model_copy(update={"bubbles": bubbles})
         return reply, companion_reply_source(reply)
 
-    def clear_partial_reply(self) -> None:
-        self._partial_delivered.clear()
+    def clear_partial_reply(self, request_id: str) -> None:
+        if request_id == self._confirmed_turn_id:
+            self.mark_persisted(list(self._partial_delivered))
 
     def mark_persisted(self, indices: list[int]) -> None:
         persisted = set(indices)
@@ -550,9 +503,9 @@ class RealtimeVoicePipeline:
         for index in indices:
             self._partial_delivered.pop(index, None)
 
-    def confirmed_indices_for(self, request_id: str | None = None) -> list[int]:
+    def confirmed_indices_for(self, request_id: str | None) -> list[int]:
         """Return confirmations only for the ledger associated with a request."""
-        if request_id is not None and request_id != self._confirmed_turn_id:
+        if request_id != self._confirmed_turn_id:
             return []
         return list(self.confirmed_indices)
 
@@ -568,7 +521,7 @@ class RealtimeVoicePipeline:
         audio_parts: list[bytes] = []
         try:
             await self.session.set_state("speaking", version)
-            async for chunk in stream_synthesize_speech(
+            chunks = stream_synthesize_speech(
                 self.actor.user_id,
                 bubble.text,
                 voice=bubble.voice_id,
@@ -576,17 +529,19 @@ class RealtimeVoicePipeline:
                 speech_style=bubble.speech,
                 task=AiTaskKey.companion_voice,
                 preserve_performance=True,
-            ):
-                if not chunk.audio:
-                    if chunk.final:
-                        continue
-                    raise ValueError("Streaming TTS returned an empty non-terminal PCM chunk")
-                if not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
-                    raise ValueError("Streaming TTS returned invalid PCM")
-                audio_parts.append(chunk.audio)
-                for offset in range(0, len(chunk.audio), 9600):
-                    last_sequence = await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
-                    sent = True
+            )
+            async with contextlib.aclosing(chunks):
+                async for chunk in chunks:
+                    if not chunk.audio:
+                        if chunk.final:
+                            continue
+                        raise ValueError("Streaming TTS returned an empty non-terminal PCM chunk")
+                    if not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
+                        raise ValueError("Streaming TTS returned invalid PCM")
+                    audio_parts.append(chunk.audio)
+                    for offset in range(0, len(chunk.audio), 9600):
+                        last_sequence = await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
+                        sent = True
             if last_sequence is None:
                 raise ProviderCapabilityError("Streaming TTS returned no audio")
             # ``send_audio`` owns the call-wide sequence.  Waiting on the last
@@ -598,10 +553,13 @@ class RealtimeVoicePipeline:
             # Playback is the communication fact. Asset persistence is best
             # effort after that fact and must not erase a confirmed utterance.
             try:
-                save_task = asyncio.create_task(
-                    save_stream_reply_audio(self.actor.user_id, part, b"".join(audio_parts), sample_rate=SAMPLE_RATE)
-                )
-                bubble.audio = await wait_for_task(save_task)
+
+                async def save_audio() -> None:
+                    bubble.audio = await save_stream_reply_audio(
+                        self.actor.user_id, part, b"".join(audio_parts), sample_rate=SAMPLE_RATE
+                    )
+
+                await wait_for_task(asyncio.create_task(save_audio()))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -657,24 +615,17 @@ class RealtimeVoicePipeline:
 
     async def deliver(self, reply: CompanionReply) -> None:
         turn = self._turn
-        # Clear stale state before waiting for the incremental worker. If the
-        # worker exits with an error, persistence must see an empty ledger for
-        # this turn rather than the previous turn's indices.
-        self.confirmed_indices = []
-        self._confirmed_turn_id = turn.request_id if turn is not None else None
         if turn is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
-        try:
-            await self._finish_partial_worker()
-        except BaseException:
-            self.confirmed_indices = []
-            raise
-        partial_delivered = dict(self._partial_delivered)
+        await self._finish_partial_worker()
+        self._terminal_reply = reply
         for index, bubble in enumerate(reply.bubbles):
             if not self.session.current(turn.version):
                 raise asyncio.CancelledError
-            delivered = partial_delivered.pop(index, None)
-            if delivered is not None and self._bubble_identity(delivered) == self._bubble_identity(bubble):
+            delivered = self._partial_delivered.get(index)
+            if delivered is not None:
+                if delivered.model_dump(exclude={"audio"}) != bubble.model_dump(exclude={"audio"}):
+                    raise RuntimeError("Final reply differs from an already delivered bubble")
                 if isinstance(bubble, VoiceBubble) and isinstance(delivered, VoiceBubble):
                     bubble.audio = delivered.audio
                 self.confirmed_indices.append(index)
@@ -683,15 +634,18 @@ class RealtimeVoicePipeline:
                 # 原始音色和演绎冻结在已验证气泡中，复用普通语音合成及资产保护。
                 part = reply.model_copy(update={"bubbles": [bubble]})
                 existing_audio = bubble.audio
-                stream_succeeded = False
+
+                def confirm_stream_voice() -> None:
+                    self._partial_delivered[index] = bubble
+                    self.confirmed_indices.append(index)
+
                 try:
                     await self._deliver_stream_voice(
                         part,
                         bubble,
                         turn.version,
-                        on_played=lambda: self._partial_delivered.__setitem__(index, bubble),
+                        on_played=confirm_stream_voice,
                     )
-                    stream_succeeded = True
                 except _PartialAudioError:
                     if existing_audio is None:
                         await discard_reply_audio(part)
@@ -722,7 +676,7 @@ class RealtimeVoicePipeline:
                         self.confirmed_indices.append(index)
                         await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
                 except asyncio.CancelledError:
-                    if existing_audio is None:
+                    if existing_audio is None and index not in self._partial_delivered:
                         await discard_reply_audio(part)
                     raise
                 except Exception:
@@ -738,11 +692,7 @@ class RealtimeVoicePipeline:
                     self._partial_delivered[index] = reply.bubbles[index]
                     self.confirmed_indices.append(index)
                     await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
-                if stream_succeeded:
-                    # Only audio that reached the transport and passed the
-                    # playback receipt is part of the confirmed history.
-                    self.confirmed_indices.append(index)
-                    self._partial_delivered[index] = bubble
+                else:
                     await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
             else:
                 await self.session.deliver_part(index, client_reply_bubbles(reply)[index], turn.version)
@@ -750,7 +700,6 @@ class RealtimeVoicePipeline:
                 self._partial_delivered[index] = bubble
                 if isinstance(bubble, TextBubble):
                     await self.session.emit("transcript.assistant", {"text": bubble.text}, version=turn.version)
-        self._partial_delivered.clear()
 
     async def push_event(self, event_type: str, payload: Any = None, session_id: str | None = None) -> None:
         await self._base.push_event(event_type, payload, session_id=session_id)
@@ -768,8 +717,8 @@ class RealtimeVoicePipeline:
             await self.session.emit("turn.complete", {"status": payload.get("status")}, version=turn.version)
 
     async def close(self) -> None:
+        await self.session.close()
         try:
             await self._wait_previous_cancel()
-            await self.cancel_current()
         finally:
-            await self.session.close()
+            await self.cancel_current()

@@ -272,6 +272,7 @@ async def build_turn_inputs(
     proactive_memory_query: str = "",
     proactive_memory_embedding: QueryEmbedding | None = None,
     companion_proactive_turn: bool = False,
+    prefer_streaming_voice: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     history: list[MessageSnapshot] | None = None,
 ) -> TurnInputs:
@@ -371,7 +372,11 @@ async def build_turn_inputs(
     if is_companion and (not companion_proactive_turn or await get_disturbance_tier(user_id, db=db) == "autonomous"):
         selected_voice = user_settings.get("companion.voice_id")
         speech_config, speech_voice = await resolve_reply_voice(
-            db, user_id, selected_voice if isinstance(selected_voice, str) else "", session_lang
+            db,
+            user_id,
+            selected_voice if isinstance(selected_voice, str) else "",
+            session_lang,
+            prefer_streaming=prefer_streaming_voice,
         )
 
     return TurnInputs(

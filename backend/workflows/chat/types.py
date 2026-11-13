@@ -5,24 +5,22 @@ from typing import Any, Protocol
 from features.conversation.replies import CompanionReply
 
 TrackTask = Callable[[asyncio.Task], None]
-ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[Any]]
+ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[asyncio.Future[None]]]
 
 
 class TerminalReplyDelivery(Protocol):
     """通话交付回执；只有完整确认的片段进入普通历史。"""
 
-    confirmed_indices: list[int]
-
     async def deliver(self, reply: CompanionReply) -> None: ...
 
+    async def enqueue_partial(self, index: int, bubble: dict[str, Any]) -> asyncio.Future[None]: ...
 
-class IncrementalReplyDelivery(Protocol):
-    """Optional normalized-bubble sink used by streaming companion replies.
+    async def stop_partial_delivery(self) -> None: ...
 
-    The sink receives a closed dialogue bubble after the normal sentence split, speech binding,
-    and reply validation. Terminal persistence still uses the complete reply.
-    """
+    def confirmed_indices_for(self, request_id: str | None) -> list[int]: ...
 
-    async def deliver_partial(self, index: int, bubble: dict[str, Any]) -> None: ...
+    def mark_persisted(self, indices: list[int]) -> None: ...
 
-    def partial_reply(self) -> tuple[CompanionReply, str] | None: ...
+    def partial_reply(self, request_id: str) -> tuple[CompanionReply, str] | None: ...
+
+    def clear_partial_reply(self, request_id: str) -> None: ...

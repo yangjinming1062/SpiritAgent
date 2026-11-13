@@ -294,13 +294,14 @@ def _proxy_bypassed(
     return any(candidate in network for candidate in addresses for network in networks)
 
 
-def configured_websocket_proxy(url: str | None = None) -> str | None:
+def configured_websocket_proxy(url: str) -> str | None:
     """返回模型 WebSocket 的显式代理，并遵守同一份 NO_PROXY 配置。"""
     proxies = _ProxySettings().model_dump()
-    if url is not None:
-        bypass_all, patterns, networks = _proxy_bypass_config(proxies.get("no_proxy", ""))
-        if _proxy_bypassed(httpx.URL(url), bypass_all, patterns, networks):
-            return None
+    endpoint = httpx.URL(url)
+    http_scheme = "https" if endpoint.scheme == "wss" else "http"
+    bypass = _proxy_bypass_config(proxies.get("no_proxy", ""))
+    if _proxy_bypassed(endpoint, *bypass) or _proxy_bypassed(endpoint.copy_with(scheme=http_scheme), *bypass):
+        return None
     for key in ("https_proxy", "http_proxy", "all_proxy"):
         if proxy := proxies.get(key):
             return proxy if "://" in proxy else f"http://{proxy}"

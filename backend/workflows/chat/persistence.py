@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict, replace
 from typing import Any
 
@@ -163,6 +163,7 @@ async def _persist_assistant_no_tool_turn(
     submission_request_id: str | None = None,
     media_request_scope: str | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
+    on_reply_persisted: Callable[[], None] | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     if reply_delivery is not None:
@@ -173,10 +174,7 @@ async def _persist_assistant_no_tool_turn(
             await reply_delivery.deliver(result.reply)
         except (asyncio.CancelledError, Exception) as exc:
             failure = exc
-        confirmed_for = getattr(reply_delivery, "confirmed_indices_for", None)
-        indices = (
-            confirmed_for(submission_request_id) if callable(confirmed_for) else list(reply_delivery.confirmed_indices)
-        )
+        indices = reply_delivery.confirmed_indices_for(submission_request_id)
         source = json.loads(result.turn_content)
         selected = [result.reply.bubbles[i] for i in indices]
         rejected = [bubble for i, bubble in enumerate(result.reply.bubbles) if i not in indices]
@@ -217,13 +215,11 @@ async def _persist_assistant_no_tool_turn(
                     track_task=track_task,
                     submission_request_id=submission_request_id,
                     media_request_scope=media_request_scope,
+                    on_reply_persisted=lambda: reply_delivery.mark_persisted(indices),
                 ),
                 name="chat.persist-call-reply",
             )
             await _wait_persistence_write(saving)
-            mark_persisted = getattr(reply_delivery, "mark_persisted", None)
-            if callable(mark_persisted):
-                mark_persisted(indices)
         if failure is not None:
             raise failure
         if not selected:
@@ -273,8 +269,11 @@ async def _persist_assistant_no_tool_turn(
         return
     assistant_message_id: int | None = None
     if persist and (turn_content or media or result.reasoning):
-        assistant_message_id = await persist_assistant_message(conv.id, user_id, turn_data, media)
-    if reply and assistant_message_id is not None:
+        assistant_message_id = await persist_assistant_message(
+            conv.id, user_id, turn_data, media, on_committed=on_reply_persisted
+        )
+    # 通话已经完成交付，历史直接使用通话确认的气泡和音频。
+    if reply and assistant_message_id is not None and on_reply_persisted is None:
         message_id = assistant_message_id
 
         async def deliver_bubble(index: int, bubble: dict[str, Any]) -> None:

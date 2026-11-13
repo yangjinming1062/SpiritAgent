@@ -329,6 +329,7 @@ async def _prepare_turn(
                 proactive_memory_query=setup.memory_query,
                 proactive_memory_embedding=memory_embedding,
                 companion_proactive_turn=ephemeral,
+                prefer_streaming_voice=reply_delivery is not None,
                 excluded_tool_names=excluded_tool_names,
                 history=setup.history,
             )
@@ -489,7 +490,7 @@ async def _prepare_turn(
     )
 
     buffer_text = companion_reply or headless or not has_viewer or setup.final_reply_only
-    partial_reply = companion_reply and callable(getattr(reply_delivery, "deliver_partial", None))
+    partial_reply = companion_reply and reply_delivery is not None
     delivery = (
         "reply_stream" if partial_reply else "complete" if companion_reply else "buffered" if buffer_text else "stream"
     )
@@ -613,10 +614,7 @@ async def _run_chat_turn(
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
-        force_final_reply = False
-        reply_bubble_sink = getattr(reply_delivery, "enqueue_partial", None) or getattr(
-            reply_delivery, "deliver_partial", None
-        )
+        reply_bubble_sink = reply_delivery.enqueue_partial if reply_delivery is not None else None
         while True:
             action_tools_not_ready = await _refresh_turn_material(
                 setup.conv,
@@ -657,7 +655,6 @@ async def _run_chat_turn(
                 setup.final_reply_only
                 or (media_turn.structured_reply and media_turn.final_reply_due())
                 or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
-                or force_final_reply
             )
             planner_pass = callable(reply_bubble_sink) and bool(active_schemas) and not reply_only
             try:
@@ -769,8 +766,6 @@ async def _run_chat_turn(
                 if isinstance(name, str) and name:
                     active_tool_names.add(name)
             _assign_tool_call_ids(llm_result.tool_calls_list)
-            if reply_delivery is not None:
-                force_final_reply = True
             await _persist_assistant_with_tool_calls_and_results(
                 setup.conv,
                 llm_result,

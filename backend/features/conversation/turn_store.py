@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, Literal
 
@@ -150,7 +151,12 @@ async def persist_tool_call(conv_id: int, data: AssistantTurnData, *, user_id: i
 
 
 async def persist_assistant_message(
-    conv_id: int, user_id: int, data: AssistantTurnData, media: list[dict[str, str]] | None
+    conv_id: int,
+    user_id: int,
+    data: AssistantTurnData,
+    media: list[dict[str, str]] | None,
+    *,
+    on_committed: Callable[[], None] | None = None,
 ) -> int:
     async with session_scope() as db:
         row = Message(
@@ -179,6 +185,8 @@ async def persist_assistant_message(
                 authorized_at=data.reply.topic_context_at,
             )
         await commit_conversation(db)
+        if on_committed is not None:
+            on_committed()
         return row.id
 
 

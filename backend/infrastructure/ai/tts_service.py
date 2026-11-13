@@ -1,6 +1,7 @@
 """TTS 供应商链调用：REST 合成端点共用的服务层。"""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -116,6 +117,7 @@ async def resolve_reply_voice(
     voice: str,
     language: str,
     *,
+    prefer_streaming: bool = False,
     provider_name: str = "",
     model: str = "",
     model_card_id: str = "",
@@ -133,10 +135,18 @@ async def resolve_reply_voice(
         design_prompt=design_prompt,
         reference_audio=reference_audio,
     )
-    if not provider_name and not selected_provider:
-        chain = _prioritize_voice_providers(chain)
     if not provider_name:
         chain = _builtin_voice_chain(chain)
+    if not provider_name and not selected_provider:
+        chain = _prioritize_voice_providers(chain)
+        if prefer_streaming:
+            streaming = [
+                config
+                for config in chain
+                if config.provider_name in PREFERRED_VOICE_PROVIDERS
+                and provider_supports_streaming(ServiceType.tts, config.provider_name, config)
+            ]
+            chain = streaming or chain
     if not chain or chain[0].provider_name not in {"mimo", "minimax"}:
         return None, ""
     config = chain[0]
@@ -239,7 +249,7 @@ async def stream_synthesize_speech(
     model: str = "",
     model_card_id: str = "",
     design_prompt: str = "",
-) -> AsyncIterator[TTSStreamChunk]:
+) -> AsyncGenerator[TTSStreamChunk]:
     """流式 TTS 入口；只选择明确声明增量能力的配置，不把整段接口伪装为流式。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, ServiceType.tts, task=task)
@@ -279,7 +289,9 @@ async def stream_synthesize_speech(
         ):
             raise ValueError("Voice message TTS configuration is no longer available")
         chain = [config]
-    streaming = [config for config in chain if provider_supports_streaming(ServiceType.tts, config.provider_name)]
+    streaming = [
+        config for config in chain if provider_supports_streaming(ServiceType.tts, config.provider_name, config)
+    ]
     if not streaming:
         raise ProviderCapabilityError("configured TTS providers do not support streaming")
     config = streaming[0]
@@ -287,11 +299,13 @@ async def stream_synthesize_speech(
     selected_voice = (
         voice if provider.provider_name == selected_provider else pick_voice_id(voice, provider.provider_name, language)
     )
-    async for chunk in provider.synthesize_stream(
+    chunks = provider.synthesize_stream(
         text,
         voice=selected_voice,
         speech_style=speech_style,
         design_prompt=design_prompt,
         reference_audio=reference_audio,
-    ):
-        yield chunk
+    )
+    async with aclosing(chunks):
+        async for chunk in chunks:
+            yield chunk

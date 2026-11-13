@@ -199,10 +199,11 @@ def create_submission_handler(
                         runtime.active_turn = None
 
         async def persist_partial_reply() -> None:
-            partial_getter = getattr(reply_delivery, "partial_reply", None)
-            if not callable(partial_getter):
+            if reply_delivery is None:
                 return
-            partial = partial_getter()
+            await reply_delivery.stop_partial_delivery()
+            request_id = params["request_id"]
+            partial = reply_delivery.partial_reply(request_id)
             if partial is None:
                 return
             partial_reply, partial_content = partial
@@ -232,16 +233,13 @@ def create_submission_handler(
                     cache_usage=CacheUsageSummary(0, 0, None, None, None),
                     persist=True,
                     track_task=actor.account.track,
-                    submission_request_id=params["request_id"],
-                    reply_delivery=None,
+                    submission_request_id=request_id,
+                    on_reply_persisted=lambda: reply_delivery.clear_partial_reply(request_id),
                 ),
                 name="chat.persist-interrupted-reply",
             )
             await wait_for_task(persist_task)
             await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
-            clear_partial = getattr(reply_delivery, "clear_partial_reply", None)
-            if callable(clear_partial):
-                clear_partial()
 
         async def run_turn() -> None:
             nonlocal started
@@ -265,6 +263,8 @@ def create_submission_handler(
                 )
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
+                if emitter.failed:
+                    await persist_partial_reply()
             except asyncio.CancelledError:
                 try:
                     await persist_partial_reply()

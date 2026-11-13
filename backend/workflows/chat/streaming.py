@@ -282,6 +282,7 @@ async def _generate_llm_response(
         else refresh_volatile_header_in_prompt(context["instructions"], user_local_tz=user_local_tz, lang=lang)
     )
     final_only = final_reply_only or reply_format_error is not None
+    tool_decision = delivery == "reply_stream" and reply_bubble_sink is None and bool(active_schemas) and not final_only
     reference_texts = (
         reply_reference_texts(context["input"], turn_request, user_input_indices=context.get("user_input_indices", []))
         if reply_preference is not None
@@ -474,17 +475,16 @@ async def _generate_llm_response(
     text_emitted = False
 
     async def _settle_incremental_receipts() -> None:
+        confirmed: list[dict[str, Any]] = []
         for bubble, receipt in incremental_receipts:
             try:
                 await receipt
             except asyncio.CancelledError:
                 raise
-            except ProviderCapabilityError:
-                with contextlib.suppress(ValueError):
-                    partial_bubbles.remove(bubble)
             except Exception:
-                with contextlib.suppress(ValueError):
-                    partial_bubbles.remove(bubble)
+                break
+            confirmed.append(bubble)
+        partial_bubbles[:] = confirmed
         incremental_receipts.clear()
 
     async def _recover_incremental_reply() -> bool:
@@ -593,7 +593,7 @@ async def _generate_llm_response(
             # incomplete prefix can never be skipped by an independently delivered suffix.
             if bubble.get("type") not in {"text", "voice"}:
                 incremental_blocked = True
-                continue
+                break
             try:
                 normalized = normalize_incremental_dialogue_bubble(
                     bubble,
@@ -606,26 +606,27 @@ async def _generate_llm_response(
                 )
                 if not normalized:
                     incremental_blocked = True
-                    continue
-                for item in normalized:
-                    receipt = await reply_bubble_sink(incremental_index, item)
-                    partial_bubbles.append(item)
-                    if isinstance(receipt, asyncio.Future):
-                        incremental_receipts.append((item, receipt))
-                    incremental_index += 1
+                    break
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # Partial delivery is an optimization.  A single invalid or unavailable bubble
-                # must leave the terminal response available for normal validation/fallback.
                 incremental_blocked = True
                 logger.warning(
-                    "Incremental companion bubble delivery failed", extra={"bubble_index": incremental_index}
+                    "Incremental companion bubble validation failed", extra={"bubble_index": incremental_index}
                 )
-                continue
-            if not text_emitted and on_text_delivered is not None:
-                on_text_delivered()
-            text_emitted = True
+                break
+            for item in normalized:
+                try:
+                    receipt = await reply_bubble_sink(incremental_index, item)
+                except ProviderCapabilityError:
+                    incremental_blocked = True
+                    return
+                partial_bubbles.append(item)
+                incremental_receipts.append((item, receipt))
+                incremental_index += 1
+                if not text_emitted and on_text_delivered is not None:
+                    on_text_delivered()
+                text_emitted = True
 
     def _check_refusal(items: list[Any], *, final_reply: bool) -> None:
         try:
@@ -777,9 +778,9 @@ async def _generate_llm_response(
         _log_reply_format_failure(failure)
         raise failure
 
-    requires_text = reply_preference is None and not media_turn.text_reply_media()
+    requires_text = not tool_decision and reply_preference is None and not media_turn.text_reply_media()
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
-    if delivery != "stream" and not tool_calls_list:
+    if delivery != "stream" and not tool_calls_list and not tool_decision:
         text = "".join(pending_text)
         if (
             not text.strip()
@@ -817,7 +818,7 @@ async def _generate_llm_response(
                 # 已经实际交付的标准化对话气泡必须有可恢复的事实记录；若后续对象让终态校验失败，
                 # 保留这些独立验证过的气泡，避免出现“说过但历史没有”的事实。
                 partial_reply = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
-                if len(partial_reply) != len(partial_bubbles):
+                if not partial_reply or len(partial_reply) != len(partial_bubbles):
                     _log_reply_format_failure(exc)
                     raise
                 recovered = CompanionReply.model_validate({"bubbles": partial_reply})
