@@ -57,6 +57,8 @@ remote/*
 !remote/style.css
 shared/*
 !shared/*.ts
+!shared/*.tsx
+!shared/*.css
 runner/
 installer/
 docs/
