@@ -1,10 +1,14 @@
 import base64
+from collections.abc import AsyncGenerator
 from typing import ClassVar
 
 from infrastructure.ai.providers.base import (
+    ProviderCapabilityError,
     ProviderConfig,
+    ProviderError,
     TTSProvider,
     TTSResult,
+    TTSStreamChunk,
     VoiceDesignResult,
     VoiceReferenceAudio,
     pick_catalog_voice,
@@ -17,6 +21,19 @@ from infrastructure.constants import MAX_VOICE_DESIGN_PROMPT_CHARS, VOICE_REFERE
 VOICEDESIGN_MODEL = "mimo-v2.5-tts-voicedesign"
 VOICECLONE_MODEL = "mimo-v2.5-tts-voiceclone"
 BUILTIN_VOICE_MODEL = "mimo-v2.5-tts"
+# 流式合成固定 24 kHz PCM16LE 单声道，与通话播放采样率一致。
+PCM_FORMAT = "pcm16"
+PCM_MIME = "audio/pcm;rate=24000"
+
+
+def _delta_audio(delta: object) -> str:
+    """读取流式分片里的 Base64 音频；SDK 可能以 dict 或对象承载未建模字段。"""
+    audio = getattr(delta, "audio", None)
+    if audio is None:
+        extra = getattr(delta, "model_extra", None)
+        audio = extra.get("audio") if isinstance(extra, dict) else None
+    data = audio.get("data") if isinstance(audio, dict) else getattr(audio, "data", None)
+    return data if isinstance(data, str) and data else ""
 
 
 class MiMoTTSProvider(TTSProvider):
@@ -24,6 +41,8 @@ class MiMoTTSProvider(TTSProvider):
 
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
+    # 内置音色模型支持 24 kHz PCM 增量输出；设计/克隆音色仍走整段合成。
+    supports_streaming: ClassVar[bool] = True
     VOICE_DESIGN_MODEL: ClassVar[str | None] = VOICEDESIGN_MODEL
     VOICE_CLONE_MODEL: ClassVar[str | None] = VOICECLONE_MODEL
     BUILTIN_VOICE_MODEL: ClassVar[str | None] = BUILTIN_VOICE_MODEL
@@ -110,12 +129,17 @@ class MiMoTTSProvider(TTSProvider):
         super().__init__(config)
         self._client = get_async_client(config.api_key, config.base_url)
 
+    @classmethod
+    def supports_streaming_config(cls, config: ProviderConfig) -> bool:
+        return config.model == BUILTIN_VOICE_MODEL
+
     def _request_parts(
         self,
         text: str,
         voice: str,
         speech_style: SpeechStyle | None,
         *,
+        audio_format: str = "mp3",
         design_prompt: str = "",
         reference_audio: VoiceReferenceAudio | None = None,
     ) -> tuple[str, list[dict], dict, str]:
@@ -142,7 +166,12 @@ class MiMoTTSProvider(TTSProvider):
             if len(encoded) > VOICE_REFERENCE_MAX_BASE64_BYTES:
                 raise ValueError("MiMo 声音克隆参考音频 Base64 不能超过 10 MB")
             messages = [{"role": "user", "content": instruction}, {"role": "assistant", "content": text}]
-            return (model, messages, {"format": "mp3", "voice": f"data:{reference_audio.mime};base64,{encoded}"}, "")
+            return (
+                model,
+                messages,
+                {"format": audio_format, "voice": f"data:{reference_audio.mime};base64,{encoded}"},
+                "",
+            )
         if design_prompt:
             if not design_prompt.strip():
                 raise ValueError("voice design prompt is empty")
@@ -152,10 +181,10 @@ class MiMoTTSProvider(TTSProvider):
                 {"role": "user", "content": design_prompt + ("\n\n" + instruction if instruction else "")},
                 {"role": "assistant", "content": text},
             ]
-            return model, messages, {"format": "mp3", "optimize_text_preview": False}, ""
+            return model, messages, {"format": audio_format, "optimize_text_preview": False}, ""
         chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG, provider=self.provider_name)
         messages = [{"role": "user", "content": instruction}, {"role": "assistant", "content": text}]
-        return self.config.model, messages, {"format": "mp3", "voice": chosen_voice}, chosen_voice
+        return self.config.model, messages, {"format": audio_format, "voice": chosen_voice}, chosen_voice
 
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         model, messages, audio_kwargs, chosen_voice = self._request_parts(text, voice, speech_style)
@@ -187,6 +216,54 @@ class MiMoTTSProvider(TTSProvider):
         if not choice or not getattr(choice.message, "audio", None):
             raise RuntimeError("MiMo TTS returned no audio")
         return TTSResult(audio=base64.b64decode(choice.message.audio.data), mime="audio/mpeg", voice=chosen_voice)
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        *,
+        voice: str,
+        speech_style: SpeechStyle | None,
+        design_prompt: str = "",
+        reference_audio: VoiceReferenceAudio | None = None,
+    ) -> AsyncGenerator[TTSStreamChunk]:
+        if reference_audio is not None or design_prompt:
+            raise ProviderCapabilityError("MiMo 流式合成只支持内置音色")
+        if not text.strip():
+            raise ValueError("MiMo streaming TTS text is empty")
+        model, messages, audio_kwargs, chosen_voice = self._request_parts(
+            text, voice, speech_style, audio_format=PCM_FORMAT
+        )
+        stream = await self._client.chat.completions.create(
+            model=model, messages=messages, audio=audio_kwargs, stream=True
+        )
+        pending = b""
+        emitted = False
+        try:
+            async for chunk in stream:
+                choice = chunk.choices[0] if chunk.choices else None
+                if choice is None:
+                    continue
+                if choice.finish_reason not in (None, "stop"):
+                    raise ProviderError(f"MiMo streaming TTS did not complete: {choice.finish_reason}", status_code=502)
+                encoded = _delta_audio(choice.delta)
+                if not encoded:
+                    continue
+                try:
+                    pending += base64.b64decode(encoded)
+                except (TypeError, ValueError) as exc:
+                    raise ProviderError("MiMo streaming TTS returned invalid audio", status_code=502) from exc
+                # 分片边界可能落在采样中间，保留余量让每块都是完整 PCM16。
+                cut = len(pending) - len(pending) % 2
+                if not cut:
+                    continue
+                emitted = True
+                yield TTSStreamChunk(audio=pending[:cut], mime=PCM_MIME, voice=chosen_voice)
+                pending = pending[cut:]
+        finally:
+            await stream.close()
+        if not emitted:
+            raise ProviderCapabilityError("MiMo streaming TTS returned no audio")
+        yield TTSStreamChunk(audio=b"", mime=PCM_MIME, final=True, voice=chosen_voice)
 
     async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
         result = await self.synthesize_designed(preview_text, prompt=prompt, voice="", speech_style=None)

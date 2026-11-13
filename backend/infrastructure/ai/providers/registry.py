@@ -108,7 +108,7 @@ def provider_supports_streaming(service: ServiceType | str, name: str, config: P
     if issubclass(cls, STTProvider):
         return cls.supports_streaming_config(config) if config is not None else cls.supports_streaming
     if issubclass(cls, TTSProvider):
-        return cls.supports_streaming
+        return cls.supports_streaming_config(config) if config is not None else cls.supports_streaming
     return False
 
 

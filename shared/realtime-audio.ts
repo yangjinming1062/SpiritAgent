@@ -2,6 +2,11 @@ import type { CallAudioFrameMeta, RealtimeCallController } from './realtime-call
 import workletUrl from './realtime-worklet.ts?worker&url'
 
 const MAX_AUDIO_FRAME_BYTES = 9600
+// 结束判定：静音达标即收口；句末标点已明确时提前收口，最长发言沿用协议上限。
+const TURN_END_SILENCE_MS = 450
+const TURN_END_EARLY_SILENCE_MS = 250
+const MAX_UTTERANCE_MS = 55000
+const SENTENCE_END = /[。！？!?]$/
 
 export interface CallLevels {
   microphone: number
@@ -269,7 +274,10 @@ export class RealtimeAudioBridge {
     this.speakingMs += 20
     this.quietMs = voiced ? 0 : this.quietMs + 20
 
-    if (this.quietMs >= 800 || this.speakingMs >= 55000) {
+    const sentenceClosed =
+      this.quietMs >= TURN_END_EARLY_SILENCE_MS && SENTENCE_END.test(this.controller.snapshot().transcript.trim())
+
+    if (this.quietMs >= TURN_END_SILENCE_MS || sentenceClosed || this.speakingMs >= MAX_UTTERANCE_MS) {
       this.speaking = false
       this.voicedMs = 0
       this.controller.endInputTurn()

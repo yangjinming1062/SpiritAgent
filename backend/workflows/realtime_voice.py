@@ -2,8 +2,7 @@
 
 import asyncio
 import contextlib
-import io
-import wave
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -18,7 +17,7 @@ from features.media.speech import stream_synthesize_speech, synthesize_speech
 from features.realtime_voice.contracts import MAX_INPUT_BYTES, SAMPLE_RATE, TurnVersion
 from features.realtime_voice.session import CallSession
 from infrastructure.ai.providers.base import ProviderCapabilityError
-from infrastructure.ai.stt_service import stream_transcribe_audio, transcribe_audio
+from infrastructure.ai.stt_service import SpeechAudioSource, stream_transcribe_audio
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.async_io import cancel_and_wait, run_blocking, wait_for_task
 from infrastructure.logger import get_logger
@@ -29,16 +28,6 @@ from workflows.chat.operations import chat_operations
 from workflows.chat.reply_delivery import companion_reply_source
 
 logger = get_logger(__name__)
-
-
-def pcm_wav(pcm: bytes) -> bytes:
-    output = io.BytesIO()
-    with wave.open(output, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
-        wav.writeframes(pcm)
-    return output.getvalue()
 
 
 @dataclass(frozen=True)
@@ -79,16 +68,24 @@ class RealtimeVoicePipeline:
         self._partial_worker: asyncio.Task[None] | None = None
         self._partial_worker_error: Exception | None = None
         self._input_error: str | None = None
+        self._input_finished_event: asyncio.Event | None = None
+        self._source: SpeechAudioSource | None = None
+        self._latency: dict[str, float] = {}
+        self._latency_logged = False
 
     async def begin_input(self, version: TurnVersion) -> None:
         if not await self.session.begin_input(version):
             return
         self._input = bytearray()
-        # 4096 × 20 ms is above the 60 s input budget; a capability fallback can
-        # therefore always receive the end sentinel without blocking the socket.
-        self._input_queue = asyncio.Queue(maxsize=4096)
+        # 4096 × 20 ms 高于 60 s 的输入预算，结束标记总能入队而不阻塞 socket。
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=4096)
+        self._input_queue = queue
         self._input_finished = False
         self._input_error = None
+        finished = asyncio.Event()
+        self._input_finished_event = finished
+        self._latency = {"input": time.monotonic()}
+        self._latency_logged = False
         # Stop the previous turn without holding the websocket receive loop.  The
         # next recognition task waits for this settlement before admission, so
         # audio capture remains full duplex while chat history stays serialized.
@@ -110,7 +107,13 @@ class RealtimeVoicePipeline:
 
             self._cancel_task = asyncio.create_task(cancel_previous(), name="call.cancel")
             self.actor.account.track(self._cancel_task)
-        self._finish_task = asyncio.create_task(self._recognize(version, self._input_queue), name="call.transcribe")
+        self._source = SpeechAudioSource(
+            chunks=self._input_chunks(queue),
+            snapshot=lambda: bytes(self._input or b""),
+            finished=finished,
+            sample_rate=SAMPLE_RATE,
+        )
+        self._finish_task = asyncio.create_task(self._recognize(version, self._source), name="call.transcribe")
         self.actor.account.track(self._finish_task)
 
     async def cancel_input(self) -> None:
@@ -119,6 +122,8 @@ class RealtimeVoicePipeline:
         self._input_queue = None
         self._input_finished = True
         self._input_error = None
+        if self._input_finished_event is not None:
+            self._input_finished_event.set()
         if self._turn is not None:
             return
         finish_task = self._finish_task
@@ -136,6 +141,8 @@ class RealtimeVoicePipeline:
             self._input_finished = True
             self._input_error = "duration"
             self._input_queue = None
+            if self._input_finished_event is not None:
+                self._input_finished_event.set()
             if self._finish_task is not None:
                 self._finish_task.cancel()
             raise ValueError("单次发言超过 60 秒，请缩短后重试")
@@ -148,6 +155,8 @@ class RealtimeVoicePipeline:
                 self._input_finished = True
                 self._input_error = "backpressure"
                 self._input_queue = None
+                if self._input_finished_event is not None:
+                    self._input_finished_event.set()
                 if self._finish_task is not None:
                     self._finish_task.cancel()
                 raise CallInputOverflowError("实时识别输入过载，请重新开始发言") from exc
@@ -156,6 +165,9 @@ class RealtimeVoicePipeline:
         if not self.session.current(version) or self._input is None or self._input_finished:
             return
         self._input_finished = True
+        self._mark("end")
+        if self._input_finished_event is not None:
+            self._input_finished_event.set()
         pcm_length = len(self._input)
         queue = self._input_queue
         if queue is not None:
@@ -200,7 +212,7 @@ class RealtimeVoicePipeline:
                 return
             yield chunk
 
-    async def _stream_text(self, queue: asyncio.Queue[bytes | None], version: TurnVersion) -> str:
+    async def _stream_text(self, source: SpeechAudioSource, version: TurnVersion) -> str:
         final_sentences: dict[int, str] = {}
         current_sentence = ""
         current_sentence_id: int | None = None
@@ -222,9 +234,7 @@ class RealtimeVoicePipeline:
                     result += part
             return result
 
-        events = stream_transcribe_audio(
-            self.actor.user_id, self._input_chunks(queue), mime_type="audio/pcm;rate=24000"
-        )
+        events = stream_transcribe_audio(self.actor.user_id, source)
         try:
             async for event in events:
                 if not self.session.current(version):
@@ -253,18 +263,11 @@ class RealtimeVoicePipeline:
         # event must not become a user message when the stream closes.
         return join_sentences([final_sentences[index] for index in sorted(final_sentences)])
 
-    async def _recognize(self, version: TurnVersion, queue: asyncio.Queue[bytes | None]) -> None:
+    async def _recognize(self, version: TurnVersion, source: SpeechAudioSource) -> None:
         try:
             await self._wait_previous_cancel()
-            try:
-                text = await self._stream_text(queue, version)
-            except ProviderCapabilityError:
-                # Streaming provider 尚未配置时保留整段路径作为明确降级；能力错误不会伪装成流式结果。
-                while await queue.get() is not None:
-                    pass
-                pcm = bytes(self._input or b"")
-                await self.session.set_state("thinking", version)
-                text = (await transcribe_audio(self.actor.user_id, pcm_wav(pcm), "audio/wav")).strip()
+            text = await self._stream_text(source, version)
+            self._mark("asr")
             if self._input_error is not None:
                 await self.session.set_state("listening", version)
                 return
@@ -288,6 +291,7 @@ class RealtimeVoicePipeline:
                 )
             )
             await wait_for_task(submitted)
+            self._mark("admit")
             await self.session.emit("transcript.final", {"text": text}, version=version)
         except asyncio.CancelledError:
             raise
@@ -299,7 +303,8 @@ class RealtimeVoicePipeline:
             )
             await self.session.set_state("listening", version)
         finally:
-            if self._input_queue is queue:
+            if self._source is source:
+                self._source = None
                 self._input = None
                 self._input_queue = None
                 self._input_finished = True
@@ -386,6 +391,7 @@ class RealtimeVoicePipeline:
         queue = self._partial_queue
         if turn is None or queue is None or not self.session.current(turn.version):
             raise asyncio.CancelledError
+        self._mark("bubble")
         receipt = asyncio.get_running_loop().create_future()
         # 回合可能在模型流中断时放弃等待回执，异常仍由交付收尾报告。
         receipt.add_done_callback(lambda done: None if done.cancelled() else done.exception())
@@ -501,17 +507,18 @@ class RealtimeVoicePipeline:
                         raise ValueError("Streaming TTS returned an empty non-terminal PCM chunk")
                     if not chunk.mime.startswith("audio/pcm") or len(chunk.audio) % 2:
                         raise ValueError("Streaming TTS returned invalid PCM")
+                    self._mark("tts")
                     for offset in range(0, len(chunk.audio), 9600):
                         last_sequence = await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
                         if not sent:
                             on_started()
+                            self._mark("audio")
+                            self._log_turn_latency()
                         sent = True
             if last_sequence is None:
                 raise ProviderCapabilityError("Streaming TTS returned no audio")
-            # ``send_audio`` owns the call-wide sequence.  Waiting on the last
-            # returned sequence prevents a later bubble from acknowledging an
-            # earlier local counter.
-            await self.session.wait_played(last_sequence, version, on_played)
+            # 播放确认由会话按序号结算；投递立即返回，让下一句合成与当前播放重叠。
+            await self.session.confirm_when_played(last_sequence, version, on_played)
         except asyncio.CancelledError:
             raise
         except ProviderCapabilityError as exc:
@@ -575,10 +582,12 @@ class RealtimeVoicePipeline:
                 last_sequence = await self.session.send_audio(pcm[offset : offset + 9600], version)
                 if not sent:
                     on_started()
+                    self._mark("audio")
+                    self._log_turn_latency()
                 sent = True
             if last_sequence is None:
                 raise RuntimeError("Voice output is empty")
-            await self.session.wait_played(last_sequence, version, on_played)
+            await self.session.confirm_when_played(last_sequence, version, on_played)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -615,10 +624,13 @@ class RealtimeVoicePipeline:
         for index, bubble in enumerate(reply.bubbles):
             if not self.session.current(turn.version):
                 raise asyncio.CancelledError
-            delivered = self._partial_delivered.get(index)
+            delivered = self._partial_delivered.get(index) or self._partial_started.get(index)
             if delivered is not None:
                 if delivered.model_dump(exclude={"audio"}) != bubble.model_dump(exclude={"audio"}):
                     raise RuntimeError("Final reply differs from an already delivered bubble")
+                # 开始播放即归本回合：终态交付不为同一气泡重新合成。
+                self._partial_delivered[index] = bubble
+                self._partial_started.pop(index, None)
                 self.confirmed_indices.append(index)
                 continue
 
@@ -654,7 +666,29 @@ class RealtimeVoicePipeline:
         if event_type == "session.state" and not payload.get("running"):
             await self.session.set_state("listening", turn.version)
 
+    def _mark(self, name: str) -> None:
+        self._latency.setdefault(name, time.monotonic())
+
+    def _log_turn_latency(self) -> None:
+        """每回合只记录一次分段耗时，用于判断等待发生在识别、受理还是合成。"""
+        if self._latency_logged or "input" not in self._latency:
+            return
+        self._latency_logged = True
+        base = self._latency["input"]
+        end = self._latency.get("end", base)
+        after_end = {
+            f"{name}_after_end_ms": int((at - end) * 1000)
+            for name, at in self._latency.items()
+            if name != "end" and at >= end
+        }
+        logger.info(
+            "Call turn latency",
+            extra={"user_id": self.actor.user_id, "end_after_input_ms": int((end - base) * 1000), **after_end},
+        )
+
     async def close(self) -> None:
+        if self._input_finished_event is not None:
+            self._input_finished_event.set()
         await self.session.close()
         try:
             await self._wait_previous_cancel()

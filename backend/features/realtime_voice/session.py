@@ -30,7 +30,7 @@ class CallSession:
         self._played = asyncio.Condition()
         self._sent_sequence = 0
         self._played_sequence = 0
-        self._playback_confirmation: tuple[int, Callable[[], None]] | None = None
+        self._playback_callbacks: list[tuple[int, Callable[[], None]]] = []
         self._part_waiter: tuple[int, asyncio.Future[None], Callable[[], None]] | None = None
 
     def current(self, version: TurnVersion) -> bool:
@@ -77,7 +77,7 @@ class CallSession:
             raise ValueError("Invalid call generation")
         self.version = version
         self._sent_sequence = self._played_sequence = 0
-        self._playback_confirmation = None
+        self._playback_callbacks.clear()
         if self._part_waiter is not None and not self._part_waiter[1].done():
             self._part_waiter[1].cancel()
         async with self._played:
@@ -109,6 +109,17 @@ class CallSession:
             await self.wait_played(sequence - 5, version)
         return sequence
 
+    def _fire_played_callbacks(self) -> None:
+        """结算已经播完的回调；调用方持有播放条件锁。"""
+        ready = [callback for boundary, callback in self._playback_callbacks if boundary <= self._played_sequence]
+        if not ready:
+            return
+        self._playback_callbacks = [
+            pending for pending in self._playback_callbacks if pending[0] > self._played_sequence
+        ]
+        for callback in ready:
+            callback()
+
     async def acknowledge_audio(self, sequence: int, version: TurnVersion) -> None:
         if not self.current(version):
             return
@@ -116,10 +127,7 @@ class CallSession:
             raise ValueError("Playback acknowledgement exceeds sent audio")
         async with self._played:
             self._played_sequence = max(self._played_sequence, sequence)
-            pending = self._playback_confirmation
-            if pending is not None and self._played_sequence >= pending[0]:
-                self._playback_confirmation = None
-                pending[1]()
+            self._fire_played_callbacks()
             self._played.notify_all()
 
     async def wait_played(
@@ -135,14 +143,24 @@ class CallSession:
             # 在消费回执时登记交付，避免紧随其后的输入或停止帧取消等待者后丢掉已交付事实。
             confirmation = (sequence, on_played) if on_played is not None else None
             if confirmation is not None:
-                self._playback_confirmation = confirmation
+                self._playback_callbacks.append(confirmation)
             try:
                 await self._played.wait_for(lambda: not self.current(version) or self._played_sequence >= sequence)
                 if not self.current(version):
                     raise asyncio.CancelledError
             finally:
-                if confirmation is not None and self._playback_confirmation is confirmation:
-                    self._playback_confirmation = None
+                if confirmation is not None and confirmation in self._playback_callbacks:
+                    self._playback_callbacks.remove(confirmation)
+
+    async def confirm_when_played(self, sequence: int, version: TurnVersion, on_played: Callable[[], None]) -> None:
+        """登记播放确认后立即返回，投递不必等上一句播完才开始下一句合成。"""
+        async with self._played:
+            if not self.current(version):
+                raise asyncio.CancelledError
+            if self._played_sequence >= sequence:
+                on_played()
+                return
+            self._playback_callbacks.append((sequence, on_played))
 
     async def deliver_part(
         self, part_id: int, bubble: EventPayload, version: TurnVersion, on_received: Callable[[], None]
@@ -167,7 +185,7 @@ class CallSession:
     async def close(self) -> None:
         self.closed.set()
         self.state = "ended"
-        self._playback_confirmation = None
+        self._playback_callbacks.clear()
         if self._part_waiter is not None and not self._part_waiter[1].done():
             self._part_waiter[1].cancel()
         async with self._played:

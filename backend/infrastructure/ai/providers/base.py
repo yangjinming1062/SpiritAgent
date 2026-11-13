@@ -432,6 +432,11 @@ class TTSProvider(BaseProvider):
     # 默认关闭：只有真实支持增量音频并完成音色/演绎验证的适配器才能打开。
     supports_streaming: ClassVar[bool] = False
 
+    @classmethod
+    def supports_streaming_config(cls, _config: ProviderConfig) -> bool:
+        """返回配置的模型与协议是否可用于增量合成；供应商可按模型覆写。"""
+        return cls.supports_streaming
+
     @abstractmethod
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         """合成 MP3 音频。"""
