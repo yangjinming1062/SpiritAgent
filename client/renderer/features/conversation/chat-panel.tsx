@@ -9,6 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
+import { CallSurface } from './call-surface'
 import type { ConversationVariant } from './chat-dock-message-bubble'
 import { ChatParamsPanel, type ChatParamsTab } from './chat-params-panel'
 import { ChatContextAmbientLine } from './context-progress-bar'
@@ -115,61 +116,68 @@ export function ChatPanel({
   }
 
   return (
-    <div className={cn('relative flex flex-col flex-1 h-full min-h-0', className)}>
-      <div className={headerWrapClass}>
-        {heading}
-        <button
-          aria-controls={paramsPanelId}
-          aria-expanded={paramsPanelOpen}
-          aria-label={dict.chat.params.openPanel}
-          className={cn(
-            'grid size-8 shrink-0 place-items-center rounded-lg border border-transparent text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40',
-            paramsPanelOpen && 'border-accent-line bg-accent-soft text-accent'
-          )}
-          disabled={!eligible || chatSessionId === null}
-          onClick={toggleParamsPanel}
-          ref={paramsButtonRef}
-          title={dict.chat.params.openPanel}
-          type="button"
-        >
-          <SlidersHorizontal size={18} />
-        </button>
-      </div>
-      {paramsPanelOpen && (
+    <CallSurface className={className} enabled={variant === 'companion' && !isReadOnlySession}>
+      {(onStartCall, callOpen) => (
         <div
-          aria-label={dict.chat.params.openPanel}
-          className="absolute right-3 top-14 z-50 max-h-[calc(100%_-_70px)] w-[min(350px,calc(100%_-_24px))] overflow-y-auto rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150"
-          id={paramsPanelId}
-          ref={paramsPanelRef}
-          role="dialog"
+          className={cn('relative flex flex-col flex-1 h-full min-h-0', callOpen && 'sa-call-covered')}
+          inert={callOpen}
         >
-          <ChatContextAmbientLine />
-          <ChatParamsPanel
-            activeTab={paramsPanelTab}
-            key={chatSessionId}
-            onClose={closeParamsPanel}
-            onTabChange={setParamsPanelTab}
-            sessionId={chatSessionId}
+          <div className={headerWrapClass}>
+            {heading}
+            <button
+              aria-controls={paramsPanelId}
+              aria-expanded={paramsPanelOpen}
+              aria-label={dict.chat.params.openPanel}
+              className={cn(
+                'grid size-8 shrink-0 place-items-center rounded-lg border border-transparent text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40',
+                paramsPanelOpen && 'border-accent-line bg-accent-soft text-accent'
+              )}
+              disabled={!eligible || chatSessionId === null}
+              onClick={toggleParamsPanel}
+              ref={paramsButtonRef}
+              title={dict.chat.params.openPanel}
+              type="button"
+            >
+              <SlidersHorizontal size={18} />
+            </button>
+          </div>
+          {paramsPanelOpen && (
+            <div
+              aria-label={dict.chat.params.openPanel}
+              className="absolute right-3 top-14 z-50 max-h-[calc(100%_-_70px)] w-[min(350px,calc(100%_-_24px))] overflow-y-auto rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150"
+              id={paramsPanelId}
+              ref={paramsPanelRef}
+              role="dialog"
+            >
+              <ChatContextAmbientLine />
+              <ChatParamsPanel
+                activeTab={paramsPanelTab}
+                key={chatSessionId}
+                onClose={closeParamsPanel}
+                onTabChange={setParamsPanelTab}
+                sessionId={chatSessionId}
+              />
+            </div>
+          )}
+          {notice}
+          <ConversationSurface
+            className={cn('flex-1 min-h-0 overflow-y-auto', surfaceClassName)}
+            groupAvatars={groupAvatars}
+            reveal={reveal}
+            scrollRef={scrollRef}
+            variant={variant}
           />
+          <div className={cn('mt-auto shrink-0', inputWrapperClassName)}>
+            {isReadOnlySession ? (
+              <p className="py-1 text-center text-xs text-muted" role="status">
+                {dict.chat.input.readOnlyHint}
+              </p>
+            ) : (
+              <ConversationInput {...input.inputProps} onStartCall={onStartCall} variant={variant} />
+            )}
+          </div>
         </div>
       )}
-      {notice}
-      <ConversationSurface
-        className={cn('flex-1 min-h-0 overflow-y-auto', surfaceClassName)}
-        groupAvatars={groupAvatars}
-        reveal={reveal}
-        scrollRef={scrollRef}
-        variant={variant}
-      />
-      <div className={cn('mt-auto shrink-0', inputWrapperClassName)}>
-        {isReadOnlySession ? (
-          <p className="py-1 text-center text-xs text-muted" role="status">
-            {dict.chat.input.readOnlyHint}
-          </p>
-        ) : (
-          <ConversationInput {...input.inputProps} variant={variant} />
-        )}
-      </div>
-    </div>
+    </CallSurface>
   )
 }

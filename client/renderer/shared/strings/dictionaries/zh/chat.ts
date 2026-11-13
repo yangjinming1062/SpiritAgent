@@ -33,6 +33,7 @@ export const chat = {
     filesHandoffFailed: '文件转交失败，请重新拖入',
     connectionInterrupted: '连接中断，重连后同步回复。',
     sendFailed: '发送失败',
+    callBusyRetry: '当前会话正在通话，请挂断后再试',
 
     media: {
       generating: '正在制作…',
@@ -170,15 +171,6 @@ export const chat = {
       releaseToSendVoice: '松开发送语音',
       pressToRecordVoice: '按住录制语音消息',
       startRealtimeCall: '开始实时通话',
-      stopRealtimeCall: '结束实时通话',
-      muteRealtimeCall: '静音通话',
-      unmuteRealtimeCall: '取消静音',
-      realtimeCallConnecting: '正在连接通话…',
-      realtimeCallListening: '通话中 · 正在倾听',
-      realtimeCallThinking: '通话中 · 正在思考',
-      realtimeCallSpeaking: '通话中 · 正在讲话',
-      realtimeCallMuted: '通话中 · 麦克风已静音',
-      realtimeCallError: '通话连接失败',
       stopGenerating: '停止生成',
       stopPending: '正在停止，等待确认',
       sendMessage: '发送消息',

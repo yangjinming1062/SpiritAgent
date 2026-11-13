@@ -9,6 +9,7 @@ export function isMessageGroupRow(item: ChatMessageListItem): boolean {
   return (
     item.subtype !== 'compress_summary' &&
     item.subtype !== 'status_media' &&
+    item.subtype !== 'realtime_call' &&
     !SYSTEM_PILL_SUBTYPES.has(item.subtype ?? '')
   )
 }

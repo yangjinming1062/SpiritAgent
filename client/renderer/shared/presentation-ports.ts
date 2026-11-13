@@ -1,4 +1,4 @@
-import type { Atom } from 'nanostores'
+import type { Atom, ReadableAtom } from 'nanostores'
 
 import { createPort } from '@/shared/lib/port'
 import type { ChatMediaItem } from '@protocol'
@@ -22,6 +22,7 @@ export interface SetSpriteStateOptions {
 
 interface PresentationPorts {
   $activeAvatarId: Atom<string | null>
+  $companionName: ReadableAtom<string>
   $companionVoiceId: Atom<string>
   $portraitUrl: Atom<string | null>
   $screenLocked: Atom<boolean>

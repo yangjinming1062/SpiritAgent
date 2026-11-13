@@ -18,6 +18,8 @@
     "noImplicitOverride": true,
     "jsx": "react-jsx",
     "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
       "@/*": ["./renderer/*"],
       "@shared/*": ["./renderer/shared/*"],
       "@client-shared/*": ["./shared/*"],

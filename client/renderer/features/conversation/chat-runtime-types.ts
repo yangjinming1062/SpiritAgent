@@ -17,6 +17,7 @@ export interface ChatMessageListItem {
 }
 
 export interface ChatMessageBody {
+  callDurationMs?: number
   canReplaceReply?: boolean
   /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
   editableText?: string
@@ -67,6 +68,8 @@ export interface ChatUndoDraft {
   session_id: string
   text: string
   attachments?: ChatAttachment[]
+  /** 追加到输入框现有草稿之后，不回写已有内容。 */
+  merge?: boolean
 }
 
 export interface SessionSettings {

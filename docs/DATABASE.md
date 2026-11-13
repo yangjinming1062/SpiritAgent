@@ -32,6 +32,7 @@ flowchart LR
 flowchart LR
     conversations -->|parent / fork| conversations
     messages --> conversations
+    messages -->|call record| messages
     prompt_submissions --> conversations
     prompt_submissions -->|result / replacement| messages
     submission_messages --> prompt_submissions
@@ -42,7 +43,9 @@ flowchart LR
     companion_topic_feedback --> companion_topics
 ```
 
-会话拥有上下文边界，消息拥有原文与交付快照，受理账本拥有请求身份和结果关系；整批输入与关联一起提交，断线后可查询原请求。依附子会话随父删除，独立分叉只失去来源指针。
+会话拥有上下文边界，消息拥有原文与交付快照，受理账本拥有请求身份和结果关系。通话记录与原发言同属会话，联合外键保证归属并在记录删除时清理关联行。整批输入与关联一起提交，断线后可查询原请求。依附子会话随父删除，独立分叉只失去来源指针。
+
+含通话历史的数据库需保留支持独立通话记录的 schema。迁移 `0003` 在通话数据存在时拒绝降级，以免旧版本把通话内容当作普通消息展示。
 
 消息文件和本地声音版本用关系表保护，回收不扫描正文 JSON 猜引用。会话统计由[语句级触发器](../backend/features/conversation/statistics.py)维护，计数规则见[查询设计与验证](#查询设计与验证)。话题资料、实际分享和显式反馈独立，选材不代表分享。
 

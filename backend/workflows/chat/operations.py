@@ -45,6 +45,8 @@ def chat_operations(
     *,
     event_publisher: EventPublisher | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
+    call_record_id: int | None = None,
+    call_owner: object | None = None,
 ) -> ChatOperations:
     user_id = actor.user_id
     runtime_sessions = actor.account.runtime_sessions
@@ -84,7 +86,11 @@ def chat_operations(
                 messages, truncated, next_cursor, message_count = await history_snapshot(conv.id)
             submission = await last_submission(user_id, runtime.conversation_id)
             info = await session_runtime_info(user_id, runtime, conv)
-            snapshot = deepcopy(runtime.active_turn)
+            snapshot = (
+                deepcopy(runtime.active_turn)
+                if runtime.active_turn and not runtime.active_turn.is_realtime_call
+                else None
+            )
             if snapshot is not None and snapshot.message_ids:
                 last_input = max(snapshot.message_ids)
                 # 终端回复先落库、后逐泡交付；挂载时以持久消息替代其瞬态副本。
@@ -144,7 +150,12 @@ def chat_operations(
         runtime = runtime_sessions.get(session_id)
         turn = runtime.active_turn if runtime is not None else None
         cancelled = False
-        if runtime is not None and turn is not None and turn.request_id == requested_id:
+        if (
+            runtime is not None
+            and turn is not None
+            and turn.request_id == requested_id
+            and (not turn.is_realtime_call or call_owner is not None)
+        ):
             task = runtime.chat_task
             if turn.running and task is not None and not task.done() and not task.cancelling():
                 runtime.cancel_requested = True
@@ -256,7 +267,13 @@ def chat_operations(
     return ChatOperations(
         snapshot=session_snapshot,
         submit=create_submission_handler(
-            actor, _require_runtime, publish_history_change, publisher=publisher, reply_delivery=reply_delivery
+            actor,
+            _require_runtime,
+            publish_history_change,
+            publisher=publisher,
+            reply_delivery=reply_delivery,
+            call_record_id=call_record_id,
+            call_owner=call_owner,
         ),
         receipt=turn_receipt,
         cancel=cancel_turn,

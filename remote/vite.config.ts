@@ -9,6 +9,7 @@ export default defineConfig({
   publicDir: false,
   css: { postcss: { plugins: [] } },
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@protocol': fileURLToPath(new URL('../shared/protocol.ts', import.meta.url))
     }

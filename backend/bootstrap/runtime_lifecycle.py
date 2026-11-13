@@ -6,6 +6,7 @@ from features.action_library.lifecycle import runtime_participants as action_par
 from features.appearance.lifecycle import runtime_participants as appearance_participants
 from features.companion.lifecycle import runtime_participants as companion_participants
 from features.configuration.social_accounts import runtime_participants as social_account_participants
+from features.conversation.call_records import recover_call_records
 from features.conversation.submissions import recover_interrupted_submissions
 from features.entries.diary_search import DIARY_SEARCH_WORKER
 from features.life.search import LIFE_SEARCH_WORKER
@@ -55,6 +56,7 @@ def configure_runtime_lifecycle() -> None:
             LIFE_SEARCH_WORKER.participant(),
             DIARY_SEARCH_WORKER.participant(),
             RuntimeParticipant("chat.submissions", prepare=recover_interrupted_submissions),
+            RuntimeParticipant("chat.calls", prepare=recover_call_records),
             RuntimeParticipant("desktop.connections", settle=drain_user_sessions),
             RuntimeParticipant("scheduler", stop_producer=stop_scheduler, drain=drain_scheduling),
             RuntimeParticipant("events", stop_producer=stop_event_loop, drain=drain_event_tasks),

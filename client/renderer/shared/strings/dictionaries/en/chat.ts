@@ -34,6 +34,7 @@ export const chat: Pick<Dictionary, 'chat' | 'conversation'> = {
     filesHandoffFailed: "Couldn't hand over the files. Drop them again.",
     connectionInterrupted: 'Connection interrupted. Replies will sync after reconnecting.',
     sendFailed: 'Send failed',
+    callBusyRetry: 'This conversation is in a call. Try again after hanging up.',
 
     media: {
       generating: 'Creating media…',
@@ -172,15 +173,6 @@ export const chat: Pick<Dictionary, 'chat' | 'conversation'> = {
       releaseToSendVoice: 'Release to send voice',
       pressToRecordVoice: 'Press and hold to record a voice message',
       startRealtimeCall: 'Start live call',
-      stopRealtimeCall: 'End live call',
-      muteRealtimeCall: 'Mute call',
-      unmuteRealtimeCall: 'Unmute call',
-      realtimeCallConnecting: 'Connecting call…',
-      realtimeCallListening: 'Live call · Listening',
-      realtimeCallThinking: 'Live call · Thinking',
-      realtimeCallSpeaking: 'Live call · Speaking',
-      realtimeCallMuted: 'Live call · Microphone muted',
-      realtimeCallError: 'Live call failed',
       stopGenerating: 'Stop generating',
       stopPending: 'Stopping, awaiting confirmation',
       sendMessage: 'Send message',

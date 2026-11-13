@@ -49,6 +49,7 @@ class SessionMessageFields(BaseModel):
 
 class PlainSessionMessageView(SessionMessageFields):
     content_type: Literal["multimodal_v1", "text"]
+    call_duration_ms: int | None = None
 
 
 class CompanionSessionMessageView(SessionMessageFields):

@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import ScalarSelect
 
-from features.conversation.context_window import context_message_watermark
+from features.conversation.context_window import CHECKPOINT_SUBTYPES, context_message_watermark
 from features.conversation.formatting import message_text
 from features.conversation.models import Conversation, Message
 from features.conversation.snapshots import MessageSnapshot
@@ -56,10 +56,11 @@ async def _replacement_candidates(
         Message.id,
         Message.role,
         Message.subtype,
+        Message.call_record_id,
         Message.tool_calls.is_(None).label("terminal"),
         or_(Message.content != "", Message.media_json != [], Message.reply_json != {}).label("has_content"),
     )
-    source_stmt = select(Message.id, Message.subtype)
+    source_stmt = select(Message.id, Message.subtype, Message.call_record_id)
     if with_message:
         latest_stmt = latest_stmt.add_columns(Message)
         source_stmt = source_stmt.add_columns(Message)
@@ -75,6 +76,7 @@ async def _replacement_candidates(
         or latest.id != message_id
         or latest.role != "assistant"
         or latest.subtype is not None
+        or latest.call_record_id is not None
         or not latest.terminal
         or not latest.has_content
     ):
@@ -86,7 +88,7 @@ async def _replacement_candidates(
             .limit(1)
         )
     ).one_or_none()
-    if source is None or source.subtype is not None or source.id >= latest.id:
+    if source is None or source.subtype is not None or source.call_record_id is not None or source.id >= latest.id:
         raise ReplyReplacementNotAllowedError("没有可复用的用户消息")
     if source.id <= await context_message_watermark(db, conv):
         raise ReplyReplacementNotAllowedError("该回合已不在当前上下文中，无法更换回答")
@@ -115,6 +117,7 @@ def replaceable_reply_expression(conv_id: int) -> ScalarSelect[int]:
             Message.id,
             Message.role,
             Message.subtype,
+            Message.call_record_id,
             Message.tool_calls,
             Message.content,
             Message.media_json,
@@ -126,7 +129,7 @@ def replaceable_reply_expression(conv_id: int) -> ScalarSelect[int]:
         .subquery()
     )
     source = (
-        select(Message.id, Message.subtype)
+        select(Message.id, Message.subtype, Message.call_record_id)
         .where(Message.conversation_id == conv_id, Message.role == "user")
         .order_by(Message.id.desc())
         .limit(1)
@@ -137,7 +140,7 @@ def replaceable_reply_expression(conv_id: int) -> ScalarSelect[int]:
         .where(
             Message.conversation_id == conv_id,
             Message.id > Conversation.context_after_message_id,
-            Message.subtype == "compress_summary",
+            Message.subtype.in_(CHECKPOINT_SUBTYPES),
         )
         .order_by(Message.id.desc())
         .limit(1)
@@ -156,9 +159,11 @@ def replaceable_reply_expression(conv_id: int) -> ScalarSelect[int]:
             Conversation.kind.in_(("standard", "special")),
             latest.c.role == "assistant",
             latest.c.subtype.is_(None),
+            latest.c.call_record_id.is_(None),
             latest.c.tool_calls.is_(None),
             or_(latest.c.content != "", latest.c.media_json != [], latest.c.reply_json != {}),
             source.c.subtype.is_(None),
+            source.c.call_record_id.is_(None),
             source.c.id < latest.c.id,
             source.c.id > func.greatest(Conversation.context_after_message_id, func.coalesce(checkpoint, 0)),
         )

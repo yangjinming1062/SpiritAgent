@@ -27,6 +27,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from features.accounts.models import User
 
+CALL_RECORD_SUBTYPE = "realtime_call"
+PRIVATE_CHECKPOINT_SUBTYPE = "private_compress_summary"
+
 
 def parse_session_id(session_id: str) -> int | None:
     try:
@@ -109,6 +112,20 @@ class Message(ModelBase):
     __tablename__ = "messages"
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_messages_user_id"),
+        UniqueConstraint("user_id", "conversation_id", "id", name="uq_messages_owned_id"),
+        ForeignKeyConstraint(
+            ["user_id", "conversation_id", "call_record_id"],
+            ["messages.user_id", "messages.conversation_id", "messages.id"],
+            name="fk_messages_call_record",
+            ondelete="CASCADE",
+        ),
+        Index("ix_messages_call_record", "call_record_id", "id", postgresql_where=text("call_record_id IS NOT NULL")),
+        CheckConstraint(
+            "(subtype IS NOT DISTINCT FROM 'realtime_call') = (call_last_seen_at IS NOT NULL) "
+            "AND (call_last_seen_at IS NULL OR (role = 'system' AND call_record_id IS NULL)) "
+            "AND (call_duration_ms IS NULL OR (call_last_seen_at IS NOT NULL AND call_duration_ms >= 0))",
+            name="realtime_call",
+        ),
         ForeignKeyConstraint(
             ["user_id", "conversation_id"],
             ["conversations.user_id", "conversations.id"],
@@ -156,6 +173,9 @@ class Message(ModelBase):
     reply_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     # 摘要实际覆盖到的原消息 id，与摘要插入位置分开。
     summary_through_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    call_record_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    call_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    call_duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

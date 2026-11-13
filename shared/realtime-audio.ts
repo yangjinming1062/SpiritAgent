@@ -3,6 +3,11 @@ import workletUrl from './realtime-worklet.ts?worker&url'
 
 const MAX_AUDIO_FRAME_BYTES = 9600
 
+export interface CallLevels {
+  microphone: number
+  playback: number
+}
+
 function pcm16(samples: Float32Array): ArrayBuffer {
   const bytes = new ArrayBuffer(samples.length * 2),
     view = new DataView(bytes)
@@ -23,6 +28,9 @@ export class RealtimeAudioBridge {
   private source: MediaStreamAudioSourceNode | null = null
   private sink: GainNode | null = null
   private revision = 0
+  private analyser: AnalyserNode | null = null
+  private meterSamples = new Float32Array(256)
+  private microphone = 0
   private started = false
   private speaking = false
   private voicedMs = 0
@@ -39,9 +47,17 @@ export class RealtimeAudioBridge {
 
     try {
       await context.resume()
+      if (revision !== this.revision) {
+        return
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       })
 
       if (revision !== this.revision) {
@@ -64,7 +80,9 @@ export class RealtimeAudioBridge {
 
       this.source = context.createMediaStreamSource(stream)
       this.input = new AudioWorkletNode(context, 'spiritagent-input')
-      this.output = new AudioWorkletNode(context, 'spiritagent-output', { outputChannelCount: [1] })
+      this.output = new AudioWorkletNode(context, 'spiritagent-output', {
+        outputChannelCount: [1]
+      })
       this.input.port.onmessage = (event: MessageEvent<ArrayBuffer>) => this.capture(new Float32Array(event.data))
 
       this.output.port.onmessage = (event: MessageEvent<CallAudioFrameMeta & { type: string }>) => {
@@ -97,7 +115,10 @@ export class RealtimeAudioBridge {
       this.sink.gain.value = 0
       this.input.connect(this.sink)
       this.sink.connect(context.destination)
-      this.output.connect(context.destination)
+      this.analyser = context.createAnalyser()
+      this.analyser.fftSize = this.meterSamples.length
+      this.output.connect(this.analyser)
+      this.analyser.connect(context.destination)
       this.started = true
     } catch (error) {
       await this.stop()
@@ -118,6 +139,22 @@ export class RealtimeAudioBridge {
 
     this.output.port.postMessage({ type: 'audio', ...meta, samples: samples.buffer }, [samples.buffer])
   }
+  levels(): CallLevels {
+    let energy = 0
+    if (this.analyser) {
+      this.analyser.getFloatTimeDomainData(this.meterSamples)
+      for (const value of this.meterSamples) {
+        energy += value * value
+      }
+    }
+
+    const state = this.controller.snapshot().state
+
+    return {
+      microphone: this.microphone,
+      playback: state === 'speaking' ? Math.sqrt(energy / this.meterSamples.length) : 0
+    }
+  }
   clearOutput(): void {
     this.output?.port.postMessage({ type: 'clear' })
     this.acknowledgements.forEach(timer => clearTimeout(timer))
@@ -132,6 +169,7 @@ export class RealtimeAudioBridge {
     this.voicedMs = 0
     this.quietMs = 0
     this.noiseFloor = 0.008
+    this.microphone = 0
     this.controller.mute(muted)
   }
   async stop(): Promise<void> {
@@ -144,6 +182,9 @@ export class RealtimeAudioBridge {
     this.input?.disconnect()
     this.output?.disconnect()
     this.sink?.disconnect()
+    this.analyser?.disconnect()
+    this.analyser = null
+    this.microphone = 0
     this.stream?.getTracks().forEach(track => track.stop())
     this.stream = null
     this.source = null
@@ -162,7 +203,7 @@ export class RealtimeAudioBridge {
     this.noiseFloor = 0.008
   }
   private capture(samples: Float32Array): void {
-    if (!this.started || this.controller.muted || this.controller.snapshot().state === 'connecting') {
+    if (!this.started || this.controller.muted || ['connecting', 'ending'].includes(this.controller.snapshot().state)) {
       return
     }
 
@@ -177,14 +218,13 @@ export class RealtimeAudioBridge {
     }
 
     const level = Math.sqrt(energy / samples.length)
+    this.microphone = level
     const threshold = Math.min(0.05, Math.max(0.018, this.noiseFloor * 2.8))
     const voiced = level >= (this.speaking ? Math.max(0.012, threshold * 0.65) : threshold)
 
     if (!this.speaking) {
       if (!voiced) {
-        // Track the local noise floor only while the gate is closed.  The
-        // minimum threshold keeps keyboard clicks and low-level echo from
-        // opening a turn, while the adaptive component handles quiet rooms.
+        // 只在门控关闭时跟踪本机噪声底：阈值下限挡住键盘声与低回声，自适应部分适应安静房间。
         this.noiseFloor = Math.min(0.04, this.noiseFloor * 0.96 + level * 0.04)
       }
 

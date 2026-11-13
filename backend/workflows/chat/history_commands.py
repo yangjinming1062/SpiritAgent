@@ -56,7 +56,7 @@ async def _do_compress_history(
         "session_id": runtime.session_id,
         "compressed": True,
         "replaced_count": result.info.replaced_count,
-        "summary": result.info.summary,
+        "summary": None if result.info.contains_call_content else result.info.summary,
         "messages": delivered,
         "usage": usage,
     }

@@ -1,12 +1,14 @@
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import { errorMessage, sleep } from '@runtime'
 
 import { ApiError } from '../../../../../shared/errors'
+import { isRecord } from '../../../../../shared/gateway'
 import { submitConversationTurn } from '../chat-requests'
 import type { PendingPromptItem } from '../chat-runtime-types'
-import { FLUSH_DEBOUNCE_MS } from '../conversation-state'
+import { $chatDraftFromUndo, FLUSH_DEBOUNCE_MS } from '../conversation-state'
 
 import type { PendingQueueProjection, SubmissionBase, SubmissionPeers } from './context'
 
@@ -178,6 +180,61 @@ export function createPendingQueue(base: SubmissionBase, peers: SubmissionPeers)
 
         const turnBusy = err instanceof ApiError && err.code === 'turn_busy'
 
+        if (
+          err instanceof ApiError &&
+          turnBusy &&
+          isRecord(err.business.details) &&
+          err.business.details.realtime_call === true &&
+          base.isCurrent() &&
+          epoch === currentClearEpoch() &&
+          submittedGeneration === base.state.submission.submissionGeneration
+        ) {
+          base.state.submission.unconfirmedSubmission = null
+
+          if (base.state.submission.activeRequestId === batchPayload.request_id) {
+            base.state.submission.activeRequestId = null
+          }
+
+          $chatTurnInFlight.set(false)
+          presentationPorts().setSpriteState('idle', { force: true })
+
+          const bodies = $chatMessageBodies.get()
+
+          const draftText = pendingRows
+            .map(row => bodies[row.id]?.text ?? '')
+            .filter(Boolean)
+            .join('\n\n')
+
+          const draftAttachments = pendingRows
+            .flatMap(row => bodies[row.id]?.attachments ?? [])
+            .filter(attachment => attachment.type === 'image')
+
+          if (!draftText && draftAttachments.length === 0) {
+            // 语音等无法回到输入框的批次仍按发送失败收尾，保留真实错误。
+            failSubmit(err)
+
+            return
+          }
+
+          // 通话占用的会话不受理提交：撤掉未落库气泡，把内容送回输入框等挂断后重发。
+          const bubbleIds = base.state.submission.submittedBubbleIds
+          $chatMessageList.set($chatMessageList.get().filter(item => !bubbleIds.has(item.id)))
+
+          for (const id of bubbleIds) {
+            $chatMessageBodies.setKey(id, undefined)
+          }
+
+          $chatDraftFromUndo.set({
+            session_id: sessionId,
+            text: draftText,
+            attachments: draftAttachments,
+            merge: true
+          })
+          notify({ kind: 'info', message: getStrings().chat.callBusyRetry })
+
+          return
+        }
+
         if (turnBusy && base.state.historyEditRevision !== submittedRevision && $chatSessionId.get() === sessionId) {
           // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
           $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
@@ -199,5 +256,11 @@ export function createPendingQueue(base: SubmissionBase, peers: SubmissionPeers)
     void submitWithRetry()
   }
 
-  return { pushPendingPrompt, clearPendingPrompts, schedulePendingFlush, cancelPendingFlush, submitPendingBatch }
+  return {
+    pushPendingPrompt,
+    clearPendingPrompts,
+    schedulePendingFlush,
+    cancelPendingFlush,
+    submitPendingBatch
+  }
 }

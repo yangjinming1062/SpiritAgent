@@ -14,11 +14,13 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_DATA_URL_MAX_CHARS, ATTACHMENT_TYPE_AUDIO, ATTACHMENT_TYPE_VIDEO
 from infrastructure.request_errors import RequestError
 from runtime.conversation import RuntimeSession
-from runtime.turn_ownership import conversation_lock
+from runtime.turn_ownership import conversation_call_conflict, conversation_lock
 
 
 @contextlib.asynccontextmanager
-async def conversation_history_lock(session_id: str) -> AsyncIterator[None]:
+async def conversation_history_lock(session_id: str, *, call_owner: object | None = None) -> AsyncIterator[None]:
+    if conversation_call_conflict(session_id, call_owner):
+        raise RequestError(409, "当前会话正在通话，请挂断后再试", code="turn_busy", details={"realtime_call": True})
     lock = conversation_lock(session_id)
     if lock.locked():
         raise RequestError(409, "当前会话正在执行任务，请先停止任务", code="turn_busy")

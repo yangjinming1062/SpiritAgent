@@ -1,5 +1,15 @@
 @import 'tailwindcss';
 
+.sa-call-host {
+  --sa-call-surface: var(--ui-surface-card);
+  --sa-call-text: var(--ui-text-strong);
+  --sa-call-muted: var(--ui-text-muted);
+  --sa-call-fill: var(--ui-fill-faint);
+  --sa-call-line: var(--ui-line-standard);
+  --sa-call-accent: var(--ui-accent);
+  --sa-call-error: var(--ui-danger-fg);
+}
+
 /* 语义 token：@theme inline 发出 var(--ui-*) 而非编译期定值；主题经 html[data-theme]/data-palette/data-effect 覆写。inline 必需——裸 @theme 会把首个主题冻进产物。 */
 @theme inline {
   --color-surface-panel: var(--ui-surface-panel);

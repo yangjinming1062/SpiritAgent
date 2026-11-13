@@ -11,6 +11,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { voicePlaybackKey } from '@ipc/contracts'
 
+import { CallRecordButton } from './call-surface'
 import { stripAttachmentDirectives } from './chat-display-text'
 import { ChatLinkCard } from './chat-link-card'
 import { ChatMediaCard } from './chat-media-card'
@@ -149,6 +150,15 @@ function MessageBubbleWithBody({
       <span className="text-[11px] text-faint">{timeLabel}</span>
     </div>
   ) : null
+
+  if (subtype === 'realtime_call' && message.backendMessageId && body.callDurationMs !== undefined) {
+    return wrapWithTimeDivider(
+      timeDivider,
+      <div className="my-1 flex justify-center">
+        <CallRecordButton duration={body.callDurationMs} id={message.backendMessageId} />
+      </div>
+    )
+  }
 
   // 摘要卡只凭 subtype 识别；正文格式不是识别契约，用户或模型写出相同文字仍是普通消息。
   if (subtype === 'compress_summary') {

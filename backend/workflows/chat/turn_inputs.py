@@ -9,8 +9,9 @@ from features.companion.persona_service import build_system_prompt_extras, load_
 from features.companion.visual_state import persona_snapshot
 from features.configuration.desktop_config import DEFAULT_CONFIG
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.conversation.context_window import CHECKPOINT_SUBTYPE
+from features.conversation.context_window import CHECKPOINT_SUBTYPES
 from features.conversation.formatting import companion_context_content, message_text
+from features.conversation.models import PRIVATE_CHECKPOINT_SUBTYPE
 from features.conversation.request_contracts import ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
 from features.conversation.turn_access import context_messages, conversation_topic_ids
@@ -181,6 +182,7 @@ def _history_to_responses_context(
         "source_message_ids": [],
         "dialogue_message_ids": [],
         "checkpoint_indices": [],
+        "call_content_indices": [],
         "time_context_indices": [],
         "user_input_indices": [],
     }
@@ -205,7 +207,7 @@ def _history_to_responses_context(
             context["dialogue_message_ids"].append(msg.id)
         if msg.role == "user":
             context["user_input_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
-        if msg.subtype == CHECKPOINT_SUBTYPE:
+        if msg.subtype in CHECKPOINT_SUBTYPES:
             context["checkpoint_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
         context["input"].extend(items)
         # 调用行已落库而缺结果行（如进程在保存结果前退出）时补记结果未知，孤立调用会让供应商拒绝整个上下文。
@@ -219,7 +221,9 @@ def _history_to_responses_context(
                         "output": tool_error(INTERRUPTED_RUNNING_ERROR),
                     }
                 )
-        source_id = msg.summary_through_message_id if msg.subtype == CHECKPOINT_SUBTYPE else msg.id
+        if msg.call_record_id is not None or msg.subtype == PRIVATE_CHECKPOINT_SUBTYPE:
+            context["call_content_indices"].extend(range(item_start, len(context["input"])))
+        source_id = msg.summary_through_message_id if msg.subtype in CHECKPOINT_SUBTYPES else msg.id
         if source_id is None:
             raise ValueError("Conversation summary requires an original message boundary")
         context["source_message_ids"].extend([source_id] * (len(context["input"]) - item_start))
@@ -282,7 +286,7 @@ async def build_turn_inputs(
     is_companion = preset_id == COMPANION_PRESET_ID and not delegated
     if history is None:
         history = await context_messages(db, conv)
-    first_user_msg = next((m for m in history if m.role == "user"), None)
+    first_user_msg = next((m for m in history if m.role == "user" and m.call_record_id is None), None)
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 

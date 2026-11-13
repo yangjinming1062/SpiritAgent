@@ -1,3 +1,4 @@
+export { CallSurface } from './call-surface'
 export type { ConversationRuntime } from './chat-runtime'
 export {
   $chatSessionId,
@@ -15,10 +16,10 @@ export { ConversationInput } from './conversation-input'
 export { $conversationInputBusy, beginConversationInputActivity } from './conversation-input-busy'
 export { ConversationSurface } from './conversation-surface'
 export { $conversationViews, isConversationActive } from './conversation-view'
+
 export { handleConversationEvent } from './gateway-events'
 
 export { openWhisper } from './open-whisper'
-
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
 export { pendingReplyText } from './pending-reply'
 export { presetDisplayName } from './preset-labels'
@@ -38,8 +39,8 @@ export {
   switchSession
 } from './sessions/selection'
 export { $systemPresets } from './sessions/state'
-export { onTopicFeedbackUpdated } from './topic-feedback-store'
 
+export { onTopicFeedbackUpdated } from './topic-feedback-store'
 export { conversationUiHandoff } from './ui-handoff'
 export { useChatInput } from './use-chat-input'
 export { useConversationUnread } from './use-conversation-unread'

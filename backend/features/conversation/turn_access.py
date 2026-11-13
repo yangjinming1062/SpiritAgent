@@ -46,6 +46,7 @@ def message_snapshot(row: Message) -> MessageSnapshot:
         row.summary_through_message_id,
         row.created_at,
         row.generation_origin_json,
+        row.call_record_id,
     )
 
 

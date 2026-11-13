@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from 'react'
 
-import { useRealtimeCall, useVoiceRecorder } from '@/features/speech'
+import { useVoiceRecorder } from '@/features/speech'
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
@@ -53,11 +53,6 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const chatSessionId = useStore($chatSessionId)
 
-  const realtimeCall = useRealtimeCall({
-    sessionId: chatSessionId,
-    eligible: view.eligible && view.visible && !isReadOnlySession
-  })
-
   const turnInFlight = useStore($chatTurnInFlight)
   const lastStreaming = useStore($lastAssistantStreaming)
   const pendingBatchLen = useStore($pendingPromptBatch).length
@@ -88,18 +83,18 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     setRecordingState
   })
 
-  // 撤销草稿回填，多窗口按会话过滤
+  // 草稿回填：撤销、删除跟随与通话占用都经此总线，多窗口按会话过滤。
   useAtomListen($chatDraftFromUndo, draft => {
     if (!view.eligible || !draft || draft.session_id !== chatSessionId) {
       return
     }
 
-    submit.setText(draft.text)
+    submit.setText(current => (draft.merge ? [draft.text, current].filter(Boolean).join('\n\n') : draft.text))
     const [image] = draft.attachments ?? []
 
-    // 待发送附件是单槽，多张图片只回填第一张。
+    // 待发送附件是单槽，多张图片只回填第一张；已有附件时不覆盖。
     if (image) {
-      submit.setPending({ type: 'image', value: image.url })
+      submit.setPending(current => current ?? { type: 'image', value: image.url })
     }
 
     $chatDraftFromUndo.set(null)
@@ -239,7 +234,6 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     onStop: () => {
       void submit.handleStop()
     },
-    realtimeCall,
     submit: submitState
   }
 

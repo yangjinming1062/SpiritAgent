@@ -136,7 +136,11 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
     async with SESSION_LOCAL() as db:
         row = await db.scalar(
             select(PromptSubmission)
-            .where(PromptSubmission.user_id == user_id, PromptSubmission.conversation_id == conversation_id)
+            .where(
+                PromptSubmission.user_id == user_id,
+                PromptSubmission.conversation_id == conversation_id,
+                PromptSubmission.is_realtime_call.is_(False),
+            )
             .order_by(PromptSubmission.id.desc())
             .limit(1)
         )

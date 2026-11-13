@@ -21,6 +21,8 @@ _MESSAGE_FIELDS = (
     "tool_calls",
     "media_json",
     "reply_json",
+    "call_record_id",
+    "call_duration_ms",
 )
 
 

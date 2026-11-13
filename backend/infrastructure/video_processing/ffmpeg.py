@@ -82,10 +82,12 @@ def _binary(name: str) -> str:
     return resolved
 
 
-def _run(args: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
+def _run(
+    args: list[str], *, timeout: float | None = None, input_bytes: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(  # 参数列表固定构造，不经 shell。
-            args, capture_output=True, timeout=timeout, check=False
+            args, input=input_bytes, capture_output=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired as exc:
         raise VideoToolUnavailableError("媒体信息读取超时", internal=str(exc)) from exc
@@ -165,9 +167,11 @@ def _alpha_mode(stream: dict) -> int:
     return 0
 
 
-def ffmpeg_stdout(args: list[str], *, failure_message: str) -> bytes:
+def ffmpeg_stdout(
+    args: list[str], *, failure_message: str, input_bytes: bytes | None = None, timeout: float | None = None
+) -> bytes:
     """执行输出到标准输出的 ffmpeg 并返回 stdout；非零退出码转 VideoProcessError（stderr 摘要进 internal）。"""
-    proc = _run([_binary("ffmpeg"), "-v", "error", *args])
+    proc = _run([_binary("ffmpeg"), "-v", "error", *args], input_bytes=input_bytes, timeout=timeout)
     if proc.returncode != 0:
         raise VideoProcessError(failure_message, internal=proc.stderr.decode("utf-8", "replace")[:2000])
     return proc.stdout

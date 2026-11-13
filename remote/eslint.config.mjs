@@ -17,7 +17,7 @@ export default [
   js.configs.recommended,
   {
     basePath: projectRoot,
-    files: ['remote/**/*.{ts,tsx}', 'shared/*.ts'],
+    files: ['remote/**/*.{ts,tsx}', 'shared/*.{ts,tsx}'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {

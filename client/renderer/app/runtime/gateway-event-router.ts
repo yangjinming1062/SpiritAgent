@@ -7,7 +7,9 @@ import {
   handleConversationEvent,
   invalidateSessionHistory,
   onSessionListChanged,
-  onTopicFeedbackUpdated
+  onTopicFeedbackUpdated,
+  requestSessionSnapshot,
+  syncSessionHistory
 } from '@/features/conversation'
 import { onOutfitEvent } from '@/features/creation'
 import { onActionEvent } from '@/features/creation/actions'
@@ -23,6 +25,7 @@ import { onJournalEvent } from '@/features/life/diary'
 import { onPostEvent } from '@/features/life/posts'
 import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
+import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 import { $surfaceRole } from '@/shared/store/surfaces'
@@ -86,7 +89,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
   // 语音与媒体 outbox 事件在载荷中标识会话，其余会话事件使用信封路由。
   const sessionId =
-    event.type === 'message.voice' || event.type === 'message.media' ? event.payload.session_id : event.session_id
+    event.type === 'message.voice' || event.type === 'message.media' || event.type === 'session.call_recorded'
+      ? event.payload.session_id
+      : event.session_id
 
   const runtime = typeof sessionId === 'string' ? findConversationRuntime(sessionId) : undefined
 
@@ -111,6 +116,21 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       onSessionListChanged(event.payload)
 
       break
+    case 'session.call_recorded': {
+      const id = event.payload.session_id
+      invalidateSessionHistory(id)
+
+      if (runtime) {
+        const previous = runtime.captureHistorySync()
+        void syncSessionHistory({ sessionId: id, request: () => requestSessionSnapshot(id) })
+          .then(snapshot => {
+            runtime.applyRemoteSnapshot(snapshot, previous)
+          })
+          .catch(error => log.warn('voice-call', 'Could not refresh call history', error))
+      }
+
+      break
+    }
 
     case 'session.snapshot':
 

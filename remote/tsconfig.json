@@ -18,10 +18,12 @@
     "noImplicitOverride": true,
     "jsx": "react-jsx",
     "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
       "@protocol": ["../shared/protocol.ts"]
     }
   },
-  "include": ["*.ts", "*.tsx", "../shared/*.ts"],
+  "include": ["*.ts", "*.tsx", "../shared/*.ts", "../shared/*.tsx"],
   "references": [],
   "exclude": ["node_modules", "dist"]
 }

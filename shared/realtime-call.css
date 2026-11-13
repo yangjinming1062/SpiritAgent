@@ -1,0 +1,193 @@
+.sa-call-page {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(12px, 3vmin, 28px);
+  color: var(--sa-call-text);
+  background: var(--sa-call-surface);
+  text-align: center;
+}
+
+.sa-call-center {
+  display: grid;
+  flex: 1 0 auto;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sa-call-avatar {
+  display: grid;
+  place-items: center;
+  width: clamp(56px, 16vmin, 104px);
+  aspect-ratio: 1;
+  margin-bottom: 6px;
+  overflow: hidden;
+  border-radius: 50%;
+  outline: 1px solid var(--sa-call-line);
+  background: var(--sa-call-fill);
+}
+
+.sa-call-avatar > * {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.sa-call-avatar img {
+  object-fit: cover;
+}
+
+.sa-call-avatar > svg {
+  width: 50%;
+  height: 50%;
+}
+
+.sa-call-page h2 {
+  margin: 0;
+  font-size: clamp(18px, 4vmin, 26px);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.sa-call-page time {
+  font-variant-numeric: tabular-nums;
+}
+
+.sa-call-page p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sa-call-state,
+.sa-call-transcript header p {
+  color: var(--sa-call-muted);
+}
+
+.sa-call-error {
+  max-width: 32rem;
+  color: var(--sa-call-error);
+}
+
+.sa-call-wave {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: clamp(26px, 8vmin, 52px);
+  color: var(--sa-call-accent);
+}
+
+.sa-call-wave[data-source='mic'] {
+  color: var(--sa-call-text);
+}
+
+.sa-call-wave span {
+  width: 4px;
+  border-radius: 4px;
+  background: currentColor;
+  transform: scaleY(var(--call-level, 0.12));
+  transition: transform 80ms linear;
+}
+
+.sa-call-captions {
+  max-width: min(100%, 34rem);
+  max-height: 30dvh;
+  overflow: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--sa-call-line);
+  border-radius: 12px;
+  text-align: start;
+  white-space: pre-wrap;
+}
+
+.sa-call-controls {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sa-call-page button,
+.sa-call-record {
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--sa-call-line);
+  border-radius: 12px;
+  background: var(--sa-call-fill);
+  color: var(--sa-call-text);
+  cursor: pointer;
+}
+
+.sa-call-controls button,
+.sa-call-record {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.sa-call-page button[aria-pressed='true'] {
+  border-color: var(--sa-call-accent);
+}
+
+.sa-call-page button:focus-visible,
+.sa-call-record:focus-visible {
+  outline: 2px solid var(--sa-call-accent);
+  outline-offset: 2px;
+}
+
+.sa-call-page button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sa-call-page .sa-call-hangup {
+  border-color: transparent;
+  background: #b92d47;
+  color: white;
+}
+
+.sa-call-transcript header {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--sa-call-line);
+}
+
+.sa-call-transcript header button {
+  justify-self: start;
+}
+
+.sa-call-transcript-lines {
+  display: grid;
+  width: min(100%, 40rem);
+  margin: 0 auto;
+  gap: 12px;
+  padding: 16px 0;
+  text-align: start;
+  white-space: pre-wrap;
+}
+
+.sa-call-transcript-lines strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sa-call-wave span {
+    transform: scaleY(0.12);
+    transition: none;
+  }
+}
+.sa-call-covered {
+  visibility: hidden;
+}

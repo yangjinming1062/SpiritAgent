@@ -329,6 +329,8 @@ async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
         _sync_bubble(bubble, artifact.status, artifact.url, artifact.error, artifact.media_revision)
         message.reply_json = reply.model_dump(mode="json")
         await sync_message_assets(db)
+        if message.call_record_id is not None:
+            return
         emit_ws_event(
             db,
             user_id=job.user_id,
@@ -465,6 +467,8 @@ async def deliver_image_job_result(db: AsyncSession, job: MediaJobView) -> None:
             _sync_bubble(bubble, slot.status, asset_store_path(slot.url) or None, slot.error, revision)
             message.reply_json = reply.model_dump(mode="json")
             await sync_message_assets(db)
+            if message.call_record_id is not None:
+                continue
             emit_ws_event(
                 db,
                 user_id=job.user_id,

@@ -11,14 +11,15 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.formatting import format_messages_compact
 from features.conversation.main_conversation import UI_ONLY_SUBTYPES
 from features.conversation.memory_scope import user_authored_conversation
-from features.conversation.models import Conversation, Message
+from features.conversation.models import PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message
 from features.conversation.snapshots import ConversationSnapshot
 
 CHECKPOINT_SUBTYPE = "compress_summary"
+CHECKPOINT_SUBTYPES = frozenset({CHECKPOINT_SUBTYPE, PRIVATE_CHECKPOINT_SUBTYPE})
 
 
 def context_visible_subtype() -> ColumnElement[bool]:
-    return Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE))
+    return Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, *CHECKPOINT_SUBTYPES))
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ async def _context_checkpoint(
         .where(
             Message.conversation_id == conv.id,
             Message.id > conv.context_after_message_id,
-            Message.subtype == CHECKPOINT_SUBTYPE,
+            Message.subtype.in_(CHECKPOINT_SUBTYPES),
         )
         .order_by(Message.id.desc())
         .limit(1)
@@ -49,7 +50,7 @@ async def _context_checkpoint(
             select(Message.id).where(
                 Message.conversation_id == conv.id,
                 Message.id == checkpoint.summary_through_message_id,
-                Message.subtype.is_(None) | (Message.subtype != CHECKPOINT_SUBTYPE),
+                Message.subtype.is_(None) | Message.subtype.notin_(CHECKPOINT_SUBTYPES),
             )
         )
         if boundary is None:

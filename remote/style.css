@@ -282,6 +282,21 @@ dd {
   overflow-y: auto;
   overscroll-behavior-y: contain;
 }
+.remote-call-host {
+  position: relative;
+  height: 100%;
+  --sa-call-surface: var(--surface-card);
+  --sa-call-text: var(--text-strong);
+  --sa-call-muted: var(--text-muted);
+  --sa-call-fill: var(--surface-sunken);
+  --sa-call-line: var(--line-strong);
+  --sa-call-accent: var(--accent);
+  --sa-call-error: var(--danger);
+}
+
+.remote-call-marker {
+  text-align: center;
+}
 .page {
   overflow-wrap: anywhere;
   padding: var(--sp-6) var(--sp-5) var(--sp-7);

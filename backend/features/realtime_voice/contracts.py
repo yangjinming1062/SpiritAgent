@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 SAMPLE_RATE = 24_000
+PROTOCOL_VERSION = 2
 MAX_AUDIO_FRAME_BYTES = 9_600
 MAX_INPUT_BYTES = SAMPLE_RATE * 2 * 60
 
@@ -18,7 +19,7 @@ class TurnVersion:
 
 class VoiceControl(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    type: Literal["input.start", "input.end", "mute", "stop", "ping", "audio.played", "part.received"]
+    type: Literal["client.ready", "input.start", "input.end", "mute", "stop", "ping", "audio.played", "part.received"]
     turn_seq: int = Field(default=0, ge=0, le=2**31 - 1)
     playback_epoch: int = Field(default=0, ge=0, le=2**31 - 1)
     muted: bool = False

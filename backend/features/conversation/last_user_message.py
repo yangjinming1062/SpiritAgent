@@ -17,7 +17,12 @@ async def _find_editable_conversation(db: AsyncSession, user_id: int, session_id
 
 
 def _is_editable_user_message(source: Message | None, conv: Conversation) -> bool:
-    return source is not None and source.subtype is None and source.id > conv.context_after_message_id
+    return (
+        source is not None
+        and source.subtype is None
+        and source.call_record_id is None
+        and source.id > conv.context_after_message_id
+    )
 
 
 async def find_user_message(

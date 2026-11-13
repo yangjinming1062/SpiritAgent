@@ -50,7 +50,11 @@ async def auto_generate_title(
             async with SESSION_LOCAL() as db:
                 first_user = await db.scalar(
                     select(Message)
-                    .where(Message.conversation_id == conversation_id, Message.role == "user")
+                    .where(
+                        Message.conversation_id == conversation_id,
+                        Message.role == "user",
+                        Message.call_record_id.is_(None),
+                    )
                     .order_by(Message.id)
                     .limit(1)
                 )

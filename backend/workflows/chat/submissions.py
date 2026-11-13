@@ -61,6 +61,8 @@ def create_submission_handler(
     *,
     publisher: EventPublisher | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
+    call_record_id: int | None = None,
+    call_owner: object | None = None,
 ) -> Callable[[str, PromptSubmitRequest], Awaitable[dict]]:
     user_id = actor.user_id
     publisher = publisher or UserEventPublisher(user_id)
@@ -121,7 +123,9 @@ def create_submission_handler(
         )
 
         snapshot = ActiveTurnSnapshot(
-            request_id=params["request_id"], replace_reply_message_id=replace_reply_message_id
+            request_id=params["request_id"],
+            replace_reply_message_id=replace_reply_message_id,
+            is_realtime_call=call_record_id is not None,
         )
 
         emitter = ChatEventEmitter(
@@ -146,6 +150,7 @@ def create_submission_handler(
             params["request_id"],
             [*precursor_messages, req.message],
             persisted_message_id=persisted_message_id,
+            call_record_id=call_record_id,
         )
         persisted_message_id = input_ids[-1]
         if edited_messages is not None:
@@ -235,6 +240,7 @@ def create_submission_handler(
                     track_task=actor.account.track,
                     submission_request_id=request_id,
                     on_reply_persisted=lambda: reply_delivery.clear_partial_reply(request_id),
+                    call_record_id=call_record_id,
                 ),
                 name="chat.persist-interrupted-reply",
             )
@@ -260,6 +266,8 @@ def create_submission_handler(
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=params["request_id"],
                     reply_delivery=reply_delivery,
+                    call_record_id=call_record_id,
+                    call_owner=call_owner,
                 )
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
@@ -334,13 +342,15 @@ def create_submission_handler(
             ).encode()
         ).hexdigest()
         try:
-            existing = await find_submission(user_id, runtime.conversation_id, request_id, fingerprint)
+            existing = await find_submission(
+                user_id, runtime.conversation_id, request_id, fingerprint, is_realtime_call=call_record_id is not None
+            )
             if existing is not None:
                 return existing.to_result()
             with contextlib.ExitStack() as admission:
                 admission.enter_context(user_turn_activity(user_id, enabled=True))
                 await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
-                async with conversation_history_lock(runtime.session_id):
+                async with conversation_history_lock(runtime.session_id, call_owner=call_owner):
                     if runtime.busy:
                         raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
                     await _require_owned_conv(user_id, runtime.session_id)
@@ -353,6 +363,7 @@ def create_submission_handler(
                         actor.origin_kind,
                         actor.origin_id,
                         replace_reply_message_id=replace_reply_message_id,
+                        is_realtime_call=call_record_id is not None,
                     )
                     if not created:
                         return receipt.to_result()

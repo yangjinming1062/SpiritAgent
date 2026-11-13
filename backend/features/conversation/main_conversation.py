@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.conversation.models import Conversation
+from features.conversation.models import CALL_RECORD_SUBTYPE, Conversation
 
 # 每个用户仅有一条陪伴主会话属于系统对话。
 SPECIAL_KIND = "special"
@@ -11,8 +11,8 @@ STANDARD_KIND = "standard"
 # 清空状态标记只供界面展示。
 CLEARED_STATUS_SUBTYPE: str = "status_cleared"
 
-# UI-only 子类型：渲染端展示但排除出 LLM 上下文与派生副本；与 SPECIAL_KIND 同处一处保证所有会话读取者一致。status_proactive 故意不在此集合——它是用户可回应的真实轮次。
-UI_ONLY_SUBTYPES: frozenset[str] = frozenset({"hint", CLEARED_STATUS_SUBTYPE})
+# 界面专用消息不进入模型上下文。通话标记随发言一起派生，其他界面状态不复制。
+UI_ONLY_SUBTYPES: frozenset[str] = frozenset({"hint", CLEARED_STATUS_SUBTYPE, CALL_RECORD_SUBTYPE})
 
 # 文本会话中后台视频任务完成后的送达行：媒体列携带可播放 URL，渲染端显示为媒体卡。故意不在 UI_ONLY_SUBTYPES——它进入模型上下文，是回答视频是否完成的依据；结构化回复会话的视频结果写回原回复气泡，不产生此行。
 MEDIA_STATUS_SUBTYPE: str = "status_media"

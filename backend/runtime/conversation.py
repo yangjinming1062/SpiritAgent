@@ -44,6 +44,7 @@ class ToolSnapshot:
 @dataclass
 class ActiveTurnSnapshot:
     request_id: str
+    is_realtime_call: bool = False
     message_ids: list[ResourceId] = field(default_factory=list)
     assistant_message_id: ResourceId | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -114,7 +115,7 @@ def build_runtime_info(
     return SessionRuntimeInfo(
         model=llm_config.model_name,
         provider=llm_config.provider_name,
-        running=runtime.busy,
+        running=runtime.busy and not (runtime.active_turn and runtime.active_turn.is_realtime_call),
         system_preset_id=system_preset_id,
         settings=settings,
         context_window=resolve_context_tokens(llm_config.config) if llm_config.config else None,

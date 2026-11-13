@@ -128,7 +128,11 @@ def _spawn_post_turn_task(
 
 
 async def _persist_interrupted_tool_results(
-    call_row: asyncio.Task[None], conv_id: int, results: list[tuple[str, Any]], user_id: int
+    call_row: asyncio.Task[None],
+    conv_id: int,
+    results: list[tuple[str, Any]],
+    user_id: int,
+    call_record_id: int | None,
 ) -> None:
     """等调用行提交结束再写中断结果：结果行 id 须排在调用行之后，调用行未落库时不写孤立结果。"""
     try:
@@ -140,7 +144,7 @@ async def _persist_interrupted_tool_results(
             exc_info=True,
         )
         return
-    await persist_tool_results(conv_id, results, user_id=user_id)
+    await persist_tool_results(conv_id, results, user_id=user_id, call_record_id=call_record_id)
 
 
 async def _persist_assistant_no_tool_turn(
@@ -164,6 +168,7 @@ async def _persist_assistant_no_tool_turn(
     media_request_scope: str | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
     on_reply_persisted: Callable[[], None] | None = None,
+    call_record_id: int | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     if reply_delivery is not None:
@@ -216,6 +221,7 @@ async def _persist_assistant_no_tool_turn(
                     submission_request_id=submission_request_id,
                     media_request_scope=media_request_scope,
                     on_reply_persisted=lambda: reply_delivery.mark_persisted(indices),
+                    call_record_id=call_record_id,
                 ),
                 name="chat.persist-call-reply",
             )
@@ -270,7 +276,12 @@ async def _persist_assistant_no_tool_turn(
     assistant_message_id: int | None = None
     if persist and (turn_content or media or result.reasoning):
         assistant_message_id = await persist_assistant_message(
-            conv.id, user_id, turn_data, media, on_committed=on_reply_persisted
+            conv.id,
+            user_id,
+            turn_data,
+            media,
+            on_committed=on_reply_persisted,
+            call_record_id=call_record_id,
         )
     # 通话已经完成交付，历史直接使用通话确认的气泡和音频。
     if reply and assistant_message_id is not None and on_reply_persisted is None:
@@ -305,7 +316,13 @@ async def _persist_assistant_no_tool_turn(
     )
     audio_transcripts: dict[str, str | Exception] = {}
     # 首条用户消息只有附件时文字为空串，转写按需准备后仍可生成标题。
-    if persist and conv.title == DEFAULT_SESSION_TITLE and first_user_msg_content is not None and turn_content:
+    if (
+        persist
+        and call_record_id is None
+        and conv.title == DEFAULT_SESSION_TITLE
+        and first_user_msg_content is not None
+        and turn_content
+    ):
         _spawn_post_turn_task(
             user_id,
             auto_generate_title(
@@ -357,7 +374,7 @@ async def _persist_assistant_no_tool_turn(
     is_companion_turn = (
         conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None and not conv.is_automation
     )
-    if persist and reply_bubbles is not None and is_companion_turn:
+    if persist and call_record_id is None and reply_bubbles is not None and is_companion_turn:
         _spawn_post_turn_task(
             user_id,
             update_mood_from_companion_turn(user_id, user_text, reply_bubbles),
@@ -383,6 +400,7 @@ async def _persist_assistant_with_tool_calls_and_results(
     schemas_by_name: dict[str, dict],
     *,
     persist: bool,
+    call_record_id: int | None = None,
 ) -> None:
     """持久化工具调用与结果、同步 Responses 输入并解锁 ``search_tools`` 命中的工具；媒体产物由回合状态统一管理。"""
     tool_calls_list = result.tool_calls_list
@@ -392,7 +410,8 @@ async def _persist_assistant_with_tool_calls_and_results(
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
     call_row = (
         _start_persistence_write(
-            persist_tool_call(conv.id, _turn_data(result), user_id=dispatch_ctx.user_id), "chat.persist-tool-call"
+            persist_tool_call(conv.id, _turn_data(result), user_id=dispatch_ctx.user_id, call_record_id=call_record_id),
+            "chat.persist-tool-call",
         )
         if persist
         else None
@@ -408,7 +427,11 @@ async def _persist_assistant_with_tool_calls_and_results(
             await _wait_persistence_write(
                 _start_persistence_write(
                     _persist_interrupted_tool_results(
-                        call_row, conv.id, interrupted_tool_results(tool_calls_list, progress), dispatch_ctx.user_id
+                        call_row,
+                        conv.id,
+                        interrupted_tool_results(tool_calls_list, progress),
+                        dispatch_ctx.user_id,
+                        call_record_id,
                     ),
                     "chat.persist-interrupted-tools",
                 )
@@ -433,6 +456,7 @@ async def _persist_assistant_with_tool_calls_and_results(
                     conv.id,
                     [(res["tool_call_id"], res.get("content", "")) for res in tool_results],
                     user_id=dispatch_ctx.user_id,
+                    call_record_id=call_record_id,
                 ),
                 "chat.persist-tool-results",
             )

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.conversation.asset_releases import collect_message_asset_releases
 from features.conversation.formatting import message_contains_text
 from features.conversation.main_conversation import SPECIAL_KIND
-from features.conversation.models import Conversation, Message, parse_session_id
+from features.conversation.models import PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message, parse_session_id
 from features.conversation.reply_audio import cancel_reply_audio
 from features.conversation.schemas import (
     DesktopSessionInfo,
@@ -40,6 +40,7 @@ _preview_subquery = (
     .where(
         Message.conversation_id == Conversation.id,
         Message.role == literal_column("'user'"),
+        Message.call_record_id.is_(None),
         Message.content.isnot(None),
         Message.content != literal_column("''"),
     )
@@ -196,7 +197,12 @@ async def list_sessions(
         )
         content_ids = (
             select(Message.conversation_id)
-            .where(Message.user_id == user_id, message_contains_text(query))
+            .where(
+                Message.user_id == user_id,
+                Message.call_record_id.is_(None),
+                Message.subtype.is_distinct_from(PRIVATE_CHECKPOINT_SUBTYPE),
+                message_contains_text(query),
+            )
             .distinct()
             .correlate(None)
         )

@@ -60,7 +60,7 @@ def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str | Non
 
 
 async def find_submission(
-    user_id: int, conversation_id: int, request_id: str, fingerprint: str | None
+    user_id: int, conversation_id: int, request_id: str, fingerprint: str | None, *, is_realtime_call: bool = False
 ) -> SubmissionReceipt | None:
     async with session_scope() as db:
         row = await db.scalar(
@@ -69,6 +69,10 @@ async def find_submission(
             )
         )
         if row is None:
+            return None
+        if row.is_realtime_call != is_realtime_call:
+            if fingerprint is not None:
+                raise SubmissionConflictError("提交标识已用于另一条消息")
             return None
         if fingerprint is None and row.conversation_id != conversation_id:
             return None
@@ -100,6 +104,8 @@ async def reserve_submission(
     origin_kind: str,
     origin_id: str,
     replace_reply_message_id: int | None = None,
+    *,
+    is_realtime_call: bool = False,
 ) -> tuple[SubmissionReceipt, bool]:
     async with session_scope() as db:
         inserted_id = await db.scalar(
@@ -111,6 +117,7 @@ async def reserve_submission(
                 fingerprint=fingerprint,
                 origin_kind=origin_kind,
                 origin_id=origin_id,
+                is_realtime_call=is_realtime_call,
                 replace_reply_message_id=replace_reply_message_id,
             )
             .on_conflict_do_nothing(constraint="uq_prompt_submissions_user_request")
@@ -121,7 +128,9 @@ async def reserve_submission(
             return SubmissionReceipt(
                 request_id, "accepted", None, replace_reply_message_id=replace_reply_message_id
             ), True
-    existing = await find_submission(user_id, conversation_id, request_id, fingerprint)
+    existing = await find_submission(
+        user_id, conversation_id, request_id, fingerprint, is_realtime_call=is_realtime_call
+    )
     if existing is None:
         raise RuntimeError("The conflicting submission disappeared")
     return existing, False
@@ -176,6 +185,7 @@ async def persist_submission_inputs(
     messages: Sequence[ChatMessageRequest],
     *,
     persisted_message_id: int | None = None,
+    call_record_id: int | None = None,
 ) -> list[int]:
     """整批输入及受理关联共用短事务；重复调用复用已受理的完整消息序列。"""
     if not messages or (persisted_message_id is not None and len(messages) != 1):
@@ -228,6 +238,7 @@ async def persist_submission_inputs(
                     role="user",
                     content=content,
                     content_type=content_type,
+                    call_record_id=call_record_id,
                 )
                 for content, content_type in contents
             ]

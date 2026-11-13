@@ -3,14 +3,14 @@
 from dataclasses import dataclass
 
 from infrastructure.assets.write_protection import user_asset_lock
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_bindings import commit_conversation, flush_conversation
-from features.conversation.context_window import CHECKPOINT_SUBTYPE
+from features.conversation.context_window import CHECKPOINT_SUBTYPES
 from features.conversation.main_conversation import STANDARD_KIND, UI_ONLY_SUBTYPES
 from features.conversation.memory_scope import conversation_memory_scope
-from features.conversation.models import Conversation, Message
+from features.conversation.models import CALL_RECORD_SUBTYPE, PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message
 from features.conversation.replies import CompanionReply, MediaBubble
 
 
@@ -42,15 +42,30 @@ async def _fork_conversation_from_message(
 
     src_msg = (
         await db.execute(
-            select(Message.id, Message.subtype).where(
+            select(Message.id, Message.subtype, Message.call_record_id).where(
                 Message.id == source_message_id, Message.conversation_id == src.id
             )
         )
     ).first()
-    if src_msg is None:
+    if (
+        src_msg is None
+        or src_msg.call_record_id is not None
+        or src_msg.subtype in {CALL_RECORD_SUBTYPE, PRIVATE_CHECKPOINT_SUBTYPE}
+    ):
         raise SourceNotFoundError(f"源消息不在会话内: message_id={source_message_id} session_id={source_session_id!r}")
 
-    # 只排除界面专用行；媒体送达、主动消息与摘要行属于模型上下文，照常复制。
+    if await db.scalar(
+        select(
+            exists().where(
+                Message.conversation_id == src.id,
+                Message.call_record_id <= source_message_id,
+                Message.id > source_message_id,
+            )
+        )
+    ):
+        raise ForkNotAllowedError("请选择通话结束之后的消息派生")
+
+    # 通话记录虽不进模型上下文，仍随已经完成的通话整组复制。
     rows = (
         (
             await db.execute(
@@ -59,7 +74,7 @@ async def _fork_conversation_from_message(
                     Message.conversation_id == src.id,
                     Message.id <= source_message_id,
                     Message.id > src.context_after_message_id,
-                    Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
+                    Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES - {CALL_RECORD_SUBTYPE})),
                 )
                 .order_by(Message.id)
             )
@@ -118,12 +133,19 @@ async def _fork_conversation_from_message(
             generation_origin_json=row.generation_origin_json,
             reply_json=copied_reply,
             created_at=row.created_at,
+            call_last_seen_at=row.call_last_seen_at,
+            call_duration_ms=row.call_duration_ms,
         )
         db.add(copy)
         copies[row.id] = copy
     await flush_conversation(db)
     for row in rows:
-        if row.subtype == CHECKPOINT_SUBTYPE:
+        if row.call_record_id is not None:
+            record = copies.get(row.call_record_id)
+            if record is None:
+                raise SourceNotFoundError("通话记录不在可派生历史中")
+            copies[row.id].call_record_id = record.id
+        if row.subtype in CHECKPOINT_SUBTYPES:
             boundary = copies.get(row.summary_through_message_id)
             if boundary is None:
                 raise SourceNotFoundError("摘要覆盖边界不在可派生历史中")

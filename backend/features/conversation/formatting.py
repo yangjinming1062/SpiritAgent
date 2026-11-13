@@ -7,7 +7,7 @@ from sqlalchemy import ColumnElement, and_, case, cast, column, false, func, lit
 from sqlalchemy.dialects.postgresql import JSONB, aggregate_order_by
 from sqlalchemy.orm.util import AliasedClass
 
-from features.conversation.models import Conversation, Message
+from features.conversation.models import CALL_RECORD_SUBTYPE, Conversation, Message
 from features.conversation.replies import CompanionReply, LinkBubble, LinkBubbleInput, MediaBubble, MediaBubbleInput
 from features.conversation.snapshots import MessageSnapshot
 
@@ -127,6 +127,8 @@ def visible_bubble_count(
         else_=false(),
     )
     return case(
+        (message.call_record_id.is_not(None), 0),
+        (message.subtype == CALL_RECORD_SUBTYPE, case((message.call_duration_ms.is_not(None), 1), else_=0)),
         (
             and_(
                 message.role == "user",

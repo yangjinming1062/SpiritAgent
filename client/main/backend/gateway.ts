@@ -19,6 +19,7 @@ import {
   type RpcRequest,
   type SessionSnapshot
 } from '../../../shared/gateway'
+import { REALTIME_CALL_VERSION } from '../../../shared/realtime-call'
 import { isResourceId } from '../../../shared/resource-id'
 import type { RunnerResponse, RunnerTools } from '../../../shared/runner'
 import { CLIENT_LIMITS } from '../../shared/constants'
@@ -556,7 +557,7 @@ export function createDesktopGateway(options: GatewayOptions) {
         throw new Error('Gateway authentication changed')
       }
 
-      return `${backend.baseUrl.replace(/^http/, 'ws')}/api/realtime_voice/${encodeURIComponent(sessionId)}?ticket=${encodeURIComponent(ticket)}`
+      return `${backend.baseUrl.replace(/^http/, 'ws')}/api/realtime_voice/${encodeURIComponent(sessionId)}?version=${REALTIME_CALL_VERSION}&ticket=${encodeURIComponent(ticket)}`
     },
     synchronize: (sessionId: string, conversationId: string, load: (streamId?: string) => Promise<SessionSnapshot>) =>
       authorize(sessionId).client.synchronize(conversationId, load),

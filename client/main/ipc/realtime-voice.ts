@@ -18,7 +18,7 @@ interface VoiceSocket {
   bufferedAmount: number
   binaryType: string
   send(data: string | Uint8Array): void
-  close(): void
+  close(code?: number): void
   addEventListener(type: string, listener: (event: { data?: unknown }) => void): void
 }
 
@@ -44,7 +44,7 @@ export function registerVoiceCallIpc({
     active = null
     clearInterval(call.timer)
     call.owner.removeListener('destroyed', call.destroyed)
-    call.socket?.close()
+    call.socket?.close(1000)
     call.reject(new Error('Voice connection closed'))
     sendToSender(call.owner, IPC.event.voiceEvent, { kind: 'closed', callKey: call.callKey, failed })
     broadcastToAllWindows(IPC.event.voiceEvent, { kind: 'busy', busy: false })

@@ -1,8 +1,11 @@
+import { computed } from 'nanostores'
+
 import { bindConversationActivity } from '@/app/workflows/conversation-activity'
 import { bindConversationSpeech } from '@/app/workflows/conversation-speech'
 import {
   $activeAvatarId,
   $companionVoiceId,
+  $persona,
   $portraitUrl,
   $responsePreference,
   $screenLocked,
@@ -16,6 +19,7 @@ import { bindPresentationPorts } from '@/shared/presentation-ports'
 export function bindPresentation(): void {
   bindPresentationPorts({
     $activeAvatarId,
+    $companionName: computed($persona, persona => persona?.name ?? ''),
     $companionVoiceId,
     $portraitUrl,
     $screenLocked,

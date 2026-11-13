@@ -267,6 +267,10 @@ async def _compress_history_with_provider(
     keep = [*block[len(bounded) :], *keep]
     block = bounded
     through_id = source_ids[len(block) - 1]
+    call_indices = context.get("call_content_indices", ())
+    contains_call_content = any(
+        index < len(block) and (included_indices is None or index in included_indices) for index in call_indices
+    )
 
     try:
         summary, completed, prompt_tokens, completion_tokens = await _summarize_block(
@@ -307,6 +311,10 @@ async def _compress_history_with_provider(
         "source_message_ids": [through_id, *kept_ids],
         "dialogue_message_ids": [mid for mid in context["dialogue_message_ids"] if mid in kept_dialogue_ids],
         "checkpoint_indices": [0],
+        "call_content_indices": [
+            *([0] if contains_call_content else []),
+            *(index - len(block) + 1 for index in call_indices if index >= len(block)),
+        ],
         "time_context_indices": [
             index - len(block) + 1 for index in context.get("time_context_indices", ()) if index >= len(block)
         ],
@@ -332,4 +340,5 @@ async def _compress_history_with_provider(
         completion_tokens=completion_tokens,
         through_message_id=through_id,
         prune_before_message_id=min((mid for mid in kept_ids if mid is not None), default=None),
+        contains_call_content=contains_call_content,
     )

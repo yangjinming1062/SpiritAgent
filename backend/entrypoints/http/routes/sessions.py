@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, Path, Query, Request
 from features.conversation import session_management
+from features.conversation.call_records import CallRecordPage, read_call_record
 from features.conversation.fork import ForkNotAllowedError, SourceNotFoundError
 from features.conversation.http_contracts import (
     CommandDispatchRequest,
@@ -42,6 +43,7 @@ from infrastructure.http_contracts import operation_policy
 from runtime.conversation import SessionCreateResult
 from runtime.desktop.connection import UserEventPublisher
 from runtime.presets import SYSTEM_PRESET_CATALOG
+from workflows.chat.inputs import conversation_history_lock
 from workflows.chat.operations import chat_operations
 from workflows.chat.session_resources import list_session_resources, patch_session_resource, session_resource
 
@@ -172,7 +174,9 @@ async def get_session(user: CurrentUser, session_id: str) -> SessionCreateResult
 @router.post("/{session_id}/forks", response_model=SessionCreateResult)
 async def fork_session(user: CurrentUser, session_id: str, body: SessionForkRequest) -> SessionCreateResult:
     try:
-        conv, _ = await fork_conversation(user.id, session_id, body.source_message_id)
+        source = await get_conversation(user.id, session_id)
+        async with conversation_history_lock(str(source.id)):
+            conv, _ = await fork_conversation(user.id, session_id, body.source_message_id)
     except (ConversationNotFoundError, SourceNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ForkNotAllowedError as exc:
@@ -181,6 +185,20 @@ async def fork_session(user: CurrentUser, session_id: str, body: SessionForkRequ
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     await UserEventPublisher(user.id).push_event("session.list_changed", {"session_id": str(conv.id)})
     return await session_resource(user.id, conv)
+
+
+@router.get("/{session_id}/calls/{record_id}", operation_id="sessions.get_call", response_model=CallRecordPage)
+async def get_call(
+    user: CurrentUser,
+    session_id: ResourceId,
+    record_id: ResourceId,
+    after_id: ResourceId | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> CallRecordPage:
+    page = await read_call_record(user.id, session_id, record_id, after_id=after_id, limit=limit)
+    if page is None:
+        raise HTTPException(status_code=404, detail="通话记录不存在")
+    return page
 
 
 @router.get("/{session_id}/history", response_model=SessionHistoryResponse)

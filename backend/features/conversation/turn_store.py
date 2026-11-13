@@ -19,7 +19,7 @@ from features.assets.references import message_asset_paths
 from features.conversation.asset_bindings import commit_conversation, flush_conversation
 from features.conversation.attachments import prune_media_in_range
 from features.conversation.context_window import CHECKPOINT_SUBTYPE
-from features.conversation.models import Conversation, Message
+from features.conversation.models import PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message
 from features.conversation.replacement import replacement_source_id
 from features.conversation.replies import CompanionReply, MediaBubble, TextBubble
 from features.conversation.reply_media import apply_video_status, bind_reply_videos
@@ -78,7 +78,13 @@ async def persist_user_message(db: AsyncSession, conv_id: int, message: ChatMess
 
 
 async def persist_compression_checkpoint(
-    db: AsyncSession, conv_id: int, info: CompressionInfo, *, user_id: int, notify_user_id: int | None = None
+    db: AsyncSession,
+    conv_id: int,
+    info: CompressionInfo,
+    *,
+    user_id: int,
+    notify_user_id: int | None = None,
+    call_record_id: int | None = None,
 ) -> MessageSnapshot:
     """写入压缩检查点，下一轮历史从其覆盖边界之后读取；原消息保留，边界前无人引用的音视频随之清理。"""
     checkpoint = Message(
@@ -86,13 +92,14 @@ async def persist_compression_checkpoint(
         conversation_id=conv_id,
         role="system",
         content=info.checkpoint_text,
-        subtype=CHECKPOINT_SUBTYPE,
+        subtype=PRIVATE_CHECKPOINT_SUBTYPE if info.contains_call_content else CHECKPOINT_SUBTYPE,
+        call_record_id=call_record_id,
         summary_through_message_id=info.through_message_id,
         prompt_tokens=info.prompt_tokens,
         completion_tokens=info.completion_tokens,
     )
     db.add(checkpoint)
-    if notify_user_id is not None:
+    if notify_user_id is not None and not info.contains_call_content:
         await flush_conversation(db)
         emit_ws_event(
             db,
@@ -112,7 +119,9 @@ async def persist_compression_checkpoint(
     return message_snapshot(checkpoint)
 
 
-async def persist_tool_results(conv_id: int, results: list[tuple[str, Any]], *, user_id: int) -> None:
+async def persist_tool_results(
+    conv_id: int, results: list[tuple[str, Any]], *, user_id: int, call_record_id: int | None = None
+) -> None:
     async with session_scope() as db:
         for call_id, content in results:
             text, content_type = _tool_result_row(content)
@@ -121,6 +130,7 @@ async def persist_tool_results(conv_id: int, results: list[tuple[str, Any]], *, 
                     user_id=user_id,
                     conversation_id=conv_id,
                     role="tool",
+                    call_record_id=call_record_id,
                     tool_call_id=call_id,
                     content=text,
                     content_type=content_type,
@@ -129,13 +139,16 @@ async def persist_tool_results(conv_id: int, results: list[tuple[str, Any]], *, 
         await commit_conversation(db)
 
 
-async def persist_tool_call(conv_id: int, data: AssistantTurnData, *, user_id: int) -> None:
+async def persist_tool_call(
+    conv_id: int, data: AssistantTurnData, *, user_id: int, call_record_id: int | None = None
+) -> None:
     async with session_scope() as db:
         db.add(
             Message(
                 user_id=user_id,
                 conversation_id=conv_id,
                 role="assistant",
+                call_record_id=call_record_id,
                 content=None,
                 tool_calls=data.tool_calls,
                 reasoning_content=data.reasoning or None,
@@ -157,12 +170,14 @@ async def persist_assistant_message(
     media: list[dict[str, str]] | None,
     *,
     on_committed: Callable[[], None] | None = None,
+    call_record_id: int | None = None,
 ) -> int:
     async with session_scope() as db:
         row = Message(
             user_id=user_id,
             conversation_id=conv_id,
             role="assistant",
+            call_record_id=call_record_id,
             content=data.content or None,
             content_type="companion_reply" if data.reply is not None else "text",
             media_json=media if media else None,

@@ -30,14 +30,16 @@ async def resolve_undo_target(db: AsyncSession, user_id: int, session_id: str, s
 
     anchor_row = (
         await db.execute(
-            select(Message.role).where(Message.id == source_message_id, Message.conversation_id == conv.id)
+            select(Message.role, Message.call_record_id).where(
+                Message.id == source_message_id, Message.conversation_id == conv.id
+            )
         )
     ).first()
     if anchor_row is None:
         raise SourceNotFoundError(f"锚点消息不在会话内: message_id={source_message_id} session_id={session_id!r}")
 
-    (anchor_role,) = anchor_row
-    if anchor_role != "user":
+    anchor_role, call_record_id = anchor_row
+    if anchor_role != "user" or call_record_id is not None:
         raise UndoNotAllowedError(
             f"撤回仅支持 user-role 消息（source_message_id={source_message_id} 是 {anchor_role!r}）"
         )

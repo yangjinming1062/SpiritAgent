@@ -141,6 +141,11 @@ class SessionListChangedEvent(BaseModel):
     deleted: bool = False
 
 
+class CallRecordedEvent(BaseModel):
+    session_id: str
+    record_id: ResourceId
+
+
 class MemoryChangedEvent(BaseModel):
     system_preset_id: str
     memory_id: ResourceId | None = None
@@ -291,6 +296,7 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "tool.cancel": EventContract(ToolCancelEvent, "desktop", "device"),
     "session.state": EventContract(SessionStateEvent, "all", "session"),
     "session.list_changed": EventContract(SessionListChangedEvent, "all", "resource"),
+    "session.call_recorded": EventContract(CallRecordedEvent, "all", "session"),
     "command.result": EventContract(CommandDispatchResult, "all", "session"),
     "compress.completed": EventContract(CompressionEvent, "all", "session"),
     "error": EventContract(GatewayErrorEvent, "all", "transient"),

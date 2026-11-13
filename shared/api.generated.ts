@@ -34,6 +34,8 @@ export interface ApiSchemas {
   "AvatarGenerateRequest": { "source": "generate"; "mode"?: ("edit" | "regenerate" | null); "feedback"?: (string | null) }
   "AvatarHistoryResponse": { "history": Array<ApiSchemas["AvatarAssetResponse"]> }
   "AvatarPromptRequest": { "feedback"?: (string | null); "has_reference"?: boolean }
+  "CallRecordPage": { "duration_ms": number; "started_at": string; "ended_at": string; "utterances": Array<ApiSchemas["CallUtterance"]>; "next_cursor": (string | null) }
+  "CallUtterance": { "role": "user" | "assistant"; "text": string }
   "CapabilityCard": { "id": string; "provider_id": string; "model_name": string; "context_window": (number | null); "max_output_tokens": (number | null); "input_modalities": Array<ApiSchemas["ModelModality"]>; "output_modalities": Array<ApiSchemas["ModelModality"]> }
   "CapabilityCardInput": { "id": string; "provider_id": string; "model_name": string; "context_window"?: (number | null); "max_output_tokens"?: (number | null); "input_modalities": Array<ApiSchemas["ModelModalityInput"]>; "output_modalities": Array<ApiSchemas["ModelModalityInput"]> }
   "CapabilityChains": { "llm": Array<ApiSchemas["CapabilityCard"]>; "stt": Array<ApiSchemas["CapabilityCard"]>; "tts": Array<ApiSchemas["CapabilityCard"]>; "image_gen": Array<ApiSchemas["CapabilityCard"]>; "video_gen": Array<ApiSchemas["CapabilityCard"]>; "embedding": Array<ApiSchemas["CapabilityCard"]> }
@@ -143,7 +145,7 @@ export interface ApiSchemas {
   "PairingResponse": { "id": string; "url"?: (string | null); "expires_at": string; "state": "pending" | "paired" | "cancelled" | "expired" }
   "PersonaResponse": { "definition_json": { [key: string]: string }; "is_complete": boolean; "personality_tags": Array<string>; "current_mood": (string | null) }
   "PersonaUpdate": { "definition_json": { [key: string]: (string | null) }; "expected_fields"?: ({ [key: string]: (string | null) } | null) }
-  "PlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
+  "PlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text"; "call_duration_ms": (number | null) }
   "PortraitConfirmRequest": { "expected_avatar_id": string }
   "PostCommentCreateRequest": { "content": string }
   "PostCommentListResponse": { "comments": Array<ApiSchemas["PostCommentResponse"]>; "next_cursor": (string | null) }
@@ -184,6 +186,7 @@ export interface ApiSchemas {
   "RpcActorClipRef": { "visual_id": string; "version": number }
   "RpcAppearancePreparationEvent": { "avatar_id": string }
   "RpcCacheUsage": { "request_count": number; "reported_request_count": number; "input_tokens": (number | null); "cached_input_tokens": (number | null); "cache_hit_rate": (number | null) }
+  "RpcCallRecordedEvent": { "session_id": string; "record_id": string }
   "RpcClientMediaBubble": { "type": "image" | "video"; "media_id": string; "status": "pending" | "ready" | "failed" | "result_unknown" | "review_pending"; "job_id": (string | null); "media_revision": number; "url": (string | null); "error": (string | null); "video_queue": (ApiSchemas["RpcVideoQueueInfo"] | null) }
   "RpcClientMediaEntry": { "type": "image" | "video" | "audio"; "url": string; "audio_url": (string | null); "duration": (number | null); "transcript": (string | null) }
   "RpcComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
@@ -225,7 +228,7 @@ export interface ApiSchemas {
   "RpcMessageVoiceEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcVoiceBubbleView"]; "session_id": string }
   "RpcMoodEvent": { "mood": string }
   "RpcOutfitChangedEvent": { "outfit_id": string }
-  "RpcPlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text" }
+  "RpcPlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text"; "call_duration_ms": (number | null) }
   "RpcPostCommentDeletedEvent": { "post_id": string; "comment_id": string }
   "RpcPostCommentEvent": { "post_id": string; "comment": ApiSchemas["RpcPostCommentResponse"] }
   "RpcPostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["RpcPostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "completed" | "failed"; "reply_error": (string | null) }
@@ -577,6 +580,7 @@ export interface ApiOperations {
   "sessions.patch_session": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["DesktopSessionPatchRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["DesktopSessionPatchRequest"] }; response: ApiSchemas["SessionCreateResult"] }
   "sessions.delete_session": { path: { "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "session_id": string }; query?: never; body?: never }; response: ApiSchemas["DesktopSessionOperationResponse"] }
   "sessions.fork_session": { path: { "session_id": string }; query: Record<string, never>; body: ApiSchemas["SessionForkRequest"]; input: { path: { "session_id": string }; query?: never; body: ApiSchemas["SessionForkRequest"] }; response: ApiSchemas["SessionCreateResult"] }
+  "sessions.get_call": { path: { "session_id": string; "record_id": string }; query: { "after_id"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "session_id": string; "record_id": string }; query?: { "after_id"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["CallRecordPage"] }
   "sessions.get_session_history": { path: { "session_id": string }; query: { "before_id"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "session_id": string }; query?: { "before_id"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["SessionHistoryResponse"] }
   "social_accounts.list_social_accounts": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["SocialAccountList"] }
   "social_accounts.put_social_credentials": { path: { "platform": "x" | "xiaohongshu" | "bilibili" }; query: Record<string, never>; body: ApiSchemas["SocialCredentialsRequest"]; input: { path: { "platform": "x" | "xiaohongshu" | "bilibili" }; query?: never; body: ApiSchemas["SocialCredentialsRequest"] }; response: ApiSchemas["SocialAccountView"] }
@@ -653,6 +657,7 @@ export interface GatewayEventPayloads {
   "message.replaced": ApiSchemas["RpcMessageReplacedEvent"]
   "message.start": ApiSchemas["RpcTurnEvent"]
   "message.voice": ApiSchemas["RpcMessageVoiceEvent"]
+  "session.call_recorded": ApiSchemas["RpcCallRecordedEvent"]
   "session.list_changed": ApiSchemas["RpcSessionListChangedEvent"]
   "session.state": ApiSchemas["RpcSessionStateEvent"]
   "system.notification": ApiSchemas["RpcSystemNotificationEvent"]
@@ -2525,6 +2530,18 @@ export const API_OPERATIONS = {
     "wait_for_model": false,
     "ipc": true
   },
+  "sessions.get_call": {
+    "path": "/api/sessions/{session_id}/calls/{record_id}",
+    "method": "GET",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop",
+      "remote"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
   "sessions.get_session_history": {
     "path": "/api/sessions/{session_id}/history",
     "method": "GET",
@@ -3058,6 +3075,12 @@ export const EVENT_POLICIES = {
     "baseline": true
   },
   "message.voice": {
+    "audience": "all",
+    "snapshot": true,
+    "recovery": "session",
+    "baseline": false
+  },
+  "session.call_recorded": {
     "audience": "all",
     "snapshot": true,
     "recovery": "session",

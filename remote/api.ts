@@ -2,6 +2,7 @@ import type { ApiArguments, ApiOperationKey, ApiResponse, ApiTransport, HttpCall
 import { createHttpClient } from '../shared/api'
 import { ApiError } from '../shared/errors'
 import { GatewayConnection, type GatewayEvent, type SessionSnapshot } from '../shared/gateway'
+import { REALTIME_CALL_VERSION } from '../shared/realtime-call'
 import { uiCopy } from '../shared/ui-copy'
 export { ApiError } from '../shared/errors'
 export type { GatewayEvent } from '../shared/gateway'
@@ -80,6 +81,7 @@ export class RemoteApi implements ApiTransport {
     const url = new URL(`/api/realtime_voice/${encodeURIComponent(sessionId)}`, location.origin)
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     url.searchParams.set('ticket', ticket)
+    url.searchParams.set('version', String(REALTIME_CALL_VERSION))
     return url.href
   }
 }

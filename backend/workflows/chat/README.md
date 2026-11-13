@@ -20,7 +20,7 @@
 
 HTTP 受理由账户任务持有，调用方取消不能中断已持久受理。结构与输入互斥由 [http_contracts.py](../../features/conversation/http_contracts.py) 校验，工作流核对附件、额度和消息资格；[会话提交账本](../../features/conversation/submissions.py) 在锁内原子保存完整消息序列、附件和请求，重复提交复用原结果。传入 `persisted_message_id` 时输入已由调用方保存并发布，编排不再插入或通知。
 
-`run_chat_turn` 的会话锁覆盖回合及取消收尾；回合起点（`_load_turn_setup`）核对身份与输入，上下文装配（`_prepare_turn`）加载资料与工具，每轮再刷新环境和媒体（`_refresh_turn_material`）。阶段结果只交接已有对象，媒体状态由同一工具上下文持有。模型任务在起点按会话与主动回合标志确定，委派子回合用 `task_override` 继承父任务；装配时解析的基础链供窗口估算与工具辅助调用使用，每步模型调用重新读取当前任务链。工具调用/结果写入必须完成后才能释放锁，资产保护覆盖工具返回到父回合提交的间隔。终端保存归 [turn_store.py](../../features/conversation/turn_store.py)，不得把尚未落库的结果留给无所属的后台任务。历史修改入口（压缩、撤回、清空）共享 `compression_context` 的只读拒绝、历史锁与在途回合校验。
+`run_chat_turn` 的会话锁覆盖回合及取消收尾；回合起点（`_load_turn_setup`）核对身份与输入，上下文装配（`_prepare_turn`）加载资料与工具，每轮再刷新环境和媒体（`_refresh_turn_material`）。阶段结果只交接已有对象，媒体状态由同一工具上下文持有。模型任务在起点按会话与主动回合标志确定，委派子回合用 `task_override` 继承父任务；装配时解析的基础链供窗口估算与工具辅助调用使用，每步模型调用重新读取当前任务链。工具调用/结果写入必须完成后才能释放锁，资产保护覆盖工具返回到父回合提交的间隔。终端保存归 [turn_store.py](../../features/conversation/turn_store.py)，不得把尚未落库的结果留给无所属的后台任务。历史修改入口（压缩、撤回、清空）共享 `compression_context` 的只读拒绝、历史锁与在途回合校验。实时通话独占其会话：通话回合以 `call_owner` 通过同一把会话锁，其他提交与历史修改按 `realtime_call` 拒绝，直到结算完成。
 
 `ephemeral` 用于主动陪伴，请求作为本轮尾部资料，压缩检查点仍保存；`headless` 控制本机桌面工作态，`has_viewer` 控制缓冲和气泡停顿。委派建立父会话下的子会话，继承预设、设置和限制，以 `HeadlessEmitter` 捕获结果；生活空间及再次委派在执行层排除，子会话输入不能成为用户事实证据。
 

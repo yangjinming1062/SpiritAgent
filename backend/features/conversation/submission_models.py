@@ -1,5 +1,5 @@
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, func, select, text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, func, select, text
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Mapped, column_property, mapped_column
 
@@ -28,6 +28,7 @@ class PromptSubmission(ModelBase, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text)
     origin_kind: Mapped[str] = mapped_column(String(16))
     origin_id: Mapped[str | None] = mapped_column(String(64))
+    is_realtime_call: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     replace_reply_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )

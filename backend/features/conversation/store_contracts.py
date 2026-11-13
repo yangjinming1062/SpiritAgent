@@ -16,6 +16,7 @@ class CompressionInfo:
     completion_tokens: int
     through_message_id: int
     prune_before_message_id: int | None
+    contains_call_content: bool = False
 
 
 @dataclass(frozen=True, slots=True)

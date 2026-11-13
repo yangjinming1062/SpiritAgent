@@ -1,10 +1,10 @@
 """会话历史读取与气泡统计；按 Message.id 正序重建消息，使工具结果可回填调用名称。"""
 
 from infrastructure.assets.asset_store import client_asset_url
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.conversation.models import Conversation, Message
+from features.conversation.models import CALL_RECORD_SUBTYPE, PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message
 from features.conversation.replacement import replaceable_reply_expression
 from features.conversation.replies import CompanionReply, MediaBubble
 from features.conversation.reply_audio import client_reply_bubbles
@@ -43,7 +43,10 @@ async def build_session_messages(
 ) -> list[dict]:
     """按 Message.id 正序重建消息；支持向前分页、最近条数与指定消息集合。"""
     stmt = select(Message, replaceable_reply_expression(conv_id).label("replaceable_id")).where(
-        Message.conversation_id == conv_id
+        Message.conversation_id == conv_id,
+        Message.call_record_id.is_(None),
+        Message.subtype.is_distinct_from(PRIVATE_CHECKPOINT_SUBTYPE),
+        or_(Message.subtype.is_distinct_from(CALL_RECORD_SUBTYPE), Message.call_duration_ms.is_not(None)),
     )
     if before_id is not None:
         stmt = stmt.where(Message.id < before_id)
@@ -81,6 +84,8 @@ async def build_session_messages(
         item: dict = {"role": msg.role, "content": msg.content, "content_type": msg.content_type}
         if msg.subtype:
             item["subtype"] = msg.subtype
+        if msg.call_duration_ms is not None:
+            item["call_duration_ms"] = msg.call_duration_ms
         if msg.media_json:
             media = msg.media_json or None
             if isinstance(media, list) and media:

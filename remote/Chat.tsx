@@ -1,8 +1,10 @@
 import {
   IconArrowLeft,
+  IconBadgeCc,
   IconMicrophone,
   IconMicrophoneOff,
   IconPhoneCall,
+  IconPhoneOff,
   IconPhoto,
   IconPlus,
   IconSend,
@@ -15,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiResponse, HttpCallOptions } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
 import { eventsAfterSnapshot, isRecord } from '../shared/gateway'
+import { callCopy, CallTranscriptPage, formatCallDuration, LiveCallPage, useCallView } from '../shared/realtime-call-ui'
 import { compareResourceIds, isResourceId } from '../shared/resource-id'
 import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
 
@@ -193,17 +196,31 @@ export function Chat({
     sessionId: selected,
     eligible: connected && selectedSession?.system_preset_id === 'companion' && !readOnly
   })
-  const callActive =
-    realtimeCall.snapshot.state !== 'idle' &&
-    realtimeCall.snapshot.state !== 'stopped' &&
-    realtimeCall.snapshot.state !== 'error'
-  const callPart = realtimeCall.snapshot.part
-  const receiveCallPart = realtimeCall.receivedPart
+  const callView = useCallView(selected, realtimeCall.snapshot.state === 'stopped')
+  const recordId = callView.recordId
+  const [callIdentity, setCallIdentity] = useState({ name: '', avatar: '' })
+  const liveOpen = callView.isOpen && !recordId
+
   useEffect(() => {
-    if (callActive && callPart) {
-      receiveCallPart(callPart)
+    if (!callView.isOpen) {
+      return
     }
-  }, [callActive, callPart, receiveCallPart])
+    const controller = new AbortController()
+    void Promise.allSettled([
+      api.invoke('companion.get_persona', {}, { signal: controller.signal }),
+      api.invoke('companion.get_avatar', {}, { signal: controller.signal })
+    ]).then(([persona, avatar]) => {
+      if (!controller.signal.aborted) {
+        const definition = persona.status === 'fulfilled' ? persona.value.definition_json : null
+        setCallIdentity({
+          name: isRecord(definition) && typeof definition.name === 'string' ? definition.name : '',
+          avatar: avatar.status === 'fulfilled' ? avatar.value.asset_url : ''
+        })
+      }
+    })
+    return () => controller.abort()
+  }, [api, callView.isOpen])
+
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const navigation = useRef(0)
@@ -506,6 +523,11 @@ export function Chat({
     if (sessionId !== selectedRef.current) {
       return
     }
+    if (event.type === 'session.call_recorded' && sessionId) {
+      void runLatest(() => resume(sessionId))
+
+      return
+    }
     if (
       event.type !== 'session.snapshot' &&
       EVENT_POLICIES[event.type].baseline &&
@@ -739,6 +761,15 @@ export function Chat({
         cancellations.rejected({ sessionId: id, requestId: request.id }, failure)
       }
       if (alive() && selectedRef.current === id && pending.current?.id === request.id) {
+        if (
+          failure instanceof ApiError &&
+          failure.code === 'turn_busy' &&
+          isRecord(failure.business.details) &&
+          failure.business.details.realtime_call === true
+        ) {
+          pending.current = null
+          sessionStorage.removeItem(promptKey(id))
+        }
         setFailure(errorText(failure))
       }
     }
@@ -988,7 +1019,7 @@ export function Chat({
     .map(bubble => bubble.topic_id)
 
   const content = (
-    <div className="chat-page">
+    <div className={`chat-page ${callView.isOpen ? 'sa-call-covered' : ''}`} inert={callView.isOpen}>
       <header className="chat-header">
         <button
           aria-label="返回会话列表"
@@ -1074,35 +1105,50 @@ export function Chat({
         ) : null}
         {messages
           .filter(message => message.role === 'assistant' || message.role === 'user' || message.subtype)
-          .map(message => (
-            <Message
-              api={api}
-              device={device}
-              key={message.id}
-              message={message}
-              onReplaceBubble={(bubbleIndex, bubble) =>
-                setMessages(previous =>
-                  previous.map(item =>
-                    item.id === message.id && item.content_type === 'companion_reply'
-                      ? {
-                          ...item,
-                          bubbles: item.bubbles.map((current, index) => (index === bubbleIndex ? bubble : current))
-                        }
-                      : item
+          .map(message =>
+            message.subtype === 'realtime_call' &&
+            message.content_type === 'text' &&
+            typeof message.call_duration_ms === 'number' ? (
+              <div className="remote-call-marker" key={message.id}>
+                <button
+                  className="sa-call-record"
+                  onClick={event => callView.open(event.currentTarget, message.id)}
+                  type="button"
+                >
+                  <IconPhoneCall aria-hidden size={16} /> {callCopy.zh.call} ·{' '}
+                  {formatCallDuration(message.call_duration_ms)}
+                </button>
+              </div>
+            ) : (
+              <Message
+                api={api}
+                device={device}
+                key={message.id}
+                message={message}
+                onReplaceBubble={(bubbleIndex, bubble) =>
+                  setMessages(previous =>
+                    previous.map(item =>
+                      item.id === message.id && item.content_type === 'companion_reply'
+                        ? {
+                            ...item,
+                            bubbles: item.bubbles.map((current, index) => (index === bubbleIndex ? bubble : current))
+                          }
+                        : item
+                    )
                   )
-                )
-              }
-              refresh={refreshMessages}
-              replace={
-                message.can_replace_reply && message.id === lastReplyMessageId
-                  ? () => run(() => submit(undefined, message.id))
-                  : undefined
-              }
-              replaceDisabled={readOnly || busy || Boolean(turn?.running) || Boolean(pending.current)}
-              replacing={turn?.replace_reply_message_id === message.id}
-              userId={userId}
-            />
-          ))}
+                }
+                refresh={refreshMessages}
+                replace={
+                  message.can_replace_reply && message.id === lastReplyMessageId
+                    ? () => run(() => submit(undefined, message.id))
+                    : undefined
+                }
+                replaceDisabled={readOnly || busy || Boolean(turn?.running) || Boolean(pending.current)}
+                replacing={turn?.replace_reply_message_id === message.id}
+                userId={userId}
+              />
+            )
+          )}
         {visibleTurn ? (
           <div className="message assistant">
             <div className="bubble">
@@ -1179,39 +1225,11 @@ export function Chat({
               </button>
             </div>
           ) : null}
-          {callActive ? (
-            <div className="recording-status">
-              ● 实时通话 · {realtimeCall.snapshot.state === 'speaking' ? '精灵正在讲话' : '正在倾听'}
-              {realtimeCall.snapshot.transcript ? <span> · {realtimeCall.snapshot.transcript}</span> : null}
-              {realtimeCall.snapshot.assistant ? <span> · {realtimeCall.snapshot.assistant}</span> : null}
-              {callPart ? (
-                <span className="call-part" role="status">
-                  {' '}
-                  · {callPart.text}
-                </span>
-              ) : null}
-              <button
-                aria-label={realtimeCall.muted ? '取消静音' : '静音通话'}
-                className="subtle"
-                onClick={() => realtimeCall.toggleMute()}
-                title={realtimeCall.muted ? '取消静音' : '静音通话'}
-                type="button"
-              >
-                {realtimeCall.muted ? <IconMicrophoneOff size={16} /> : <IconMicrophone size={16} />}
-              </button>
-              <button onClick={realtimeCall.stop} type="button">
-                结束
-              </button>
-            </div>
-          ) : null}
-          {!callActive && realtimeCall.snapshot.error ? (
-            <span className="muted">{realtimeCall.snapshot.error}</span>
-          ) : null}
           <div className="composer-row">
             <button
               aria-label="添加图片"
               className="icon-button"
-              disabled={busy || recording || callActive}
+              disabled={busy || recording}
               onClick={() => fileRef.current?.click()}
               type="button"
             >
@@ -1232,7 +1250,7 @@ export function Chat({
             <button
               aria-label={recording ? '完成录音' : '录制语音'}
               className={`icon-button ${recording ? 'recording' : ''}`}
-              disabled={callActive || transcribing || Boolean(recordingUnavailable)}
+              disabled={transcribing || Boolean(recordingUnavailable)}
               onClick={() => run(recordVoice)}
               title={recordingUnavailable || undefined}
               type="button"
@@ -1240,24 +1258,27 @@ export function Chat({
               {recording ? <IconSquare size={18} /> : <IconMicrophone />}
             </button>
             <button
-              aria-label={callActive ? '结束实时通话' : '开始实时通话'}
-              className={`icon-button ${callActive ? 'recording' : ''}`}
+              aria-label="开始实时通话"
+              className="icon-button"
               disabled={
-                callActive
-                  ? false
-                  : !connected ||
-                    !selected ||
-                    selectedSession?.system_preset_id !== 'companion' ||
-                    readOnly ||
-                    busy ||
-                    Boolean(turn?.running) ||
-                    Boolean(pending.current) ||
-                    Boolean(stoppingId) ||
-                    recording ||
-                    transcribing
+                !connected ||
+                !selected ||
+                selectedSession?.system_preset_id !== 'companion' ||
+                readOnly ||
+                busy ||
+                Boolean(turn?.running) ||
+                Boolean(pending.current) ||
+                Boolean(stoppingId) ||
+                recording ||
+                transcribing ||
+                !window.isSecureContext ||
+                !navigator.mediaDevices?.getUserMedia
               }
-              onClick={callActive ? realtimeCall.stop : () => void realtimeCall.start()}
-              title={realtimeCall.snapshot.error || undefined}
+              onClick={event => {
+                pauseMedia()
+                callView.open(event.currentTarget)
+                void realtimeCall.start()
+              }}
               type="button"
             >
               <IconPhoneCall size={18} />
@@ -1267,7 +1288,6 @@ export function Chat({
               className="send-button"
               disabled={
                 busy ||
-                callActive ||
                 Boolean(turn?.running) ||
                 recording ||
                 transcribing ||
@@ -1312,7 +1332,48 @@ export function Chat({
 
   return (
     <TopicFeedbackProvider api={api} gateway={gateway} key={selected} topicIds={topicIds}>
-      {content}
+      <div className="sa-call-host remote-call-host">
+        {content}
+        {callView.isOpen && recordId && (
+          <CallTranscriptPage
+            close={callView.close}
+            copy={callCopy.zh}
+            key={recordId}
+            load={(afterId, signal) =>
+              api.invoke(
+                'sessions.get_call',
+                {
+                  path: { session_id: selected, record_id: recordId },
+                  query: { after_id: afterId }
+                },
+                { signal }
+              )
+            }
+            name={callIdentity.name}
+          />
+        )}
+        {liveOpen && (
+          <LiveCallPage
+            acknowledge={realtimeCall.receivedPart}
+            avatar={
+              callIdentity.avatar ? <img alt="" src={callIdentity.avatar} /> : <IconPhoneCall aria-hidden size={28} />
+            }
+            close={callView.close}
+            copy={callCopy.zh}
+            hangup={realtimeCall.hangup}
+            icons={{
+              mic: <IconMicrophone aria-hidden size={18} />,
+              muted: <IconMicrophoneOff aria-hidden size={18} />,
+              captions: <IconBadgeCc aria-hidden size={18} />,
+              hangup: <IconPhoneOff aria-hidden size={18} />
+            }}
+            levels={realtimeCall.levels}
+            mute={realtimeCall.toggleMute}
+            name={callIdentity.name}
+            snapshot={realtimeCall.snapshot}
+          />
+        )}
+      </div>
     </TopicFeedbackProvider>
   )
 }

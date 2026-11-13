@@ -43,7 +43,7 @@ from runtime.tools.domains import apply_search_tools_catalog
 from runtime.tools.presentation import VISUAL_TOOL_NAMES
 from runtime.tools.registry import REGISTRY, schema_name
 from runtime.tools.tool_guardrails import ToolCallGuardrailController
-from runtime.turn_ownership import conversation_lock
+from runtime.turn_ownership import conversation_call_conflict, conversation_lock
 
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.context_compressor import CompressionFailedError, compress_history, compression_due
@@ -171,9 +171,14 @@ async def run_chat_turn(
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
     reply_delivery: TerminalReplyDelivery | None = None,
+    call_record_id: int | None = None,
+    call_owner: object | None = None,
 ) -> None:
     """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。``task_override`` 供委派子回合继承父回合任务。"""
     async with conversation_lock(req.session_id):
+        if conversation_call_conflict(req.session_id, call_owner):
+            await emitter.send_json({"type": "error", "message": "当前会话正在通话，请挂断后再试"})
+            return
         with asset_write_context():
             await _run_chat_turn(
                 req,
@@ -192,6 +197,7 @@ async def run_chat_turn(
                 has_viewer=has_viewer,
                 excluded_tool_names=excluded_tool_names,
                 reply_delivery=reply_delivery,
+                call_record_id=call_record_id,
             )
 
 
@@ -313,6 +319,7 @@ async def _prepare_turn(
     excluded_tool_names: frozenset[str],
     memory_embedding: QueryEmbedding | None,
     reply_delivery: TerminalReplyDelivery | None,
+    call_record_id: int | None,
 ) -> _TurnContext | None:
     """上下文阶段：召回与工具装配、自动压缩、截断与媒体状态；`None` 表示已发错误帧结束本轮。"""
     async with session_scope() as db:
@@ -396,17 +403,23 @@ async def _prepare_turn(
         if compress_info is not None:
             async with session_scope() as db:
                 checkpoint = await persist_compression_checkpoint(
-                    db, setup.conv.id, compress_info, user_id=user_id, notify_user_id=user_id if headless else None
+                    db,
+                    setup.conv.id,
+                    compress_info,
+                    user_id=user_id,
+                    notify_user_id=user_id if headless else None,
+                    call_record_id=call_record_id,
                 )
             # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
-            await emitter.send_json(
-                {
-                    "type": "compress.completed",
-                    "subtype": checkpoint.subtype,
-                    "text": checkpoint.content,
-                    "message_id": checkpoint.id,
-                }
-            )
+            if not compress_info.contains_call_content:
+                await emitter.send_json(
+                    {
+                        "type": "compress.completed",
+                        "subtype": checkpoint.subtype,
+                        "text": checkpoint.content,
+                        "message_id": checkpoint.id,
+                    }
+                )
     # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
     current_context = truncate_responses_context(
         compressed_context,
@@ -477,11 +490,11 @@ async def _prepare_turn(
         delegate_executor=partial(
             run_delegated_turn,
             user_id=user_id,
-            run_turn=partial(run_chat_turn, headless=headless),
+            run_turn=partial(run_chat_turn, headless=headless or call_record_id is not None),
             task=setup.task,
             inherited_excluded_tool_names=inputs.excluded_tool_names,
         ),
-        headless=headless,
+        headless=headless or call_record_id is not None,
         excluded_tool_names=inputs.excluded_tool_names,
         scene_turn=SceneTurnState(),
         proactive_turn=ephemeral,
@@ -569,6 +582,7 @@ async def _run_chat_turn(
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
     reply_delivery: TerminalReplyDelivery | None = None,
+    call_record_id: int | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     with ExitStack() as turn_scope:
@@ -603,6 +617,7 @@ async def _run_chat_turn(
             excluded_tool_names=excluded_tool_names,
             memory_embedding=memory_embedding,
             reply_delivery=reply_delivery,
+            call_record_id=call_record_id,
         )
         if turn is None:
             return
@@ -758,6 +773,7 @@ async def _run_chat_turn(
                     submission_request_id=submission_request_id,
                     media_request_scope=media_turn.request_scope,
                     reply_delivery=reply_delivery,
+                    call_record_id=call_record_id,
                 )
                 break
 
@@ -774,4 +790,5 @@ async def _run_chat_turn(
                 active_tool_names,
                 schemas_by_name,
                 persist=not ephemeral,
+                call_record_id=call_record_id,
             )

@@ -11,6 +11,7 @@ import {
 import {
   $chatSessionId,
   $companionSessionId,
+  CallSurface,
   consumePendingMessages,
   ConversationInput,
   ConversationSurface,
@@ -78,12 +79,18 @@ function WhisperOverlayContent(): React.JSX.Element {
 
   return (
     <WhisperPositioner onDrop={input.handleDrop}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ConversationSurface scrollRef={scrollRef} variant="companion" />
-      </div>
-      <div className="shrink-0">
-        <ConversationInput {...input.inputProps} variant="companion" />
-      </div>
+      <CallSurface enabled={!isReadOnlySession && sessionId === companionSessionId && gatewayState === 'open'}>
+        {(onStartCall, callOpen) => (
+          <div className={`flex min-h-0 flex-1 flex-col ${callOpen ? 'sa-call-covered' : ''}`} inert={callOpen}>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <ConversationSurface scrollRef={scrollRef} variant="companion" />
+            </div>
+            <div className="shrink-0">
+              <ConversationInput {...input.inputProps} onStartCall={onStartCall} variant="companion" />
+            </div>
+          </div>
+        )}
+      </CallSurface>
     </WhisperPositioner>
   )
 }

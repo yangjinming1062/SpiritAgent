@@ -1,4 +1,6 @@
-export type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'stopped' | 'error'
+export const REALTIME_CALL_VERSION = 2
+
+export type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ending' | 'stopped' | 'error'
 export interface PlaybackVersion {
   turnSeq: number
   playbackEpoch: number
@@ -14,6 +16,7 @@ export interface CallPart {
 export interface RealtimeCallSnapshot {
   state: CallState
   muted: boolean
+  connectedAt: number | null
   turnSeq: number
   playbackEpoch: number
   error: string | null
@@ -45,6 +48,7 @@ export class RealtimeCallController {
   private value: RealtimeCallSnapshot = {
     state: 'idle',
     muted: false,
+    connectedAt: null,
     turnSeq: 0,
     playbackEpoch: 0,
     error: null,
@@ -55,12 +59,14 @@ export class RealtimeCallController {
   private pending: (CallAudioFrameMeta & { bytes: number }) | null = null
   private sequence = 0
   private heartbeat: ReturnType<typeof setInterval> | null = null
+  private endingTimer: ReturnType<typeof setTimeout> | null = null
+  private connectTimer: ReturnType<typeof setTimeout> | null = null
   private ready: (() => void) | null = null
   private rejectReady: ((error: Error) => void) | null = null
   private queued = 0
   private tail: Promise<void> = Promise.resolve()
   private closed = false
-  private lastPong = Date.now()
+  private lastPong = performance.now()
   constructor(private readonly options: RealtimeCallControllerOptions) {}
   get muted(): boolean {
     return this.value.muted
@@ -70,9 +76,6 @@ export class RealtimeCallController {
   }
   private publish(): void {
     this.options.onSnapshot(this.snapshot())
-  }
-  private version(): PlaybackVersion {
-    return { turnSeq: this.value.turnSeq, playbackEpoch: this.value.playbackEpoch }
   }
   current(version: PlaybackVersion): boolean {
     return !this.closed && version.turnSeq === this.value.turnSeq && version.playbackEpoch === this.value.playbackEpoch
@@ -98,7 +101,10 @@ export class RealtimeCallController {
       }
 
       this.heartbeat = setInterval(() => {
-        if (Date.now() - this.lastPong > 30000) {
+        if (this.value.state === 'connecting' || this.value.state === 'ending') {
+          return
+        }
+        if (performance.now() - this.lastPong > 30000) {
           this.fail('通话连接已中断')
 
           return
@@ -153,8 +159,14 @@ export class RealtimeCallController {
     this.value.state = 'listening'
     this.value.error = null
     this.value.part = null
+    this.value.transcript = ''
+    this.value.assistant = ''
     this.options.onClear()
-    this.send({ type: 'input.start', turn_seq: this.value.turnSeq, playback_epoch: this.value.playbackEpoch })
+    this.send({
+      type: 'input.start',
+      turn_seq: this.value.turnSeq,
+      playback_epoch: this.value.playbackEpoch
+    })
     this.publish()
   }
   endInputTurn(): void {
@@ -162,7 +174,11 @@ export class RealtimeCallController {
       return
     }
 
-    this.send({ type: 'input.end', turn_seq: this.value.turnSeq, playback_epoch: this.value.playbackEpoch })
+    this.send({
+      type: 'input.end',
+      turn_seq: this.value.turnSeq,
+      playback_epoch: this.value.playbackEpoch
+    })
     this.value.state = 'thinking'
     this.publish()
   }
@@ -187,7 +203,7 @@ export class RealtimeCallController {
     }
   }
   receivedPart(part: CallPart): void {
-    if (this.current(part.version)) {
+    if (this.value.part === part && this.current(part.version)) {
       this.send({
         type: 'part.received',
         part_id: part.id,
@@ -196,8 +212,12 @@ export class RealtimeCallController {
       })
     }
   }
-  receive(data: string | ArrayBuffer | Uint8Array): void {
+  receive(data: string | Uint8Array | ArrayBuffer): void {
     if (this.closed) {
+      return
+    }
+
+    if (this.value.state === 'ending') {
       return
     }
 
@@ -216,8 +236,7 @@ export class RealtimeCallController {
         return
       }
 
-      const frame = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-      this.options.onAudioFrame(frame as ArrayBuffer, header)
+      this.options.onAudioFrame(bytes.slice().buffer, header)
 
       return
     }
@@ -243,10 +262,19 @@ export class RealtimeCallController {
       return
     }
 
-    const version = { turnSeq: event.turn_seq, playbackEpoch: event.playback_epoch }
+    const version = {
+      turnSeq: event.turn_seq,
+      playbackEpoch: event.playback_epoch
+    }
 
     if (event.type === 'audio.chunk') {
       this.pending = null
+    }
+
+    // 心跳只属于连接本身；期间开始的输入回合不会让 pong 失效。
+    if (event.type === 'pong') {
+      this.lastPong = performance.now()
+      return
     }
 
     if (!this.current(version)) {
@@ -257,14 +285,25 @@ export class RealtimeCallController {
 
     switch (event.type) {
       case 'session.ready':
-        this.lastPong = Date.now()
-        this.value.state = 'listening'
+        if (payload.version !== REALTIME_CALL_VERSION) {
+          this.fail('通话版本不匹配，请更新应用后重试')
+
+          return
+        }
+
+        this.lastPong = performance.now()
         this.ready?.()
 
         break
 
-      case 'pong':
-        this.lastPong = Date.now()
+      case 'session.connected':
+        if (this.connectTimer !== null) {
+          clearTimeout(this.connectTimer)
+          this.connectTimer = null
+        }
+        this.lastPong = performance.now()
+        this.value.connectedAt = performance.now()
+        this.value.state = 'listening'
 
         break
 
@@ -294,8 +333,16 @@ export class RealtimeCallController {
         }
 
         this.sequence = payload.sequence
-        this.pending = { ...version, sequence: payload.sequence, bytes: payload.byte_length }
+        this.pending = {
+          ...version,
+          sequence: payload.sequence,
+          bytes: payload.byte_length
+        }
+        if (this.value.state === 'speaking' && this.value.part === null) {
+          return
+        }
         this.value.state = 'speaking'
+        this.value.part = null
 
         break
 
@@ -330,8 +377,8 @@ export class RealtimeCallController {
               : typeof bubble.title === 'string'
                 ? bubble.title
                 : bubble.type === 'image'
-                  ? '图片已生成，可在对话中查看。'
-                  : '影像任务可在对话中查看。'
+                  ? '图片已生成。'
+                  : '已提交影像任务。'
 
           this.value.part = { id: payload.part_id, text, version }
         }
@@ -364,6 +411,14 @@ export class RealtimeCallController {
     }
 
     this.closed = true
+    if (this.connectTimer !== null) {
+      clearTimeout(this.connectTimer)
+      this.connectTimer = null
+    }
+    if (this.endingTimer !== null) {
+      clearTimeout(this.endingTimer)
+      this.endingTimer = null
+    }
     this.pending = null
 
     if (this.heartbeat) {
@@ -379,7 +434,39 @@ export class RealtimeCallController {
     this.options.onEnded()
     void this.options.transport.close().catch(() => {})
   }
-  stop(): void {
+  audioReady(): void {
+    if (this.closed || this.value.state !== 'connecting' || this.connectTimer !== null) {
+      return
+    }
+    this.connectTimer = setTimeout(() => this.fail('通话连接超时'), 15000)
+    this.send({ type: 'client.ready' })
+  }
+  stop(graceful = false): void {
+    if (graceful && !this.closed && this.value.connectedAt !== null) {
+      if (this.value.state === 'ending') {
+        return
+      }
+
+      this.send({ type: 'stop' })
+      if (this.closed) {
+        return
+      }
+      this.value.state = 'ending'
+      this.value.part = null
+      this.options.onClear()
+      this.publish()
+      this.endingTimer = setTimeout(() => this.finish(null), 5000)
+
+      return
+    }
+
     this.finish(null)
+  }
+  transportClosed(): void {
+    if (this.value.state === 'ending') {
+      this.finish(null)
+    } else {
+      this.fail('通话连接已中断')
+    }
   }
 }

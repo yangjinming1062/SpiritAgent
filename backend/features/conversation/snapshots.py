@@ -38,3 +38,4 @@ class MessageSnapshot:
     summary_through_message_id: int | None
     created_at: datetime
     generation_origin_json: dict[str, Any] | None = None
+    call_record_id: int | None = None
