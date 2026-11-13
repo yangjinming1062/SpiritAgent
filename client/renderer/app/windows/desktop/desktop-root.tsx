@@ -12,7 +12,6 @@ import {
 } from '@/app/navigation/app-navigation'
 import { useDesktopWindowHydration } from '@/app/workflows/window-hydration'
 import { useDesktopNavigation } from '@/app/workflows/window-navigation'
-import { AccountMenu } from '@/features/accounts/account-menu'
 import { $portraitUrl } from '@/features/character'
 import {
   $callScreenOpen,
@@ -25,7 +24,6 @@ import { ConversationPage } from '@/features/conversation/conversation-page'
 import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
 import { $postsHasUnread } from '@/features/life/posts'
-import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -96,8 +94,7 @@ export function DesktopRoot(): React.JSX.Element {
   const wallpaper = useDesktopWallpaperStatus()
 
   const [mainChatFocused, setMainChatFocused] = useState(false)
-  const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
-  const accountOpen = overlay === 'account'
+  const [overlay, setOverlay] = useState<'controls' | 'dock' | 'product' | null>(null)
 
   const [area, setArea] = useState<{ width: number; height: number; left: number; top: number }>({
     width: 1000,
@@ -109,9 +106,8 @@ export function DesktopRoot(): React.JSX.Element {
   const handledNavigationRevision = useRef(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const avatarRef = useRef<HTMLButtonElement>(null)
-  useInteractiveRegion('desktop-avatar', menuRef)
+  const avatarRegionRef = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('desktop-avatar', avatarRegionRef)
   const { layout, activate, enterCall, exitCall, updateWindow, close } = useDesktopLayout()
 
   // 通话把聊天内窗临时改成竖版；切页或通话结束时恢复，竖向尺寸不带给其他页面。
@@ -160,7 +156,7 @@ export function DesktopRoot(): React.JSX.Element {
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
   const chatWindow = layout.windows.find(item => item.id === 'chat')
 
-  const avatarLabel = [
+  const chatLabel = [
     companionUnread ? t.openUnread : t.chat,
     chatWindow && t.running,
     chatWindow?.minimized && t.minimizedWindow
@@ -253,14 +249,10 @@ export function DesktopRoot(): React.JSX.Element {
       return
     }
 
-    // 主会话尚未加载：按头像语义找回伙伴主会话，而不是不响应。
+    // 主会话尚未加载：按聊天入口语义找回伙伴主会话，而不是不响应。
     clearReveal()
     void openCompanionMainChat().catch(error => notifyError(error, strings.chat.nav.companion))
   }, [activatePanel, clearReveal, companionSessionId, firstUnheard, reveal, strings])
-
-  const openAccountMenu = (): void => {
-    setOverlay('account')
-  }
 
   useEffect(() => {
     $desktopChatActive.set(mainChatActive)
@@ -318,8 +310,6 @@ export function DesktopRoot(): React.JSX.Element {
     return () => window.removeEventListener('blur', closeMenus)
   }, [desktopVisible])
 
-  useDismissOnOutside(menuRef, accountOpen, () => setOverlay(null))
-
   const page = (id: AppPage, visible: boolean): React.ReactNode => {
     const reading = visible && activePanel === id
 
@@ -368,6 +358,17 @@ export function DesktopRoot(): React.JSX.Element {
     )
   }
 
+  const avatarContent = (
+    <>
+      <DesktopAvatarSignal unread={companionUnread} />
+      {portrait ? (
+        <img alt="" className={styles.avatarPortrait} src={portrait} />
+      ) : (
+        <span className={styles.avatarPortrait}>{strings.brand.name.slice(0, 1)}</span>
+      )}
+    </>
+  )
+
   return (
     <div
       className={styles.desktop}
@@ -394,7 +395,6 @@ export function DesktopRoot(): React.JSX.Element {
           '--desktop-work-area-height': workArea
             ? `${workArea.height}px`
             : `calc(100vh - ${DESKTOP_LAYOUT.bottomInset}px)`,
-          '--desktop-center-width': `${DESKTOP_LAYOUT.centerWidth}px`,
           '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
           '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`,
           '--desktop-control-right': `${safeRight + rail.controlRight}px`,
@@ -422,50 +422,41 @@ export function DesktopRoot(): React.JSX.Element {
       </main>
       <DesktopBottomBar
         avatar={
-          <div className={styles.avatarMenu} ref={menuRef}>
-            <button
-              aria-current={activeWindow === 'chat' ? 'page' : undefined}
-              aria-expanded={accountOpen}
-              aria-label={avatarLabel}
-              className={styles.avatarButton}
-              data-current={activeWindow === 'chat'}
-              data-minimized={chatWindow?.minimized ?? false}
-              data-unread={companionUnread}
-              onClick={openCompanionChat}
-              onContextMenu={event => {
-                event.preventDefault()
-                openAccountMenu()
-              }}
-              onKeyDown={event => {
-                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                  event.preventDefault()
-                  openAccountMenu()
-                }
-              }}
-              ref={avatarRef}
-              title={companionUnread ? t.avatarUnreadHint : t.avatarChatHint}
-              type="button"
-            >
-              <DesktopAvatarSignal unread={companionUnread} />
-              {portrait ? (
-                <img alt="" className={styles.avatarPortrait} src={portrait} />
-              ) : (
-                <span className={styles.avatarPortrait}>{strings.brand.name.slice(0, 1)}</span>
-              )}
-              {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
-            </button>
-            <DesktopCompanionBubble onOpen={openCompanionChat} visible={desktopVisible && overlay === null} />
-            {accountOpen && (
-              <AccountMenu
-                bottomInset={popupBottom}
-                onClose={() => {
-                  setOverlay(null)
-                  avatarRef.current?.focus()
-                }}
-                placement="top-center"
-              />
+          <div className={styles.avatarMenu} ref={avatarRegionRef}>
+            {companionUnread ? (
+              <button
+                aria-label={t.openUnread}
+                className={`${styles.avatarCircle} ${styles.avatarButton}`}
+                data-unread="true"
+                onClick={openCompanionChat}
+                title={t.openUnread}
+                type="button"
+              >
+                {avatarContent}
+              </button>
+            ) : (
+              <div aria-hidden="true" className={styles.avatarCircle} data-unread="false">
+                {avatarContent}
+              </div>
             )}
+            <DesktopCompanionBubble onOpen={openCompanionChat} visible={desktopVisible && overlay === null} />
           </div>
+        }
+        chat={
+          <button
+            aria-current={activeWindow === 'chat' ? 'page' : undefined}
+            aria-label={chatLabel}
+            className={styles.internalDockItem}
+            data-current={activeWindow === 'chat'}
+            data-minimized={chatWindow?.minimized ?? false}
+            onClick={openCompanionChat}
+            title={chatLabel}
+            type="button"
+          >
+            <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/chat.svg`} />
+            {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
+            {companionUnread && <span aria-hidden="true" className={styles.productUnread} />}
+          </button>
         }
         dockOverlayActive={overlay === 'dock'}
         menuEnabled={desktopVisible}

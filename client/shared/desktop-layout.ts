@@ -4,7 +4,6 @@ export const DESKTOP_LAYOUT = {
   barHeight: 64,
   barBottom: 12,
   avatarSize: 76,
-  centerWidth: 100,
   controlSize: 44,
   controlEdge: 16,
   wingScrollSize: 20,
@@ -18,10 +17,10 @@ export function getDesktopRailLayout(viewportWidth: number) {
   const controlSize = compact ? 40 : DESKTOP_LAYOUT.controlSize
   const controlEdge = compact ? 4 : DESKTOP_LAYOUT.controlEdge
   const controlGap = compact ? 6 : 12
-  const centerWidth = compact ? DESKTOP_LAYOUT.avatarSize + 8 : DESKTOP_LAYOUT.centerWidth
   const barPadding = compact ? 4 : narrow ? 8 : 12
   const iconSize = narrow ? 40 : 48
   const itemGap = narrow ? 4 : 8
+  const centerWidth = DESKTOP_LAYOUT.avatarSize + iconSize + itemGap + 2 * barPadding
 
   const minimumWingWidth = Math.max(
     iconSize + 2 * itemGap + 8,

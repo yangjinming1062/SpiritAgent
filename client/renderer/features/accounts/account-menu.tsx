@@ -1,18 +1,15 @@
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft, ArrowRight, Check } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import styles from './account-menu.module.css'
+import { accountDetail, type Accounts, useAccountAction, useAccounts } from './use-accounts'
 
-type Accounts = Awaited<ReturnType<DesktopBridge['desktop']['accounts']>>
 const ACCOUNT_SUBMENU_WIDTH = 224
 const ACCOUNT_SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 12
@@ -31,24 +28,17 @@ function accountSubmenuSide(left: number, right: number): AccountSubmenuSide {
   return left - VIEWPORT_MARGIN >= ACCOUNT_SUBMENU_WIDTH + ACCOUNT_SUBMENU_GAP ? 'left' : 'overlay'
 }
 
-export function AccountMenu({
-  onClose,
-  placement,
-  bottomInset = VIEWPORT_MARGIN
-}: {
-  onClose: () => void
-  placement: 'above' | 'top-center'
-  bottomInset?: number
-}): React.JSX.Element {
+export function AccountMenu({ onClose }: { onClose: () => void }): React.JSX.Element {
   const strings = useStrings()
   const t = strings.accounts
-  const [accounts, setAccounts] = useState<Accounts | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
-  const [retry, setRetry] = useState(0)
+
+  const { accounts, failed, reload } = useAccounts({
+    onLoadError: error => notifyError(error, strings.common.operationFailed)
+  })
+
+  const { busy, run } = useAccountAction()
   const [submenu, setSubmenu] = useState<AccountSubmenu | null>(null)
   const [submenuSide, setSubmenuSide] = useState<AccountSubmenuSide>('right')
-  const beginAsync = useAsyncGuard()
   const menuRef = useRef<HTMLDivElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
@@ -73,11 +63,11 @@ export function AccountMenu({
     const updatePosition = (): void => {
       popup.style.setProperty('--account-offset-x', '0px')
       popup.style.setProperty('--account-offset-y', '0px')
-      popup.style.setProperty('--account-available-height', `${window.innerHeight - VIEWPORT_MARGIN - bottomInset}px`)
+      popup.style.setProperty('--account-available-height', `${window.innerHeight - 2 * VIEWPORT_MARGIN}px`)
 
       const rect = menu.getBoundingClientRect()
       const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - rect.width - VIEWPORT_MARGIN))
-      const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.top, window.innerHeight - rect.height - bottomInset))
+      const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.top, window.innerHeight - rect.height - VIEWPORT_MARGIN))
       popup.style.setProperty('--account-offset-x', `${left - rect.left}px`)
       popup.style.setProperty('--account-offset-y', `${top - rect.top}px`)
       popup.style.setProperty('--account-menu-left', `${menu.offsetLeft}px`)
@@ -96,7 +86,7 @@ export function AccountMenu({
         '--account-submenu-top',
         `${menu.offsetTop + (trigger ? trigger.getBoundingClientRect().top - top : 0)}px`
       )
-      popup.style.setProperty('--account-submenu-height', `${window.innerHeight - VIEWPORT_MARGIN - bottomInset}px`)
+      popup.style.setProperty('--account-submenu-height', `${window.innerHeight - 2 * VIEWPORT_MARGIN}px`)
 
       const submenuElement = submenuRef.current
 
@@ -109,7 +99,7 @@ export function AccountMenu({
 
         const submenuTop = Math.max(
           VIEWPORT_MARGIN,
-          Math.min(submenuRect.top, window.innerHeight - submenuRect.height - bottomInset)
+          Math.min(submenuRect.top, window.innerHeight - submenuRect.height - VIEWPORT_MARGIN)
         )
 
         submenuElement.style.setProperty('--account-submenu-offset-y', `${submenuTop - submenuRect.top}px`)
@@ -130,7 +120,7 @@ export function AccountMenu({
       observer.disconnect()
       window.removeEventListener('resize', updatePosition)
     }
-  }, [bottomInset, placement, submenu])
+  }, [submenu])
 
   const closeSubmenu = (): void => {
     focusOptionOnOpen.current = false
@@ -210,70 +200,12 @@ export function AccountMenu({
     focusOptionOnOpen.current = !focusAccountOption(submenu, focusDirectionOnOpen.current)
   }, [focusAccountOption, submenu, submenuSide])
 
-  useEffect(() => {
-    let disposed = false
-    setAccounts(null)
-    setFailed(false)
-
-    void shellApi()
-      .desktop.accounts()
-      .then(value => {
-        if (!disposed) {
-          setAccounts(value)
-          setFailed(false)
-        }
-      })
-      .catch(error => {
-        if (!disposed) {
-          setFailed(true)
-          notifyError(error, strings.common.operationFailed)
-        }
-      })
-
-    return () => {
-      disposed = true
-    }
-  }, [retry, strings.common.operationFailed])
-
-  const run = (action: () => Promise<unknown>): Promise<void> => {
-    const isCurrent = captureAuthScope()
-
-    if (!isCurrent) {
-      return Promise.resolve()
-    }
-
-    const isLive = beginAsync()
-    setBusy(true)
+  const closeForAction = (): void => {
     closeSubmenu()
     onClose()
-
-    return (async () => {
-      try {
-        await action()
-      } catch (error) {
-        if (isCurrent()) {
-          notifyError(error, strings.common.operationFailed)
-        }
-      } finally {
-        if (isLive()) {
-          setBusy(false)
-        }
-      }
-    })()
-  }
-
-  const accountCounts = new Map<string, number>()
-
-  for (const account of accounts ?? []) {
-    accountCounts.set(account.username, (accountCounts.get(account.username) ?? 0) + 1)
   }
 
   const currentAccount = accounts?.find(account => account.active)
-
-  const hasDuplicateName = (account: Accounts[number]): boolean => (accountCounts.get(account.username) ?? 0) > 1
-
-  const accountDetail = (account: Accounts[number]): string | null =>
-    hasDuplicateName(account) ? account.baseUrl : null
 
   const handlePopupBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
     if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
@@ -365,7 +297,6 @@ export function AccountMenu({
   return (
     <div
       className={styles.accountPopup}
-      data-placement={placement}
       data-side={submenuSide}
       onBlur={handlePopupBlur}
       onKeyDown={event => {
@@ -397,7 +328,7 @@ export function AccountMenu({
           {currentAccount && (
             <span className={styles.accountSummaryName}>
               <span>{currentAccount.username}</span>
-              {accountDetail(currentAccount) && <small>{accountDetail(currentAccount)}</small>}
+              {accountDetail(currentAccount, accounts) && <small>{accountDetail(currentAccount, accounts)}</small>}
             </span>
           )}
         </div>
@@ -405,7 +336,7 @@ export function AccountMenu({
         {failed && (
           <button
             className={styles.menuAction}
-            onClick={() => setRetry(value => value + 1)}
+            onClick={reload}
             onFocus={closeSubmenu}
             onPointerEnter={closeSubmenu}
             tabIndex={submenu ? -1 : 0}
@@ -417,7 +348,7 @@ export function AccountMenu({
         <button
           className={styles.menuAction}
           disabled={busy}
-          onClick={() => void run(() => shellApi().desktop.addAccount())}
+          onClick={() => void run(() => shellApi().desktop.addAccount(), closeForAction)}
           onFocus={closeSubmenu}
           onPointerEnter={closeSubmenu}
           tabIndex={submenu ? -1 : 0}
@@ -463,10 +394,12 @@ export function AccountMenu({
                 disabled={busy || (submenu === 'switch' && account.active)}
                 key={account.id}
                 onClick={() =>
-                  void run(() =>
-                    submenu === 'remove'
-                      ? shellApi().desktop.removeAccount(account.id)
-                      : shellApi().desktop.switchAccount(account.id)
+                  void run(
+                    () =>
+                      submenu === 'remove'
+                        ? shellApi().desktop.removeAccount(account.id)
+                        : shellApi().desktop.switchAccount(account.id),
+                    closeForAction
                   )
                 }
                 onKeyDown={event => handleAccountOptionKeyDown(event, index)}
@@ -480,7 +413,7 @@ export function AccountMenu({
               >
                 <span className={styles.accountOptionText}>
                   <span>{account.username}</span>
-                  {accountDetail(account) && <small>{accountDetail(account)}</small>}
+                  {accountDetail(account, accounts) && <small>{accountDetail(account, accounts)}</small>}
                 </span>
                 {account.active && <Check aria-hidden="true" size={14} />}
               </button>

@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 
+import { AccountSettings } from '@/features/accounts/account-settings'
 import { usePresentationModeSwitch } from '@/features/character'
 import { $userPreferredTier, selectDisturbanceTier } from '@/features/character'
 import { RENDERER_TIMINGS } from '@/shared/constants'
@@ -231,6 +232,7 @@ export function DesktopControls({
                 widthClass="w-full"
               />
             </div>
+            <AccountSettings onClose={closePanel} />
             {state.compatibilityWarning && (
               <p className={styles.notice} role="status">
                 {state.compatibilityWarning}

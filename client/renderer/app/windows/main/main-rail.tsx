@@ -157,7 +157,7 @@ export function MainRail({
             <Users aria-hidden="true" size={21} />
             <span>{strings.accounts.title}</span>
           </button>
-          {accountOpen && <AccountMenu onClose={closeAccounts} placement="above" />}
+          {accountOpen && <AccountMenu onClose={closeAccounts} />}
         </div>
       </div>
     </aside>

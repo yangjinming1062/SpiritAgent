@@ -12,6 +12,7 @@ import styles from './desktop.module.css'
 
 export function DesktopBottomBar({
   avatar,
+  chat,
   navigation,
   menuEnabled,
   dockOverlayActive,
@@ -21,6 +22,7 @@ export function DesktopBottomBar({
   systemTray
 }: {
   avatar: React.ReactNode
+  chat: React.ReactNode
   navigation: React.ReactNode
   menuEnabled: boolean
   dockOverlayActive: boolean
@@ -119,7 +121,10 @@ export function DesktopBottomBar({
         onMenuOpenChange={onDockOpenChange}
         overlayActive={dockOverlayActive}
       />
-      <div className={styles.avatarSlot}>{avatar}</div>
+      <div className={styles.centerRail}>
+        <div className={styles.avatarSlot}>{avatar}</div>
+        {chat}
+      </div>
       <div className={styles.productWing} ref={wingRef}>
         <button
           aria-label={t.moveLeft}

@@ -1,26 +1,11 @@
 .accountPopup {
   position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 60;
-  width: max-content;
-  padding-top: 12px;
-  translate: var(--account-offset-x, 0px) var(--account-offset-y, 0px);
-}
-.accountPopup[data-placement='above'] {
-  top: auto;
   bottom: 0;
   left: 100%;
-  padding-top: 0;
+  z-index: 60;
+  width: max-content;
   padding-left: 8px;
-}
-.accountPopup[data-placement='top-center'] {
-  top: auto;
-  bottom: 100%;
-  left: 50%;
-  padding-top: 0;
-  padding-bottom: 12px;
-  transform: translateX(-50%);
+  translate: var(--account-offset-x, 0px) var(--account-offset-y, 0px);
 }
 .menuContent {
   position: relative;

@@ -2,7 +2,9 @@
   --desktop-icon-size: 48px;
   --desktop-item-gap: 8px;
   --desktop-bar-padding: 12px;
-  --desktop-rail-center-width: var(--desktop-center-width);
+  --desktop-rail-center-width: calc(
+    var(--desktop-avatar-size) + var(--desktop-icon-size) + var(--desktop-item-gap) + 2 * var(--desktop-bar-padding)
+  );
   --desktop-rail-control-size: var(--desktop-control-size);
   --desktop-rail-control-edge: var(--desktop-control-edge);
   --desktop-unread-color: #168ee8;
@@ -62,6 +64,15 @@
     0 8px 28px rgb(0 0 0 / 0.16),
     inset 0 1px 0 rgb(255 255 255 / 0.12);
 }
+.centerRail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--desktop-item-gap);
+  height: 100%;
+  min-width: 0;
+  pointer-events: auto;
+}
 .avatarSlot {
   display: flex;
   align-self: end;
@@ -76,7 +87,7 @@
   height: var(--desktop-avatar-size);
   pointer-events: auto;
 }
-.avatarButton {
+.avatarCircle {
   position: relative;
   display: grid;
   place-items: center;
@@ -104,11 +115,6 @@
   object-fit: cover;
   border-radius: 50%;
 }
-.avatarButton[data-current='true'] {
-  box-shadow:
-    0 0 0 2px var(--ui-accent-line),
-    0 3px 14px rgb(0 0 0 / 0.14);
-}
 .avatarButton:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 4px;
@@ -124,10 +130,10 @@
     0 0 12px var(--desktop-unread-halo);
   opacity: 0.45;
 }
-.avatarButton[data-unread='false'] .avatarGlow {
+.avatarCircle[data-unread='false'] .avatarGlow {
   animation: desktopAvatarBreathe 3.6s ease-in-out infinite;
 }
-.avatarButton[data-unread='true'] .avatarGlow {
+.avatarCircle[data-unread='true'] .avatarGlow {
   opacity: 0.85;
 }
 .avatarSignal {
@@ -513,13 +519,11 @@
   left: 50%;
   transform: translateX(-50%);
 }
-.internalDockItem[data-current='true'] .runningDot,
-.avatarButton[data-current='true'] .runningDot {
+.internalDockItem[data-current='true'] .runningDot {
   width: 12px;
   background: var(--ui-accent);
 }
-.internalDockItem[data-minimized='true'] .runningDot,
-.avatarButton[data-minimized='true'] .runningDot {
+.internalDockItem[data-minimized='true'] .runningDot {
   background: var(--ui-app-bg);
   box-shadow: inset 0 0 0 1px var(--ui-text-muted);
 }
@@ -625,7 +629,6 @@
 }
 @media (max-width: 480px) {
   .desktop {
-    --desktop-rail-center-width: calc(var(--desktop-avatar-size) + 8px);
     --desktop-rail-control-size: 40px;
     --desktop-rail-control-edge: 4px;
     --desktop-bar-padding: 4px;

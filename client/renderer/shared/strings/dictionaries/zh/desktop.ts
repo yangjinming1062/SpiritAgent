@@ -12,8 +12,6 @@ export const desktop = {
     showConversations: '展开对话列表',
     hideConversations: '收起对话列表',
     openUnread: '查看未读对话',
-    avatarChatHint: '左键打开对话，右键切换账户',
-    avatarUnreadHint: '左键查看未读对话，右键切换账户',
     posts: '动态',
     diary: '日记',
     life: '生活',
