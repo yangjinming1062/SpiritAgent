@@ -148,7 +148,7 @@ Windows 与 macOS 均可从主窗口、精灵菜单、托盘或设置进入。�
 
 应用目录支持搜索、键盘操作、拖入与失效修复，启动和固定分开。Dock 只展示当前虚拟桌面交互屏的真实窗口；优先恢复本屏窗口，其次迁移异屏窗口，无窗口才启动，未能定位如实提示。关闭保留系统保存提示，不波及其他屏；Windows 保留 Jump List。可信启动与运行投影归 [PROTOCOL](PROTOCOL.md#桌面呈现与本机启动器)。
 
-背景使用当前有效静态素材或完整影像，全屏、锁屏和降低动态时停止动态播放，恢复不抢焦点；桌面不显示独立精灵。平台实现见 [Windows](../client/desktop-windows/README.md)、[macOS](../client/desktop-macos/README.md)，实机验收归 [Scripts](../scripts/README.md)。
+背景使用当前有效静态素材或完整影像；用户可在影像详情中把场景或完整场景成品设为账户默认壁纸，桌面无有效播放指令时优先显示它，影像重做后跟随该条目的当前版本。临时播放结束后回到默认壁纸，未设置或默认素材失效时回到普通基础画面。全屏、锁屏和降低动态时停止动态播放，恢复不抢焦点；桌面不显示独立精灵。平台实现见 [Windows](../client/desktop-windows/README.md)、[macOS](../client/desktop-macos/README.md)，实机验收归 [Scripts](../scripts/README.md)。
 
 ### 激活与账户切换
 

@@ -6,14 +6,14 @@ from uuid import uuid4
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.life.use_cases import current_presentation_revision, presentation_revision_matches
 
 from .eligibility import existing_asset
-from .models import VisualPlayback, VisualPresentation
+from .models import VisualItem, VisualPlayback, VisualPresentation
 from .ports import request_base_motion_preparation
 from .repository import (
     clear_presented_pointers,
@@ -82,6 +82,18 @@ async def present_static(user_id: int, snapshot: StagePresentation, *, expected_
         await touch_presentation(db, user_id)
         state.presentation_epoch = presence.revision
         await cancel_pending_command(db, state)
+        if state.default_visual_id is not None:
+            default_item = await db.scalar(
+                select(VisualItem).where(VisualItem.id == state.default_visual_id, VisualItem.user_id == user_id)
+            )
+            if default_item is not None and default_item.current_version is not None:
+                default_source = visual_snapshot(default_item).source
+                if default_source.kind == "cinematic" and (
+                    snapshot.identity_hash != default_source.identity_hash
+                    or snapshot.outfit is None
+                    or snapshot.outfit.content_hash != default_source.outfit.content_hash
+                ):
+                    state.default_visual_id = None
         state.pending_static_json = snapshot.model_copy(update={"state_revision": state.state_revision}).model_dump(
             mode="json"
         )
@@ -171,6 +183,16 @@ async def invalidate_scene_presentation(db: AsyncSession, user_id: int, scene_id
             else None
         )
         changed = True
+
+    if state.default_visual_id is not None:
+        default_item = await db.scalar(
+            select(VisualItem).where(VisualItem.id == state.default_visual_id, VisualItem.user_id == user_id)
+        )
+        if default_item is not None and default_item.current_version is not None:
+            default_source = visual_snapshot(default_item).source
+            if ref_matches(getattr(default_source, "scene", None)):
+                state.default_visual_id = None
+                changed = True
 
     affected_visual_ids: set[int] = set()
     for loop in (False, True):

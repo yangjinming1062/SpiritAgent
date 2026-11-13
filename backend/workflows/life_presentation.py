@@ -25,6 +25,7 @@ from features.visuals.schemas import (
     StagePresentation,
     VisualPresentationView,
 )
+from features.visuals.service import clear_default_cinematic_wallpaper
 from features.visuals.static_presentation import present_static
 from features.visuals.static_presentation import record_stage_intent as persist_intent
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
@@ -198,6 +199,8 @@ async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
 
 
 async def life_presentation_requested(user_id: int, _payload: dict) -> None:
+    if _payload.get("force") is True:
+        await clear_default_cinematic_wallpaper(user_id)
     await evaluate_life_presentation(user_id, force=_payload.get("force") is True)
 
 

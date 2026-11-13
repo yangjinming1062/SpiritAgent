@@ -47,6 +47,14 @@ async def _presentation_response(user_id: int, presentation: VisualPresentationV
         presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})
     if presentation.composition is not None:
         presentation = presentation.model_copy(update={"composition": client_composition(presentation.composition)})
+    if presentation.default_wallpaper is not None:
+        presentation = presentation.model_copy(
+            update={
+                "default_wallpaper": presentation.default_wallpaper.model_copy(
+                    update={"composition": client_composition(presentation.default_wallpaper.composition)}
+                )
+            }
+        )
     if presentation.static_presentation is not None:
         static = presentation.static_presentation
         presentation = presentation.model_copy(
@@ -168,6 +176,8 @@ async def update_preferences(user_id: int, body: VisualPreferencesRequest) -> Vi
         presentation = await service.update_presentation_preferences(
             user_id,
             autonomous_enabled=body.autonomous_enabled,
+            default_visual_id=body.default_visual_id,
+            set_default_visual="default_visual_id" in body.model_fields_set,
             target_width=body.target_width,
             target_height=body.target_height,
         )

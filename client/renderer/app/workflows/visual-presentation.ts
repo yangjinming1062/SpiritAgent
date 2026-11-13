@@ -42,7 +42,7 @@ export function deriveVisualPresentationTarget({
   paused
 }: VisualPresentationInput): DesktopBackgroundRequest {
   const baseline = projection?.loop_visual ?? projection?.current_visual ?? null
-  const plan = deriveStagePlan(projection, activeCommand, resolveAmbientLoop(projection), subtle, stagePlan.scene)
+  const plan = deriveStagePlan(projection, activeCommand, resolveAmbientLoop(projection), subtle, stagePlan.scene, true)
   const layerActor = plan.actor
   const layerScene = plan.scene
   const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null

@@ -81,6 +81,12 @@ def emit_visual_identity_updated(db: AsyncSession, asset: AvatarAsset) -> None:
         event_type="companion.visual_identity.updated",
         payload={"avatar_id": asset.id, "revision": asset.identity_revision},
     )
+    emit_ws_event(
+        db,
+        user_id=asset.user_id,
+        event_type="companion.life.presentation_requested",
+        payload={"force": True},
+    )
 
 
 async def initialize_visual_identity(db: AsyncSession, avatar: AvatarAsset) -> None:

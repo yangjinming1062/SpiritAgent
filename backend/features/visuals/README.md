@@ -39,9 +39,9 @@
 
 ## 呈现与文件
 
-呈现读取指定的冻结版本，素材修改或重做不能追改已显示的事实。呈现行保存舞台组合 `composition_json`、生活意图 `intent_json`、静态目标与已显示快照、待播指令和代次。
+呈现读取指定的冻结版本，素材修改或重做不能追改已显示的事实。呈现行保存舞台组合 `composition_json`、账户级默认壁纸关系 `default_visual_id`、生活意图 `intent_json`、静态目标与已显示快照、待播指令和代次。默认关系按稳定影像 ID 保存并跟随该条目的当前版本；用户从影像详情指定或清除，只允许 `scene` 与 `cinematic` 的已审核持续成品。
 
-呈现响应在 `composition.media` 附各层可播媒体投影（含 actor 版本的 `body` 锚点与命中元数据），播放指令对 actor 成品同样携带 `body`；`ambient_actor` 从可自动使用的待机成品中匹配冻结身份和造型，`ambient_catalog` 与 `ambient_scene` 投影当前身份、造型与环境可用的常驻和环境媒体，目录资格与限额在服务端筛选。三者不制作新素材、不建立逐圈播放账本；窗口模式播放透明主体视频按 `video` 回执并推进组合，静态投影仍按 `window_static`。客户端导演点播（`POST /{visual_id}/play?version=...`，desktop 身份）走同一指令管线，按目录指定版本登记播放与回执，`origin` 与 `life_revision` 按影像契约核对。
+呈现响应在 `composition.media` 附各层可播媒体投影（含 actor 版本的 `body` 锚点与命中元数据），并在 `default_wallpaper` 附默认成品当前版本及其可呈现组合；播放指令对 actor 成品同样携带 `body`；`ambient_actor` 从可自动使用的待机成品中匹配冻结身份和造型，`ambient_catalog` 与 `ambient_scene` 投影当前身份、造型与环境可用的常驻和环境媒体，目录资格与限额在服务端筛选。默认壁纸只由桌面宿主在无有效播放指令时消费，不建立播放账本，不受自动演出资格过滤；窗口模式继续使用主体层基础画面。三者不制作新素材、不建立逐圈播放账本；窗口模式播放透明主体视频按 `video` 回执并推进组合，静态投影仍按 `window_static`。客户端导演点播（`POST /{visual_id}/play?version=...`，desktop 身份）走同一指令管线，按目录指定版本登记播放与回执，`origin` 与 `life_revision` 按影像契约核对。
 
 生活情境投影与静态兜底归 [life_presentation](../../workflows/life_presentation.py)：动态表现关闭或无可播媒体时生活变化只落到静态目标，自主播放与制作受主动档位及自主开关约束。
 

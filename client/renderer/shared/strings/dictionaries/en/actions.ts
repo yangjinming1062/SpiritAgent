@@ -198,6 +198,16 @@ export const actions: Pick<Dictionary, 'actions' | 'visuals'> = {
     jobCommandFailed: "Couldn't run the creation command",
     cancelTitle: 'Cancel this creation?',
     currentMark: 'Currently shown',
+    defaultWallpaperMark: 'Default wallpaper',
+    defaultWallpaperTitle: 'Default desktop wallpaper',
+    defaultWallpaperHint:
+      'The desktop uses this visual when no playback command is active, then returns to it after one-shot playback.',
+    defaultWallpaperUnavailable: 'This visual has not passed presentation review or cannot be shown continuously.',
+    setDefaultWallpaper: 'Set as default wallpaper',
+    clearDefaultWallpaper: 'Clear default wallpaper',
+    defaultWallpaperSet: 'Default wallpaper set',
+    defaultWallpaperCleared: 'Default wallpaper cleared',
+    defaultWallpaperFailed: "Couldn't save the default wallpaper",
     autoPlayOff: 'Auto-play off',
     autoPlayOn: 'Auto-play on',
     autoPlayHint:

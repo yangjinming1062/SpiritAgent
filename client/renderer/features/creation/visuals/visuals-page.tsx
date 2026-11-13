@@ -146,6 +146,7 @@ export function VisualsPage(): React.JSX.Element {
 
   const detail = detailState?.id === selectedId ? detailState.detail : null
   const currentVisualId = projection?.current_visual?.id ?? null
+  const defaultVisualId = projection?.default_wallpaper?.visual.id ?? null
   const activeJobs = jobs.filter(job => !['succeeded', 'cancelled'].includes(job.state))
 
   const sourceSummary = (item: VisualItem): string =>
@@ -244,6 +245,19 @@ export function VisualsPage(): React.JSX.Element {
     })
   }
 
+  const setDefaultWallpaper = (): void => {
+    if (!detail) {
+      return
+    }
+
+    const clearing = defaultVisualId === detail.id
+
+    void run(() => setVisualPreferences({ default_visual_id: clearing ? null : detail.id }), {
+      failure: t.defaultWallpaperFailed,
+      success: clearing ? t.defaultWallpaperCleared : t.defaultWallpaperSet
+    })
+  }
+
   const readiness = t.materialReady(
     outfits.filter(item => item.status === 'ready').length,
     scenes.length,
@@ -268,6 +282,7 @@ export function VisualsPage(): React.JSX.Element {
         <VisualDetailView
           busy={busy}
           current={currentVisualId === selectedId}
+          defaultWallpaper={defaultVisualId === selectedId}
           detail={detail}
           detailError={detailError}
           key={selectedId}
@@ -276,6 +291,7 @@ export function VisualsPage(): React.JSX.Element {
           onDelete={deleteDetail}
           onRedo={redoDetail}
           onRetryLoad={() => void reloadDetail()}
+          onSetDefaultWallpaper={setDefaultWallpaper}
         />
       ) : (
         <>
@@ -405,6 +421,7 @@ export function VisualsPage(): React.JSX.Element {
                   {items.map(item => (
                     <VisualCard
                       current={currentVisualId === item.id}
+                      defaultWallpaper={defaultVisualId === item.id}
                       item={item}
                       key={item.id}
                       onSelect={() => openDetail(item.id)}
@@ -490,12 +507,14 @@ function SearchSourceField({
 function VisualCard({
   item,
   current,
+  defaultWallpaper,
   sourceSummary,
   onSelect,
   t
 }: {
   item: VisualItem
   current: boolean
+  defaultWallpaper: boolean
   sourceSummary: string
   onSelect: () => void
   t: VisualsCopy
@@ -531,6 +550,7 @@ function VisualCard({
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
           <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
           {current && <Badge tone="accent">{t.currentMark}</Badge>}
+          {defaultWallpaper && <Badge tone="accent">{t.defaultWallpaperMark}</Badge>}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1">

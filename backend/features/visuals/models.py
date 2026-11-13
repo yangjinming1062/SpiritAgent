@@ -310,6 +310,14 @@ class VisualPresentation(ModelBase, TimestampMixin):
             deferrable=True,
             initially="DEFERRED",
         ),
+        ForeignKeyConstraint(
+            ["user_id", "default_visual_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_presentation_default_visual_owner",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
     )
 
     id = None
@@ -329,6 +337,8 @@ class VisualPresentation(ModelBase, TimestampMixin):
     loop_visual_id: Mapped[int | None] = mapped_column(
         ForeignKey("visual_items.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED"), nullable=True
     )
+    # 用户指定的默认壁纸成品；只保存稳定成品 ID，读取时跟随当前版本。
+    default_visual_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     autonomous_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     # 本机呈现上下文的目标画幅（像素），组合制作以此冻结目标。
     target_width: Mapped[int | None] = mapped_column(Integer, nullable=True)

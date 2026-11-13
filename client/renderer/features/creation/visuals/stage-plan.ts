@@ -125,7 +125,8 @@ export function deriveStagePlan(
   play: ApiSchemas['VisualPlayCommand'] | null,
   directedAmbient: CatalogEntry | null = null,
   subtle = false,
-  previousScene: StageScenePlan | null = null
+  previousScene: StageScenePlan | null = null,
+  useDefaultWallpaper = false
 ): StagePlan {
   if (!presentation && !play) {
     return EMPTY_PLAN
@@ -208,6 +209,34 @@ export function deriveStagePlan(
 
   if (!presentation) {
     return EMPTY_PLAN
+  }
+
+  // 默认壁纸是桌面专用的用户偏好；窗口模式继续消费当前主体组合。
+  // 选定的场景不再按本地时段替换，完整场景也不要求进入自动演出目录。
+  if (useDefaultWallpaper) {
+    const defaultWallpaper = presentation.default_wallpaper
+    const defaultComposition = defaultWallpaper?.composition
+    const defaultMedia = defaultComposition?.media
+
+    if (defaultComposition?.mode === 'cinematic' && defaultMedia?.cinematic) {
+      return {
+        mode: 'cinematic',
+        actor: null,
+        scene: null,
+        cinematic: defaultMedia.cinematic,
+        layout: defaultComposition.layout
+      }
+    }
+
+    if (defaultComposition?.mode === 'layered' && defaultMedia?.scene) {
+      return {
+        mode: 'layered',
+        actor: ambient,
+        scene: sceneFromLayer(defaultMedia.scene),
+        cinematic: null,
+        layout: defaultComposition.layout
+      }
+    }
   }
 
   const media = presentation.composition?.media ?? null

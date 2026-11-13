@@ -19,7 +19,7 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
 
 from .creation import begin_opening_repair, identity_review_passed
-from .eligibility import automatic_media_ready
+from .eligibility import automatic_media_ready, existing_asset
 from .generation import (
     cancel_visual_job,
     pause_visual_job,
@@ -35,7 +35,7 @@ from .geometry import visual_aspect_ratio
 from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .policy import visual_autonomous_block_reason
-from .ports import request_base_motion_preparation
+from .ports import request_base_motion_preparation, scene_reference_exists
 from .queries import frozen_stage_reference as _frozen_stage_reference
 from .queries import job_view, presentation_state
 from .repository import (
@@ -553,6 +553,33 @@ async def play_visual(
         return command
 
 
+async def _validate_default_wallpaper(db: AsyncSession, state: VisualPresentation, item: VisualItem) -> VisualSnapshot:
+    """核对用户指定的默认壁纸；显式选择仍须通过呈现安全边界。"""
+
+    if item.status != "ready" or item.current_version is None:
+        raise VisualStateError("影像当前版本尚未就绪")
+    if item.asset_kind not in {"scene", "cinematic"}:
+        raise VisualStateError("只有环境或完整场景影像可以作为默认壁纸")
+    if not visual_playable(item):
+        raise VisualStateError("影像文件缺失，请重新制作")
+
+    snapshot = visual_snapshot(item)
+    source = snapshot.source
+    if not source.presentation_approved:
+        raise VisualStateError("影像尚未通过呈现审核，可在影像库中预览")
+    if not visual_plays_as_loop(item, snapshot):
+        raise VisualStateError("一次性动作不能作为默认壁纸")
+
+    scene = getattr(source, "scene", None)
+    if scene is None or not existing_asset(scene.path):
+        raise VisualStateError("默认壁纸的环境素材不可用")
+    if scene.scene_id is not None and not await scene_reference_exists(db, state.user_id, scene.scene_id):
+        raise VisualStateError("默认壁纸引用的环境已失效")
+    if item.asset_kind == "cinematic":
+        await _require_stage_media_match(state, snapshot)
+    return snapshot
+
+
 async def _require_stage_media_match(state: VisualPresentation, snapshot: VisualSnapshot) -> None:
     """客户端导演点播只允许当前舞台身份与造型的媒体，避免旧造型画面混入当前呈现。"""
 
@@ -939,6 +966,8 @@ async def delete_visual(user_id: int, visual_id: int) -> None:
             raise VisualStateError("只能删除用户上传的影像")
         if state.current_visual_id == visual_id or state.loop_visual_id == visual_id:
             raise VisualStateError("当前呈现正在使用这份影像，请先切换画面")
+        if state.default_visual_id == visual_id:
+            raise VisualStateError("这份影像是默认壁纸，请先取消默认壁纸")
         composition = stage_composition(state)
         if composition is not None and (
             composition.scene_visual_id == visual_id
@@ -1076,18 +1105,52 @@ async def update_presentation_preferences(
     user_id: int,
     *,
     autonomous_enabled: bool | None = None,
+    default_visual_id: int | None = None,
+    set_default_visual: bool = False,
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> VisualPresentationView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
-        if autonomous_enabled is not None:
+        changed = False
+        if autonomous_enabled is not None and state.autonomous_enabled != autonomous_enabled:
             state.autonomous_enabled = autonomous_enabled
+            changed = True
+        if set_default_visual:
+            if default_visual_id is not None:
+                item = await visual_item(db, user_id, default_visual_id)
+                await _validate_default_wallpaper(db, state, item)
+            if state.default_visual_id != default_visual_id:
+                state.default_visual_id = default_visual_id
+                changed = True
         if (target_width is None) != (target_height is None):
             raise VisualStateError("目标画幅须同时给出宽和高")
-        if target_width is not None and target_height is not None:
+        if (
+            target_width is not None
+            and target_height is not None
+            and (state.target_width != target_width or state.target_height != target_height)
+        ):
             state.target_width = target_width
             state.target_height = target_height
-        await touch_presentation(db, user_id)
+            changed = True
+        if changed:
+            await touch_presentation(db, user_id)
         await db.commit()
     return await presentation_state(user_id)
+
+
+async def clear_default_cinematic_wallpaper(user_id: int) -> None:
+    """外观或环境发生确定性变更时清除不再匹配的完整场景默认壁纸。"""
+
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        state = await require_presentation_row(db, user_id, lock=True)
+        if state.default_visual_id is None:
+            return
+        item = await db.scalar(
+            select(VisualItem).where(VisualItem.id == state.default_visual_id, VisualItem.user_id == user_id)
+        )
+        if item is not None and item.asset_kind != "cinematic":
+            return
+        state.default_visual_id = None
+        await touch_presentation(db, user_id)
+        await db.commit()

@@ -35,6 +35,7 @@ from .repository import (
     visual_clip_kind,
     visual_is_short_action,
     visual_playable,
+    visual_plays_as_loop,
     visual_snapshot,
 )
 from .schemas import (
@@ -42,14 +43,17 @@ from .schemas import (
     ActionMediaEntry,
     ActionMediaListResponse,
     ActorClipBody,
+    ActorClipRef,
     ActorClipSource,
     ActualPresentationSnapshot,
     AmbientCatalogEntry,
     AnalyzingVisualSource,
     ComboMaterialRef,
+    DefaultWallpaperView,
     PresentedVisual,
     SceneMediaRef,
     StageComposition,
+    StageCompositionLayout,
     StageCompositionMedia,
     StageIntent,
     StageLayerMedia,
@@ -675,6 +679,88 @@ async def _existing_composition(
     return (composition.model_copy(update=update), True) if update else (composition, False)
 
 
+async def _default_wallpaper(
+    db: AsyncSession,
+    user_id: int,
+    state: VisualPresentation,
+    base_composition: StageComposition | None,
+) -> DefaultWallpaperView | None:
+    """装配账户默认壁纸；成品 ID 稳定，版本随当前成品读取。"""
+
+    if state.default_visual_id is None:
+        return None
+    item = await db.scalar(
+        select(VisualItem).where(VisualItem.id == state.default_visual_id, VisualItem.user_id == user_id)
+    )
+    if item is None or item.current_version is None or item.status != "ready" or not visual_playable(item):
+        return None
+    snapshot = visual_snapshot(item)
+    source = snapshot.source
+    if (
+        item.asset_kind not in {"scene", "cinematic"}
+        or not source.presentation_approved
+        or not visual_plays_as_loop(item, snapshot)
+    ):
+        return None
+    scene = getattr(source, "scene", None)
+    if scene is None or not existing_asset(scene.path) or not await _scene_reference_usable(db, user_id, scene):
+        return None
+    if item.asset_kind == "cinematic":
+        outfit, identity_hash = frozen_stage_reference(state)
+        source_outfit = getattr(source, "outfit", None)
+        source_identity_hash = getattr(source, "identity_hash", None)
+        source_identity_path = getattr(source, "identity_path", None)
+        if source_outfit is None or source_identity_hash is None or source_identity_path is None:
+            return None
+        if outfit is None or identity_hash != source_identity_hash or source_outfit.content_hash != outfit.content_hash:
+            return None
+        layout = (
+            base_composition.layout
+            if base_composition is not None and base_composition.mode == "cinematic"
+            else StageCompositionLayout(layer_order=["cinematic", "effects"])
+        )
+        composition = StageComposition(
+            mode="cinematic",
+            cinematic=ActorClipRef(visual_id=item.id, version=item.version),
+            outfit_material=source_outfit,
+            scene_material=source.scene,
+            identity_path=source_identity_path,
+            identity_hash=source_identity_hash,
+            layout=layout,
+            selection_source="user",
+        )
+    else:
+        base = base_composition if base_composition is not None and base_composition.mode == "layered" else None
+        composition = (
+            base.model_copy(
+                update={
+                    "scene_visual_id": item.id,
+                    "scene_version": item.version,
+                    "scene_material": source.scene,
+                    "selection_source": "user",
+                    "life_revision": None,
+                    "life_activity_type": None,
+                }
+            )
+            if base is not None
+            else StageComposition(
+                mode="layered",
+                scene_visual_id=item.id,
+                scene_version=item.version,
+                scene_material=source.scene,
+                layout=StageCompositionLayout(),
+                selection_source="user",
+            )
+        )
+    projected = await composition_with_media(db, user_id, composition)
+    if projected is None or projected.media is None:
+        return None
+    media = projected.media.cinematic if projected.mode == "cinematic" else projected.media.scene
+    if media is None:
+        return None
+    return DefaultWallpaperView(visual=item_view(item, snapshot), composition=projected)
+
+
 async def presentation_state(user_id: int, *, with_catalog: bool = True) -> VisualPresentationView:
     """呈现状态装配；内部决策路径不需要目录时跳过（目录含逐行文件核对）。"""
 
@@ -687,6 +773,7 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
         pending = _pending_command(row)
         static, lost_static = await _existing_static(db, user_id, row.pending_static_json or row.current_static_json)
         composition, lost_composition = await _existing_composition(db, user_id, stage_composition(row))
+        default_wallpaper = await _default_wallpaper(db, user_id, row, composition)
         presence = get_presentation_snapshot(user_id)
         # 已按当前模式呈现过的目标缺少素材说明文件后来被删除；准备中的目标仍走原流程。
         needs_recovery = (
@@ -711,6 +798,7 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
             intent=StageIntent.model_validate(row.intent_json) if row.intent_json else None,
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
+            default_wallpaper=default_wallpaper,
             autonomous_enabled=row.autonomous_enabled,
             target_width=row.target_width,
             target_height=row.target_height,

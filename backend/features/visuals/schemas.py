@@ -790,6 +790,15 @@ class StagePresentation(BaseModel):
     retry_at: datetime | None = None
 
 
+class DefaultWallpaperView(BaseModel):
+    """用户指定的默认桌面壁纸；成品引用跟随影像条目的当前版本。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visual: VisualItemView
+    composition: StageComposition
+
+
 class StageReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -833,6 +842,7 @@ class VisualPresentationView(BaseModel):
     intent: StageIntent | None = None
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None
+    default_wallpaper: DefaultWallpaperView | None = None
     autonomous_enabled: bool = True
     target_width: int | None = None
     target_height: int | None = None
@@ -1033,6 +1043,8 @@ class VisualPreferencesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     autonomous_enabled: bool | None = None
+    # 字段省略表示保持现值；显式 null 清除默认壁纸。
+    default_visual_id: ResourceId | None = None
     target_width: int | None = Field(default=None, gt=0, le=VISUAL_MAX_EDGE, strict=True)
     target_height: int | None = Field(default=None, gt=0, le=VISUAL_MAX_EDGE, strict=True)
 

@@ -35,16 +35,19 @@ import { VISUAL_BODY, VISUAL_SECTION } from './visual-text'
 export function VisualDetailView({
   busy,
   current,
+  defaultWallpaper,
   detail,
   detailError,
   onBack,
   onCommand,
   onDelete,
   onRedo,
-  onRetryLoad
+  onRetryLoad,
+  onSetDefaultWallpaper
 }: {
   busy: boolean
   current: boolean
+  defaultWallpaper: boolean
   detail: VisualDetail | null
   detailError: string | null
   onBack: () => void
@@ -52,6 +55,7 @@ export function VisualDetailView({
   onDelete: () => void
   onRedo: (feedback: string, videoFeedback: string) => void
   onRetryLoad: () => void
+  onSetDefaultWallpaper: () => void
 }): React.JSX.Element {
   const dict = useStrings()
   const t = dict.visuals
@@ -91,7 +95,15 @@ export function VisualDetailView({
       </div>
       {/* 已读到的详情优先于错误提示：轮询或后台刷新失败不打断阅读。 */}
       {detail ? (
-        <VisualDetailContent busy={busy} current={current} detail={detail} onCommand={onCommand} onRedo={onRedo} />
+        <VisualDetailContent
+          busy={busy}
+          current={current}
+          defaultWallpaper={defaultWallpaper}
+          detail={detail}
+          onCommand={onCommand}
+          onRedo={onRedo}
+          onSetDefaultWallpaper={onSetDefaultWallpaper}
+        />
       ) : detailError ? (
         <ErrorBanner message={t.detailLoadFailed} onRetry={onRetryLoad} retryLabel={dict.common.retry} />
       ) : (
@@ -104,15 +116,19 @@ export function VisualDetailView({
 function VisualDetailContent({
   busy,
   current,
+  defaultWallpaper,
   detail,
   onCommand,
-  onRedo
+  onRedo,
+  onSetDefaultWallpaper
 }: {
   busy: boolean
   current: boolean
+  defaultWallpaper: boolean
   detail: VisualDetail
   onCommand: (job: VisualJob, command: VisualJobCommand) => void
   onRedo: (feedback: string, videoFeedback: string) => void
+  onSetDefaultWallpaper: () => void
 }): React.JSX.Element {
   const dict = useStrings()
   const t = dict.visuals
@@ -123,6 +139,14 @@ function VisualDetailContent({
 
   const source = detail.snapshot.source
   const analysisPending = isPendingState(detail.analysis?.state)
+
+  const canSetDefaultWallpaper =
+    !analysisPending &&
+    source.kind !== 'analysis' &&
+    (detail.asset_kind === 'scene' || detail.asset_kind === 'cinematic') &&
+    source.presentation_approved &&
+    detail.clip_kind !== 'once'
+
   const canCompare = Boolean(detail.original_url && detail.original_url !== detail.media_url)
   const originalSource = showOriginal && detail.original_url ? source : null
   const mediaUrl = showOriginal && detail.original_url ? detail.original_url : detail.media_url
@@ -178,6 +202,27 @@ function VisualDetailContent({
         </div>
         <p className="mt-1 text-[11px] leading-relaxed text-muted">{meta}</p>
       </div>
+
+      {detail.asset_kind !== 'actor' && source.kind !== 'analysis' ? (
+        <SettingCard divided={false}>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-strong">{t.defaultWallpaperTitle}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                {canSetDefaultWallpaper ? t.defaultWallpaperHint : t.defaultWallpaperUnavailable}
+              </p>
+            </div>
+            <button
+              className={defaultWallpaper ? BTN_SUBTLE : BTN_PRIMARY}
+              disabled={busy || (!canSetDefaultWallpaper && !defaultWallpaper)}
+              onClick={onSetDefaultWallpaper}
+              type="button"
+            >
+              {defaultWallpaper ? t.clearDefaultWallpaper : t.setDefaultWallpaper}
+            </button>
+          </div>
+        </SettingCard>
+      ) : null}
 
       <SettingCard divided={false}>
         <div className="relative bg-fill-trough">
