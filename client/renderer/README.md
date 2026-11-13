@@ -52,6 +52,7 @@
 | 音频队列与合成 | speech；conversation 持投影，app 工作流连接两者 |
 | 表现优先级、偏好与空间 | character；窗口不另造状态机 |
 | 开窗、附件信箱、显示资格 | 主进程；来源窗口不能只写本地 store |
+| 通话接管与通话窗 | conversation 的 `$callScreenOpen`；窗口外壳只读并驱动原生窗口或桌面内窗，轻语浮层不参与窗口变形 |
 | 造型与环境未提交输入、造型制作会话 | 所属功能持有，经 [app-ui-state.ts](app/workflows/app-ui-state.ts) 参与账户快照；制作结果以服务端为准 |
 | 窗口舞台事实 | [window-stage.ts](shared/store/window-stage.ts)：目标由 [window-presentation.ts](app/workflows/window-presentation.ts) 写入，环境层只读并回填已呈现地址 |
 

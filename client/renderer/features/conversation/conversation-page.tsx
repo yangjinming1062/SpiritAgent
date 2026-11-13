@@ -12,6 +12,7 @@ import { definePersistedBoolean, registerCompanionStorageKey } from '@/shared/li
 import { useStrings } from '@/shared/strings'
 import { ErrorBanner } from '@/ui'
 
+import { $callScreenOpen } from './call-screen'
 import { ChatPanel } from './chat-panel'
 import { $chatSessionId, getConversationRuntime } from './chat-store'
 import styles from './conversation-page.module.css'
@@ -54,6 +55,7 @@ export function ConversationPage({
   const runtime = getConversationRuntime(sessionId)
   const sessionPresetId = useStore(runtime.$chatSessionPresetId)
   const collapsed = useStore(sidebarCollapsed.$atom)
+  const callActive = useStore($callScreenOpen)
   const [narrow, setNarrow] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [railOpen, setRailOpen] = useState(false)
@@ -67,7 +69,7 @@ export function ConversationPage({
   const railId = useId()
   const strings = useStrings()
   const t = strings.chat.nav
-  const sidebarOpen = narrow ? drawerOpen : !collapsed
+  const sidebarOpen = !callActive && (narrow ? drawerOpen : !collapsed)
 
   useEffect(() => {
     const element = layoutRef.current
@@ -92,6 +94,14 @@ export function ConversationPage({
   }, [active, visible, foreground])
 
   useEffect(() => setRailOpen(false), [sessionId])
+
+  // 通话接管整页时收起侧栏与执行详情，挂断后按原偏好恢复。
+  useEffect(() => {
+    if (callActive) {
+      setDrawerOpen(false)
+      setRailOpen(false)
+    }
+  }, [callActive])
 
   useEffect(() => {
     if (narrow && drawerOpen && active && visible && foreground) {
@@ -207,7 +217,8 @@ export function ConversationPage({
                 </button>
               }
               railAction={
-                !companion && (
+                !companion &&
+                !callActive && (
                   <button
                     aria-controls={railId}
                     aria-expanded={railOpen}
@@ -223,7 +234,7 @@ export function ConversationPage({
               }
               reveal={reveal}
             />
-            {railOpen && !companion && (
+            {!callActive && railOpen && !companion && (
               <>
                 <button aria-label={t.closeExecution} className={styles.backdrop} onClick={closeRail} type="button" />
                 <RunRail closeLabel={t.closeExecution} id={railId} onClose={closeRail} title={t.execution} />

@@ -14,15 +14,26 @@ export interface DesktopWindowState {
   bounds: DesktopRect
   minimized: boolean
   maximized: boolean
+  call?: { restoreBounds: DesktopRect; restoreMaximized: boolean }
 }
 
 interface DesktopLayout {
   windows: DesktopWindowState[]
 }
 
-export function fitRect(rect: DesktopRect, width: number, height: number): DesktopRect {
-  const w = Math.min(Math.max(560, rect.width), Math.max(1, width))
-  const h = Math.min(Math.max(360, rect.height), Math.max(1, height))
+const CALL_WINDOW_SIZE = { width: 420, height: 760 }
+export const CALL_WINDOW_MIN = { minWidth: 320, minHeight: 480 }
+
+interface FitOptions {
+  minHeight?: number
+  minWidth?: number
+}
+
+export function fitRect(rect: DesktopRect, width: number, height: number, options?: FitOptions): DesktopRect {
+  const minWidth = options?.minWidth ?? 560
+  const minHeight = options?.minHeight ?? 360
+  const w = Math.min(Math.max(minWidth, rect.width), Math.max(1, width))
+  const h = Math.min(Math.max(minHeight, rect.height), Math.max(1, height))
 
   return {
     width: w,
@@ -50,21 +61,71 @@ export function useDesktopLayout() {
         return { ...current, windows: [next] }
       }
 
-      // 切页按关闭旧窗口处理，但沿用当前窗口的几何状态，避免页面切换时跳动。
+      // 切页按关闭旧窗口处理；通话接管中的竖版尺寸不能带给下一个页面。
+      const restore = currentWindow?.call
+
       const next = {
         id,
-        bounds: currentWindow?.bounds ?? {
-          x: 30,
-          y: 24,
-          width: id === 'chat' ? 1120 : 840,
-          height: 650
-        },
+        bounds: restore?.restoreBounds ??
+          currentWindow?.bounds ?? {
+            x: 30,
+            y: 24,
+            width: id === 'chat' ? 1120 : 840,
+            height: 650
+          },
         minimized: false,
-        maximized: currentWindow?.maximized ?? false
+        maximized: restore?.restoreMaximized ?? currentWindow?.maximized ?? false
       }
 
       return { ...current, windows: [next] }
     })
+  }, [])
+
+  // 通话期间把当前聊天内窗临时改成竖版；恢复信息随窗口状态保存，避免泄漏给其他页面。
+  const enterCall = useCallback((id: AppPage, area: { height: number; width: number }): void => {
+    setLayout(current => {
+      const currentWindow = current.windows.at(-1)
+
+      if (!currentWindow || currentWindow.id !== id || currentWindow.call) {
+        return current
+      }
+
+      const portrait = fitRect(
+        { x: 0, y: 0, width: CALL_WINDOW_SIZE.width, height: CALL_WINDOW_SIZE.height },
+        area.width,
+        area.height,
+        CALL_WINDOW_MIN
+      )
+
+      const bounds = {
+        ...portrait,
+        x: Math.max(0, Math.round((area.width - portrait.width) / 2)),
+        y: Math.max(0, Math.round((area.height - portrait.height) / 2))
+      }
+
+      return {
+        ...current,
+        windows: [
+          {
+            ...currentWindow,
+            bounds,
+            maximized: false,
+            call: { restoreBounds: currentWindow.bounds, restoreMaximized: currentWindow.maximized }
+          }
+        ]
+      }
+    })
+  }, [])
+
+  const exitCall = useCallback((id: AppPage): void => {
+    setLayout(current => ({
+      ...current,
+      windows: current.windows.map(item =>
+        item.id === id && item.call
+          ? { ...item, bounds: item.call.restoreBounds, maximized: item.call.restoreMaximized, call: undefined }
+          : item
+      )
+    }))
   }, [])
 
   const updateWindow = (id: AppPage, patch: Partial<DesktopWindowState>): void =>
@@ -79,5 +140,5 @@ export function useDesktopLayout() {
       windows: current.windows.filter(item => item.id !== id)
     }))
 
-  return { layout, activate, updateWindow, close }
+  return { layout, activate, enterCall, exitCall, updateWindow, close }
 }

@@ -10,6 +10,7 @@ import { useWindowPresentation } from '@/app/workflows/window-presentation'
 import { PresentationModeButton } from '@/features/character'
 import { CompanionMenu } from '@/features/character/surface-companion'
 import {
+  $callScreenOpen,
   $chatSessionId,
   $companionSessionId,
   getConversationRuntime,
@@ -21,6 +22,7 @@ import { LifeArea, LifeDrawer } from '@/features/life/life-area'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { Home } from '@/shared/lib/icons'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
+import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $mainChatActive } from '@/shared/store/chat-visibility'
@@ -61,6 +63,8 @@ export function MainRoot(): React.JSX.Element {
   const [foreground, setForeground] = useState(() => document.hasFocus())
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState === 'visible')
   const [overlayOpen, setOverlayOpen] = useState(false)
+  const callActive = useStore($callScreenOpen)
+  const callLayout = callActive && presentation.effectiveMode === 'window'
   const dict = useStrings()
   const t = dict.living.rail
 
@@ -84,7 +88,9 @@ export function MainRoot(): React.JSX.Element {
   const work = page === 'chat' && (readOnly || Boolean(presetId && presetId !== 'companion'))
 
   const wantsLife =
-    companion.preference.enabled && (!work || (selectedSessionId !== null && expandedSession === selectedSessionId))
+    !callActive &&
+    companion.preference.enabled &&
+    (!work || (selectedSessionId !== null && expandedSession === selectedSessionId))
 
   const lifeShown = wantsLife && (!narrow || drawerOpen)
   const lifeModal = narrow && lifeShown
@@ -106,6 +112,31 @@ export function MainRoot(): React.JSX.Element {
     target.focus.page === 'chat' && target.focus.messageKey
       ? { key: target.focus.messageKey, request: navigationRevision }
       : undefined
+
+  useEffect(() => {
+    if (!callActive) {
+      return
+    }
+
+    // 主导航随通话收起；其账户菜单不能留下逻辑上的打开状态。
+    setOverlayOpen(false)
+  }, [callActive])
+
+  useEffect(() => {
+    if (!callLayout) {
+      return
+    }
+
+    void shellApi()
+      .surface.setCallLayout({ active: true })
+      .catch(error => log.warn('main-window', 'Call layout failed', error))
+
+    return () => {
+      void shellApi()
+        .surface.setCallLayout({ active: false })
+        .catch(error => log.warn('main-window', 'Call layout restore failed', error))
+    }
+  }, [callLayout])
 
   useSurfaceNavigation(t.chat)
   useWindowPresentation()
@@ -193,26 +224,29 @@ export function MainRoot(): React.JSX.Element {
       <div className={styles.contentFrame}>
         <div aria-hidden="true" className={styles.glassPlate} />
         <div className={styles.shell} data-surface="main" ref={shellRef}>
-          <header
-            className={styles.titlebar}
-            onDoubleClick={event => {
-              if (event.target instanceof Element && !event.target.closest('button')) {
-                void shellApi().surface.maximize()
-              }
-            }}
-          >
-            <div className={styles.titleActions}>
-              <PresentationModeButton className={styles.modeButton} />
-              {(narrow || !lifeShown) && (
-                <button aria-label={dict.life.show} className={styles.modeButton} onClick={openLife} type="button">
-                  <Home size={14} />
-                  {dict.life.title}
-                </button>
-              )}
-              <CompanionMenu onShow={revealLife} />
-              <WindowControls />
-            </div>
-          </header>
+          {callActive && <div aria-hidden="true" className={styles.callDragBar} />}
+          {!callActive && (
+            <header
+              className={styles.titlebar}
+              onDoubleClick={event => {
+                if (event.target instanceof Element && !event.target.closest('button')) {
+                  void shellApi().surface.maximize()
+                }
+              }}
+            >
+              <div className={styles.titleActions}>
+                <PresentationModeButton className={styles.modeButton} />
+                {(narrow || !lifeShown) && (
+                  <button aria-label={dict.life.show} className={styles.modeButton} onClick={openLife} type="button">
+                    <Home size={14} />
+                    {dict.life.title}
+                  </button>
+                )}
+                <CompanionMenu onShow={revealLife} />
+                <WindowControls />
+              </div>
+            </header>
+          )}
           {uiStateError && (
             <div
               className="flex shrink-0 items-center gap-3 border-b border-line-hairline bg-surface-card px-5 py-3 text-sm"
@@ -231,11 +265,13 @@ export function MainRoot(): React.JSX.Element {
             className={styles.body}
             inert={!authenticated || !uiStateReady || ['starting', 'recovering'].includes(presentation.status)}
           >
-            <MainRail
-              chatUnread={pending.length > 0 || companionUnread}
-              labels={labels}
-              onOverlayChange={setOverlayOpen}
-            />
+            {!callActive && (
+              <MainRail
+                chatUnread={pending.length > 0 || companionUnread}
+                labels={labels}
+                onOverlayChange={setOverlayOpen}
+              />
+            )}
             <div className={styles.workspace} ref={workspaceRef}>
               {!narrow && lifeShown && (
                 <div className={styles.lifeSlot} style={{ order: companion.preference.side === 'left' ? -1 : 1 }}>

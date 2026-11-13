@@ -23,7 +23,7 @@ import { clamp, errorMessage } from '@runtime'
 import { isSenderWindow } from '../security/ipc-trust'
 import { broadcastToAllWindows, createSerialQueue, isWindowShown, setWindowIgnoreMouseEvents } from '../shared/utils'
 
-import { parseCompanionPreference } from './surface-companion'
+import { PANEL_SIZE, parseCompanionPreference } from './surface-companion'
 
 export interface SurfacesManager {
   closeSurface: () => Promise<void>
@@ -60,12 +60,24 @@ interface SurfacesManagerOptions {
   syncSpriteToDisplay: (display: Electron.Display) => void
 }
 
+interface CallLayout {
+  bounds: Rectangle
+  expanded: boolean
+  maximized: boolean
+  normalBounds: Rectangle | null
+}
+
 interface SurfaceWindowState {
   win: BrowserWindow
   minimizing: boolean
   normalBounds: Rectangle | null
   expanded: boolean
+  call: CallLayout | null
 }
+
+// 通话占满整窗时临时压低最小尺寸；退出后恢复创建时的下限。
+const CALL_WINDOW_SIZE = { width: 420, height: 760 }
+const CALL_WINDOW_MIN = { width: 320, height: 480 }
 
 export function createSurfacesManager(options: SurfacesManagerOptions): SurfacesManager {
   let surfaceWindow: SurfaceWindowState | null = null
@@ -84,6 +96,82 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   function isCurrentWindow(surface: SurfaceWindowState): boolean {
     return surfaceWindow === surface && !surface.win.isDestroyed()
+  }
+
+  function applyWindowBounds(win: BrowserWindow, bounds: Rectangle): void {
+    if (process.platform === 'win32') {
+      win.setContentBounds(bounds)
+    } else {
+      win.setBounds(bounds)
+    }
+  }
+
+  // 竖版通话窗固定居中于窗口所在显示器，显示器变化时按当前工作区重新计算。
+  function callWindowBounds(win: BrowserWindow): Rectangle {
+    const current = process.platform === 'win32' ? win.getContentBounds() : win.getBounds()
+    const area = screen.getDisplayMatching(current).workArea
+    const width = Math.min(CALL_WINDOW_SIZE.width, Math.max(1, area.width - 32))
+    const height = Math.min(CALL_WINDOW_SIZE.height, Math.max(1, area.height - 32))
+
+    return {
+      width,
+      height,
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2)
+    }
+  }
+
+  function setCallLayout(win: BrowserWindow, active: boolean): void {
+    const layout = findSurfaceWindow(win)
+
+    if (!layout || win.isDestroyed()) {
+      return
+    }
+
+    if (active) {
+      // 隐藏或最小化中的窗口不接受迟到的接管请求，避免下次打开时停留在竖版。
+      if (layout.call || !win.isVisible()) {
+        return
+      }
+
+      const target = callWindowBounds(win)
+
+      layout.call = {
+        bounds: process.platform === 'win32' ? win.getContentBounds() : win.getBounds(),
+        expanded: layout.expanded,
+        maximized: win.isMaximized(),
+        normalBounds: layout.normalBounds
+      }
+      win.setMinimumSize(Math.min(CALL_WINDOW_MIN.width, target.width), Math.min(CALL_WINDOW_MIN.height, target.height))
+      applyWindowBounds(win, target)
+
+      return
+    }
+
+    const call = layout.call
+
+    if (!call) {
+      return
+    }
+
+    win.setMinimumSize(PANEL_SIZE.minWidth, PANEL_SIZE.minHeight)
+
+    if (!call.maximized && win.isMaximized()) {
+      win.unmaximize()
+    }
+
+    if (call.maximized) {
+      win.maximize()
+    } else if (call.expanded) {
+      win.setContentBounds(screen.getDisplayMatching(call.bounds).workArea)
+    } else {
+      applyWindowBounds(win, fitWindowBounds(call.bounds))
+    }
+
+    // 先完成尺寸恢复再写回还原信息，避免恢复自身触发的 will-resize 清掉它们。
+    layout.normalBounds = call.normalBounds
+    layout.expanded = call.expanded
+    layout.call = null
   }
 
   function companionState(): SurfaceCompanionState {
@@ -147,7 +235,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   function registerSurfaceWindow(win: BrowserWindow): SurfaceWindowState {
-    const layout: SurfaceWindowState = { win, minimizing: false, normalBounds: null, expanded: false }
+    const layout: SurfaceWindowState = { win, minimizing: false, normalBounds: null, expanded: false, call: null }
     surfaceWindow = layout
 
     if (loadingWindow === win) {
@@ -155,12 +243,26 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
 
     win.on('show', () => publish())
-    win.on('hide', () => publish())
+    win.on('hide', () => {
+      setCallLayout(win, false)
+      publish()
+    })
     win.on('maximize', () => publish())
     win.on('unmaximize', () => publish())
-    win.on('minimize', () => publish())
+    win.on('minimize', () => {
+      setCallLayout(win, false)
+      publish()
+    })
+    // 渲染进程重载或崩溃时没有退出回报，窗口不能停留在竖版尺寸。
+    win.webContents.on('render-process-gone', () => setCallLayout(win, false))
+    win.webContents.on('did-start-loading', () => setCallLayout(win, false))
 
     const releaseExpandedLayout = (): void => {
+      // 通话布局的进入/恢复本身就是一次 resize，不能让它清掉待恢复的最大化信息。
+      if (layout.call) {
+        return
+      }
+
       if (layout.normalBounds || layout.expanded) {
         layout.normalBounds = null
         layout.expanded = false
@@ -417,6 +519,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     const layout = findSurfaceWindow(win)
 
+    if (layout?.call) {
+      return
+    }
+
     // Windows 透明窗的原生展开状态不可靠，使用工作区矩形并保留还原位置。
     if (process.platform === 'win32' && layout) {
       if (layout.expanded && layout.normalBounds) {
@@ -463,6 +569,12 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const win = surfaceWindow?.win
 
     if (!win || win.isDestroyed() || win.isMaximized() || win.isMinimized()) {
+      return
+    }
+
+    if (surfaceWindow?.call) {
+      applyWindowBounds(win, callWindowBounds(win))
+
       return
     }
 
@@ -534,6 +646,16 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       if (win) {
         toggleMaximizeWindow(win)
       }
+    })
+    ipcMain.handle(IPC.invoke.surfaceCallLayout, (event, payload: unknown) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const active = payload && typeof payload === 'object' ? (payload as { active?: unknown }).active : undefined
+
+      if (!win || win.isDestroyed() || !isSurfaceSender(event.sender) || typeof active !== 'boolean') {
+        throw new Error('Invalid call layout request')
+      }
+
+      return withMutex(() => setCallLayout(win, active))
     })
     ipcMain.handle(IPC.invoke.surfaceIsMaximized, event => {
       const win = resolveWindow(event)

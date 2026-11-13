@@ -277,6 +277,14 @@
     0 24px 72px rgb(0 0 0 / 0.24),
     0 0 0 1px var(--ui-line-hairline);
 }
+.callDragBar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 20;
+  height: 20px;
+  cursor: move;
+  touch-action: none;
+}
 .windowHeader {
   height: 37px;
   flex-shrink: 0;

@@ -41,6 +41,13 @@ html[data-maximized='true'] .shell {
   border: 0;
   box-shadow: none;
 }
+.callDragBar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 30;
+  height: 20px;
+  -webkit-app-region: drag;
+}
 .titlebar {
   align-items: center;
   background: var(--ui-fill-faint);

@@ -14,7 +14,13 @@ import { useDesktopWindowHydration } from '@/app/workflows/window-hydration'
 import { useDesktopNavigation } from '@/app/workflows/window-navigation'
 import { AccountMenu } from '@/features/accounts/account-menu'
 import { $portraitUrl } from '@/features/character'
-import { $companionSessionId, setChatSession, switchSession, useConversationUnread } from '@/features/conversation'
+import {
+  $callScreenOpen,
+  $companionSessionId,
+  setChatSession,
+  switchSession,
+  useConversationUnread
+} from '@/features/conversation'
 import { ConversationPage } from '@/features/conversation/conversation-page'
 import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
@@ -60,6 +66,7 @@ export function DesktopRoot(): React.JSX.Element {
     errorLabel: t.chat
   })
   const screenLocked = useStore($surfaceScreenLocked)
+  const callActive = useStore($callScreenOpen)
   const portrait = useStore($portraitUrl)
   const companionSessionId = useStore($companionSessionId)
   const { hasUnread: companionUnread, firstUnheard } = useConversationUnread(companionSessionId)
@@ -105,7 +112,26 @@ export function DesktopRoot(): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
   const avatarRef = useRef<HTMLButtonElement>(null)
   useInteractiveRegion('desktop-avatar', menuRef)
-  const { layout, activate, updateWindow, close } = useDesktopLayout()
+  const { layout, activate, enterCall, exitCall, updateWindow, close } = useDesktopLayout()
+
+  // 通话把聊天内窗临时改成竖版；切页或通话结束时恢复，竖向尺寸不带给其他页面。
+  const callWindow = useRef<AppPage | null>(null)
+
+  useEffect(() => {
+    if (callActive) {
+      callWindow.current = 'chat'
+      enterCall('chat', area)
+
+      return
+    }
+
+    const id = callWindow.current
+    callWindow.current = null
+
+    if (id) {
+      exitCall(id)
+    }
+  }, [callActive, area, enterCall, exitCall])
 
   const desktopVisible =
     presentation?.effectiveMode === 'desktop' &&

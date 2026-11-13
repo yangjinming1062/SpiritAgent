@@ -223,6 +223,7 @@ export interface IpcInvokeContract {
   'spiritagent:surface:minimize': () => Promise<void> | void
   'spiritagent:surface:maximize': () => Promise<void> | void
   'spiritagent:surface:is-maximized': () => Promise<boolean> | boolean
+  'spiritagent:surface:call-layout': (payload: { active: boolean }) => Promise<void> | void
   'spiritagent:surface:get-state': () => DesktopSurfaceChangedEvent | Promise<DesktopSurfaceChangedEvent>
   'spiritagent:surface:set-companion': (
     preference: SurfaceCompanionPreference
@@ -485,6 +486,7 @@ export const IPC = {
     surfaceMinimize: 'spiritagent:surface:minimize',
     surfaceMaximize: 'spiritagent:surface:maximize',
     surfaceIsMaximized: 'spiritagent:surface:is-maximized',
+    surfaceCallLayout: 'spiritagent:surface:call-layout',
     surfaceGetState: 'spiritagent:surface:get-state',
     surfaceSetCompanion: 'spiritagent:surface:set-companion',
     surfaceCompanionVisibility: 'spiritagent:surface:companion-visibility',

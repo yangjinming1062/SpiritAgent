@@ -225,6 +225,8 @@ const desktopBridge = {
     close: () => invoke(IPC.invoke.surfaceClose),
     getState: () => invoke(IPC.invoke.surfaceGetState),
     isMaximized: () => invoke(IPC.invoke.surfaceIsMaximized),
+    setCallLayout: (payload: InvokePayload<typeof IPC.invoke.surfaceCallLayout>) =>
+      invoke(IPC.invoke.surfaceCallLayout, payload),
     maximize: () => invoke(IPC.invoke.surfaceMaximize),
     minimize: () => invoke(IPC.invoke.surfaceMinimize),
     onChanged: (cb: (payload: DesktopSurfaceChangedEvent) => void) => subscribe(IPC.event.surfaceChanged, cb),

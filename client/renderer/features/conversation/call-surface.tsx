@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { IconBadgeCc, IconMicrophoneOff } from '@tabler/icons-react'
-import { createContext, type ReactNode, useContext, useEffect } from 'react'
+import { createContext, type ReactNode, useContext, useEffect, useLayoutEffect } from 'react'
 
 import { useRealtimeCall } from '@/features/speech'
 import { Mic, Phone, PhoneOff } from '@/shared/lib/icons'
@@ -17,10 +17,21 @@ import {
   useCallView
 } from '../../../../shared/realtime-call-ui'
 
-import { CompanionAvatar } from './companion-avatar'
+import { beginCallScreen } from './call-screen'
 import { useConversationView } from './conversation-view'
 
 const OpenCallRecord = createContext<((element: HTMLElement, id: string) => void) | null>(null)
+
+// 通话页的头像要铺满形象区，不能沿用会话列表里的固定小尺寸头像。
+function CallPortrait(): React.JSX.Element {
+  const portraitUrl = useStore(presentationPorts().$portraitUrl)
+
+  return portraitUrl ? (
+    <img alt="" src={portraitUrl} />
+  ) : (
+    <span aria-hidden="true" className="sa-call-portrait-fallback" />
+  )
+}
 
 export function CallRecordButton({ id, duration }: { id: string; duration: number }): React.JSX.Element {
   const copy = callCopy[useStore($locale)]
@@ -64,6 +75,10 @@ export function CallSurface({
 
   const open = Boolean(eligible && view.isOpen)
   const { close, recordId } = view
+  const live = open && !recordId
+
+  // 在绘制前接管窗口，避免先露出一帧带侧栏的聊天页；记录页不触发窗口变形。
+  useLayoutEffect(() => (live ? beginCallScreen() : undefined), [live])
 
   useEffect(() => {
     if (!open) {
@@ -113,7 +128,7 @@ export function CallSurface({
           ) : (
             <LiveCallPage
               acknowledge={call.receivedPart}
-              avatar={<CompanionAvatar />}
+              avatar={<CallPortrait />}
               close={view.close}
               copy={copy}
               hangup={call.hangup}

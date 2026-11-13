@@ -7,7 +7,7 @@ import { X } from '@/shared/lib/icons'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { useStrings } from '@/shared/strings'
 
-import { type DesktopRect, type DesktopWindowState, fitRect } from './desktop-layout'
+import { CALL_WINDOW_MIN, type DesktopRect, type DesktopWindowState, fitRect } from './desktop-layout'
 import styles from './desktop.module.css'
 
 interface Props {
@@ -49,9 +49,11 @@ export function DesktopWindow({
     target: HTMLElement
   } | null>(null)
 
+  const call = Boolean(item.call)
+
   const bounds = item.maximized
     ? { x: 0, y: 0, width: area.width, height: area.height }
-    : fitRect(item.bounds, area.width, area.height)
+    : fitRect(item.bounds, area.width, area.height, call ? CALL_WINDOW_MIN : undefined)
 
   const start = (event: React.PointerEvent<HTMLElement>, resize: boolean): void => {
     if (
@@ -124,7 +126,7 @@ export function DesktopWindow({
       ? { ...initial.bounds, width: initial.bounds.width + dx, height: initial.bounds.height + dy }
       : { ...initial.bounds, x: initial.bounds.x + dx, y: initial.bounds.y + dy }
 
-    onChange({ bounds: fitRect(next, area.width, area.height) })
+    onChange({ bounds: fitRect(next, area.width, area.height, call ? CALL_WINDOW_MIN : undefined) })
   }
 
   return (
@@ -138,42 +140,55 @@ export function DesktopWindow({
       ref={windowRef}
       style={{ left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height, zIndex: index + 1 }}
     >
-      <header
-        className={styles.windowHeader}
-        onDoubleClick={() => onChange({ maximized: !item.maximized })}
-        onLostPointerCapture={finish}
-        onPointerCancel={finish}
-        onPointerDown={event => start(event, false)}
-        onPointerMove={move}
-        onPointerUp={finish}
-      >
-        <span className={styles.windowTitle}>{title}</span>
-        <div className={styles.windowControls} onDoubleClick={event => event.stopPropagation()}>
-          <button
-            aria-label={t.minimize}
-            onClick={() => onChange({ minimized: true })}
-            title={t.minimize}
-            type="button"
-          >
-            <Minus size={13} />
-          </button>
-          <button
-            aria-label={item.maximized ? t.restore : t.maximize}
-            onClick={() => onChange({ maximized: !item.maximized })}
-            title={item.maximized ? t.restore : t.maximize}
-            type="button"
-          >
-            {item.maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-          <button aria-label={t.close} className={styles.closeButton} onClick={onClose} title={t.close} type="button">
-            <X size={14} />
-          </button>
-        </div>
-      </header>
+      {call ? (
+        // 通话窗去掉标题栏，只留一条不可见拖动区，避免占掉竖版的形象高度。
+        <div
+          aria-hidden="true"
+          className={styles.callDragBar}
+          onLostPointerCapture={finish}
+          onPointerCancel={finish}
+          onPointerDown={event => start(event, false)}
+          onPointerMove={move}
+          onPointerUp={finish}
+        />
+      ) : (
+        <header
+          className={styles.windowHeader}
+          onDoubleClick={() => onChange({ maximized: !item.maximized })}
+          onLostPointerCapture={finish}
+          onPointerCancel={finish}
+          onPointerDown={event => start(event, false)}
+          onPointerMove={move}
+          onPointerUp={finish}
+        >
+          <span className={styles.windowTitle}>{title}</span>
+          <div className={styles.windowControls} onDoubleClick={event => event.stopPropagation()}>
+            <button
+              aria-label={t.minimize}
+              onClick={() => onChange({ minimized: true })}
+              title={t.minimize}
+              type="button"
+            >
+              <Minus size={13} />
+            </button>
+            <button
+              aria-label={item.maximized ? t.restore : t.maximize}
+              onClick={() => onChange({ maximized: !item.maximized })}
+              title={item.maximized ? t.restore : t.maximize}
+              type="button"
+            >
+              {item.maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+            <button aria-label={t.close} className={styles.closeButton} onClick={onClose} title={t.close} type="button">
+              <X size={14} />
+            </button>
+          </div>
+        </header>
+      )}
       <div className={styles.windowContent}>
         <PanelActivityProvider active={active && !item.minimized}>{children}</PanelActivityProvider>
       </div>
-      {!item.maximized && (
+      {!item.maximized && !call && (
         <button
           aria-label={t.resize}
           className={styles.resizeHandle}

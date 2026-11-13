@@ -115,6 +115,7 @@ export interface DesktopBridge {
     open: AsyncIpc<IpcInvokeContract['spiritagent:surface:open']>
     close: AsyncIpc<IpcInvokeContract['spiritagent:surface:close']>
     isMaximized: AsyncIpc<IpcInvokeContract['spiritagent:surface:is-maximized']>
+    setCallLayout: AsyncIpc<IpcInvokeContract['spiritagent:surface:call-layout']>
     maximize: AsyncIpc<IpcInvokeContract['spiritagent:surface:maximize']>
     minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>
     getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>

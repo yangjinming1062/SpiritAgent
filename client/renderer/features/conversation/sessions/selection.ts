@@ -2,10 +2,12 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { SessionSnapshot } from '@protocol'
 import { errorMessage } from '@runtime'
 
+import { $callScreenOpen } from '../call-screen'
 import type { ConversationRuntime } from '../chat-runtime'
 import type { ConversationHistorySync } from '../chat-runtime-types'
 import {
@@ -138,6 +140,13 @@ function mountMainSnapshot(
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
+  // 通话占用会话期间不切换：UI 入口已收起，这里挡住外部导航与迟到入口。
+  if ($callScreenOpen.get() && sessionId !== $chatSessionId.get()) {
+    notify({ kind: 'info', message: getStrings().chat.callBusyRetry })
+
+    return
+  }
+
   const authCurrent = captureAuthScope()
 
   if (!authCurrent) {

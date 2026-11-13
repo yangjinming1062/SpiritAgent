@@ -211,18 +211,9 @@ export function LiveCallPage({
   const status = state === 'idle' || state === 'stopped' ? copy.connecting : copy[state]
 
   return (
-    <section aria-label={copy.call} className="sa-call-page">
-      <div className="sa-call-center">
-        <div className="sa-call-avatar">{avatar}</div>
-        <h2 ref={heading} tabIndex={-1}>
-          {name || copy.companion}
-        </h2>
-        <p className="sa-call-state" role="status">
-          {status}
-          {muted && !failed && !ending ? ` · ${copy.muted}` : ''}
-        </p>
-        <CallWave enabled={connectedAt !== null && !ending && !failed} levels={levels} />
-        {connectedAt !== null && <time>{formatCallDuration(elapsed)}</time>}
+    <section aria-label={copy.call} className="sa-call-page sa-call-live">
+      <div className="sa-call-portrait">
+        {avatar}
         {!failed && !ending && (part || captions) && (
           <div className="sa-call-captions">
             {captions && snapshot.transcript && (
@@ -244,34 +235,47 @@ export function LiveCallPage({
             )}
           </div>
         )}
+      </div>
+      <div className="sa-call-console">
+        <div className="sa-call-identity">
+          <h2 ref={heading} tabIndex={-1}>
+            {name || copy.companion}
+          </h2>
+          <p className="sa-call-state" role="status">
+            {status}
+            {muted && !failed && !ending ? ` · ${copy.muted}` : ''}
+          </p>
+          {connectedAt !== null && <time>{formatCallDuration(elapsed)}</time>}
+        </div>
+        <CallWave enabled={connectedAt !== null && !ending && !failed} levels={levels} />
         {error && (
           <p className="sa-call-error" role={failed ? 'alert' : 'status'}>
             {error}
           </p>
         )}
+        <footer className="sa-call-controls">
+          {failed ? (
+            <button onClick={close} type="button">
+              {copy.back}
+            </button>
+          ) : (
+            <>
+              <button aria-pressed={muted} disabled={connectedAt === null || ending} onClick={mute} type="button">
+                {muted ? icons.muted : icons.mic}
+                <span>{muted ? copy.unmute : copy.mute}</span>
+              </button>
+              <button aria-pressed={captions} disabled={ending} onClick={() => setCaptions(!captions)} type="button">
+                {icons.captions}
+                <span>{copy.captions}</span>
+              </button>
+              <button className="sa-call-hangup" disabled={ending} onClick={hangup} type="button">
+                {icons.hangup}
+                <span>{connectedAt === null ? copy.cancel : copy.hangup}</span>
+              </button>
+            </>
+          )}
+        </footer>
       </div>
-      <footer className="sa-call-controls">
-        {failed ? (
-          <button onClick={close} type="button">
-            {copy.back}
-          </button>
-        ) : (
-          <>
-            <button aria-pressed={muted} disabled={connectedAt === null || ending} onClick={mute} type="button">
-              {muted ? icons.muted : icons.mic}
-              <span>{muted ? copy.unmute : copy.mute}</span>
-            </button>
-            <button aria-pressed={captions} disabled={ending} onClick={() => setCaptions(!captions)} type="button">
-              {icons.captions}
-              <span>{copy.captions}</span>
-            </button>
-            <button className="sa-call-hangup" disabled={ending} onClick={hangup} type="button">
-              {icons.hangup}
-              <span>{connectedAt === null ? copy.cancel : copy.hangup}</span>
-            </button>
-          </>
-        )}
-      </footer>
     </section>
   )
 }
