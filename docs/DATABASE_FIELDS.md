@@ -27,7 +27,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生。通话记录与已确认发言也是同一表的行，`call_record_id` 表达归属，`call_last_seen_at` 与 `call_duration_ms` 是结算依据 |
+| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生。通话记录与通话发言也是同一表的行，`call_record_id` 表达归属，`call_last_seen_at` 与 `call_duration_ms` 是结算依据 |
 | 受理账本：[submission_models.py](../backend/features/conversation/submission_models.py) | 请求标识和内容指纹决定重放资格，结果/替换回复是实体关系；批量输入经有序关联与请求一次提交；`is_realtime_call` 区分通话受理与普通提交 |
 | 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期与完成情况，来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
 

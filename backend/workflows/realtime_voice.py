@@ -72,6 +72,8 @@ class RealtimeVoicePipeline:
         self._turn: CallTurn | None = None
         # 保存已确认气泡的原始位置及音频，供终态持久化和中断恢复共用。
         self._partial_delivered: dict[int, TextBubble | VoiceBubble | MediaBubble | LinkBubble] = {}
+        # 已经开始播放、尚未确认的气泡；中断时按整句与已确认气泡一起进入通话记录。
+        self._partial_started: dict[int, TextBubble | VoiceBubble | MediaBubble | LinkBubble] = {}
         self._terminal_reply: CompanionReply | None = None
         self._partial_queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]] | None = None
         self._partial_worker: asyncio.Task[None] | None = None
@@ -330,6 +332,7 @@ class RealtimeVoicePipeline:
         self.confirmed_indices = []
         self._confirmed_turn_id = turn.request_id
         self._partial_delivered.clear()
+        self._partial_started.clear()
         self._terminal_reply = None
         queue: asyncio.Queue[tuple[int, dict[str, Any], asyncio.Future[None]]] = asyncio.Queue(maxsize=4)
         self._partial_queue = queue
@@ -428,21 +431,25 @@ class RealtimeVoicePipeline:
 
         def confirm() -> None:
             self._partial_delivered[index] = validated
+            self._partial_started.pop(index, None)
+
+        def started() -> None:
+            self._partial_started[index] = validated
 
         if isinstance(validated, VoiceBubble):
-            await self._deliver_voice(index, validated, version, confirm)
+            await self._deliver_voice(index, validated, version, confirm, started)
         else:
             await self.session.deliver_part(index, validated.model_dump(mode="json"), version, confirm)
         await self.session.emit("transcript.assistant", {"text": validated.text}, version=version)
 
     def partial_reply(self, request_id: str) -> tuple[CompanionReply, str] | None:
-        """Return ordered, already confirmed bubbles for interruption recovery."""
-        if request_id != self._confirmed_turn_id or not self._partial_delivered:
+        """中断恢复时返回已确认或已经开始播放的气泡，保持原始顺序。"""
+        bubbles_by_index = {**self._partial_started, **self._partial_delivered}
+        if request_id != self._confirmed_turn_id or not bubbles_by_index:
             return None
-        indices = sorted(self._partial_delivered)
         # Earlier confirmed bubbles may already have been persisted and
         # removed. Remaining indices retain their original identity and order.
-        bubbles = [self._partial_delivered[index] for index in indices]
+        bubbles = [bubbles_by_index[index] for index in sorted(bubbles_by_index)]
         if self._terminal_reply is None:
             reply = CompanionReply(bubbles=bubbles)
         else:
@@ -451,25 +458,27 @@ class RealtimeVoicePipeline:
 
     def clear_partial_reply(self, request_id: str) -> None:
         if request_id == self._confirmed_turn_id:
-            self.mark_persisted(list(self._partial_delivered))
+            self.mark_persisted([*self._partial_delivered, *self._partial_started])
 
     def mark_persisted(self, indices: list[int]) -> None:
         persisted = set(indices)
         self.confirmed_indices = [index for index in self.confirmed_indices if index not in persisted]
         for index in indices:
             self._partial_delivered.pop(index, None)
+            self._partial_started.pop(index, None)
 
-    def confirmed_indices_for(self, request_id: str | None) -> list[int]:
-        """Return confirmations only for the ledger associated with a request."""
+    def delivered_indices_for(self, request_id: str | None) -> list[int]:
+        """返回本次请求已确认或已经开始播放的气泡位置。"""
         if request_id != self._confirmed_turn_id:
             return []
-        return list(self.confirmed_indices)
+        return sorted({*self._partial_delivered, *self.confirmed_indices, *self._partial_started})
 
     async def _deliver_stream_voice(
         self,
         bubble: VoiceBubble,
         version: TurnVersion,
         on_played: Callable[[], None],
+        on_started: Callable[[], None],
     ) -> None:
         sent = False
         last_sequence: int | None = None
@@ -494,6 +503,8 @@ class RealtimeVoicePipeline:
                         raise ValueError("Streaming TTS returned invalid PCM")
                     for offset in range(0, len(chunk.audio), 9600):
                         last_sequence = await self.session.send_audio(chunk.audio[offset : offset + 9600], version)
+                        if not sent:
+                            on_started()
                         sent = True
             if last_sequence is None:
                 raise ProviderCapabilityError("Streaming TTS returned no audio")
@@ -516,7 +527,11 @@ class RealtimeVoicePipeline:
             raise ProviderCapabilityError("Streaming TTS unavailable") from exc
 
     async def _deliver_full_voice(
-        self, bubble: VoiceBubble, version: TurnVersion, on_played: Callable[[], None]
+        self,
+        bubble: VoiceBubble,
+        version: TurnVersion,
+        on_played: Callable[[], None],
+        on_started: Callable[[], None],
     ) -> None:
         audio = await synthesize_speech(
             self.actor.user_id,
@@ -558,6 +573,8 @@ class RealtimeVoicePipeline:
         try:
             for offset in range(0, len(pcm), 9600):
                 last_sequence = await self.session.send_audio(pcm[offset : offset + 9600], version)
+                if not sent:
+                    on_started()
                 sent = True
             if last_sequence is None:
                 raise RuntimeError("Voice output is empty")
@@ -570,13 +587,18 @@ class RealtimeVoicePipeline:
             raise
 
     async def _deliver_voice(
-        self, index: int, bubble: VoiceBubble, version: TurnVersion, confirm: Callable[[], None]
+        self,
+        index: int,
+        bubble: VoiceBubble,
+        version: TurnVersion,
+        confirm: Callable[[], None],
+        on_started: Callable[[], None],
     ) -> None:
         try:
             try:
-                await self._deliver_stream_voice(bubble, version, on_played=confirm)
+                await self._deliver_stream_voice(bubble, version, on_played=confirm, on_started=on_started)
             except ProviderCapabilityError:
-                await self._deliver_full_voice(bubble, version, confirm)
+                await self._deliver_full_voice(bubble, version, confirm, on_started)
         except Exception:
             if not self.session.current(version):
                 raise asyncio.CancelledError
@@ -604,10 +626,16 @@ class RealtimeVoicePipeline:
                 index: int = index, bubble: TextBubble | VoiceBubble | MediaBubble | LinkBubble = bubble
             ) -> None:
                 self._partial_delivered[index] = bubble
+                self._partial_started.pop(index, None)
                 self.confirmed_indices.append(index)
 
+            def started(
+                index: int = index, bubble: TextBubble | VoiceBubble | MediaBubble | LinkBubble = bubble
+            ) -> None:
+                self._partial_started[index] = bubble
+
             if isinstance(bubble, VoiceBubble):
-                await self._deliver_voice(index, bubble, turn.version, confirm)
+                await self._deliver_voice(index, bubble, turn.version, confirm, started)
             else:
                 await self.session.deliver_part(index, client_reply_bubbles(reply)[index], turn.version, confirm)
             if isinstance(bubble, (TextBubble, VoiceBubble)):

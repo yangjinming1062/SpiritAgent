@@ -9,7 +9,7 @@ ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[asyncio.Future[None]
 
 
 class TerminalReplyDelivery(Protocol):
-    """通话交付回执；只有完整确认的片段进入普通历史。"""
+    """通话交付回执；已开始播放或完整确认的片段进入通话记录。"""
 
     async def deliver(self, reply: CompanionReply) -> None: ...
 
@@ -17,7 +17,7 @@ class TerminalReplyDelivery(Protocol):
 
     async def stop_partial_delivery(self) -> None: ...
 
-    def confirmed_indices_for(self, request_id: str | None) -> list[int]: ...
+    def delivered_indices_for(self, request_id: str | None) -> list[int]: ...
 
     def mark_persisted(self, indices: list[int]) -> None: ...
 

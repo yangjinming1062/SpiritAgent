@@ -179,7 +179,7 @@ async def _persist_assistant_no_tool_turn(
             await reply_delivery.deliver(result.reply)
         except (asyncio.CancelledError, Exception) as exc:
             failure = exc
-        indices = reply_delivery.confirmed_indices_for(submission_request_id)
+        indices = reply_delivery.delivered_indices_for(submission_request_id)
         source = json.loads(result.turn_content)
         selected = [result.reply.bubbles[i] for i in indices]
         rejected = [bubble for i, bubble in enumerate(result.reply.bubbles) if i not in indices]
