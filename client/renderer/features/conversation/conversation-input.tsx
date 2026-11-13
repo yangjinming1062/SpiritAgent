@@ -141,7 +141,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const callState = realtimeCall?.snapshot.state ?? 'idle'
   const callActive = callState !== 'idle' && callState !== 'stopped' && callState !== 'error'
 
-  const callLabel = realtimeCall?.muted
+  const callMuted = callActive && realtimeCall?.muted
+
+  const callLabel = callMuted
     ? dict.chat.input.realtimeCallMuted
     : callActive
       ? callState === 'connecting'
@@ -539,14 +541,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
                   'inline-flex size-7 items-center justify-center rounded-full border border-line-hairline bg-fill-faint text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40',
                   callActive && 'border-accent-line bg-accent-soft text-accent'
                 )}
-                disabled={!eligible || isReadOnlySession || (!callActive && (recording || isGenerating || isEditing))}
-                onClick={() => {
-                  if (callActive) {
-                    void realtimeCall.stop()
-                  } else {
-                    void realtimeCall.start()
-                  }
-                }}
+                disabled={!callActive && (!eligible || isReadOnlySession || recording || isGenerating || isEditing)}
+                onClick={callActive ? realtimeCall.stop : () => void realtimeCall.start()}
                 title={callActive ? dict.chat.input.stopRealtimeCall : callLabel}
                 type="button"
               >

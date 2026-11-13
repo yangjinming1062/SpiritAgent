@@ -1199,7 +1199,7 @@ export function Chat({
               >
                 {realtimeCall.muted ? <IconMicrophoneOff size={16} /> : <IconMicrophone size={16} />}
               </button>
-              <button onClick={() => void realtimeCall.stop()} type="button">
+              <button onClick={realtimeCall.stop} type="button">
                 结束
               </button>
             </div>
@@ -1256,7 +1256,7 @@ export function Chat({
                     recording ||
                     transcribing
               }
-              onClick={() => void (callActive ? realtimeCall.stop() : realtimeCall.start())}
+              onClick={callActive ? realtimeCall.stop : () => void realtimeCall.start()}
               title={realtimeCall.snapshot.error || undefined}
               type="button"
             >

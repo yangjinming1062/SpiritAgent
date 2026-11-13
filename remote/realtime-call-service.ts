@@ -9,7 +9,7 @@ export interface RemoteRealtimeCallControls {
   snapshot: RealtimeCallSnapshot
   seconds: number
   start: () => Promise<void>
-  stop: () => Promise<void>
+  stop: () => void
   toggleMute: () => void
   receivedPart: (part: CallPart) => void
 }
@@ -17,8 +17,6 @@ export interface RemoteRealtimeCallControls {
 interface ActiveCall {
   controller: RealtimeCallController
   audio: RealtimeAudioBridge
-  dispose: () => void
-  cancelStart: () => void
 }
 
 const IDLE: RealtimeCallSnapshot = {
@@ -42,54 +40,36 @@ export function useRemoteRealtimeCall({
   eligible: boolean
 }): RemoteRealtimeCallControls {
   const active = useRef<ActiveCall | null>(null)
-  const revision = useRef(0)
-  const socket = useRef<WebSocket | null>(null)
   const [snapshot, setSnapshot] = useState(IDLE)
   const [seconds, setSeconds] = useState(0)
 
-  const stop = useCallback(async (): Promise<void> => {
-    revision.current++
-    const current = active.current
-    active.current = null
-    socket.current = null
-    if (current) {
-      current.cancelStart()
-      current.controller.stop()
-      current.dispose()
-      await current.audio.stop()
-    }
+  const stop = useCallback((): void => {
+    active.current?.controller.stop()
   }, [])
 
   const start = useCallback(async (): Promise<void> => {
     if (!sessionId || !eligible || active.current) {
       return
     }
-    const attempt = ++revision.current
     const startAbort = new AbortController()
-    let audio: RealtimeAudioBridge
     let currentSocket: WebSocket | null = null
-    let dispose = (): void => {}
     const controller = new RealtimeCallController({
       transport: {
         connect: async () => {
           const url = await api.realtimeUrl(sessionId, { signal: startAbort.signal, timeoutMs: 15_000 })
-          if (startAbort.signal.aborted || revision.current !== attempt) {
+          if (startAbort.signal.aborted) {
             throw new DOMException('通话启动已取消', 'AbortError')
           }
           await new Promise<void>((resolve, reject) => {
             const next = new WebSocket(url)
             currentSocket = next
-            socket.current = next
             next.binaryType = 'arraybuffer'
             next.onopen = () => resolve()
             next.onerror = () => reject(new Error('通话连接失败'))
             next.onmessage = event => controller.receive(event.data)
             next.onclose = () => {
-              if (!controller.snapshot().state || controller.snapshot().state === 'connecting') {
-                reject(new Error('通话连接已关闭'))
-              } else if (controller.snapshot().state !== 'stopped' && controller.snapshot().state !== 'error') {
-                controller.fail('通话连接已中断')
-              }
+              reject(new Error('通话连接已关闭'))
+              controller.fail('通话连接已中断')
             }
           })
         },
@@ -103,40 +83,34 @@ export function useRemoteRealtimeCall({
         close: () => {
           currentSocket?.close()
           currentSocket = null
-          socket.current = null
           return Promise.resolve()
         }
       },
       onSnapshot: value => {
-        if (revision.current === attempt) {
+        if (active.current?.controller === controller) {
           setSnapshot(value)
         }
       },
       onAudioFrame: (frame, meta) => audio.enqueueAudio(frame, meta),
-      onClear: () => audio?.clearOutput(),
+      onClear: () => audio.clearOutput(),
       onEnded: () => {
         startAbort.abort()
-        dispose()
-        void audio.stop()
+        void audio.stop().catch(error => console.warn('通话音频清理失败', errorText(error)))
         if (active.current?.controller === controller) {
           active.current = null
         }
       }
     })
 
-    audio = new RealtimeAudioBridge(controller)
-    const current: ActiveCall = { controller, audio, dispose, cancelStart: () => startAbort.abort() }
+    const audio = new RealtimeAudioBridge(controller)
+    const current = { controller, audio }
     active.current = current
     setSeconds(0)
 
     try {
       await controller.start()
-      if (active.current !== current || revision.current !== attempt) {
-        return
-      }
-      await audio.start()
-      if (active.current !== current || revision.current !== attempt) {
-        await audio.stop()
+      if (active.current === current) {
+        await audio.start()
       }
     } catch (failure) {
       controller.fail(errorText(failure) || '无法开始通话，请检查麦克风权限和连接')
@@ -154,14 +128,7 @@ export function useRemoteRealtimeCall({
     active.current?.controller.receivedPart(part)
   }, [])
 
-  useEffect(() => {
-    if (!eligible || !sessionId) {
-      void stop()
-    }
-    return () => {
-      void stop()
-    }
-  }, [eligible, sessionId, stop])
+  useEffect(() => stop, [eligible, sessionId, stop])
 
   const running = snapshot.state !== 'idle' && snapshot.state !== 'stopped' && snapshot.state !== 'error'
   useEffect(() => {

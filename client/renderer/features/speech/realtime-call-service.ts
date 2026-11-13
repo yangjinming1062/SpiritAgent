@@ -14,14 +14,13 @@ export interface RealtimeCallControls {
   snapshot: RealtimeCallSnapshot
   seconds: number
   start: () => Promise<void>
-  stop: () => Promise<void>
+  stop: () => void
   toggleMute: () => void
   receivedPart: (part: CallPart) => void
 }
 interface ActiveCall {
   controller: RealtimeCallController
   audio: RealtimeAudioBridge
-  dispose: () => void
 }
 
 const IDLE: RealtimeCallSnapshot = {
@@ -43,23 +42,14 @@ export function useRealtimeCall({
   eligible: boolean
 }): RealtimeCallControls {
   const active = useRef<ActiveCall | null>(null)
-  const revision = useRef(0)
   const [snapshot, setSnapshot] = useState(IDLE)
   const [seconds, setSeconds] = useState(0)
   const auth = useStore($auth)
   const authId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const locked = useStore(presentationPorts().$screenLocked)
 
-  const stop = useCallback(async (): Promise<void> => {
-    revision.current++
-    const current = active.current
-    active.current = null
-
-    if (current) {
-      current.controller.stop()
-      current.dispose()
-      await current.audio.stop()
-    }
+  const stop = useCallback((): void => {
+    active.current?.controller.stop()
   }, [])
 
   const start = useCallback(async (): Promise<void> => {
@@ -67,11 +57,7 @@ export function useRealtimeCall({
       return
     }
 
-    const attempt = ++revision.current
     const callKey = crypto.randomUUID()
-    let audio: RealtimeAudioBridge
-
-    let dispose = (): void => {}
 
     const controller = new RealtimeCallController({
       transport: {
@@ -80,12 +66,12 @@ export function useRealtimeCall({
         close: () => gatewayApi().voiceClose(callKey)
       },
       onSnapshot: value => {
-        if (revision.current === attempt) {
+        if (active.current?.controller === controller) {
           setSnapshot(value)
         }
       },
       onAudioFrame: (frame, meta) => audio.enqueueAudio(frame, meta),
-      onClear: () => audio?.clearOutput(),
+      onClear: () => audio.clearOutput(),
       onEnded: () => {
         dispose()
         void audio.stop().catch(error => log.warn('voice-call', 'Audio cleanup failed', error))
@@ -96,8 +82,9 @@ export function useRealtimeCall({
       }
     })
 
-    audio = new RealtimeAudioBridge(controller)
-    dispose = gatewayApi().onVoiceEvent(event => {
+    const audio = new RealtimeAudioBridge(controller)
+
+    const dispose = gatewayApi().onVoiceEvent(event => {
       if (event.kind === 'busy' || event.callKey !== callKey) {
         return
       }
@@ -110,26 +97,28 @@ export function useRealtimeCall({
         controller.stop()
       }
     })
-    const current = { controller, audio, dispose }
+
+    const current = { controller, audio }
     active.current = current
     setSeconds(0)
 
     try {
       await controller.start()
-      await mediaApi().media.prepareOutput()
 
-      if (active.current !== current || revision.current !== attempt) {
+      if (active.current !== current) {
         return
       }
 
-      await audio.start()
+      await mediaApi().media.prepareOutput()
 
-      if (active.current !== current || revision.current !== attempt) {
-        await audio.stop()
+      if (active.current === current) {
+        await audio.start()
       }
     } catch (error) {
-      log.warn('voice-call', 'Call startup failed', error)
-      controller.fail('无法开始通话，请检查麦克风权限和连接')
+      if (controller.snapshot().state !== 'stopped') {
+        log.warn('voice-call', 'Call startup failed', error)
+        controller.fail('无法开始通话，请检查麦克风权限和连接')
+      }
     }
   }, [authId, eligible, locked, sessionId])
 
@@ -145,24 +134,20 @@ export function useRealtimeCall({
   useEffect(() => {
     const disposeAuth = $auth.listen(value => {
       if (value.kind !== 'authenticated' || value.snapshot.sessionId !== authId) {
-        void stop()
+        stop()
       }
     })
 
-    const unload = (): void => {
-      void stop()
-    }
-
-    window.addEventListener('beforeunload', unload)
+    window.addEventListener('beforeunload', stop)
 
     if (!eligible || !sessionId || locked) {
-      void stop()
+      stop()
     }
 
     return () => {
       disposeAuth()
-      window.removeEventListener('beforeunload', unload)
-      void stop()
+      window.removeEventListener('beforeunload', stop)
+      stop()
     }
   }, [authId, eligible, locked, sessionId, stop])
   const running = snapshot.state !== 'idle' && snapshot.state !== 'stopped' && snapshot.state !== 'error'

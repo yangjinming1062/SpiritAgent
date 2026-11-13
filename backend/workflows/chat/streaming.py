@@ -273,6 +273,9 @@ async def _generate_llm_response(
     """单次 LLM 调用与正文交付；正文发送时锁定供应商，未确认的正文和推理留在本次尝试。"""
     reasoning = await provider.reasoning_param(reasoning_effort)
     reply_repair = reply_preference is not None and reply_format_error is not None
+    # 格式修复接口只接受完整响应，校验修正后的整份草稿后再交付。
+    if reply_repair:
+        delivery = "complete"
     instructions = (
         resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang)
         if reply_repair
