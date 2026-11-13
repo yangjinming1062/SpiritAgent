@@ -452,9 +452,17 @@
   align-items: center;
   gap: var(--desktop-item-gap);
   width: max-content;
+  min-width: 100%;
+}
+.productGroup {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--desktop-item-gap);
 }
 .systemTraySlot {
   flex: 0 0 auto;
+  margin-left: auto;
   pointer-events: none;
 }
 .productNav {
