@@ -111,9 +111,9 @@ def _graph(
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}},
         "2": {
             "class_type": "CLIPLoader",
-            # 参考图会进文本编码器的视觉分支：这套 ROCm 栈在 GPU 上处理图像时堆损坏崩溃
-            # （Qwen3-VL 8B 与 H3 的编码器都复现过），带图请求因此把编码器放 CPU。
-            "inputs": {"clip_name": clip_name, "type": _CLIP_TYPE, "device": "cpu" if image_names else "default"},
+            # 编码器始终留 GPU：参考图的视觉分支会走 conv3d，而 ComfyUI 在 RDNA3+ 上默认关闭 MIOpen，
+            # 关闭态的 conv3d 在此 ROCm 栈上堆损坏崩服；服务端以 COMFYUI_ENABLE_MIOPEN=1 保留 MIOpen。
+            "inputs": {"clip_name": clip_name, "type": _CLIP_TYPE, "device": "default"},
         },
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
         "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode},

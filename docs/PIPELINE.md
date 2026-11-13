@@ -148,7 +148,7 @@ flowchart TD
 
 #### 本地 ComfyUI
 
-本地图片适配支持文字、多参考和透明；编辑画布随首张参考，条件生成按请求比例。本地固定使用 Qwen-Image-2.1-Turbo 工作流；带参考图的请求把文本编码器放 CPU（该 ROCm 栈的 GPU 视觉分支会崩），耗时约为纯文生图的十倍。暂时查询失败续原 `prompt_id`，不重交，参考存留由部署方保护。具体工作流、loader、批量和采样配置见[适配器](../backend/infrastructure/ai/providers/local/image.py)，部署归 [Backend](../backend/README.md#本地供应商)。
+本地图片适配支持文字、多参考和透明；编辑画布随首张参考，条件生成按请求比例。本地固定使用 Qwen-Image-2.1-Turbo 工作流，文本编码器常驻 GPU，带参考图的请求耗时与纯文生图同档；服务端保留 MIOpen 的要求见 [Backend](../backend/README.md#本地供应商)。暂时查询失败续原 `prompt_id`，不重交，参考存留由部署方保护。具体工作流、loader、批量和采样配置见[适配器](../backend/infrastructure/ai/providers/local/image.py)，部署归 [Backend](../backend/README.md#本地供应商)。
 
 ### 质量选择
 
