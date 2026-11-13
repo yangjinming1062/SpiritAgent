@@ -1,4 +1,4 @@
-"""本地 ComfyUI 图像生成供应商。ComfyUI 须能从 Backend 访问。"""
+"""本地 ComfyUI 图像生成供应商，固定使用 Qwen-Image-2.1-Turbo 工作流。ComfyUI 须能从 Backend 访问。"""
 
 import asyncio
 import base64
@@ -44,25 +44,19 @@ _RGBA_WRAP = (
     "The image has an alpha channel and a transparent background."
 )
 
-_POLL_INTERVAL_S = 30.0
+_DEFAULT_WH = (1024, 1024)
+_POLL_INTERVAL_S = 5.0
+_CLIP_TYPE = "qwen_image"
+# Qwen-Image Turbo 的蒸馏采样档：8 步 sigma 表，euler。
 _TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0"
+# 权重前缀按具体程度排列；模型卡片名称只作展示，不参与选文件。
+_UNET_PREFIXES = ("qwen_image_2.1_turbo", "qwen_image_2.1", "qwen")
+_CLIP_PREFIXES = ("qwen3vl_8b_abliterated", "qwen3vl_8b", "qwen_image")
+_VAE_PREFIXES = ("qwen_image_2.1_vae", "qwen_image_vae", "qwen")
 
 
 def _wrap_rgba(prompt: str) -> str:
     return _RGBA_WRAP.format(desc=prompt.strip())
-
-
-def _unet_loader(unet_name: str) -> tuple[str, dict[str, Any]]:
-    """ComfyUI-GGUF 的 .gguf 权重只在 UnetLoaderGGUF 列出，原生 UNETLoader 不接受该扩展名。"""
-    if unet_name.lower().endswith(".gguf"):
-        return "UnetLoaderGGUF", {"unet_name": unet_name}
-    return "UNETLoader", {"unet_name": unet_name, "weight_dtype": "default"}
-
-
-def _clip_loader(clip_name: str) -> tuple[str, dict[str, Any]]:
-    if clip_name.lower().endswith(".gguf"):
-        return "CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"}
-    return "CLIPLoader", {"clip_name": clip_name, "type": "qwen_image", "device": "default"}
 
 
 def _image_asset(data: bytes) -> ImageAsset:
@@ -84,7 +78,16 @@ def _resolve_wh(req: ImageGenRequest) -> tuple[int, int]:
                 return (max(64, w // 32 * 32), max(64, h // 32 * 32))
         except ValueError:
             pass
-    return _ASPECT_TO_WH.get(req.aspect_ratio or "", (1024, 1024))
+    return _ASPECT_TO_WH.get(req.aspect_ratio or "", _DEFAULT_WH)
+
+
+def _pick_weights(options: list[str], prefixes: tuple[str, ...]) -> str:
+    """按权重命名前缀选文件；都不匹配时直接报错，避免把同目录下的其它模型装进本工作流。"""
+    for prefix in prefixes:
+        for name in options:
+            if name.startswith(prefix):
+                return name
+    raise ProviderError(f"local image_gen found no model for {prefixes}")
 
 
 def _graph(
@@ -99,50 +102,49 @@ def _graph(
     clip_name: str,
     vae_name: str,
 ) -> dict[str, Any]:
-    """Qwen-Image Turbo 工作流；参考图编辑使用编码节点的 latent 输出。"""
-    encode_inputs: dict[str, Any] = {"clip": ["2", 0]}
+    """Qwen-Image-2.1-Turbo 工作流；参考图进编码节点，编辑时以其 latent 为画布。"""
+    encode: dict[str, Any] = {"clip": ["2", 0], "prompt": prompt, "negative_prompt": ""}
     if image_names:
-        encode_inputs["vae"] = ["3", 0]
-    encode_inputs.update(prompt=prompt, negative_prompt="", resolution=0 if image_names else min(width, height))
-    unet_class, unet_inputs = _unet_loader(unet_name)
-    clip_class, clip_inputs = _clip_loader(clip_name)
+        encode["vae"] = ["3", 0]
+    encode["resolution"] = 0 if image_names else min(width, height)
     nodes: dict[str, Any] = {
-        "1": {"class_type": unet_class, "inputs": unet_inputs},
-        "2": {"class_type": clip_class, "inputs": clip_inputs},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}},
+        "2": {
+            "class_type": "CLIPLoader",
+            # 参考图会进文本编码器的视觉分支：这套 ROCm 栈在 GPU 上处理图像时堆损坏崩溃
+            # （Qwen3-VL 8B 与 H3 的编码器都复现过），带图请求因此把编码器放 CPU。
+            "inputs": {"clip_name": clip_name, "type": _CLIP_TYPE, "device": "cpu" if image_names else "default"},
+        },
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
-        "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode_inputs},
+        "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode},
+        "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+        "7": {"class_type": "BasicGuider", "inputs": {"model": ["1", 0], "conditioning": ["4", 0]}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "9": {"class_type": "ManualSigmas", "inputs": {"sigmas": _TURBO_SIGMAS}},
+        "10": {
+            "class_type": "SamplerCustomAdvanced",
+            "inputs": {
+                "noise": ["6", 0],
+                "guider": ["7", 0],
+                "sampler": ["8", 0],
+                "sigmas": ["9", 0],
+                "latent_image": ["4", 2] if image_edit else ["5", 0],
+            },
+        },
+        "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+        "12": {"class_type": "PreviewImage", "inputs": {"images": ["11", 0]}},
     }
     if not image_edit:
         nodes["5"] = {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
-    nodes.update(
-        {
-            "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
-            "7": {"class_type": "BasicGuider", "inputs": {"model": ["1", 0], "conditioning": ["4", 0]}},
-            "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
-            "9": {"class_type": "ManualSigmas", "inputs": {"sigmas": _TURBO_SIGMAS}},
-            "10": {
-                "class_type": "SamplerCustomAdvanced",
-                "inputs": {
-                    "noise": ["6", 0],
-                    "guider": ["7", 0],
-                    "sampler": ["8", 0],
-                    "sigmas": ["9", 0],
-                    "latent_image": ["4", 2] if image_edit else ["5", 0],
-                },
-            },
-            "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
-            "12": {"class_type": "PreviewImage", "inputs": {"images": ["11", 0]}},
-        }
-    )
     for i, name in enumerate(image_names, start=1):
         load_id = str(20 + i)
         nodes[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
-        encode_inputs[f"images.image_{i}"] = [load_id, 0]
+        encode[f"images.image_{i}"] = [load_id, 0]
     return nodes
 
 
 class LocalImageGenProvider(ImageGenProvider):
-    """ComfyUI 生图；透明请求包装提示词，返回可解码图片供消费方校验和处理。"""
+    """ComfyUI 生图；返回可解码图片供消费方校验和处理。"""
 
     provider_name = "local"
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
@@ -151,8 +153,9 @@ class LocalImageGenProvider(ImageGenProvider):
     supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
+    # Qwen 的 VAE 会出 alpha，透明请求用提示词索取通道；消费方仍按实际 alpha 验收。
     supports_transparent_background: ClassVar[bool] = True
-    # Mac 16GB 统一内存不宜并行 batch；单次原生请求只出 1 张，多张由调用方或本层顺序重试
+    # 单次原生请求只出 1 张，多张由调用方或本层顺序重试
     max_images_per_request: ClassVar[int | None] = 1
 
     def __init__(self, config: ProviderConfig) -> None:
@@ -161,70 +164,25 @@ class LocalImageGenProvider(ImageGenProvider):
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
         self._model_files: tuple[str, str, str] | None = None
 
+    async def _loader_options(self, node_name: str, field: str) -> list[str]:
+        resp = await self._client.get(f"/object_info/{node_name}")
+        resp.raise_for_status()
+        options = resp.json().get(node_name, {}).get("input", {}).get("required", {}).get(field, [[]])
+        return (
+            [name for name in options[0] if isinstance(name, str)] if options and isinstance(options[0], list) else []
+        )
+
     async def _resolve_model_files(self) -> tuple[str, str, str]:
         if self._model_files is not None:
             return self._model_files
         # 保留原始传输和 HTTP 异常，供上层判定供应商回退
-        resp = await self._client.get("/object_info/UNETLoader")
-        resp.raise_for_status()
-        unet_opts: list[str] = (
-            resp.json().get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
+        files = (
+            _pick_weights(await self._loader_options("UNETLoader", "unet_name"), _UNET_PREFIXES),
+            _pick_weights(await self._loader_options("CLIPLoader", "clip_name"), _CLIP_PREFIXES),
+            _pick_weights(await self._loader_options("VAELoader", "vae_name"), _VAE_PREFIXES),
         )
-        # .gguf 权重由 ComfyUI-GGUF 的 UnetLoaderGGUF 单独列出；节点未安装时跳过
-        gguf_opts: list[str] = []
-        resp = await self._client.get("/object_info/UnetLoaderGGUF")
-        if resp.status_code < 400:
-            gguf_opts = (
-                resp.json().get("UnetLoaderGGUF", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
-            )
-        clip_opts: list[str] = []
-        gguf_clip_opts: list[str] = []
-        for node_name, target in (("CLIPLoader", clip_opts), ("CLIPLoaderGGUF", gguf_clip_opts)):
-            resp = await self._client.get(f"/object_info/{node_name}")
-            if resp.status_code >= 400:
-                if resp.status_code != 404:
-                    resp.raise_for_status()
-                continue
-            options = resp.json().get(node_name, {}).get("input", {}).get("required", {}).get("clip_name", [[]])
-            if options and isinstance(options[0], list):
-                target.extend(name for name in options[0] if isinstance(name, str))
-        resp = await self._client.get("/object_info/VAELoader")
-        resp.raise_for_status()
-        vae_opts: list[str] = (
-            resp.json().get("VAELoader", {}).get("input", {}).get("required", {}).get("vae_name", [[]])[0]
-        )
-
-        def _pick(options: list[str], *prefixes: str) -> str:
-            for p in prefixes:
-                for name in options:
-                    if name.startswith(p):
-                        return name
-            for name in options:
-                if name.startswith("qwen"):
-                    return name
-            if options:
-                return options[0]
-            raise ProviderError(f"local image_gen found no model for {prefixes}")
-
-        unet_name = _pick([*unet_opts, *gguf_opts], "qwen_dit", "qwen_image")
-        clip_candidates = gguf_clip_opts if unet_name.lower().endswith(".gguf") else clip_opts
-        if not clip_candidates:
-            clip_candidates = clip_opts or gguf_clip_opts
-        clip_name = _pick(clip_candidates, "qwen_te", "qwen3vl")
-        files = (unet_name, clip_name, _pick(vae_opts, "qwen_vae", "qwen_image_2"))
         self._model_files = files
-        unet_class, _ = _unet_loader(files[0])
-        clip_class, _ = _clip_loader(files[1])
-        logger.info(
-            "local image_gen resolved model files",
-            extra={
-                "unet": files[0],
-                "unet_loader": unet_class,
-                "clip": files[1],
-                "clip_loader": clip_class,
-                "vae": files[2],
-            },
-        )
+        logger.info("local image_gen resolved model files", extra={"unet": files[0], "clip": files[1], "vae": files[2]})
         return files
 
     async def _upload_image(self, reference: str) -> str:
@@ -383,8 +341,7 @@ class LocalImageGenProvider(ImageGenProvider):
 
     async def generate(self, req: ImageGenRequest) -> ImageGenResult:
         unet_name, clip_name, vae_name = await self._resolve_model_files()
-        require_transparency = req.background == "transparent"
-        prompt = _wrap_rgba(req.prompt) if require_transparency else req.prompt
+        prompt = _wrap_rgba(req.prompt) if req.background == "transparent" else req.prompt
         count = int(req.n or 1)
         if not 1 <= count <= 4:
             raise ProviderError("local image_gen accepts between 1 and 4 images per request", status_code=400)

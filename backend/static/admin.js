@@ -1009,7 +1009,6 @@ function validateAiCards(editorName) {
             if (!card.model_name?.trim()) return fail(aiGroupLabel(service) + '：请填写具体模型名称');
             const capabilityIssue = aiModelCapabilityIssue(card, service);
             if (capabilityIssue) return fail(card.model_name + '：' + capabilityIssue + '，请根据模型元数据或供应商说明手动配置');
-            if (service === 'image_gen' && provider.provider_type === 'local' && card.model_name !== 'qwen') return fail('本地生图使用固定 Qwen 工作流');
             if (service === 'llm') {
                 const window = parseAiContextWindow(card.context_window);
                 if (window === null) return fail('请填写有效的上下文窗口，例如 32k、1M 或 32768');
@@ -1200,7 +1199,7 @@ function aiModelFields(card, service, settings, localImage) {
         <p class="hint" data-ai-capability-issue${capabilityIssue ? '' : ' hidden'}>${capabilityIssue ? esc(capabilityIssue) + '，补全后才能保存。' : ''}</p>
         ${candidates.length ? `<label>请选择对应的 OpenRouter 模型<select data-ai-catalog-choice><option value="">模型名称有多个匹配</option>${candidates.map(model => `<option value="${esc(model.catalog_id || model.model_name)}">${esc(model.display_name + ' · ' + model.model_name)}</option>`).join('')}</select></label>` : ''}
         ${selected ? `<p class="hint">${aiModelMetadataHtml(selected)}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
-        ${localImage ? '<p class="hint">固定 Qwen 工作流，模型文件由服务匹配。</p>' : ''}
+        ${localImage ? '<p class="hint">本地固定使用 Qwen-Image-2.1-Turbo 工作流，权重由服务匹配。</p>' : ''}
         ${settings.voice_design_model ? `<p class="hint">自定义音色设计须配置 ${esc(settings.voice_design_model)} 模型。</p>` : ''}</div>
         ${settings.voice_clone_model ? `<p class="hint">声音克隆须配置 ${esc(settings.voice_clone_model)} 模型，输入类型勾选文字和音频。</p>` : ''}
         ${service === 'llm' ? aiTokenField(card, 'context_window', '上下文窗口（tokens）', [32768, 131072, 256000, 1048576], true) + aiTokenField(card, 'max_output_tokens', '输出 Token 上限（含推理）', [8192, 16384, 32768, 65536, 131072], true) + '<p class="hint">上下文窗口容纳输入与输出，输出上限包含推理。按实际供应商或部署填写；k = 1000，M = 1000000。建议值可修改，保存后即时生效。</p>' : ''}

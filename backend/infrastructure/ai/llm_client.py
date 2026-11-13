@@ -51,8 +51,6 @@ def _chain_entry(
 ) -> ProviderConfig | None:
     """凭据仅从供应商实例取得；未配置必需凭据或端点的模型不可调用。"""
     provider_type = provider.provider_type
-    if provider_type == "local" and service_type == ServiceType.image_gen and card.model_name != "qwen":
-        raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流")
     base_url = configured_base_url(provider_type, provider.base_url, service_type)
     if not base_url or provider_type not in providers_supporting(service_type):
         return None

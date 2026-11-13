@@ -93,8 +93,6 @@ class AIConfig(BaseModel):
             provider = self.find_provider(card.provider_id, system)
             if provider is None:
                 raise ValueError(f"{service} 模型 {card.model_name} 引用的供应商不存在：{card.provider_id}")
-            if service == "image_gen" and provider.provider_type == "local" and card.model_name != "qwen":
-                raise ValueError("本地生图使用固定 Qwen 工作流，不支持自选模型名称")
         for task, value in self.tasks.items():
             definition = AI_TASK_BY_ID[task]
             for service, policy in value.chains.items():

@@ -277,20 +277,23 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
     return list({item.model_name: item for item in result}.values())
 
 
+def _local_image_metadata() -> ModelMetadata:
+    """本地 ComfyUI 由适配器固定使用 Qwen-Image-2.1-Turbo 工作流，模型名称只作展示。"""
+    return ModelMetadata(
+        model_name="qwen_image_2.1_turbo",
+        display_name="Qwen-Image-2.1-Turbo 工作流",
+        services=["image_gen"],
+        input_modalities=[ModelModality.text, ModelModality.image],
+        output_modalities=[ModelModality.image],
+    )
+
+
 async def discover_models(
     provider: ProviderCard, service: ServiceType, *, model_name: str | None, catalog_id: str | None, refresh: bool
 ) -> ModelDiscoveryResponse:
     response = ModelDiscoveryResponse()
     if provider.provider_type == "local" and service == ServiceType.image_gen:
-        response.models = [
-            ModelMetadata(
-                model_name="qwen",
-                display_name="固定 Qwen 工作流",
-                services=["image_gen"],
-                input_modalities=[ModelModality.text, ModelModality.image],
-                output_modalities=[ModelModality.image],
-            )
-        ]
+        response.models = [_local_image_metadata()]
         return response
     try:
         async with asyncio.timeout(20.0):
