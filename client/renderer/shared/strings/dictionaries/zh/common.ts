@@ -113,6 +113,14 @@ export const common = {
       zoomPercent: (n: number) => `${n}%`,
       zoomHint: '滚轮缩放 · 拖动平移 · 双击放大/还原'
     },
+    player: {
+      fullscreen: '全屏',
+      mute: '静音',
+      pause: '暂停',
+      play: '播放',
+      progress: '播放进度',
+      unmute: '取消静音'
+    },
     search: {
       clear: '清除搜索'
     }

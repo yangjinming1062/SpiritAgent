@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { MediaPreview, useMediaViewId } from '@/features/media'
+import { MediaPreview, useMediaViewId, VideoSurface } from '@/features/media'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
@@ -37,11 +37,13 @@ export function MediaReviewButton({
       {state => {
         if (state.status === 'ready' && state.src) {
           if (candidate.media_type === 'video') {
+            // 原生控件在无全屏权限时仍会留下不可用的全屏按钮，预览统一用自带控制条，全屏走窗口内查看器。
             return (
-              <video
+              <VideoSurface
                 className="max-h-72 w-full rounded-lg border border-line-hairline bg-black"
-                controls
+                frameClassName="block w-full overflow-hidden rounded-lg"
                 onError={state.onError}
+                onFullscreen={() => preview(candidate)}
                 src={state.src}
               />
             )

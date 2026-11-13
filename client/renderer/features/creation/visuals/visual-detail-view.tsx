@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 
 import { MediaPreview } from '@/features/media'
 import { useResolvedMediaSrc } from '@/features/media'
+import { VideoSurface } from '@/features/media'
 import { ArrowLeft, ZoomIn } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
@@ -195,12 +196,11 @@ function VisualDetailContent({
                   <LoadingBlock label={t.loading} />
                 </div>
               ) : detail.media_kind === 'video' ? (
-                <video
+                <VideoSurface
                   className="mx-auto block max-h-[min(62vh,640px)] w-full"
-                  controls
+                  frameClassName="block w-full"
                   onError={onError}
                   poster={poster.status === 'ready' ? poster.src : undefined}
-                  preload="metadata"
                   src={src}
                 />
               ) : (

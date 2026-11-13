@@ -3,16 +3,19 @@ import { useRef } from 'react'
 import { useStrings } from '@/shared/strings'
 
 import { useResolvedMediaSrc } from './media-src'
+import { VideoSurface } from './video-surface'
 
 export function InlineMedia({
   alt,
   audioUrl,
+  autoPlay = false,
   mediaType,
   onImageClick,
   url
 }: {
   alt: string
   audioUrl: string | null
+  autoPlay?: boolean
   mediaType: '' | 'image' | 'video' | 'audio'
   onImageClick?: () => void
   url: string
@@ -43,9 +46,10 @@ export function InlineMedia({
   if (mediaType === 'video') {
     return (
       <div className="w-full" onClick={event => event.stopPropagation()}>
-        <video
+        <VideoSurface
+          autoPlay={autoPlay}
           className="max-h-[70vh] max-w-full rounded-lg"
-          controls
+          frameClassName="max-w-full overflow-hidden rounded-lg"
           muted={Boolean(voiceSrc)}
           onEnded={() => {
             if (audioRef.current) {
@@ -54,17 +58,18 @@ export function InlineMedia({
             }
           }}
           onPause={() => audioRef.current?.pause()}
-          onPlay={event => {
+          onPlay={video => {
             if (audioRef.current) {
-              audioRef.current.currentTime = event.currentTarget.currentTime
+              audioRef.current.currentTime = video.currentTime
               void audioRef.current.play()
             }
           }}
-          onSeeked={event => {
+          onSeeked={video => {
             if (audioRef.current) {
-              audioRef.current.currentTime = event.currentTarget.currentTime
+              audioRef.current.currentTime = video.currentTime
             }
           }}
+          showMute={!voiceSrc}
           src={src}
         />
         {voiceSrc ? <audio className="w-full" controls ref={audioRef} src={voiceSrc} /> : voiceFailed}

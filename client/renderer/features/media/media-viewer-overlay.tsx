@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
+import { X } from '@/shared/lib/icons'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
@@ -124,6 +125,18 @@ function MediaViewer({
       ref={overlayRef}
       style={{ display: active ? undefined : 'none', pointerEvents: 'auto' }}
     >
+      <button
+        aria-label={dict.ui.lightbox.closePreview}
+        className="absolute right-4 top-4 flex size-8 items-center justify-center rounded-full bg-white/12 text-white/85 transition hover:bg-white/20 hover:text-white"
+        onClick={event => {
+          event.stopPropagation()
+          closeMediaViewer()
+        }}
+        title={dict.ui.lightbox.closePreview}
+        type="button"
+      >
+        <X size={16} />
+      </button>
       {item.type === 'image' ? (
         <p className="text-sm text-white/80" role="status">
           {image.status === 'failed' ? dict.chat.media.loadFailed : dict.chat.media.imageLoading}
@@ -136,10 +149,14 @@ function MediaViewer({
   )
 }
 
+/** 应用内全屏呈现：铺满所属窗口并自动播放，退出靠关闭按钮、Esc 或点击背景。 */
 function ViewerSurface({ item }: { item: ChatMediaItem }): React.JSX.Element {
   return (
-    <div className="max-h-full max-w-full" onClick={event => event.stopPropagation()}>
-      <InlineMedia alt="" audioUrl={item.audio_url ?? null} mediaType={item.type} url={item.url} />
+    <div
+      className="flex max-h-full max-w-full items-center justify-center [&_video]:max-h-[86vh]"
+      onClick={event => event.stopPropagation()}
+    >
+      <InlineMedia alt="" audioUrl={item.audio_url ?? null} autoPlay mediaType={item.type} url={item.url} />
     </div>
   )
 }

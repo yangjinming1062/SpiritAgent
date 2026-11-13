@@ -67,7 +67,7 @@ macOS 钥匙串验证须从已登录图形会话启动，SSH 安全会话可能�
 
 切换先核验 sender、账户与载荷，再经 [ui-state.ts](ipc/ui-state.ts) 捕获来源视图并等待目标恢复。快照按账户存于进程内，不包含持久文件许可；录音与上传共同阻止切换。组件缺失或准备失败在释放来源前返回实际失败，页面加载与就绪等待共享预算。
 
-交互桌面使用完整 preload，背景仅接收已认证的媒体字节和播放状态。静态环境与透明造型分别传入背景窗口合成，所有回执复核已派发请求、账户与呈现代次。显示器逻辑坐标只管布局；Windows 目标像素经 `desktop-display-resolutions.ts` 的只读原生查询取得，不从取整 DIP 反推。桌面窗口固定缩放，退出恢复窗口模式缩放。
+交互桌面使用完整 preload，背景仅接收已认证的媒体字节和播放状态。静态环境与透明造型分别传入背景窗口合成，所有回执复核已派发请求、账户与呈现代次。显示器逻辑坐标只管布局；Windows 目标像素经 `desktop-display-resolutions.ts` 的只读原生查询取得，不从取整 DIP 反推。桌面窗口固定缩放，退出恢复窗口模式缩放；桌面表面不进入原生全屏，媒体放大由渲染层查看器承担，透明无边框窗全屏会露出系统栏且失去播放控制。
 
 Windows 的 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts) 等界面就绪后再交 helper 接管，消息协议、进程监控、外部激活与任务列表归 [host/](lifecycle/host/)；主进程在准入、排队和回执时隔离旧会话。renderer 上报托盘槽位及滚动视口，主进程转物理坐标并保留固有尺寸，不能把裁剪后位置反馈为尺寸。样式确认后才发布就绪并用 `showInactive()` 校准 Electron 可见性；原生层级、托盘、AppBar 与 journal 由 helper 管理。`platform.ts` 关闭 DirectComposition 视频叠加层以参与页面模糊合成，保持硬件解码；修改须重启。
 

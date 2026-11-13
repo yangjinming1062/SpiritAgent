@@ -114,6 +114,14 @@ export const common: Pick<Dictionary, 'brand' | 'common' | 'notifications' | 'er
       zoomPercent: (n: number) => `${n}%`,
       zoomHint: 'Scroll to zoom · drag to pan · double-click to zoom in/out'
     },
+    player: {
+      fullscreen: 'Fullscreen',
+      mute: 'Mute',
+      pause: 'Pause',
+      play: 'Play',
+      progress: 'Playback progress',
+      unmute: 'Unmute'
+    },
     search: {
       clear: 'Clear search'
     }
