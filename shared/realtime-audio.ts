@@ -2,6 +2,8 @@ import type { CallAudioFrameMeta, RealtimeCallController } from './realtime-call
 import workletUrl from './realtime-worklet.ts?worker&url'
 
 const MAX_AUDIO_FRAME_BYTES = 9600
+// 出站音频按 100 ms 合帧：50 帧/秒的逐帧 IPC 在开场抖动时容易顶满发送队列。
+const AUDIO_SEND_FRAME_BYTES = 4800
 // 结束判定：静音达标即收口；句末标点已明确时提前收口，最长发言沿用协议上限。
 const TURN_END_SILENCE_MS = 450
 const TURN_END_EARLY_SILENCE_MS = 250
@@ -43,6 +45,8 @@ export class RealtimeAudioBridge {
   private speakingMs = 0
   private noiseFloor = 0.008
   private preRoll: Float32Array[] = []
+  private outgoing: Uint8Array[] = []
+  private outgoingBytes = 0
   private acknowledgements = new Set<ReturnType<typeof setTimeout>>()
   constructor(private readonly controller: RealtimeCallController) {}
   async start(): Promise<void> {
@@ -171,6 +175,8 @@ export class RealtimeAudioBridge {
     })
     this.speaking = false
     this.preRoll = []
+    this.outgoing = []
+    this.outgoingBytes = 0
     this.voicedMs = 0
     this.quietMs = 0
     this.noiseFloor = 0.008
@@ -204,9 +210,44 @@ export class RealtimeAudioBridge {
     }
 
     this.preRoll = []
+    this.outgoing = []
+    this.outgoingBytes = 0
     this.speaking = false
     this.noiseFloor = 0.008
   }
+
+  /** 说话期间先缓冲，攒够一帧再交给发送队列；实时音频过期即可丢弃。 */
+  private queueAudio(pcm: Uint8Array): void {
+    this.outgoing.push(pcm)
+    this.outgoingBytes += pcm.byteLength
+
+    if (this.outgoingBytes >= AUDIO_SEND_FRAME_BYTES) {
+      this.flushAudio()
+    }
+  }
+
+  private flushAudio(): void {
+    if (this.outgoingBytes === 0) {
+      return
+    }
+
+    const merged = new ArrayBuffer(this.outgoingBytes)
+    const view = new Uint8Array(merged)
+    let offset = 0
+
+    for (const chunk of this.outgoing) {
+      view.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+
+    this.outgoing = []
+    this.outgoingBytes = 0
+
+    for (let start = 0; start < merged.byteLength; start += MAX_AUDIO_FRAME_BYTES) {
+      this.controller.sendAudio(merged.slice(start, start + MAX_AUDIO_FRAME_BYTES))
+    }
+  }
+
   private capture(samples: Float32Array): void {
     if (!this.started || this.controller.muted || ['connecting', 'ending'].includes(this.controller.snapshot().state)) {
       return
@@ -270,7 +311,7 @@ export class RealtimeAudioBridge {
       return
     }
 
-    this.controller.sendAudio(pcm16(samples))
+    this.queueAudio(new Uint8Array(pcm16(samples)))
     this.speakingMs += 20
     this.quietMs = voiced ? 0 : this.quietMs + 20
 
@@ -280,6 +321,7 @@ export class RealtimeAudioBridge {
     if (this.quietMs >= TURN_END_SILENCE_MS || sentenceClosed || this.speakingMs >= MAX_UTTERANCE_MS) {
       this.speaking = false
       this.voicedMs = 0
+      this.flushAudio()
       this.controller.endInputTurn()
     }
   }

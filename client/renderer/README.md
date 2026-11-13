@@ -137,7 +137,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 语音直接经 HTMLAudioElement 输出；[audio-track.ts](features/speech/audio-track.ts) 通过 IPC 共享主进程的输出就绪结果。启动预热及运行期间的静音保活归主进程，渲染窗口不按播放或闲置时间重复预热。尚未就绪时保留 loading 和原断点，不报告台词进度或已听，取消照常释放本次播放。实际蓝牙首字听感须在对应设备验收，媒体时间轴检查不能证明硬件已出声。预制反馈和试听使用 `speakScripted`。
 
-[通话页](features/conversation/call-surface.tsx) 保留聊天视图和草稿，使用 [realtime-call-service.ts](features/speech/realtime-call-service.ts) 和根 shared 的通话控制、AudioWorklet 与页面组件。主进程经 `voiceConnect` 复用现有票据并独占媒体 WebSocket，渲染层的 `useRealtimeCall` 管理连接、AudioWorklet、静音和结束；AudioWorklet 持续采集/播放并以回声消除、降噪、自动增益和 VAD 产生输入回合。实时二进制音频不进入普通语音气泡的播放队列；插话清空旧代次的播放缓冲；锁屏、换号和视图关闭释放设备。
+[通话页](features/conversation/call-surface.tsx) 保留聊天视图和草稿，使用 [realtime-call-service.ts](features/speech/realtime-call-service.ts) 和根 shared 的通话控制、AudioWorklet 与页面组件。主进程经 `voiceConnect` 复用现有票据并独占媒体 WebSocket，渲染层的 `useRealtimeCall` 管理连接、AudioWorklet、静音和结束；AudioWorklet 持续采集/播放并以回声消除、降噪、自动增益和 VAD 产生输入回合。实时二进制音频不进入普通语音气泡的播放队列；出站音频按 100 ms 合帧，传输积压时丢弃过期帧而不是结束通话；插话清空旧代次的播放缓冲；锁屏、换号和视图关闭释放设备。
 
 ### 媒体查看
 

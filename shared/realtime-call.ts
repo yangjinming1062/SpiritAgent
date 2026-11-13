@@ -1,5 +1,9 @@
 export const REALTIME_CALL_VERSION = 2
 
+// 出站积压上限：实时音频过期即丢，只有控制帧也发不出去才判定连接不可用。
+const AUDIO_SEND_QUEUE_LIMIT = 32
+const CONTROL_SEND_QUEUE_LIMIT = 64
+
 export type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ending' | 'stopped' | 'error'
 export interface PlaybackVersion {
   turnSeq: number
@@ -129,11 +133,19 @@ export class RealtimeCallController {
       return
     }
 
-    if (++this.queued > 16) {
+    const audio = message instanceof Uint8Array
+
+    if (this.queued >= (audio ? AUDIO_SEND_QUEUE_LIMIT : CONTROL_SEND_QUEUE_LIMIT)) {
+      if (audio) {
+        return
+      }
+
       this.fail('音频传输积压，通话已结束')
 
       return
     }
+
+    this.queued++
 
     const data = message instanceof Uint8Array ? message : JSON.stringify(message)
     this.tail = this.tail
