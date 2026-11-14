@@ -15,8 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromPoint,
-    MonitorFromRect, MonitorFromWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RedrawWindow,
-    ScreenToClient,
+    MonitorFromRect, MonitorFromWindow, ScreenToClient,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
 use windows_sys::Win32::System::Threading::*;
@@ -53,6 +52,7 @@ mod geometry;
 mod identity;
 mod journal;
 mod session;
+mod wallpaper;
 use command::{execute_command, interrupt_session};
 pub(crate) use geometry::{monitor_bounds, rectangle, window_on_display};
 pub(crate) use identity::{
@@ -67,6 +67,7 @@ pub(crate) use journal::{
 use session::Session;
 pub use geometry::display_bounds;
 pub use identity::allow_foreground;
+pub(crate) use wallpaper::refresh_static_wallpaper;
 
 pub fn tray_probe(handle: u64) -> Result<()> {
     tray::probe(handle)
@@ -262,10 +263,18 @@ pub(crate) fn set_long(window: HWND, index: i32, value: isize) -> Result<()> {
 pub(crate) fn set_parent(window: HWND, parent: HWND) -> Result<()> {
     unsafe {
         SetLastError(0);
-        SetParent(window, parent);
     }
-    if unsafe { GetLastError() } != 0 || unsafe { GetParent(window) } != parent {
+    if unsafe { SetParent(window, parent) }.is_null() && unsafe { GetLastError() } != 0 {
         return Err(failure("SetParent"));
+    }
+    let expected = if parent.is_null() {
+        unsafe { GetDesktopWindow() }
+    } else {
+        parent
+    };
+    // GetParent 根据 WS_CHILD / WS_POPUP 返回不同结果，GA_PARENT 只核验实际父层。
+    if unsafe { GetAncestor(window, GA_PARENT) } != expected {
+        return Err("desktop window parent did not settle".into());
     }
     Ok(())
 }
@@ -418,43 +427,6 @@ pub(in crate::windows) fn attach(saved: &RestoreWindow, layers: &DesktopLayers, 
     Ok(())
 }
 
-pub(crate) fn redraw_released_display(target: Bounds) -> Result<()> {
-    let shell = unsafe { GetShellWindow() };
-    if shell.is_null() || !is_explorer(window_pid(shell)) {
-        // Explorer 启动后会重建桌面，无现存合成表面需要刷新。
-        return Ok(());
-    }
-    for window in top_windows()? {
-        if window_pid(window) != window_pid(shell)
-            || !["Progman", "WorkerW"].contains(&class_name(window).as_str())
-        {
-            continue;
-        }
-        let mut origin = POINT { x: target.x, y: target.y };
-        if unsafe { ScreenToClient(window, &mut origin) } == 0 {
-            return Err(failure("released desktop redraw coordinates"));
-        }
-        let region = RECT {
-            left: origin.x,
-            top: origin.y,
-            right: origin.x + target.width,
-            bottom: origin.y + target.height,
-        };
-        if unsafe {
-            RedrawWindow(
-                window,
-                &region,
-                null_mut(),
-                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
-            )
-        } == 0
-        {
-            return Err(failure("redraw released desktop display"));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn set_top_level(saved: &RestoreWindow, bounds: Bounds, topmost: bool) -> Result<()> {
     if !saved.identity.valid() {
         return Err("desktop window identity changed".into());
@@ -511,7 +483,6 @@ pub(crate) fn restore_locked(path: &Path, expected_session: Option<&str>) -> Res
         return Err("restoration session changed".into());
     }
     let mut failures = Vec::new();
-    let mut hosted = false;
     if !matches!(journal.phase, JournalPhase::Prepared) {
         if let Some(style) = &journal.tray_style {
             if let Err(error) = style.restore() {
@@ -560,9 +531,10 @@ pub(crate) fn restore_locked(path: &Path, expected_session: Option<&str>) -> Res
                 failures.push(error);
             }
             let parent = saved.parent as usize as HWND;
-            let result = set_long(window, GWL_STYLE, saved.style as isize)
+            // 先从 Explorer 摘除子窗，再撤销子窗和分层样式。
+            let result = set_parent(window, parent)
+                .and_then(|()| set_long(window, GWL_STYLE, saved.style as isize))
                 .and_then(|()| set_long(window, GWL_EXSTYLE, saved.ex_style as isize))
-                .and_then(|()| set_parent(window, parent))
                 .and_then(|()| move_window(window, parent, saved.bounds))
                 .and_then(|()| {
                     // 置顶属性属于层序状态，仅恢复 GWL_EXSTYLE 不能清除其残留。
@@ -598,11 +570,13 @@ pub(crate) fn restore_locked(path: &Path, expected_session: Option<&str>) -> Res
                 failures.push(error);
             }
         }
-        hosted = true;
-    }
-    if hosted {
-        if let Err(error) = redraw_released_display(journal.desktop_bounds) {
+        if let Err(error) = wallpaper::redraw_released_display(journal.desktop_bounds) {
             failures.push(error);
+        }
+        if failures.is_empty() {
+            if let Err(error) = wallpaper::reload_after_release() {
+                log_restoration_diagnostic(path, &error);
+            }
         }
     }
     if !failures.is_empty() {
@@ -649,23 +623,27 @@ pub(crate) fn restore_interrupted(
         .chain(recording.err())
         .chain(stop_error)
     {
-        let diagnostic = format!("interruption marker write failed: {error}\n");
-        if let Ok(mut log) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(sidecar(path, ".guardian.log"))
-        {
-            if log
-                .metadata()
-                .is_ok_and(|metadata| metadata.len() + diagnostic.len() as u64 <= 65_536)
-            {
-                let _ = log.write_all(diagnostic.as_bytes());
-            }
-        }
-        let _ = std::io::stderr().write_all(diagnostic.as_bytes());
+        log_restoration_diagnostic(path, &format!("interruption marker write failed: {error}"));
     }
     // 标记失败也必须恢复系统界面。
     restore_locked(path, Some(session))
+}
+
+fn log_restoration_diagnostic(path: &Path, error: &str) {
+    let diagnostic = format!("{error}\n");
+    if let Ok(mut log) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(sidecar(path, ".guardian.log"))
+    {
+        if log
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() + diagnostic.len() as u64 <= 65_536)
+        {
+            let _ = log.write_all(diagnostic.as_bytes());
+        }
+    }
+    let _ = std::io::stderr().write_all(diagnostic.as_bytes());
 }
 
 pub(crate) fn finish_failed_start(

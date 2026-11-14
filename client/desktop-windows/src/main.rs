@@ -257,6 +257,10 @@ fn run() -> Result<()> {
         #[cfg(not(windows))]
         return Err("Native system tray query is available on Windows only".into());
     }
+    #[cfg(windows)]
+    if mode == "refresh-static-wallpaper" && args.len() == 1 {
+        return windows::refresh_static_wallpaper();
+    }
     if mode == "tray-style-attach" && args.len() == 3 {
         #[cfg(windows)]
         {
