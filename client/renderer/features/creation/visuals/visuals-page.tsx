@@ -2,11 +2,10 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { openCompanionMainChat } from '@/app/navigation/app-navigation'
 import { useDetailFlow } from '@/app/navigation/use-detail-flow'
 import { useResolvedMediaSrc } from '@/features/media'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
-import { ImagePlus, MessageCircle, Sparkles } from '@/shared/lib/icons'
+import { ImagePlus, Sparkles } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
@@ -184,10 +183,6 @@ export function VisualsPage(): React.JSX.Element {
 
   const submitFilters = (): void => {
     updateVisualsUi({ query: draftQuery.trim(), source: draftSource.trim(), page: 0 })
-  }
-
-  const openCompanion = (): void => {
-    void run(() => openCompanionMainChat(), { failure: t.contactCompanion })
   }
 
   const closeDetail = (): void => {
@@ -399,7 +394,6 @@ export function VisualsPage(): React.JSX.Element {
                 }
               />
               {hasFilters ? <OverflowMenuAction label={t.clearFilters} onClick={clearFilters} /> : null}
-              <OverflowMenuAction label={t.contactCompanion} onClick={openCompanion} />
             </OverflowMenu>
           }
           query={draftQuery}
@@ -474,10 +468,6 @@ export function VisualsPage(): React.JSX.Element {
                 <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
                   <ImagePlus aria-hidden="true" className="size-3.5" />
                   {t.composer.upload}
-                </button>
-                <button className={BTN_SUBTLE} onClick={openCompanion} type="button">
-                  <MessageCircle aria-hidden="true" className="size-3.5" />
-                  {t.contactCompanion}
                 </button>
               </div>
             }

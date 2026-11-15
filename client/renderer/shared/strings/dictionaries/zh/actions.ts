@@ -136,9 +136,8 @@ export const actions = {
     materialReady: (outfits: number, scenes: number, actions: number) =>
       `已备素材：衣柜 ${outfits} · 环境 ${scenes} · 动作 ${actions}`,
     emptyTitle: '还没有影像成品',
-    emptyHint: '可以选择现有素材创建影像，上传喜欢的图片或视频，也可以请伙伴创作。',
+    emptyHint: '可以选择现有素材创建影像，上传喜欢的图片或视频。',
     emptySearch: '没有找到匹配的影像。',
-    contactCompanion: '联系伙伴制作',
     loading: '加载影像中…',
     loadFailed: '影像加载失败',
     detailLoadFailed: '影像详情加载失败',

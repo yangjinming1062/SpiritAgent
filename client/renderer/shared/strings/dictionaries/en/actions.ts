@@ -139,10 +139,8 @@ export const actions: Pick<Dictionary, 'actions' | 'visuals'> = {
     materialReady: (outfits: number, scenes: number, actions: number) =>
       `Materials ready: wardrobe ${outfits} · environments ${scenes} · actions ${actions}`,
     emptyTitle: 'No visuals yet',
-    emptyHint:
-      'Choose existing materials to create a visual, upload a favorite image or video, or ask your companion to create one.',
+    emptyHint: 'Choose existing materials to create a visual, or upload a favorite image or video.',
     emptySearch: 'No visuals match this search.',
-    contactCompanion: 'Ask the companion to create one',
     loading: 'Loading visuals…',
     loadFailed: "Couldn't load visuals",
     detailLoadFailed: "Couldn't load the visual details",
