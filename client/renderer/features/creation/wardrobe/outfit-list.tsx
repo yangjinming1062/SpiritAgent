@@ -10,10 +10,9 @@ import {
   CreationFeedback,
   Disclosure,
   LibraryToolbar,
-  OverflowMenu,
-  OverflowMenuToggle,
   SettingCard,
-  SettingsContent
+  SettingsContent,
+  StatusToggle
 } from '@/ui'
 
 import { selectAppearanceDraft } from './appearance-ui-state'
@@ -75,19 +74,14 @@ export function OutfitList({ model }: { model: OutfitSectionModel }): React.JSX.
           createLabel={t.startAction}
           onCreate={startDesign}
           onQueryChange={search.onQueryChange}
-          overflow={
-            <OverflowMenu label={common.moreActions}>
-              <OverflowMenuToggle
-                checked={outfitPolicy !== 'locked'}
-                description={t.policyDesc}
-                disabled={policyBusy}
-                label={t.policyLabel}
-                onClick={() => void togglePolicy()}
-                status={
-                  policyBusy ? common.saving : outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked
-                }
-              />
-            </OverflowMenu>
+          preference={
+            <StatusToggle
+              checked={outfitPolicy !== 'locked'}
+              disabled={policyBusy}
+              label={t.policyShort}
+              onClick={() => void togglePolicy()}
+              title={`${t.policyLabel}\n${t.policyDesc}`}
+            />
           }
           query={search.query}
           searchLabel={t.search}

@@ -208,6 +208,7 @@ export const actions: Pick<Dictionary, 'actions' | 'visuals'> = {
     delete: 'Delete this visual',
     deleteTitle: 'Delete this uploaded visual?',
     deleteFailed: "Couldn't delete the visual",
+    autonomousShort: 'Auto present',
     autonomousLabel: 'Let the companion present visuals on its own',
     autonomousDesc: 'When enabled, your companion may play or switch visuals at fitting moments.',
     prefsFailed: "Couldn't save the presentation preference",

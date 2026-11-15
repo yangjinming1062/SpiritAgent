@@ -10,11 +10,10 @@ import {
   HINT_TEXT,
   LibraryStatusBanner,
   LibraryToolbar,
-  OverflowMenu,
-  OverflowMenuToggle,
   Pager,
   SettingCard,
-  Spinner
+  Spinner,
+  StatusToggle
 } from '@/ui'
 import { AssetLibraryCard, AssetLibraryGrid } from '@/ui/asset-library-card'
 
@@ -82,19 +81,14 @@ export function SceneLibraryView({
         onCreate={onCreate}
         onQueryChange={onQueryChange}
         onSearch={onSearch}
-        overflow={
-          <OverflowMenu label={strings.common.moreActions}>
-            <OverflowMenuToggle
-              checked={policy !== 'locked'}
-              description={t.policyDesc}
-              disabled={policyBusy}
-              label={t.policyLabel}
-              onClick={onPolicyChange}
-              status={
-                policyBusy ? strings.common.saving : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked
-              }
-            />
-          </OverflowMenu>
+        preference={
+          <StatusToggle
+            checked={policy !== 'locked'}
+            disabled={policyBusy}
+            label={t.policyShort}
+            onClick={onPolicyChange}
+            title={`${t.policyLabel}\n${t.policyDesc}`}
+          />
         }
         query={query}
         searchLabel={t.search}

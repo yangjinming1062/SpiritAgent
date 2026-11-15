@@ -12,6 +12,7 @@ import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import {
   Badge,
+  BTN_GHOST,
   BTN_PRIMARY,
   BTN_SUBTLE,
   CapsuleTabs,
@@ -20,11 +21,9 @@ import {
   LibraryStatusBanner,
   LibraryToolbar,
   LoadingBlock,
-  OverflowMenu,
-  OverflowMenuAction,
-  OverflowMenuToggle,
   Pager,
-  SettingsContent
+  SettingsContent,
+  StatusToggle
 } from '@/ui'
 
 import { $actions, refreshActions } from '../actions'
@@ -379,31 +378,35 @@ export function VisualsPage(): React.JSX.Element {
           onCreate={() => openComposer('create')}
           onQueryChange={setDraftQuery}
           onSearch={submitFilters}
-          overflow={
-            <OverflowMenu label={dict.common.moreActions}>
-              <OverflowMenuToggle
-                checked={projection?.autonomous_enabled ?? true}
-                description={t.autonomousDesc}
-                disabled={busy}
-                label={t.autonomousLabel}
-                onClick={() =>
-                  void run(
-                    () => setVisualPreferences({ autonomous_enabled: !(projection?.autonomous_enabled ?? true) }),
-                    { failure: t.prefsFailed }
-                  )
-                }
-              />
-              {hasFilters ? <OverflowMenuAction label={t.clearFilters} onClick={clearFilters} /> : null}
-            </OverflowMenu>
+          preference={
+            <StatusToggle
+              checked={projection?.autonomous_enabled ?? true}
+              disabled={busy}
+              label={t.autonomousShort}
+              onClick={() =>
+                void run(
+                  () => setVisualPreferences({ autonomous_enabled: !(projection?.autonomous_enabled ?? true) }),
+                  { failure: t.prefsFailed }
+                )
+              }
+              title={`${t.autonomousLabel}\n${t.autonomousDesc}`}
+            />
           }
           query={draftQuery}
           searchLabel={t.searchAria}
           searchMode="submit"
           secondary={
-            <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
-              <ImagePlus aria-hidden="true" className="size-3.5" />
-              {t.composer.upload}
-            </button>
+            <>
+              <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
+                <ImagePlus aria-hidden="true" className="size-3.5" />
+                {t.composer.upload}
+              </button>
+              {hasFilters ? (
+                <button className={BTN_GHOST} onClick={clearFilters} type="button">
+                  {t.clearFilters}
+                </button>
+              ) : null}
+            </>
           }
         />
 

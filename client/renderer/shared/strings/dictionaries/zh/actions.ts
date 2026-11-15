@@ -203,6 +203,7 @@ export const actions = {
     delete: '删除这份影像',
     deleteTitle: '删除这份用户上传的影像？',
     deleteFailed: '删除影像失败',
+    autonomousShort: '自主呈现',
     autonomousLabel: '允许伙伴自主呈现影像',
     autonomousDesc: '开启后，伙伴可在合适时机自主播放或切换影像。',
     prefsFailed: '呈现偏好保存失败',
