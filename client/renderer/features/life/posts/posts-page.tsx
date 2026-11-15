@@ -5,6 +5,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 
 import { $persona } from '@/features/character'
 import { InlineMedia, MediaViewerOverlay, MediaViewHost, openMediaViewer } from '@/features/media'
+import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
@@ -137,7 +138,7 @@ function PostsContent({
 
   const recovery =
     authState.kind === 'authenticated' ? (
-      <PostMediaRecovery key={`${authState.snapshot.sessionId}:${reloadKey}`} />
+      <PostMediaRecovery key={authState.snapshot.sessionId} reloadKey={reloadKey} />
     ) : null
 
   if (posts.length === 0) {
@@ -280,10 +281,13 @@ function PostComments(props: {
   postId: string
 }): React.JSX.Element {
   const { comments, commentCount, commentsLoaded, hasMore, companionName, postId } = props
-  const t = useStrings().living.posts
+  const strings = useStrings()
+  const t = strings.living.posts
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-  const [loadingComments, setLoadingComments] = useState(false)
+  const [open, setOpen] = useState(false)
+  const { busy: loadingComments, run: runCommentLoad } = usePanelAction()
+  const needsFirstPage = !commentsLoaded && commentCount > 0
 
   const submit = async (): Promise<void> => {
     const content = draft.trim()
@@ -314,67 +318,95 @@ function PostComments(props: {
     }
   }
 
+  const loadComments = (): void => {
+    if (loadingComments) {
+      return
+    }
+
+    void runCommentLoad(
+      async () => {
+        if (!(await loadPostComments(postId))) {
+          throw new Error(t.commentsLoadFailed)
+        }
+      },
+      { failure: t.commentsLoadFailed }
+    )
+  }
+
+  // 评论区默认折叠；发送中或回复待处理／失败的评论必须保持可见。
+  const attention =
+    sending ||
+    comments.some(c => c.replyStatus === 'pending' || c.replyStatus === 'running' || c.replyStatus === 'failed')
+
+  const shown = open || attention
+
   return (
     <div className={styles.comments}>
-      {comments.map(c => (
-        <CommentRow
-          comment={c}
-          companionName={companionName}
-          key={c.id}
-          onRemove={remove}
-          onRetry={async commentId => {
-            if (!(await retryPostReply(postId, commentId))) {
-              notify({ kind: 'error', message: t.replyRetryFailed, title: t.replyRetryFailed })
-            }
-          }}
-        />
-      ))}
-      {((!commentsLoaded && commentCount > 0) || hasMore) && (
-        <button
-          className={BTN_SUBTLE}
-          disabled={loadingComments}
-          onClick={() => {
-            setLoadingComments(true)
-            void loadPostComments(postId)
-              .then(ok => {
-                if (!ok) {
-                  notify({ kind: 'error', message: t.loadFailed, title: t.loadFailed })
+      <button
+        aria-expanded={shown}
+        className={styles.commentsToggle}
+        disabled={attention}
+        onClick={() => {
+          const next = !open
+          setOpen(next)
+
+          if (next && needsFirstPage) {
+            loadComments()
+          }
+        }}
+        type="button"
+      >
+        {shown ? t.commentsCollapse : commentCount > 0 ? `${t.commentsLoad} (${commentCount})` : t.commentsLoad}
+      </button>
+      {shown && (
+        <>
+          {comments.map(c => (
+            <CommentRow
+              comment={c}
+              companionName={companionName}
+              key={c.id}
+              onRemove={remove}
+              onRetry={async commentId => {
+                if (!(await retryPostReply(postId, commentId))) {
+                  notify({ kind: 'error', message: t.replyRetryFailed, title: t.replyRetryFailed })
                 }
-              })
-              .finally(() => setLoadingComments(false))
-          }}
-          type="button"
-        >
-          {loadingComments ? t.loading : commentsLoaded ? t.commentsMore : `${t.commentsLoad} (${commentCount})`}
-        </button>
+              }}
+            />
+          ))}
+          {(needsFirstPage || hasMore) && (
+            <button className={BTN_SUBTLE} disabled={loadingComments} onClick={loadComments} type="button">
+              {loadingComments ? strings.common.loading : needsFirstPage ? t.commentsLoadFirst : t.commentsMore}
+            </button>
+          )}
+          <div className={styles.commentInputRow}>
+            <input
+              aria-label={t.commentPlaceholder}
+              className={cn(INPUT_CLASS, styles.commentInput)}
+              disabled={sending}
+              maxLength={500}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                  void submit()
+                }
+              }}
+              placeholder={t.commentPlaceholder}
+              type="text"
+              value={draft}
+            />
+            <button
+              className={BTN_PRIMARY}
+              disabled={sending || draft.trim().length === 0}
+              onClick={() => {
+                void submit()
+              }}
+              type="button"
+            >
+              {sending ? t.commentSending : t.commentSend}
+            </button>
+          </div>
+        </>
       )}
-      <div className={styles.commentInputRow}>
-        <input
-          aria-label={t.commentPlaceholder}
-          className={cn(INPUT_CLASS, styles.commentInput)}
-          disabled={sending}
-          maxLength={500}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-              void submit()
-            }
-          }}
-          placeholder={t.commentPlaceholder}
-          type="text"
-          value={draft}
-        />
-        <button
-          className={BTN_PRIMARY}
-          disabled={sending || draft.trim().length === 0}
-          onClick={() => {
-            void submit()
-          }}
-          type="button"
-        >
-          {sending ? t.commentSending : t.commentSend}
-        </button>
-      </div>
     </div>
   )
 }

@@ -15,18 +15,7 @@ import { ApiError } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
 import { MediaReviewButton } from './MediaReviewButton'
 import type { Diary, Post, Recovery } from './types'
-import {
-  Empty,
-  Media,
-  Notice,
-  PageHeader,
-  pauseMedia,
-  timestamp,
-  useAlive,
-  usePageScroll,
-  usePageState,
-  useTask
-} from './ui'
+import { Empty, Media, Notice, timestamp, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 // 没有游标与 has_more：整页返回表示可能还有更早的日记。
 const DIARY_PAGE_SIZE = 100
@@ -48,60 +37,7 @@ async function markReadAfterRender(
   }
 }
 
-export function Feed({
-  api,
-  gateway,
-  onRead,
-  refresh,
-  unread
-}: {
-  api: RemoteApi
-  gateway: RemoteGateway
-  onRead: () => void
-  refresh: number
-  unread: { feed: boolean; diary: boolean }
-}): ReactElement {
-  const [section, setSection] = usePageState<'feed' | 'diary'>('feed.section', 'feed')
-
-  useEffect(() => {
-    document.querySelector('.content')?.scrollTo({ top: 0 })
-  }, [section])
-
-  return (
-    <div className="page">
-      <PageHeader subtitle="伙伴的日常，和一起走过的每一天" title="动态" />
-      <div aria-label="动态与日记" className="section-tabs feed-tabs">
-        {(
-          [
-            { id: 'feed', label: '动态' },
-            { id: 'diary', label: '日记' }
-          ] as const
-        ).map(item => (
-          <button
-            aria-pressed={section === item.id}
-            className={section === item.id ? 'selected' : ''}
-            key={item.id}
-            onClick={() => {
-              pauseMedia()
-              setSection(item.id)
-            }}
-            type="button"
-          >
-            {item.label}
-            {unread[item.id] ? <i aria-label="有未读内容" className="tab-unread" /> : null}
-          </button>
-        ))}
-      </div>
-      {section === 'feed' ? (
-        <Posts api={api} gateway={gateway} onRead={onRead} refresh={refresh} />
-      ) : (
-        <DiaryView api={api} onRead={onRead} refresh={refresh} />
-      )}
-    </div>
-  )
-}
-
-function Posts({
+export function Posts({
   api,
   gateway,
   onRead,
@@ -291,7 +227,7 @@ function Posts({
       {error ? <Notice>{error}</Notice> : null}
       {recoveries.length > 0 ? (
         <details className="card recovery">
-          <summary>待处理的制作 · {recoveries.length}</summary>
+          <summary>待处理的媒体动态 · {recoveries.length}</summary>
           {recoveries.map(item => (
             <section className="recovery-item" key={item.publication_id}>
               <strong>{item.title || '媒体动态'}</strong>
@@ -409,7 +345,15 @@ function Posts({
   )
 }
 
-function DiaryView({ api, onRead, refresh }: { api: RemoteApi; onRead: () => void; refresh: number }): ReactElement {
+export function DiaryView({
+  api,
+  onRead,
+  refresh
+}: {
+  api: RemoteApi
+  onRead: () => void
+  refresh: number
+}): ReactElement {
   const alive = useAlive()
   const { runLatest, error } = useTask()
   const [entries, setEntries] = useState<Diary[]>([])
@@ -622,6 +566,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
   const [loadedComments, setLoadedComments] = useState<Post['comments']>([])
   const [commentsLoaded, setCommentsLoaded] = useState(false)
   const [commentsCursor, setCommentsCursor] = useState<string | null>(null)
+  const [commentsOpen, setCommentsOpen] = useState(false)
   const commentsRevision = useRef(0)
   useEffect(() => {
     if (post.comments_loaded) {
@@ -649,6 +594,17 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
     void run(refresh)
   }
 
+  // 评论区默认折叠；回复待处理或失败的评论保持可见。
+  const attention = loadedComments.some(
+    item =>
+      item.reply_status === 'pending' ||
+      item.reply_status === 'running' ||
+      item.reply_status === 'failed' ||
+      Boolean(item.reply_error)
+  )
+  const shown = commentsOpen || attention
+  const needsFirstPage = !commentsLoaded && post.comment_count > 0
+
   return (
     <article className="post-card">
       <header>
@@ -668,87 +624,109 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
         />
       ) : null}
       {post.audio_url ? <Media refresh={refreshMedia} type="audio" url={post.audio_url} /> : null}
-      <div className="post-comments">
-        {loadedComments.map(item => (
-          <div className={`comment ${item.role}`} key={item.id}>
-            <p>
-              <strong>{item.role === 'user' ? '我' : '伙伴'}</strong> {item.content}
-            </p>
-            {item.role === 'user' ? (
-              <div className="comment-actions">
-                {item.reply_status === 'pending' || item.reply_status === 'running' ? <span>伙伴正在回复</span> : null}
-                {item.reply_status === 'failed' ? (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      run(async () => {
-                        await api.invoke('companion_posts.retry_comment_reply', {
-                          path: { post_id: post.id, comment_id: item.id }
-                        })
-                        await refresh()
-                      })
-                    }
-                    type="button"
-                  >
-                    重试回复
-                  </button>
-                ) : null}
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      await api.invoke('companion_posts.remove_comment', {
-                        path: { post_id: post.id, comment_id: item.id }
-                      })
-                      await refresh()
-                    })
-                  }
-                  type="button"
-                >
-                  删除
-                </button>
-              </div>
-            ) : null}
-            {item.reply_error ? <Notice>{item.reply_error}</Notice> : null}
-          </div>
-        ))}
-      </div>
-      {(!commentsLoaded && post.comment_count > 0) || commentsCursor ? (
-        <button disabled={busy} onClick={() => run(loadComments)} type="button">
-          {commentsLoaded ? '更多评论' : `查看评论 (${post.comment_count})`}
-        </button>
-      ) : null}
-      {error ? <Notice>{error}</Notice> : null}
-      <form
-        className="comment-form"
-        onSubmit={event => {
-          event.preventDefault()
-          void run(async () => {
-            await api.invoke('companion_posts.post_comment', {
-              path: { post_id: post.id },
-              body: { content: comment.trim() }
-            })
+      <button
+        aria-expanded={shown}
+        className="subtle"
+        disabled={attention}
+        onClick={() => {
+          const nextOpen = !commentsOpen
+          setCommentsOpen(nextOpen)
 
-            if (alive()) {
-              setComment('')
-            }
-
-            await refresh()
-          })
+          if (nextOpen && needsFirstPage) {
+            void run(loadComments)
+          }
         }}
+        type="button"
       >
-        <IconMessageCircle size={19} />
-        <input
-          aria-label="写评论"
-          maxLength={500}
-          onChange={event => setComment(event.target.value)}
-          placeholder="写下你的回应…"
-          value={comment}
-        />
-        <button disabled={busy || !comment.trim()} type="submit">
-          发送
-        </button>
-      </form>
+        {shown ? '收起评论' : post.comment_count > 0 ? `查看评论 (${post.comment_count})` : '查看评论'}
+      </button>
+      {shown && (
+        <>
+          <div className="post-comments">
+            {loadedComments.map(item => (
+              <div className={`comment ${item.role}`} key={item.id}>
+                <p>
+                  <strong>{item.role === 'user' ? '我' : '伙伴'}</strong> {item.content}
+                </p>
+                {item.role === 'user' ? (
+                  <div className="comment-actions">
+                    {item.reply_status === 'pending' || item.reply_status === 'running' ? (
+                      <span>伙伴正在回复</span>
+                    ) : null}
+                    {item.reply_status === 'failed' ? (
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          run(async () => {
+                            await api.invoke('companion_posts.retry_comment_reply', {
+                              path: { post_id: post.id, comment_id: item.id }
+                            })
+                            await refresh()
+                          })
+                        }
+                        type="button"
+                      >
+                        重试回复
+                      </button>
+                    ) : null}
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => {
+                          await api.invoke('companion_posts.remove_comment', {
+                            path: { post_id: post.id, comment_id: item.id }
+                          })
+                          await refresh()
+                        })
+                      }
+                      type="button"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ) : null}
+                {item.reply_error ? <Notice>{item.reply_error}</Notice> : null}
+              </div>
+            ))}
+          </div>
+          {needsFirstPage || commentsCursor ? (
+            <button disabled={busy} onClick={() => run(loadComments)} type="button">
+              {needsFirstPage ? '加载评论' : '更多评论'}
+            </button>
+          ) : null}
+          {error ? <Notice>{error}</Notice> : null}
+          <form
+            className="comment-form"
+            onSubmit={event => {
+              event.preventDefault()
+              void run(async () => {
+                await api.invoke('companion_posts.post_comment', {
+                  path: { post_id: post.id },
+                  body: { content: comment.trim() }
+                })
+
+                if (alive()) {
+                  setComment('')
+                }
+
+                await refresh()
+              })
+            }}
+          >
+            <IconMessageCircle size={19} />
+            <input
+              aria-label="写评论"
+              maxLength={500}
+              onChange={event => setComment(event.target.value)}
+              placeholder="写下你的回应…"
+              value={comment}
+            />
+            <button disabled={busy || !comment.trim()} type="submit">
+              发送
+            </button>
+          </form>
+        </>
+      )}
     </article>
   )
 }

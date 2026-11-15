@@ -3,32 +3,41 @@ import { useEffect } from 'react'
 import type React from 'react'
 
 import { $locale } from '@/shared/store/locale'
-import { BTN_GHOST, ErrorBanner, LoadingBlock } from '@/ui'
+import { useStrings } from '@/shared/strings'
+import { BTN_SUBTLE, Disclosure, ErrorBanner, HINT_TEXT, LoadingBlock } from '@/ui'
 import { ArchiveSearchFeedback, ArchiveSearchForm } from '@/ui/archive-search'
 
-import { archiveSearchCopy } from '../../../../../shared/archive-search'
+import { archiveSearchCopy, emptyArchiveSearch } from '../../../../../shared/archive-search'
 import styles from '../life.module.css'
 import { lifeSearch, searchLife } from '../search'
 
 import { $lifeUi, updateLifeUi } from './life-state'
 
+/**
+ * 生活记录：未提交搜索时由调用方提供最近变化，提交后切换为搜索结果；
+ * 搜索表单收进折叠区，结果与时间线共用同一可视区。
+ */
 export function LifeArchiveSearch({
   visible,
   pursuitId,
   revision,
-  onSelectPursuit
+  onSelectPursuit,
+  fallback
 }: {
   visible: boolean
   pursuitId: string | null
   revision: string
-  onSelectPursuit: (id: string) => void
+  onSelectPursuit: (id: string | null) => void
+  fallback: React.ReactNode
 }): React.JSX.Element {
   const ui = useStore($lifeUi)
   const result = useStore(lifeSearch.$data)
   const busy = useStore(lifeSearch.$loading)
   const failed = useStore(lifeSearch.$error)
   const locale = useStore($locale)
+  const strings = useStrings()
   const t = archiveSearchCopy(locale)
+  const life = strings.life
   const applied = ui.search.applied
 
   useEffect(() => {
@@ -41,13 +50,37 @@ export function LifeArchiveSearch({
 
   return (
     <section className={styles.section}>
-      <ArchiveSearchForm
-        busy={busy}
-        label={t.life}
-        onChange={search => updateLifeUi({ search, ...(search.applied !== ui.search.applied ? { scrollTop: 0 } : {}) })}
-        value={ui.search}
-      />
-      {applied && (
+      <h2>{life.recordsTitle}</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <Disclosure chevron summaryClassName="text-[11px] text-muted" title={life.searchLabel} variant="inline">
+          <ArchiveSearchForm
+            busy={busy}
+            label={t.life}
+            onChange={search =>
+              updateLifeUi({ search, ...(search.applied !== ui.search.applied ? { scrollTop: 0 } : {}) })
+            }
+            value={ui.search}
+          />
+        </Disclosure>
+        {applied && (
+          <button
+            className={BTN_SUBTLE}
+            onClick={() => updateLifeUi({ search: emptyArchiveSearch(), scrollTop: 0 })}
+            type="button"
+          >
+            {life.clearFilter}
+          </button>
+        )}
+        {pursuitId !== null && (
+          <>
+            <span className={HINT_TEXT}>{life.recordsScope}</span>
+            <button className={BTN_SUBTLE} onClick={() => onSelectPursuit(null)} type="button">
+              {life.recordsScopeClear}
+            </button>
+          </>
+        )}
+      </div>
+      {applied ? (
         <>
           {failed && (
             <ErrorBanner
@@ -100,7 +133,7 @@ export function LifeArchiveSearch({
                         )}
                         {item.pursuit_id && (
                           <button
-                            className={BTN_GHOST}
+                            className={BTN_SUBTLE}
                             onClick={() => {
                               if (item.pursuit_id) {
                                 onSelectPursuit(item.pursuit_id)
@@ -119,6 +152,8 @@ export function LifeArchiveSearch({
             )
           )}
         </>
+      ) : (
+        fallback
       )}
     </section>
   )

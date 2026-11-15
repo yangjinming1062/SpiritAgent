@@ -7,11 +7,12 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import { BTN_GHOST, BTN_SUBTLE, ErrorBanner, LoadingBlock } from '@/ui'
+import { BTN_GHOST, BTN_SUBTLE } from '@/ui'
 
 import styles from '../life.module.css'
-import { $lifeError, $lifeFocusedPursuit, $lifeLoading, $lifeState, refreshLife } from '../store'
+import { $lifeFocusedPursuit, $lifeLoading, $lifeState } from '../store'
 
+import { LifeNarrative } from './life-narrative'
 import { useLife } from './use-life'
 
 export function LifeOverview({
@@ -27,7 +28,6 @@ export function LifeOverview({
   const state = useStore($lifeState)
   const pursuit = useStore($lifeFocusedPursuit)
   const loading = useStore($lifeLoading)
-  const failed = useStore($lifeError)
   const strings = useStrings()
   const t = strings.life
   const beginAsync = useAsyncGuard()
@@ -57,14 +57,7 @@ export function LifeOverview({
   return (
     <section aria-label={t.now} className={styles.overview}>
       <span className={styles.eyebrow}>{t.now}</span>
-      {!state && loading ? (
-        <LoadingBlock label={t.loading} />
-      ) : (
-        <p className={styles.activity}>{state?.narrative || t.unavailable}</p>
-      )}
-      {failed && (
-        <ErrorBanner message={t.failed} onRetry={() => void refreshLife()} retryLabel={strings.common.retry} />
-      )}
+      <LifeNarrative />
       <div className={styles.focused}>
         <span className={styles.eyebrow}>{t.ongoing}</span>
         {pursuit ? (
@@ -76,7 +69,7 @@ export function LifeOverview({
             }}
             type="button"
           >
-            {pursuit.narrative || t.ongoing}
+            {pursuit.narrative || t.pursuitFallback}
           </button>
         ) : (
           <p className={styles.quiet}>

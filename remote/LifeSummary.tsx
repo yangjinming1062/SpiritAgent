@@ -13,7 +13,14 @@ import type { RemoteApi } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
 import { usePageState } from './ui'
 
-const statuses = { active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' }
+const statuses = { all: '全部', active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' }
+type PursuitFilter = keyof typeof statuses
+type PursuitListResult = {
+  status: PursuitFilter
+  items: ApiSchemas['LifePursuitPublicView'][] | null
+  failed: boolean
+}
+
 const states = {
   planned: '准备中',
   running: '正在继续',
@@ -28,12 +35,24 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
   const pursuitsElement = useRef<HTMLDetailsElement>(null)
   const t = archiveSearchCopy()
   const [life, setLife] = useState<ApiSchemas['LifeStatePublicView'] | null>(null)
-  const [pursuits, setPursuits] = useState<ApiSchemas['LifePursuitPublicView'][]>([])
+  const [lifeFailed, setLifeFailed] = useState(false)
+  const [list, setList] = useState<PursuitListResult | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [status, setStatus] = usePageState<PursuitFilter>('life.status', 'active')
   const [detail, setDetail] = useState<ApiSchemas['LifePursuitPublicDetail'] | null>(null)
-  const [failed, setFailed] = useState(false)
   const [detailFailed, setDetailFailed] = useState(false)
   const [retry, setRetry] = useState(0)
+  const currentList = list?.status === status ? list : null
+  const pursuits = currentList?.items ?? null
+
+  const selectPursuit = (id: string | null): void => {
+    if (id !== selected) {
+      setSelected(id)
+      setDetail(null)
+      setDetailFailed(false)
+    }
+  }
+
   const searchHistory = useCallback(
     (filters: ArchiveSearchFilters) =>
       api.invoke('companion_life.search_life_events', {
@@ -43,26 +62,43 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
   )
   useEffect(() => {
     let current = true
-    void Promise.all([
-      api.invoke('companion_life.get_life', {}),
-      api.invoke('companion_life.get_life_pursuits', { query: { limit: 10 } })
-    ])
-      .then(([state, list]) => {
+    void api
+      .invoke('companion_life.get_life', {})
+      .then(state => {
         if (current) {
           setLife(state)
-          setPursuits(list.items)
-          setFailed(false)
+          setLifeFailed(false)
         }
       })
       .catch(() => {
         if (current) {
-          setFailed(true)
+          setLifeFailed(true)
         }
       })
     return () => {
       current = false
     }
   }, [api, refresh, retry])
+  useEffect(() => {
+    let current = true
+    void api
+      .invoke('companion_life.get_life_pursuits', {
+        query: { status: status === 'all' ? undefined : status, limit: 10 }
+      })
+      .then(response => {
+        if (current) {
+          setList({ status, items: response.items, failed: false })
+        }
+      })
+      .catch(() => {
+        if (current) {
+          setList(previous => ({ status, items: previous?.status === status ? previous.items : null, failed: true }))
+        }
+      })
+    return () => {
+      current = false
+    }
+  }, [api, refresh, retry, status])
   useEffect(() => {
     let current = true
     if (selected) {
@@ -86,69 +122,87 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
   }, [api, selected, refresh, retry])
   return (
     <section aria-label="伙伴近况" className="card companion-life-card">
-      <strong>伙伴近况</strong>
       <p>{life?.narrative || '暂时还没有可分享的近况'}</p>
-      {(failed || detailFailed) && (
+      {(lifeFailed || currentList?.failed || detailFailed) && (
         <div role="status">
-          <p>暂时无法更新，已有内容仍可查看。</p>
+          <p>暂时无法更新，请重试。</p>
           <button onClick={() => setRetry(value => value + 1)} type="button">
             重试
           </button>
         </div>
       )}
-      {pursuits.length > 0 && (
-        <details ref={pursuitsElement}>
-          <summary>在意的事</summary>
+      <details ref={pursuitsElement}>
+        <summary>在意的事</summary>
+        <div aria-label="在意的事筛选" className="section-tabs life-filter-tabs">
+          {(['active', 'paused', 'completed', 'abandoned', 'all'] as const).map(value => (
+            <button
+              aria-pressed={status === value}
+              className={status === value ? 'selected' : ''}
+              key={value}
+              onClick={() => {
+                if (status !== value) {
+                  setStatus(value)
+                  selectPursuit(null)
+                }
+              }}
+              type="button"
+            >
+              {statuses[value]}
+            </button>
+          ))}
+        </div>
+        {pursuits && pursuits.length > 0 && (
           <ul>
             {pursuits.map(item => (
               <li key={item.id}>
-                <button
-                  onClick={() => {
-                    setSelected(item.id)
-                    setDetailFailed(false)
-                  }}
-                  type="button"
-                >
+                <button onClick={() => selectPursuit(item.id)} type="button">
                   {statuses[item.status]} · {item.narrative || '这件事'}
                 </button>
               </li>
             ))}
           </ul>
-          {detail?.id === selected && (
-            <article>
-              <h3>{detail.narrative || '这件事'}</h3>
-              {detail.status_changed_at && (
-                <small>
-                  {statuses[detail.status]} · {new Date(detail.status_changed_at).toLocaleString()}
-                </small>
-              )}
-              {detail.steps.map(step => (
-                <section key={step.id}>
-                  <strong>{states[step.state]}</strong>
-                  {step.narrative && <p>{step.narrative}</p>}
-                  {step.reading_result && (
-                    <details>
-                      <summary>阅读笔记</summary>
-                      <p style={{ whiteSpace: 'pre-wrap' }}>{step.reading_result.notes}</p>
-                      <ul>
-                        {step.reading_result.sources.map(source => (
-                          <li key={source.url}>
-                            <a href={source.url} rel="noreferrer" target="_blank">
-                              {source.title || source.url}
-                            </a>{' '}
-                            · {source.content_kind === 'summary' ? '摘要' : source.excerpted ? '摘录' : '正文'} ·{' '}
-                            {new Date(source.retrieved_at).toLocaleString()}
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </section>
-              ))}
-            </article>
-          )}
-        </details>
-      )}
+        )}
+        {pursuits?.length === 0 && <p className="muted">这里还没有记录的事项。</p>}
+        {!pursuits && !currentList?.failed && (
+          <p className="muted" role="status">
+            正在加载事项…
+          </p>
+        )}
+        {detail?.id === selected && (
+          <article>
+            <h3>{detail.narrative || '这件事'}</h3>
+            <small>{new Date(detail.started_at).toLocaleString()}</small>
+            {detail.status_changed_at && (
+              <small>
+                {statuses[detail.status]} · {new Date(detail.status_changed_at).toLocaleString()}
+              </small>
+            )}
+            {detail.steps.map(step => (
+              <section key={step.id}>
+                <strong>{states[step.state]}</strong>
+                {step.narrative && <p>{step.narrative}</p>}
+                {step.reading_result && (
+                  <details>
+                    <summary>阅读笔记</summary>
+                    <p style={{ whiteSpace: 'pre-wrap' }}>{step.reading_result.notes}</p>
+                    <ul>
+                      {step.reading_result.sources.map(source => (
+                        <li key={source.url}>
+                          <a href={source.url} rel="noreferrer" target="_blank">
+                            {source.title || source.url}
+                          </a>{' '}
+                          · {source.content_kind === 'summary' ? '摘要' : source.excerpted ? '摘录' : '正文'} ·{' '}
+                          {new Date(source.retrieved_at).toLocaleString()}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </section>
+            ))}
+          </article>
+        )}
+      </details>
       <ArchiveSearchPanel
         count={result => result.items.length}
         label={t.life}
@@ -188,7 +242,7 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
                   <button
                     className="subtle"
                     onClick={() => {
-                      setSelected(item.pursuit_id)
+                      selectPursuit(item.pursuit_id)
                       if (pursuitsElement.current) {
                         pursuitsElement.current.open = true
                         pursuitsElement.current.scrollIntoView({ block: 'nearest' })

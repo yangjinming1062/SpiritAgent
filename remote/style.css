@@ -1072,9 +1072,6 @@ dd {
   font-weight: 600;
   box-shadow: var(--shadow-1);
 }
-.feed-tabs button.selected {
-  color: var(--accent);
-}
 .tab-unread {
   display: inline-block;
   width: 7px;
@@ -1090,7 +1087,8 @@ dd {
   margin-top: -12px;
 }
 .memory-tabs,
-.memory-status-tabs {
+.memory-status-tabs,
+.life-filter-tabs {
   flex-wrap: wrap;
   overflow: visible;
 }

@@ -6,7 +6,16 @@ import { openCreation, openLife } from '@/app/navigation/app-navigation'
 import { useNavigationDetail } from '@/app/navigation/navigation-detail'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
-import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, ErrorBanner, LoadingBlock, Pager } from '@/ui'
+import {
+  BTN_GHOST,
+  BTN_SUBTLE,
+  CapsuleTabs,
+  ErrorBanner,
+  LoadingBlock,
+  OverflowMenu,
+  OverflowMenuAction,
+  Pager
+} from '@/ui'
 
 import { isResourceId } from '../../../../../shared/resource-id'
 import styles from '../life.module.css'
@@ -30,6 +39,7 @@ import {
 } from '../store'
 import { lifeTimeline } from '../timeline'
 
+import { LifeNarrative } from './life-narrative'
 import { LifeArchiveSearch } from './life-search'
 import { $lifeUi, $lifeUiRestoreRevision, updateLifeUi } from './life-state'
 import { useLife } from './use-life'
@@ -160,6 +170,29 @@ export function LifeOverviewPage({ visible = true }: { visible?: boolean }): Rea
     <Pager busy={busy} className={styles.pagination} hasMore={hasMore} onPageChange={onChange} page={page} />
   )
 
+  // 记录行内只留一个主要动作，其余收进溢出菜单；各入口的跳转语义不变。
+  const timelineActions = (entry: (typeof timeline)[number]): Array<{ label: string; onClick: () => void }> => {
+    const actions: Array<{ label: string; onClick: () => void }> = []
+
+    if (entry.pursuitId && entry.pursuitId !== selectedId) {
+      actions.push({ label: t.details, onClick: () => selectPursuit(entry.pursuitId) })
+    }
+
+    if (entry.visualId) {
+      actions.push({ label: t.openVisual, onClick: () => openResult('visual', entry.visualId) })
+    }
+
+    if (entry.postId) {
+      actions.push({ label: t.openPosts, onClick: () => void openLife('posts') })
+    }
+
+    if (entry.diaryId) {
+      actions.push({ label: t.openDiary, onClick: () => void openLife('diary') })
+    }
+
+    return actions
+  }
+
   return (
     <div
       className={styles.page}
@@ -171,9 +204,10 @@ export function LifeOverviewPage({ visible = true }: { visible?: boolean }): Rea
       ref={root}
     >
       <header className={styles.pageHeading}>
-        <h1>{t.title}</h1>
+        <h1>{t.now}</h1>
         <p>{t.intro}</p>
       </header>
+      <LifeNarrative />
       {selectedId !== null ? (
         <section className={styles.section}>
           <button className={BTN_GHOST} onClick={() => selectPursuit(null)} type="button">
@@ -191,8 +225,7 @@ export function LifeOverviewPage({ visible = true }: { visible?: boolean }): Rea
           ) : detail?.id === selectedId ? (
             <article className={styles.detail}>
               <span className={styles.eyebrow}>{t.statuses[detail.status]}</span>
-              <h2>{t.ongoing}</h2>
-              {detail.narrative && <p>{detail.narrative}</p>}
+              <h2>{detail.narrative || t.pursuitFallback}</h2>
               <time dateTime={detail.started_at}>{formatDate(detail.started_at)}</time>
               {detail.status_changed_at && (
                 <time dateTime={detail.status_changed_at}>
@@ -247,122 +280,130 @@ export function LifeOverviewPage({ visible = true }: { visible?: boolean }): Rea
           ) : null}
         </section>
       ) : (
-        <section className={styles.section}>
-          <h2>{t.pursuitsTitle}</h2>
-          <CapsuleTabs
-            ariaLabel={t.pursuitsTitle}
-            onChange={status => updateLifeUi({ status, pursuitPage: 0, pursuitCursors: [null] })}
-            options={(['active', 'paused', 'completed', 'abandoned', 'all'] as const).map(value => ({
-              value,
-              label: t.statuses[value]
-            }))}
-            value={ui.status}
-          />
-          {pursuitsError && (
-            <ErrorBanner
-              message={t.failed}
-              onRetry={() => void loadLifePursuits(ui.status, pursuitCursor)}
-              retryLabel={strings.common.retry}
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <CapsuleTabs
+              ariaLabel={t.pursuitsTitle}
+              onChange={status => updateLifeUi({ status, pursuitPage: 0, pursuitCursors: [null] })}
+              options={(['active', 'paused', 'completed', 'abandoned', 'all'] as const).map(value => ({
+                value,
+                label: t.statuses[value]
+              }))}
+              size="sm"
+              value={ui.status}
+              variant="segmented"
             />
-          )}
-          {pursuitsLoading && pursuits.length === 0 ? (
-            <LoadingBlock label={t.loading} />
-          ) : pursuits.length === 0 ? (
-            !pursuitsError && <p className={styles.empty}>{t.emptyPursuits}</p>
-          ) : (
-            <div className={styles.pursuits}>
-              {pursuits.map(pursuit => (
-                <button
-                  className={styles.pursuit}
-                  key={pursuit.id}
-                  onClick={() => selectPursuit(pursuit.id)}
-                  type="button"
-                >
-                  <span className={styles.eyebrow}>{t.statuses[pursuit.status]}</span>
-                  <strong>{pursuit.narrative || t.ongoing}</strong>
-                  <time dateTime={pursuit.updated_at}>{formatDate(pursuit.updated_at)}</time>
-                </button>
-              ))}
-            </div>
-          )}
-          {pagination(ui.pursuitPage, pursuitsHasMore, pursuitsLoading, pursuitPage =>
-            updateLifeUi({
-              pursuitPage,
-              pursuitCursors:
-                pursuitPage > ui.pursuitPage && pursuitsNextCursor
-                  ? [...ui.pursuitCursors.slice(0, ui.pursuitPage + 1), pursuitsNextCursor]
-                  : ui.pursuitCursors
-            })
-          )}
-        </section>
+          </div>
+          <section className={styles.section}>
+            <h2>{t.pursuitsTitle}</h2>
+            {pursuitsError && (
+              <ErrorBanner
+                message={t.failed}
+                onRetry={() => void loadLifePursuits(ui.status, pursuitCursor)}
+                retryLabel={strings.common.retry}
+              />
+            )}
+            {pursuitsLoading && pursuits.length === 0 ? (
+              <LoadingBlock label={t.loading} />
+            ) : pursuits.length === 0 ? (
+              !pursuitsError && <p className={styles.empty}>{t.emptyPursuits}</p>
+            ) : (
+              <div className={styles.pursuits}>
+                {pursuits.map(pursuit => (
+                  <button
+                    className={styles.pursuit}
+                    key={pursuit.id}
+                    onClick={() => selectPursuit(pursuit.id)}
+                    type="button"
+                  >
+                    <span className={styles.eyebrow}>{t.statuses[pursuit.status]}</span>
+                    <strong>{pursuit.narrative || t.pursuitFallback}</strong>
+                    <time dateTime={pursuit.updated_at}>{formatDate(pursuit.updated_at)}</time>
+                  </button>
+                ))}
+              </div>
+            )}
+            {pagination(ui.pursuitPage, pursuitsHasMore, pursuitsLoading, pursuitPage =>
+              updateLifeUi({
+                pursuitPage,
+                pursuitCursors:
+                  pursuitPage > ui.pursuitPage && pursuitsNextCursor
+                    ? [...ui.pursuitCursors.slice(0, ui.pursuitPage + 1), pursuitsNextCursor]
+                    : ui.pursuitCursors
+              })
+            )}
+          </section>
+        </>
       )}
-      <LifeArchiveSearch onSelectPursuit={selectPursuit} pursuitId={selectedId} revision={revision} visible={visible} />
-      {!ui.search.applied && (
-        <section className={styles.section}>
-          <h2>{t.eventsTitle}</h2>
-          {eventsError && (
-            <ErrorBanner
-              message={t.failed}
-              onRetry={() => void loadLifeEvents(ui.eventPage, selectedId ?? undefined)}
-              retryLabel={strings.common.retry}
-            />
-          )}
-          {eventsLoading && events.length === 0 ? (
-            <LoadingBlock label={t.loading} />
-          ) : (
-            <ol className={styles.timeline}>
-              {timeline.map(entry => (
-                <li key={entry.id}>
-                  <time dateTime={entry.occurredAt}>{formatDate(entry.occurredAt)}</time>
-                  <div className={styles.eventBody}>
-                    <span className={styles.eyebrow}>{t.eventLabels[entry.kind]}</span>
-                    {entry.text && <p>{entry.text}</p>}
-                    <div className={styles.actions}>
-                      {entry.pursuitId && entry.pursuitId !== selectedId && (
-                        <button className={BTN_GHOST} onClick={() => selectPursuit(entry.pursuitId)} type="button">
-                          {t.details}
-                        </button>
-                      )}
-                      {entry.visualId && (
-                        <button
-                          className={BTN_GHOST}
-                          onClick={() => openResult('visual', entry.visualId)}
-                          type="button"
-                        >
-                          {t.openVisual}
-                        </button>
-                      )}
-                      {entry.postId && (
-                        <button className={BTN_GHOST} onClick={() => void openLife('posts')} type="button">
-                          {t.openPosts}
-                        </button>
-                      )}
-                      {entry.diaryId && (
-                        <button className={BTN_GHOST} onClick={() => void openLife('diary')} type="button">
-                          {t.openDiary}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </li>
-              ))}
-              {!eventsLoading && !eventsError && timeline.length === 0 && (
-                <li className={styles.empty}>{t.emptyEvents}</li>
-              )}
-            </ol>
-          )}
-          {eventsHasMore && (
-            <button
-              className={BTN_SUBTLE}
-              disabled={eventsLoading}
-              onClick={() => updateLifeUi({ eventPage: ui.eventPage + 1 })}
-              type="button"
-            >
-              {t.moreEvents}
-            </button>
-          )}
-        </section>
-      )}
+      <LifeArchiveSearch
+        fallback={
+          <>
+            {eventsError && (
+              <ErrorBanner
+                message={t.failed}
+                onRetry={() => void loadLifeEvents(ui.eventPage, selectedId ?? undefined)}
+                retryLabel={strings.common.retry}
+              />
+            )}
+            {eventsLoading && events.length === 0 ? (
+              <LoadingBlock label={t.loading} />
+            ) : (
+              <ol className={styles.timeline}>
+                {timeline.map(entry => {
+                  const actions = timelineActions(entry)
+
+                  return (
+                    <li key={entry.id}>
+                      <time dateTime={entry.occurredAt}>{formatDate(entry.occurredAt)}</time>
+                      <div className={styles.eventBody}>
+                        <span className={styles.eyebrow}>{t.eventLabels[entry.kind]}</span>
+                        {entry.text && <p>{entry.text}</p>}
+                        {actions.length > 0 && (
+                          <div className={styles.actions}>
+                            {actions.slice(0, 1).map(action => (
+                              <button className={BTN_SUBTLE} key={action.label} onClick={action.onClick} type="button">
+                                {action.label}
+                              </button>
+                            ))}
+                            {actions.length > 1 && (
+                              <OverflowMenu label={t.moreActions}>
+                                {actions.slice(1).map(action => (
+                                  <OverflowMenuAction
+                                    key={action.label}
+                                    label={action.label}
+                                    onClick={action.onClick}
+                                  />
+                                ))}
+                              </OverflowMenu>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+                {!eventsLoading && !eventsError && timeline.length === 0 && (
+                  <li className={styles.empty}>{t.emptyEvents}</li>
+                )}
+              </ol>
+            )}
+            {eventsHasMore && (
+              <button
+                className={BTN_SUBTLE}
+                disabled={eventsLoading}
+                onClick={() => updateLifeUi({ eventPage: ui.eventPage + 1 })}
+                type="button"
+              >
+                {t.moreEvents}
+              </button>
+            )}
+          </>
+        }
+        onSelectPursuit={selectPursuit}
+        pursuitId={selectedId}
+        revision={revision}
+        visible={visible}
+      />
     </div>
   )
 }

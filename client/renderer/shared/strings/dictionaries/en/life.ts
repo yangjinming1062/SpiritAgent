@@ -3,7 +3,12 @@ export const life: Pick<Dictionary, 'life'> = {
   life: {
     title: 'Life',
     intro: 'What your companion is continuing, and what has changed recently.',
-    now: 'Right now',
+    now: 'Now',
+    sectionHints: {
+      now: 'What they are continuing, and what has changed',
+      posts: 'Words, images, and videos your companion shares',
+      diary: 'Records and reflections kept by date'
+    },
     unavailable: 'No companion update is available yet',
     ongoing: 'Still on their mind',
     noPursuit: 'No ongoing pursuits at the moment',
@@ -13,7 +18,13 @@ export const life: Pick<Dictionary, 'life'> = {
     hide: 'Hide life area',
     close: 'Close life area',
     pursuitsTitle: 'Things that matter',
-    eventsTitle: 'Recent changes',
+    recordsTitle: 'Life records',
+    searchLabel: 'Search records',
+    clearFilter: 'Clear filters',
+    recordsScope: 'Only records of this pursuit',
+    recordsScopeClear: 'View all records',
+    pursuitFallback: 'This pursuit',
+    moreActions: 'More actions',
     statuses: { all: 'All', active: 'Ongoing', paused: 'Paused', completed: 'Completed', abandoned: 'Set aside' },
     stepStates: {
       planned: 'Getting ready',

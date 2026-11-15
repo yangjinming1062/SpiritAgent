@@ -2,7 +2,12 @@ export const life = {
   life: {
     title: '生活',
     intro: '看看伙伴正在继续的事，和最近发生的变化。',
-    now: '此刻',
+    now: '近况',
+    sectionHints: {
+      now: '正在继续的事与最近的变化',
+      posts: '伙伴分享的文字、图片与视频',
+      diary: '按日期留下的记录与感受'
+    },
     unavailable: '暂时还没有可分享的近况',
     ongoing: '正在继续的事',
     noPursuit: '暂时没有正在推进的事',
@@ -12,7 +17,13 @@ export const life = {
     hide: '收起生活区',
     close: '关闭生活区',
     pursuitsTitle: '在意的事',
-    eventsTitle: '最近的变化',
+    recordsTitle: '生活记录',
+    searchLabel: '搜索记录',
+    clearFilter: '清除筛选',
+    recordsScope: '仅显示这件事的记录',
+    recordsScopeClear: '查看全部记录',
+    pursuitFallback: '这件事',
+    moreActions: '更多操作',
     statuses: { all: '全部', active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' },
     stepStates: {
       planned: '准备中',

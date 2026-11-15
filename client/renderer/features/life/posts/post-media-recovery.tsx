@@ -20,12 +20,14 @@ import {
 } from './recovery'
 import { hydratePosts } from './store'
 
-export function PostMediaRecovery(): React.JSX.Element | null {
+export function PostMediaRecovery({ reloadKey }: { reloadKey: number }): React.JSX.Element | null {
   const t = useStrings().living.posts
   const [items, setItems] = useState<MediaPublicationRecovery[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [discardId, setDiscardId] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [refreshing, setRefreshing] = useState(true)
   const [loadFailed, setLoadFailed] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const beginAsync = useAsyncGuard()
@@ -42,9 +44,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
   useEffect(() => {
     let cancelled = false
     const isLive = beginAsync()
-    setItems([])
-    setNextCursor(null)
-    setBusy(null)
+    setRefreshing(true)
     setDiscardId(null)
     setLoadFailed(false)
     void listMediaPublications().then(result => {
@@ -52,6 +52,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
         return
       }
 
+      setRefreshing(false)
       setLoadFailed(result === null)
 
       if (result) {
@@ -63,7 +64,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, beginAsync])
+  }, [reloadKey, refreshKey, beginAsync])
 
   const query = async (id: string): Promise<void> => {
     const isLive = beginAsync()
@@ -166,7 +167,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
     }
   }
 
-  if (loadFailed) {
+  if (loadFailed && items.length === 0) {
     return (
       <div className={cn('liquid-glass-card', styles.card)}>
         <p className={styles.body}>{t.mediaRecoveryLoadFailed}</p>
@@ -181,20 +182,30 @@ export function PostMediaRecovery(): React.JSX.Element | null {
     return null
   }
 
+  const actionsDisabled = refreshing || busy !== null
+
   return (
-    <section className={cn('liquid-glass-card', styles.card)}>
+    <details
+      className={cn('liquid-glass-card', styles.card)}
+      onToggle={event => setExpanded(event.currentTarget.open)}
+      open={expanded}
+    >
+      <summary className={styles.recoverySummary}>
+        {t.mediaRecoveryHeading} · {items.length}
+      </summary>
       <div className="flex items-center justify-between gap-2">
-        <h3 className={styles.title}>{t.mediaRecoveryHeading}</h3>
+        <p className={styles.body} role={loadFailed ? 'status' : undefined}>
+          {loadFailed ? t.mediaRecoveryLoadFailed : t.mediaRecoveryHint}
+        </p>
         <button
           className={BTN_SUBTLE}
-          disabled={busy !== null}
+          disabled={actionsDisabled}
           onClick={() => setRefreshKey(current => current + 1)}
           type="button"
         >
           {t.mediaRefresh}
         </button>
       </div>
-      <p className={styles.body}>{t.mediaRecoveryHint}</p>
       {items.map(item => (
         <div className="space-y-2 border-t border-line-standard pt-3" key={item.publication_id}>
           <p className={styles.title}>{item.title}</p>
@@ -204,7 +215,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
               : t.mediaRecoveryStatuses[item.media_status]}
           </p>
           {item.error && <p className={styles.body}>{item.error}</p>}
-          {item.media_url && (
+          {expanded && item.media_url && (
             <InlineMedia alt={item.title} audioUrl={null} mediaType={item.media_kind} url={item.media_url} />
           )}
           {(item.media_status === 'review_pending' || item.media_status === 'failed') && item.media_job_id ? (
@@ -213,7 +224,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
           {item.can_publish ? (
             <button
               className={BTN_SUBTLE}
-              disabled={busy !== null}
+              disabled={actionsDisabled}
               onClick={() => void publish(item.publication_id)}
               type="button"
             >
@@ -224,13 +235,13 @@ export function PostMediaRecovery(): React.JSX.Element | null {
             actions={[
               {
                 className: BTN_SUBTLE,
-                disabled: busy !== null,
+                disabled: actionsDisabled,
                 label: t.mediaQuery,
                 onClick: () => void query(item.publication_id)
               },
               {
                 className: BTN_SUBTLE,
-                disabled: busy !== null || !item.can_discard,
+                disabled: actionsDisabled || !item.can_discard,
                 label: item.status === 'discarded' ? t.mediaRetryCleanup : t.mediaDiscard,
                 onClick: () => setDiscardId(item.publication_id)
               }
@@ -238,7 +249,7 @@ export function PostMediaRecovery(): React.JSX.Element | null {
           />
         </div>
       ))}
-      <Pager busy={busy !== null} hasMore={nextCursor !== null} mode="more" onLoadMore={() => void loadMore()} />
+      <Pager busy={actionsDisabled} hasMore={nextCursor !== null} mode="more" onLoadMore={() => void loadMore()} />
       <ConfirmDialog
         confirmLabel={t.mediaDiscard}
         description={t.mediaDiscardDescription}
@@ -255,6 +266,6 @@ export function PostMediaRecovery(): React.JSX.Element | null {
         open={discardId !== null}
         title={t.mediaDiscardTitle}
       />
-    </section>
+    </details>
   )
 }
