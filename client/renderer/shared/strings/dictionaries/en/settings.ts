@@ -265,8 +265,7 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
     },
     persona: {
       title: 'About your companion',
-      intro: 'Review the name, personality, and your relationship. Save your edits or cancel to discard them.',
-      sectionTitle: 'Persona',
+      intro: 'These settings shape how your companion speaks and how you two get along.',
       categoriesAria: 'Companion categories',
       memoriesTitle: 'Memories',
       memoryIntro:
@@ -279,6 +278,11 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
         environment: 'Environments',
         actions: 'Actions',
         visuals: 'Visuals'
+      },
+      sectionHints: {
+        profile: 'Name, personality and appearance',
+        voice: 'How your companion sounds',
+        memory: 'What your companion remembers'
       },
       memoryScope: 'Whose memories',
       memoryScopeAria: 'Memory type',
@@ -352,7 +356,6 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
         }
       },
       editAction: 'Edit',
-      editHeading: 'Edit persona',
       defaultName: 'Companion',
       ageLabel: 'Age (optional)',
       agePlaceholder: 'Describe freely, or leave blank',
@@ -379,6 +382,15 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
       personalityPlaceholder: 'Describe freely…',
       speakingStyleLabel: 'Speaking style',
       speakingStylePlaceholder: 'Describe the tone and expression style you want',
+      groups: {
+        relationship: 'Getting along',
+        background: 'Background'
+      },
+      unfilled: 'Not set',
+      unfilledCount: (count: number) => (count === 1 ? '1 field empty' : `${count} fields empty`),
+      renameAction: 'Rename',
+      collapseAction: 'Collapse',
+      appearanceEmpty: 'No full-body appearance yet',
       hintEmptyName: 'Please enter a name',
       hintEmptySpeakingStyle: 'Please enter a speaking style',
       hintSaveFailed: 'Save failed, try again.'
@@ -431,6 +443,14 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
           user_hobbies: 'Hobbies',
           user_freeform: 'Notes'
         }
+      },
+      maintenanceTitle: 'How memories are maintained',
+      otherPresetHint: 'This assistant keeps only memories from its own conversations.',
+      statusLabels: {
+        active: 'In use',
+        candidate: 'To organize',
+        invalidated: 'Disabled',
+        expired: 'Expired'
       },
       maintenanceHint:
         'Your companion reviews evidence and maintains memory autonomously. Only active, unexpired memories inform interactions.',

@@ -2,32 +2,15 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { presetDisplayName } from '@/features/conversation'
 import { $systemPresets, fetchSystemPresets } from '@/features/conversation'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { requestResource } from '@/shared/lib/resource-request'
-import { cn } from '@/shared/lib/utils'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import {
-  BTN_GHOST,
-  BTN_SUBTLE,
-  CapsuleTabs,
-  CHIP,
-  confirmAction,
-  Disclosure,
-  EmptyState,
-  ErrorBanner,
-  HINT_TEXT,
-  INPUT_CLASS,
-  LoadingBlock,
-  Pager,
-  PanelSelect
-} from '@/ui'
+import { confirmAction, EmptyState, ErrorBanner, HINT_TEXT, LoadingBlock, Pager, SettingsSectionIntro } from '@/ui'
 import type { CompanionMemoryBrowser } from '@client-shared/ipc/ui-state'
-import type { MemoryCounts, MemoryDetail, MemoryItem } from '@protocol'
+import type { MemoryCounts, MemoryItem } from '@protocol'
 
 import {
   $companionEditors,
@@ -38,86 +21,57 @@ import {
   updateCompanionEditors,
   updateMemoryBrowser
 } from './companion-editor-state'
+import { memoryCountBucket, MemoryItemCard } from './memory-item'
+import { MemoryRecallFilters, type MemorySectionId, MemoryToolbar } from './memory-toolbar'
 import { useMemoryChanged, UserProfileSection } from './user-profile-section'
 
 const PAGE_SIZE = 20
-
-/** 回忆记忆的计数桶：与服务端 memory_counts 的分桶一致；判定不了时返回 null，调用方回源确认。 */
-function memoryCountBucket(item: { expires_at: null | string; status: string }): null | string {
-  const expired = item.expires_at !== null && new Date(item.expires_at).getTime() <= Date.now()
-
-  if (item.status === 'active') {
-    return expired ? 'expired' : 'active'
-  }
-
-  if (item.status === 'candidate') {
-    return expired ? 'expired' : 'candidate'
-  }
-
-  if (item.status === 'invalidated') {
-    return 'invalidated'
-  }
-
-  return null
-}
 
 export function MemorySection(): React.ReactElement {
   const presets = useStore($systemPresets)
   const memory = useStore($companionEditors).memory
   const dict = useStrings()
+  const persona = dict.settings.persona
   const { presetId, section } = memory
+
   useEffect(() => {
     void fetchSystemPresets()
   }, [])
 
+  const showProfile = section === 'profile' && presetId === 'companion'
+
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 flex-wrap items-end gap-3">
-        <label className="block min-w-40 flex-1 text-sm text-body">
-          {dict.settings.persona.memoryScope}
-          <PanelSelect
-            ariaLabel={dict.settings.memory.presetLabel}
-            onChange={next =>
-              updateCompanionEditors({
-                memory: {
-                  ...$companionEditors.get().memory,
-                  presetId: next,
-                  section: next === 'companion' ? section : 'recall'
-                }
-              })
-            }
-            options={presets.map(preset => ({ value: preset.id, label: presetDisplayName(dict, preset) }))}
-            value={presetId}
-            widthClass="w-full"
-          />
-        </label>
-        {presetId === 'companion' && (
-          <CapsuleTabs
-            ariaLabel={dict.settings.persona.memoryScopeAria}
-            onChange={next => updateCompanionEditors({ memory: { ...$companionEditors.get().memory, section: next } })}
-            options={[
-              { value: 'recall', label: dict.settings.persona.memoryKindRecall },
-              { value: 'profile', label: dict.settings.memory.profile.title }
-            ]}
-            value={section}
-          />
-        )}
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="shrink-0">
+        <SettingsSectionIntro hint={persona.memoryIntro} title={persona.memoriesTitle} />
       </div>
-      {section === 'profile' && presetId === 'companion' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <UserProfileSection />
-        </div>
-      ) : (
-        <RecallBrowser key={presetId} presetId={presetId} />
-      )}
-    </section>
+      <MemoryToolbar
+        onChangePreset={next =>
+          updateCompanionEditors({
+            memory: {
+              ...$companionEditors.get().memory,
+              presetId: next,
+              section: next === 'companion' ? section : 'recall'
+            }
+          })
+        }
+        onChangeSection={(next: MemorySectionId) =>
+          updateCompanionEditors({
+            memory: { ...$companionEditors.get().memory, section: next }
+          })
+        }
+        presetId={presetId}
+        presets={presets}
+        section={section}
+      />
+      {showProfile ? <UserProfileSection /> : <RecallBrowser key={presetId} presetId={presetId} />}
+    </div>
   )
 }
 
 function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
-  const locale = useStore($locale)
   const memory = useStore($companionEditors).memory
   const browser = memory.browsers[presetId] ?? memoryBrowser(presetId)
   const { status, page, query } = browser
@@ -129,7 +83,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const [hint, setHint] = useState<string | null>(null)
   const [savedHint, setSavedHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  // 就地编辑的选中与展开随组件生命周期，不跨菜单保留。
+  // 就地编辑的选中与展开随组件生命周期，不跨分区保留。
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const loadId = useRef(0)
@@ -180,9 +134,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         setNextCursor(result.next_cursor ?? null)
 
         if (page > 0 && !result.memories.length) {
-          updateMemoryBrowser(presetId, {
-            page: page - 1
-          })
+          updateMemoryBrowser(presetId, { page: page - 1 })
           setSelectedId(null)
           setEditorOpen(false)
         }
@@ -220,9 +172,6 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   }, [loading, presetId])
 
   const selected = rows.find(row => row.id === selectedId) ?? rows[0]
-  const draftKey = selected ? `${presetId}:${selected.id}` : ''
-  const draft = memory.drafts[draftKey]
-  const conflict = !!draft && selected?.content_version !== draft.baseVersion
 
   const changeFilter = (filter: Partial<Pick<CompanionMemoryBrowser, 'page' | 'query' | 'status'>>): void => {
     if (listRef.current) {
@@ -266,11 +215,15 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     })
   }
 
-  const save = async (): Promise<void> => {
-    if (!selected || !draft || busy) {
+  const save = async (id: string): Promise<void> => {
+    const target = rows.find(row => row.id === id)
+    const targetDraft = memory.drafts[`${presetId}:${id}`]
+
+    if (!target || !targetDraft || busy) {
       return
     }
 
+    const targetKey = `${presetId}:${id}`
     const isLive = begin()
     const isCurrent = captureAuthScope()
 
@@ -284,10 +237,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
     try {
       const updated = await requestResource('resource_catalog.patch_memory', {
-        path: { memory_id: selected.id },
+        path: { memory_id: target.id },
         body: {
-          content: draft.content.trim(),
-          expected_version: draft.baseVersion,
+          content: targetDraft.content.trim(),
+          expected_version: targetDraft.baseVersion,
           system_preset_id: presetId
         }
       })
@@ -296,7 +249,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         return
       }
 
-      completeMemoryDraft('drafts', draftKey, draft, updated)
+      completeMemoryDraft('drafts', targetKey, targetDraft, updated)
 
       if (!isLive()) {
         return
@@ -345,14 +298,16 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
             kind: 'recall',
             status: 'active',
             system_preset_id: presetId,
-            q: draft.content.trim(),
+            q: targetDraft.content.trim(),
             limit: PAGE_SIZE
           }
         })
 
         confirmed = result.memories.find(
           row =>
-            row.id === selected.id && row.content === draft.content.trim() && row.content_version > draft.baseVersion
+            row.id === target.id &&
+            row.content === targetDraft.content.trim() &&
+            row.content_version > targetDraft.baseVersion
         )
       } catch {
         // 原写请求的错误仍交给页面呈现，读取失败时保留原稿与版本。
@@ -363,7 +318,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       }
 
       if (confirmed) {
-        completeMemoryDraft('drafts', draftKey, draft, confirmed)
+        completeMemoryDraft('drafts', targetKey, targetDraft, confirmed)
       }
 
       if (isLive()) {
@@ -385,8 +340,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     }
   }
 
-  const forget = async (): Promise<void> => {
-    if (!selected || busy) {
+  const forget = async (id: string): Promise<void> => {
+    const target = rows.find(row => row.id === id)
+
+    if (!target || busy) {
       return
     }
 
@@ -400,7 +357,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     if (
       !(await confirmAction({
         title: dict.settings.persona.memoryForgetTitle,
-        description: selected.content ?? '',
+        description: target.content ?? '',
         confirmLabel: dict.common.forget,
         variant: 'destructive'
       })) ||
@@ -413,7 +370,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
     try {
       await requestResource('resource_catalog.delete_memory', {
-        path: { memory_id: selected.id },
+        path: { memory_id: target.id },
         query: { system_preset_id: presetId }
       })
 
@@ -421,7 +378,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         return
       }
 
-      setMemoryDraft('drafts', draftKey, undefined)
+      setMemoryDraft('drafts', `${presetId}:${id}`, undefined)
 
       if (!isLive()) {
         return
@@ -444,39 +401,19 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="shrink-0 space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="block min-w-40 flex-1">
-            <span className="sr-only">{dict.settings.persona.memorySearchAria}</span>
-            <input
-              className={INPUT_CLASS}
-              onChange={event => changeFilter({ query: event.target.value })}
-              placeholder={dict.settings.persona.memorySearchPlaceholder}
-              type="search"
-              value={query}
-            />
-          </label>
-          <CapsuleTabs
-            ariaLabel={t.tabAriaLabel}
-            onChange={next => changeFilter({ status: next })}
-            options={[
-              { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
-              { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
-              { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
-              { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
-            ]}
-            size="sm"
-            value={status}
-          />
-        </div>
-        <p className={HINT_TEXT}>{t.maintenanceHint}</p>
-        {hint && <ErrorBanner message={hint} onRetry={() => void load()} retryLabel={dict.common.retry} />}
-        {savedHint && (
-          <p aria-live="polite" className={HINT_TEXT}>
-            {savedHint}
-          </p>
-        )}
-      </div>
+      <MemoryRecallFilters
+        counts={counts}
+        onChangeQuery={next => changeFilter({ query: next })}
+        onChangeStatus={next => changeFilter({ status: next })}
+        query={query}
+        status={status}
+      />
+      {hint ? <ErrorBanner message={hint} onRetry={() => void load()} retryLabel={dict.common.retry} /> : null}
+      {savedHint ? (
+        <p aria-live="polite" className={HINT_TEXT}>
+          {savedHint}
+        </p>
+      ) : null}
       {loading ? (
         <LoadingBlock label={t.loading} />
       ) : rows.length === 0 ? (
@@ -492,119 +429,38 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
           >
             {rows.map(row => {
               const editing = editorOpen && selected?.id === row.id
+              const rowKey = `${presetId}:${row.id}`
+              const rowDraft = memory.drafts[rowKey]
 
               return (
-                <article
-                  className={cn(
-                    'liquid-glass-card rounded-xl',
-                    editing && 'outline-1 -outline-offset-1 outline-accent'
-                  )}
+                <MemoryItemCard
+                  busy={busy}
+                  cardRef={editing ? editorRef : undefined}
+                  draft={rowDraft}
+                  editing={editing}
+                  filterStatus={status}
                   key={row.id}
-                  ref={editing ? editorRef : undefined}
-                >
-                  {editing ? (
-                    <div className="space-y-3 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <label className="text-sm font-medium text-strong" htmlFor={`memory-${row.id}`}>
-                          {dict.settings.persona.memoryEdit}
-                        </label>
-                        <div className="flex items-center gap-2">
-                          {draft && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
-                          <button className={BTN_GHOST} onClick={closeEditor} type="button">
-                            {dict.settings.persona.memoryCollapse}
-                          </button>
-                        </div>
-                      </div>
-                      <textarea
-                        className={cn(INPUT_CLASS, 'min-h-40 resize-y')}
-                        disabled={busy}
-                        id={`memory-${row.id}`}
-                        onChange={event => {
-                          setSavedHint(null)
-                          setMemoryDraft('drafts', draftKey, editMemoryDraft(draft, event.target.value, row))
-                        }}
-                        rows={7}
-                        value={draft?.content ?? row.content ?? ''}
-                      />
-                      {status !== 'active' && <p className={HINT_TEXT}>{dict.settings.persona.memorySaveHint}</p>}
-                      {conflict && (
-                        <div className="space-y-2 rounded-xl border border-line-hairline p-3">
-                          <p className="text-xs text-amber-300/90">{dict.settings.persona.memoryLatestContent}</p>
-                          <p className="whitespace-pre-wrap break-words text-sm text-body">{row.content}</p>
-                          <button
-                            className={BTN_SUBTLE}
-                            disabled={busy}
-                            onClick={() => {
-                              if (draft) {
-                                setMemoryDraft('drafts', draftKey, {
-                                  ...draft,
-                                  baseContent: row.content ?? '',
-                                  baseVersion: row.content_version
-                                })
-                              }
-                            }}
-                            type="button"
-                          >
-                            {dict.common.keepMyEdits}
-                          </button>
-                        </div>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          className={BTN_SUBTLE}
-                          disabled={busy || !draft?.content.trim() || conflict}
-                          onClick={() => void save()}
-                          type="button"
-                        >
-                          {busy
-                            ? dict.common.saving
-                            : status === 'active'
-                              ? dict.common.saveChanges
-                              : dict.settings.persona.memorySaveAgain}
-                        </button>
-                        <button
-                          className={BTN_GHOST}
-                          disabled={busy || !draft}
-                          onClick={() => setMemoryDraft('drafts', draftKey, undefined)}
-                          type="button"
-                        >
-                          {dict.common.cancel}
-                        </button>
-                        <button
-                          className={cn(BTN_GHOST, 'text-danger-fg')}
-                          disabled={busy}
-                          onClick={() => void forget()}
-                          type="button"
-                        >
-                          {dict.settings.persona.memoryForgetAction}
-                        </button>
-                      </div>
-                      <p className={cn(HINT_TEXT, 'break-words')}>
-                        {row.context || '—'} · {t.updated} {row.updated_at ?? '—'}
-                      </p>
-                      <MemoryDetails key={`${row.id}:${row.content_version}`} presetId={presetId} row={row} />
-                    </div>
-                  ) : (
-                    <button
-                      aria-expanded={false}
-                      className="w-full rounded-xl p-3 text-left focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
-                      data-memory-id={row.id}
-                      onClick={() => selectRow(row.id)}
-                      type="button"
-                    >
-                      <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-body">
-                        {row.content}
-                      </p>
-                      <p className={cn(HINT_TEXT, 'mt-2 break-words')}>
-                        {row.context || '—'} ·{' '}
-                        {row.updated_at ? new Date(row.updated_at).toLocaleDateString(locale) : '—'}
-                      </p>
-                      {memory.drafts[`${presetId}:${row.id}`] && (
-                        <span className="text-xs text-accent">{dict.common.unsavedChanges}</span>
-                      )}
-                    </button>
-                  )}
-                </article>
+                  onChange={value => {
+                    setSavedHint(null)
+                    setMemoryDraft('drafts', rowKey, editMemoryDraft(rowDraft, value, row))
+                  }}
+                  onClose={closeEditor}
+                  onForget={() => void forget(row.id)}
+                  onKeepMine={() => {
+                    if (rowDraft) {
+                      setMemoryDraft('drafts', rowKey, {
+                        ...rowDraft,
+                        baseContent: row.content ?? '',
+                        baseVersion: row.content_version
+                      })
+                    }
+                  }}
+                  onReset={() => setMemoryDraft('drafts', rowKey, undefined)}
+                  onSave={() => void save(row.id)}
+                  onSelect={() => selectRow(row.id)}
+                  presetId={presetId}
+                  row={row}
+                />
               )
             })}
           </div>
@@ -628,84 +484,5 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
         </>
       )}
     </div>
-  )
-}
-
-function MemoryDetails({ row, presetId }: { row: MemoryItem; presetId: string }): React.ReactElement {
-  const dict = useStrings()
-  const t = dict.settings.memory
-  const [detail, setDetail] = useState<MemoryDetail | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [failed, setFailed] = useState(false)
-  const begin = useAsyncGuard()
-
-  const load = async (): Promise<void> => {
-    if (detail || loading) {
-      return
-    }
-
-    const isLive = begin()
-    setLoading(true)
-    setFailed(false)
-
-    try {
-      const result = await requestResource('resource_catalog.get_memory', {
-        path: { memory_id: row.id },
-        query: { system_preset_id: presetId }
-      })
-
-      if (isLive()) {
-        setDetail(result)
-      }
-    } catch (error) {
-      if (isLive()) {
-        setFailed(true)
-        notifyError(error, t.loadFailedToast)
-      }
-    } finally {
-      if (isLive()) {
-        setLoading(false)
-      }
-    }
-  }
-
-  return (
-    <Disclosure
-      bodyClassName="space-y-2"
-      className="border-t border-line-hairline pt-3 text-xs text-muted"
-      onOpenChange={open => {
-        if (open) {
-          void load()
-        }
-      }}
-      title={t.evidence}
-      variant="inline"
-    >
-      <p>
-        {t.basis[row.basis]} · {t.usage[row.usage]}
-      </p>
-      {row.reason && <p className="whitespace-pre-wrap break-words">{row.reason}</p>}
-      {row.expires_at && (
-        <p>
-          {t.expires} {row.expires_at}
-        </p>
-      )}
-      <div className="flex flex-wrap gap-1">
-        {row.tags.map(tag => (
-          <span className={CHIP} key={tag}>
-            {tag}
-          </span>
-        ))}
-      </div>
-      {loading && <p>{t.loading}</p>}
-      {failed && <ErrorBanner message={t.loadFailedHint} onRetry={() => void load()} retryLabel={dict.common.retry} />}
-      {detail?.evidence.map((entry, index) => (
-        <blockquote className="border-l border-line-hairline pl-2" key={`${entry.fingerprint}-${index}`}>
-          {entry.stance ? t.stance[entry.stance] : ''} · {entry.created_at}
-          <br />
-          {entry.quote}
-        </blockquote>
-      ))}
-    </Disclosure>
   )
 }

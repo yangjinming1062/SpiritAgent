@@ -89,6 +89,7 @@ export function useVoiceManager({
   } = creation
 
   const [genderFilter, setGenderFilter] = useState('')
+  const [voiceQuery, setVoiceQuery] = useState('')
   const [showAll, setShowAll] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const sample = useVoiceSample(active && tab === 'clone')
@@ -210,7 +211,17 @@ export function useVoiceManager({
     })
   }
 
-  const voices = catalog?.voices.filter(voice => !genderFilter || voice.gender === genderFilter) ?? []
+  const query = voiceQuery.trim().toLowerCase()
+
+  // 本地过滤只按名称与标签匹配，与手机端音色搜索的语义一致。
+  const voices =
+    catalog?.voices.filter(
+      voice =>
+        (!genderFilter || voice.gender === genderFilter) &&
+        (!query ||
+          voice.label.toLowerCase().includes(query) ||
+          voice.tags.some(tag => tag.toLowerCase().includes(query)))
+    ) ?? []
 
   const displayedVoices =
     !compact || showAll || genderFilter
@@ -299,6 +310,8 @@ export function useVoiceManager({
     confirmationChecked,
     genderFilter,
     setGenderFilter,
+    voiceQuery,
+    setVoiceQuery,
     showAll,
     setShowAll,
     playbackError: preview.playbackError,

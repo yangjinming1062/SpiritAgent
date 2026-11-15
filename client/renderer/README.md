@@ -150,6 +150,8 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [companion-editor-state.ts](features/companion/companion-editor-state.ts) 在内存中按账户隔离人物资料编辑起点与草稿并参与交接，换号清空、不落盘。记忆页按预设保存搜索与分页，未保存条目保留到会话结束；日记 store 不管理记忆编辑。
 
+伙伴页三个分区共用「目录项职责说明 → 页头标题与 hint → 命令栏或当前值 → 自管滚动的正文 → 页底操作条」骨架，操作条只在有未保存修改或进行中制作时出现。[资料页](features/companion/persona-page.tsx) 把名字与形象放在名片上，相处方式与背景分两组就地编辑，共享一份草稿并一次提交；[声音页](features/companion/voice-manager.tsx) 常显当前音色，固定音色行内试听、设计/克隆在同一 `CreationWorkspace` 内完成；记忆页的搜索、状态与作用域收进两行命令栏，折叠行卡只留正文、元信息与状态，忘记只出现在溢出菜单或独立危险行。「我的资料」是一张表单卡加额外资料行卡，批量提交。
+
 [场景子域](features/creation/environment/scene/state.ts) 按职责分工：state 持原子、缓存与请求原语，library 只做分页读取，detail 只读单场景，[sync.ts](features/creation/environment/scene/sync.ts) 持待处理任务、轮询与刷新入口，commands 持写操作并在写后调用同步服务。详情写入锁随任务而非页面存活，未知结果先回源核对，迟到读取不能覆盖新任务。详情先刷新恢复状态再加载图片，长等待降低轮询频率，查询不重试分析或生图。新图预载成功才换背景，失败保留旧图但更新任务和政策；环境固定画幅，不读取显示器尺寸。
 
 素材库共用 `asset-library-header.tsx` 与 `asset-library-card.tsx`，公共件只接数据和回调。四个素材分区共用「命令栏 → 状态条 → 内容区 → 分页」骨架，制作流程是专注视图并带 `CreationSteps` 步骤条，偏好开关收进命令栏 `OverflowMenu`。衣柜本地筛选（live 搜索），环境服务端提交搜索（submit 语义），两者不能共用隐含的查询状态。

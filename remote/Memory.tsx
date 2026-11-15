@@ -28,6 +28,10 @@ const STATUSES: { id: Status; label: string }[] = [
   { id: 'invalidated', label: '已停用' },
   { id: 'expired', label: '已过期' }
 ]
+const STATUS_LABELS: Record<Status, string> = Object.fromEntries(STATUSES.map(item => [item.id, item.label])) as Record<
+  Status,
+  string
+>
 
 const PROFILE_FIELDS: { key: UserProfileField; label: string; rows: number }[] = [
   { key: 'user_call_name', label: '称呼', rows: 1 },
@@ -85,6 +89,19 @@ function isActiveMemory(row: MemoryItem): boolean {
   return row.status === 'active' && (!row.expires_at || Date.parse(row.expires_at) > Date.now())
 }
 
+/** 与筛选桶同构的实际归属；与当前筛选不同才需要在行上标注。 */
+function memoryBucket(row: MemoryItem): Status {
+  if (row.status === 'invalidated') {
+    return 'invalidated'
+  }
+
+  if (row.expires_at && Date.parse(row.expires_at) <= Date.now()) {
+    return 'expired'
+  }
+
+  return row.status === 'candidate' ? 'candidate' : 'active'
+}
+
 async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
   const memories: MemoryItem[] = []
   for await (const page of readActiveMemories(api, { system_preset_id: 'companion', kind: 'user_profile' })) {
@@ -136,38 +153,49 @@ export function MemoryView({ api, refresh }: { api: RemoteApi; refresh: number }
 
   return (
     <>
-      <label className="field-label">
-        查看谁的记忆
-        <select onChange={event => setPreset(event.target.value)} value={preset}>
-          {!presets.some(value => value.id === preset) ? (
-            <option value={preset}>{preset === 'companion' ? '伙伴对话' : preset}</option>
-          ) : null}
-          {presets.map(value => (
-            <option key={value.id} value={value.id}>
-              {value.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div aria-label="记忆内容" className="section-tabs memory-tabs">
-        <button
-          aria-pressed={!profile}
-          className={!profile ? 'selected' : ''}
-          onClick={() => setKind('recall')}
-          type="button"
-        >
-          记住的事
-        </button>
-        {preset === 'companion' ? (
+      <div className="memory-toolbar">
+        <div aria-label="记忆内容" className="section-tabs memory-tabs">
           <button
-            aria-pressed={profile}
-            className={profile ? 'selected' : ''}
-            onClick={() => setKind('user_profile')}
+            aria-pressed={!profile}
+            className={!profile ? 'selected' : ''}
+            onClick={() => setKind('recall')}
             type="button"
           >
-            我的资料
+            记住的事
           </button>
-        ) : null}
+          {preset === 'companion' ? (
+            <button
+              aria-pressed={profile}
+              className={profile ? 'selected' : ''}
+              onClick={() => setKind('user_profile')}
+              type="button"
+            >
+              我的资料
+            </button>
+          ) : null}
+        </div>
+        <div className="memory-toolbar-side">
+          {!profile ? (
+            <details className="memory-maintenance">
+              <summary>记忆怎么维护</summary>
+              <p className="muted">
+                伙伴会自行审阅证据和维护记忆，无需你确认。只有有效且未过期的记忆用于互动。交流中沉淀的长期信息、偏好与相处理解保存在这里；生活历史和日记在各自页面查询。
+              </p>
+            </details>
+          ) : null}
+          {presets.length > 1 ? (
+            <select aria-label="查看谁的记忆" onChange={event => setPreset(event.target.value)} value={preset}>
+              {!presets.some(value => value.id === preset) ? (
+                <option value={preset}>{preset === 'companion' ? '伙伴对话' : preset}</option>
+              ) : null}
+              {presets.map(value => (
+                <option key={value.id} value={value.id}>
+                  {value.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
       </div>
       {error ? <Notice>{error}</Notice> : null}
       {profile ? (
@@ -246,7 +274,6 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
 
   return (
     <>
-      <p className="muted">这里保存交流中沉淀的长期信息、偏好与相处理解。生活历史和日记在各自页面查询。</p>
       <input
         aria-label="搜索记忆"
         className="search-input"
@@ -321,8 +348,13 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
                   }}
                   type="button"
                 >
-                  <strong>{row.content}</strong>
-                  <span>{memoryTitle(row)}</span>
+                  <strong className="memory-content">{row.content}</strong>
+                  <span>
+                    {memoryTitle(row)}
+                    {memoryBucket(row) !== status ? (
+                      <span className="memory-badge">{STATUS_LABELS[memoryBucket(row)]}</span>
+                    ) : null}
+                  </span>
                   <time dateTime={row.updated_at}>{updatedLabel(row.updated_at)}</time>
                   {draft ? <span className="draft-label">未保存修改</span> : null}
                 </button>
@@ -510,6 +542,8 @@ function MemoryEditor({
         >
           取消
         </button>
+      </div>
+      <div className="danger-row">
         <button className="danger" disabled={busy} onClick={forget} type="button">
           {copy.forget}
         </button>
@@ -594,6 +628,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
   const [draft, setDraft] = usePageState<ProfileDraft | null>('memory.profile.draft', null)
   const [drafts, setDrafts] = usePageState<MemoryDrafts>('memory.companion.drafts', {})
   const [saved, setSaved] = useState(false)
+  const [expandedExtra, setExpandedExtra] = useState<string | null>(null)
   const current = (key: UserProfileField) => rows.find(row => row.slot_key === key)
   const changedFields = PROFILE_FIELDS.filter(
     ({ key }) => draft && (draft.values[key] ?? '').trim() !== (draft.base[key] ?? '')
@@ -709,6 +744,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
                   })
                   setSaved(false)
                 }}
+                placeholder="未填写"
                 rows={size}
                 value={draft ? (draft.values[key] ?? '') : (current(key)?.content ?? '')}
               />
@@ -777,22 +813,44 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
       {extras.length ? (
         <section className="profile-extras">
           <h3>其他资料</h3>
-          {extras.map(row => (
-            <article className="memory-item expanded" key={row.id}>
-              <MemoryEditor
-                api={api}
-                copy={EDITOR_COPY.profile}
-                draft={readMemoryDraft(drafts, row)}
-                drafts={drafts}
-                onChanged={() => runLatest(load)}
-                onDraftsChange={setDrafts}
-                preset="companion"
-                reactivate={false}
-                row={row}
-                rows={2}
-              />
-            </article>
-          ))}
+          {extras.map(row => {
+            const open = expandedExtra === row.id
+
+            return (
+              <article className={`memory-item ${open ? 'expanded' : ''}`} data-memory-id={row.id} key={row.id}>
+                {open ? (
+                  <MemoryEditor
+                    api={api}
+                    copy={EDITOR_COPY.profile}
+                    draft={readMemoryDraft(drafts, row)}
+                    drafts={drafts}
+                    onChanged={() => runLatest(load)}
+                    onCollapse={() => setExpandedExtra(null)}
+                    onDraftsChange={setDrafts}
+                    preset="companion"
+                    reactivate={false}
+                    row={row}
+                    rows={2}
+                  />
+                ) : (
+                  <button
+                    aria-expanded={false}
+                    className="memory-summary"
+                    onClick={() => {
+                      setExpandedExtra(row.id)
+                      focusMemoryEditor(row.id)
+                    }}
+                    type="button"
+                  >
+                    <strong className="memory-content">{row.content}</strong>
+                    <span>{memoryTitle(row)}</span>
+                    <time dateTime={row.updated_at}>{updatedLabel(row.updated_at)}</time>
+                    {readMemoryDraft(drafts, row) ? <span className="draft-label">未保存修改</span> : null}
+                  </button>
+                )}
+              </article>
+            )
+          })}
         </section>
       ) : null}
     </>

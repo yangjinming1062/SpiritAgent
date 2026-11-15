@@ -250,8 +250,7 @@ export const settings = {
     },
     persona: {
       title: '伙伴资料',
-      intro: '查看名字、性格和相处方式。编辑后保存修改，或取消本次编辑。',
-      sectionTitle: '角色',
+      intro: '这些设定决定它怎么说话、怎么和你相处。',
       categoriesAria: '伙伴分类',
       memoriesTitle: '记忆',
       memoryIntro:
@@ -264,6 +263,11 @@ export const settings = {
         environment: '环境',
         actions: '动作',
         visuals: '影像'
+      },
+      sectionHints: {
+        profile: '名字、性格与形象',
+        voice: '它怎么说话',
+        memory: '它记得什么'
       },
       memoryScope: '查看谁的记忆',
       memoryScopeAria: '记忆类型',
@@ -333,7 +337,6 @@ export const settings = {
         }
       },
       editAction: '编辑',
-      editHeading: '编辑角色',
       defaultName: '伙伴',
       ageLabel: '年龄（可选）',
       agePlaceholder: '自由描述，也可以留空',
@@ -359,6 +362,15 @@ export const settings = {
       personalityPlaceholder: '自由描述…',
       speakingStyleLabel: '说话风格',
       speakingStylePlaceholder: '描述想要的语气和表达习惯',
+      groups: {
+        relationship: '相处方式',
+        background: '背景'
+      },
+      unfilled: '未填写',
+      unfilledCount: (count: number) => `${count} 项未填`,
+      renameAction: '改名',
+      collapseAction: '收起',
+      appearanceEmpty: '暂无全身形象',
       hintEmptyName: '请填写名字',
       hintEmptySpeakingStyle: '请填写说话风格',
       hintSaveFailed: '保存失败，稍后再试'
@@ -404,6 +416,14 @@ export const settings = {
         }
       },
       maintenanceHint: '伙伴会自行审阅证据和维护记忆，无需你确认。只有有效且未过期的记忆用于互动。',
+      maintenanceTitle: '记忆怎么维护',
+      otherPresetHint: '这个助手只保留自己会话里的记忆。',
+      statusLabels: {
+        active: '正在使用',
+        candidate: '待整理',
+        invalidated: '已停用',
+        expired: '已过期'
+      },
       basis: { explicit: '明确表达', inferred: '推断', observed: '事件观察', system: '系统记录' },
       usage: { contextual: '按需使用', background: '长期背景' },
       stance: { supports: '支持依据', opposes: '相反依据' },

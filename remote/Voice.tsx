@@ -1,4 +1,4 @@
-import { IconRefresh } from '@tabler/icons-react'
+import { IconRefresh, IconVolume2 } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -8,7 +8,7 @@ import type { ApiSchemas } from '../shared/api.generated'
 
 import type { RemoteApi } from './api'
 import { newRequestId } from './browser'
-import { Empty, FileInput, Media, Notice, PageHeader, useAlive, usePageState, useTask } from './ui'
+import { AssetSteps, Empty, FileInput, Media, Notice, PageHeader, useAlive, usePageState, useTask } from './ui'
 
 type VoiceCatalog = ApiSchemas['VoicesListResponse']
 type VoicePreview = ApiSchemas['VoicePreviewResponse']
@@ -115,11 +115,13 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   return (
     <>
       <PageHeader subtitle="选择固定音色，或为伙伴设计、克隆一个专属声音" title="声音" />
-      <section className="card">
-        <h3>当前声音</h3>
-        <p aria-live="polite">{currentLabel()}</p>
-        {trial ? <Media type="audio" url={trial} /> : null}
+      <section className="status-row">
+        <span className="status-row-label">当前声音</span>
+        <strong aria-live="polite" className="status-row-value">
+          {currentLabel()}
+        </strong>
       </section>
+      {trial ? <Media type="audio" url={trial} /> : null}
       {error ? <Notice>{error}</Notice> : null}
       <nav aria-label="声音来源" className="section-tabs">
         {(
@@ -173,8 +175,10 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                     <span>{[voice.gender, voice.language, ...voice.tags].filter(Boolean).join(' · ')}</span>
                     {voice.description ? <span>{voice.description}</span> : null}
                   </div>
-                  <div className="button-row">
+                  <div className="row-actions">
                     <button
+                      aria-label={`试听 ${voice.label}`}
+                      className="icon-button"
                       disabled={busy}
                       onClick={() =>
                         run(async () => {
@@ -186,25 +190,30 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                           }
                         })
                       }
+                      title="试听"
                       type="button"
                     >
-                      试听
+                      <IconVolume2 aria-hidden="true" size={20} />
                     </button>
-                    <button
-                      className="primary"
-                      disabled={busy || current?.voice_id === voice.id}
-                      onClick={() =>
-                        run(async () => {
-                          const next = await api.invoke('voices.put_current_voice', { body: { voice_id: voice.id } })
-                          if (alive()) {
-                            setCurrent(next)
-                          }
-                        })
-                      }
-                      type="button"
-                    >
-                      {current?.voice_id === voice.id ? '已使用' : '使用这个声音'}
-                    </button>
+                    {current?.voice_id === voice.id ? (
+                      <span className="in-use">使用中</span>
+                    ) : (
+                      <button
+                        className="primary"
+                        disabled={busy}
+                        onClick={() =>
+                          run(async () => {
+                            const next = await api.invoke('voices.put_current_voice', { body: { voice_id: voice.id } })
+                            if (alive()) {
+                              setCurrent(next)
+                            }
+                          })
+                        }
+                        type="button"
+                      >
+                        使用这个声音
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -213,6 +222,10 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         </>
       ) : tab === 'design' ? (
         <section className="creation-screen">
+          <AssetSteps
+            labels={['描述声音', '生成试听', '试听并使用']}
+            step={preview && preview.kind === 'design' ? 3 : prompt.trim() ? 2 : 1}
+          />
           {!catalog?.supports_voice_design ? <Notice>音色设计暂未配置，可以选择固定音色或克隆声音。</Notice> : null}
           <p className="muted">描述想要的音色，生成试听满意后再使用。</p>
           <label className="field-label">
@@ -280,6 +293,10 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         </section>
       ) : (
         <section className="creation-screen">
+          <AssetSteps
+            labels={['提供样本', '生成试听', '试听并使用']}
+            step={preview && preview.kind === 'clone' ? 3 : sample ? 2 : 1}
+          />
           {!catalog?.supports_voice_clone ? <Notice>声音克隆暂未配置，可以选择固定音色或设计音色。</Notice> : null}
           <p className="muted">上传一段伙伴的参考声音，生成试听满意后再使用。</p>
           <div className="upload-area">

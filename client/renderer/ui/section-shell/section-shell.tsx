@@ -9,6 +9,8 @@ export interface SectionEntry<T extends string> {
   id: T
   icon: IconComponent
   label: string
+  /** 一行职责说明；不传时目录项与只带标签的形态一致。 */
+  hint?: string
   unread?: boolean
 }
 
@@ -73,7 +75,7 @@ export function SectionShell<T extends string>({
       <div className={styles.shell}>
         {entries && entries.length > 0 && (
           <nav aria-label={ariaLabel} className={styles.directory} data-section-navigation ref={directory}>
-            {entries.map(({ id, icon: Icon, label, unread }) => (
+            {entries.map(({ id, icon: Icon, label, hint, unread }) => (
               <button
                 aria-current={activeId === id ? 'page' : undefined}
                 className={styles.category}
@@ -82,7 +84,10 @@ export function SectionShell<T extends string>({
                 type="button"
               >
                 <Icon aria-hidden="true" size={18} />
-                <span className={styles.label}>{label}</span>
+                <span className={styles.textBlock}>
+                  <span className={styles.label}>{label}</span>
+                  {hint ? <span className={styles.hint}>{hint}</span> : null}
+                </span>
                 {unread ? <span aria-hidden="true" className={styles.unreadDot} /> : null}
               </button>
             ))}

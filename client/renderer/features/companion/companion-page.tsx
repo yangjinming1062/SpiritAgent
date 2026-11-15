@@ -5,7 +5,6 @@ import { $companionSection, openCompanion } from '@/app/navigation/app-navigatio
 import { Brain, Users, Volume2 } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 import type { AppPageProps } from '@/shared/types/app-page'
-import { SettingsSectionIntro } from '@/ui'
 import { SectionShell } from '@/ui/section-shell/section-shell'
 import type { CompanionSection } from '@ipc/contracts'
 
@@ -24,6 +23,7 @@ export function CompanionHub(_props: AppPageProps): React.JSX.Element {
   const section = useStore($companionSection)
   const strings = useStrings()
   const persona = strings.settings.persona
+  const hints = persona.sectionHints
 
   const content = (value: CompanionSection): React.ReactNode => {
     switch (value) {
@@ -34,12 +34,7 @@ export function CompanionHub(_props: AppPageProps): React.JSX.Element {
         return <VoicePage />
 
       case 'memory':
-        return (
-          <div className="flex min-h-0 flex-1 flex-col pb-4">
-            <SettingsSectionIntro hint={persona.memoryIntro} title={persona.memoriesTitle} />
-            <MemorySection />
-          </div>
-        )
+        return <MemorySection />
     }
   }
 
@@ -47,8 +42,13 @@ export function CompanionHub(_props: AppPageProps): React.JSX.Element {
     <SectionShell
       activeId={section}
       ariaLabel={persona.categoriesAria}
-      bounded={section !== 'profile'}
-      entries={ENTRIES.map(({ id, icon }) => ({ id, icon, label: persona.sections[id] }))}
+      bounded
+      entries={ENTRIES.map(({ id, icon }) => ({
+        id,
+        icon,
+        label: persona.sections[id],
+        hint: hints[id]
+      }))}
       onSelect={next => void openCompanion(next)}
     >
       {content(section)}

@@ -12,14 +12,42 @@ import { ApiError } from './api'
 import { saveWithReadback } from './save-result'
 import { Media, Notice, useAlive, usePageScroll, usePageState, useTask, useVisiblePolling } from './ui'
 
-const PERSONA_FIELDS: { key: PersonaEditableField; label: string; rows: number }[] = [
-  { key: 'name', label: '名字', rows: 1 },
-  { key: 'age', label: '年龄（可选）', rows: 1 },
-  { key: 'occupation', label: '职业或身份（可选）', rows: 1 },
-  { key: 'background', label: '背景经历（可选）', rows: 5 },
-  { key: 'personality', label: '性格', rows: 3 },
-  { key: 'relationship', label: '你们的关系', rows: 3 },
-  { key: 'speaking_style', label: '说话方式', rows: 3 }
+const FIELD_LABELS: Record<PersonaEditableField, string> = {
+  name: '名字',
+  age: '年龄（可选）',
+  occupation: '职业或身份（可选）',
+  background: '背景经历（可选）',
+  personality: '性格',
+  relationship: '你们的关系',
+  speaking_style: '说话方式'
+}
+
+const FIELD_ROWS: Record<PersonaEditableField, number> = {
+  name: 1,
+  age: 1,
+  occupation: 1,
+  background: 5,
+  personality: 3,
+  relationship: 3,
+  speaking_style: 3
+}
+
+const PERSONA_FIELDS: PersonaEditableField[] = [
+  'name',
+  'age',
+  'occupation',
+  'background',
+  'personality',
+  'relationship',
+  'speaking_style'
+]
+
+type ProfileGroupId = 'background' | 'bond'
+
+/** 与桌面一致的分组：名字在名片上改，分组卡只承载相处方式与背景。 */
+const GROUPS: { fields: PersonaEditableField[]; id: ProfileGroupId; title: string }[] = [
+  { id: 'bond', title: '相处方式', fields: ['relationship', 'personality', 'speaking_style'] },
+  { id: 'background', title: '背景', fields: ['age', 'occupation', 'background'] }
 ]
 
 interface PersonaDraft {
@@ -46,10 +74,12 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
   const [avatar, setAvatar] = useState<Avatar | null>(null)
   const [draft, setDraft] = usePageState<PersonaDraft | null>('profile.draft', null)
   const [saved, setSaved] = useState('')
+  const [editingName, setEditingName] = useState(false)
+  const [openGroups, setOpenGroups] = useState<ProfileGroupId[]>([])
   const definition = persona ? definitionOf(persona) : {}
-  const personaDirty = Boolean(draft && PERSONA_FIELDS.some(({ key }) => draft.values[key] !== (draft.base[key] ?? '')))
+  const dirty = Boolean(draft && PERSONA_FIELDS.some(key => (draft.values[key] ?? '') !== (draft.base[key] ?? '')))
   const personaConflict = Boolean(
-    draft && persona && PERSONA_FIELDS.some(({ key }) => draft.base[key] !== editableValue(definition, key))
+    draft && PERSONA_FIELDS.some(key => draft.base[key] !== editableValue(definition, key))
   )
   const load = useCallback(async () => {
     const [nextPersona, nextAvatar] = await Promise.all([
@@ -79,14 +109,31 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
   )
   usePageScroll('companion.profile', persona !== null)
 
-  const beginPersonaEdit = () => {
+  const startDraft = (): PersonaDraft => {
     const base: PersonaDraft['base'] = {}
     const values: PersonaDraft['values'] = {}
-    PERSONA_FIELDS.forEach(({ key }) => {
+
+    PERSONA_FIELDS.forEach(key => {
       base[key] = editableValue(definition, key)
       values[key] = base[key] ?? ''
     })
-    setDraft({ base, values })
+
+    return { base, values }
+  }
+
+  const ensureDraft = (): void => {
+    if (!draft) {
+      setDraft(startDraft())
+      setSaved('')
+    }
+  }
+
+  const updateField = (key: PersonaEditableField, value: string): void => {
+    setDraft(previous => {
+      const next = previous ?? startDraft()
+
+      return { ...next, values: { ...next.values, [key]: value } }
+    })
     setSaved('')
   }
 
@@ -99,8 +146,8 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         write: () =>
           api.invoke('companion.put_persona', {
             body: {
-              definition_json: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.values[key] ?? ''])),
-              expected_fields: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.base[key] ?? null]))
+              definition_json: Object.fromEntries(PERSONA_FIELDS.map(key => [key, draft.values[key] ?? ''])),
+              expected_fields: Object.fromEntries(PERSONA_FIELDS.map(key => [key, draft.base[key] ?? null]))
             }
           }),
         read: () => api.invoke('companion.get_persona'),
@@ -108,7 +155,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
           const latestDefinition = definitionOf(latest)
 
           return PERSONA_FIELDS.every(
-            ({ key }) => (editableValue(latestDefinition, key) ?? '') === (draft.values[key] ?? '').trim()
+            key => (editableValue(latestDefinition, key) ?? '') === (draft.values[key] ?? '').trim()
           )
         },
         isCurrent: alive,
@@ -121,11 +168,15 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       if (alive()) {
         setPersona(updated)
         setDraft(null)
+        setOpenGroups([])
+        setEditingName(false)
         setSaved('基本资料已保存')
       }
     })
 
-  const name = typeof definition.name === 'string' ? definition.name : '我的伙伴'
+  const currentName = (draft?.values.name ?? editableValue(definition, 'name') ?? '').trim() || '我的伙伴'
+  const unfilled = (group: { fields: PersonaEditableField[] }): number =>
+    group.fields.filter(key => !(draft?.values[key] ?? editableValue(definition, key) ?? '').trim()).length
 
   return (
     <>
@@ -144,8 +195,38 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       ) : null}
       <section className="profile-card companion-profile">
         {avatar?.asset_url ? <Media type="image" url={avatar.asset_url} /> : <div className="avatar">✦</div>}
-        <h2>{name}</h2>
-        {persona?.current_mood ? <p>{persona.current_mood}</p> : null}
+        <div className="profile-name-row">
+          {editingName ? (
+            <input
+              aria-label="名字"
+              autoFocus
+              disabled={busy}
+              maxLength={500}
+              onChange={event => updateField('name', event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === 'Escape') {
+                  event.preventDefault()
+                  setEditingName(false)
+                }
+              }}
+              value={draft?.values.name ?? ''}
+            />
+          ) : (
+            <h2>{currentName}</h2>
+          )}
+          <button
+            aria-expanded={editingName}
+            className="link-button"
+            disabled={busy || !persona}
+            onClick={() => {
+              ensureDraft()
+              setEditingName(value => !value)
+            }}
+            type="button"
+          >
+            {editingName ? '完成' : '改名'}
+          </button>
+        </div>
         <div className="tag-list">
           {persona?.personality_tags?.map(tag => (
             <span className="pill" key={tag}>
@@ -154,92 +235,112 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
           ))}
         </div>
       </section>
-      <section className="card profile-editor">
-        <div className="card-title">
-          <h3>基本资料</h3>
-          {!draft ? (
-            <button disabled={!persona || busy} onClick={beginPersonaEdit} type="button">
-              编辑资料
-            </button>
-          ) : null}
-        </div>
-        {draft ? (
-          <>
-            {personaDirty ? <p className="draft-label">未保存修改</p> : null}
-            <div className="edit-fields">
-              {PERSONA_FIELDS.map(({ key, label, rows }) => (
-                <label className="field-label" key={key}>
-                  {label}
-                  <textarea
-                    disabled={busy}
-                    maxLength={key === 'background' ? 2000 : 500}
-                    onChange={event =>
-                      setDraft(previous =>
-                        previous ? { ...previous, values: { ...previous.values, [key]: event.target.value } } : previous
-                      )
-                    }
-                    rows={rows}
-                    value={draft.values[key] ?? ''}
-                  />
-                </label>
-              ))}
-            </div>
-            {personaConflict ? (
-              <div className="creation-status">
-                <p>资料已在其他设备修改。请核对最新内容后继续，当前草稿已保留。</p>
-                <dl>
-                  {PERSONA_FIELDS.map(({ key, label }) => (
-                    <div key={key}>
-                      <dt>{label}</dt>
-                      <dd>{editableValue(definition, key) || '未填写'}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    setDraft(previous =>
-                      previous
-                        ? {
-                            ...previous,
-                            base: Object.fromEntries(
-                              PERSONA_FIELDS.map(({ key }) => [key, editableValue(definition, key)])
-                            )
-                          }
-                        : previous
-                    )
-                  }
-                  type="button"
-                >
-                  已核对，保留草稿继续编辑
-                </button>
-              </div>
-            ) : null}
-            <div className="button-row">
+      {GROUPS.map(group => {
+        const open = openGroups.includes(group.id)
+        const missing = unfilled(group)
+
+        return (
+          <section className="card profile-editor" key={group.id}>
+            <div className="card-title">
+              <h3>
+                {group.title}
+                {missing ? <span className="draft-label">{missing} 项未填</span> : null}
+              </h3>
               <button
-                className="primary"
-                disabled={busy || !personaDirty || personaConflict}
-                onClick={savePersona}
+                aria-expanded={open}
+                disabled={busy || !persona}
+                onClick={() => {
+                  ensureDraft()
+                  setOpenGroups(current =>
+                    current.includes(group.id) ? current.filter(id => id !== group.id) : [...current, group.id]
+                  )
+                }}
                 type="button"
               >
-                {busy ? uiCopy.saving : '保存修改'}
-              </button>
-              <button disabled={busy} onClick={() => setDraft(null)} type="button">
-                取消
+                {open ? '收起' : '编辑'}
               </button>
             </div>
-          </>
-        ) : (
+            {open ? (
+              <div className="edit-fields">
+                {group.fields.map(key => (
+                  <label className="field-label" key={key}>
+                    {FIELD_LABELS[key]}
+                    <textarea
+                      disabled={busy}
+                      maxLength={key === 'background' ? 2000 : 500}
+                      onChange={event => updateField(key, event.target.value)}
+                      placeholder="未填写"
+                      rows={FIELD_ROWS[key]}
+                      value={draft?.values[key] ?? ''}
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <dl className="profile-read">
+                {group.fields.map(key => {
+                  const value = (draft?.values[key] ?? editableValue(definition, key) ?? '').trim()
+
+                  return (
+                    <div key={key}>
+                      <dt>{FIELD_LABELS[key]}</dt>
+                      <dd className={value ? '' : 'placeholder'}>{value || '未填写'}</dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            )}
+          </section>
+        )
+      })}
+      {personaConflict ? (
+        <section className="card">
+          <p>资料已在其他设备修改。请核对最新内容后继续，当前草稿已保留。</p>
           <dl>
-            {PERSONA_FIELDS.map(({ key, label }) => (
+            {PERSONA_FIELDS.map(key => (
               <div key={key}>
-                <dt>{label}</dt>
+                <dt>{FIELD_LABELS[key]}</dt>
                 <dd>{editableValue(definition, key) || '未填写'}</dd>
               </div>
             ))}
           </dl>
-        )}
-      </section>
+          <button
+            disabled={busy}
+            onClick={() =>
+              setDraft(previous =>
+                previous
+                  ? {
+                      ...previous,
+                      base: Object.fromEntries(PERSONA_FIELDS.map(key => [key, editableValue(definition, key)]))
+                    }
+                  : previous
+              )
+            }
+            type="button"
+          >
+            已核对，保留草稿继续编辑
+          </button>
+        </section>
+      ) : null}
+      {dirty || personaConflict ? (
+        <div className="button-row save-row">
+          <button className="primary" disabled={busy || !dirty || personaConflict} onClick={savePersona} type="button">
+            {busy ? uiCopy.saving : '保存修改'}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => {
+              setDraft(null)
+              setOpenGroups([])
+              setEditingName(false)
+              setSaved('')
+            }}
+            type="button"
+          >
+            撤销
+          </button>
+        </div>
+      ) : null}
       <section className="card profile-editor">
         <h3>确认的形象</h3>
         {avatar ? (

@@ -170,7 +170,8 @@ export function CreationSteps({
   labels
 }: {
   step: number
-  labels: readonly [string, string, string]
+  /** 有序步骤文案；条目数量即步骤数。 */
+  labels: readonly string[]
 }): React.JSX.Element {
   return (
     <ol aria-label={labels.join(' → ')} className="flex flex-wrap items-center gap-2">

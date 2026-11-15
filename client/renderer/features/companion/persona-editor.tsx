@@ -1,355 +1,167 @@
 import { useStore } from '@nanostores/react'
-import { type ChangeEvent, useState } from 'react'
+import type { ChangeEvent } from 'react'
 
-import { PERSONALITY_PRESETS, RELATIONSHIP_PRESETS, SPEAKING_STYLE_PRESETS } from '@/features/character'
-import { $persona, applyPersonaResponse, hydratePersona } from '@/features/character'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { captureAuthScope } from '@/shared/lib/authed-api'
-import { failureText, ipcErrorStatus } from '@/shared/lib/ipc-error'
-import { authedResource } from '@/shared/lib/resource-request'
+import { $persona } from '@/features/character'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
-import {
-  BTN_GHOST,
-  BTN_SUBTLE,
-  Chip,
-  CreationActionBar,
-  CreationFeedback,
-  FIELD_LABEL,
-  HINT_TEXT,
-  INPUT_CLASS,
-  SECTION_TITLE,
-  WizardModal
-} from '@/ui'
-import type { PersonaEditableField, PersonaUpdateRequest } from '@protocol'
+import { Badge, BTN_GHOST, Chip, FIELD_LABEL, INPUT_CLASS, SECTION_TITLE } from '@/ui'
+import type { PersonaEditableField } from '@protocol'
 
 import { $companionEditors, updateCompanionEditors } from './companion-editor-state'
+import {
+  FIELD_PRESETS,
+  fieldMaxLength,
+  isMultilineField,
+  PERSONA_GROUPS,
+  personaBase,
+  type PersonaFieldErrors,
+  personaFieldMeta,
+  type PersonaGroupId,
+  personaGroupTitle,
+  personaValues
+} from './persona-groups'
 
-type PersonaValues = Record<PersonaEditableField, string>
-interface PersonaField {
-  key: PersonaEditableField
-  label: string
-  placeholder: string
-  presets?: readonly string[]
-}
-
-function valuesOf(persona: ReturnType<typeof $persona.get>): PersonaValues {
-  return {
-    name: persona?.name ?? '',
-    personality: persona?.personality ?? '',
-    relationship: persona?.relationship ?? '',
-    speaking_style: persona?.speaking_style ?? '',
-    age: persona?.age ?? '',
-    occupation: persona?.occupation ?? '',
-    background: persona?.background ?? ''
-  }
-}
-
-function baseOf(persona: ReturnType<typeof $persona.get>): Record<PersonaEditableField, string | null> {
-  return {
-    name: persona?.name ?? null,
-    personality: persona?.personality ?? null,
-    relationship: persona?.relationship ?? null,
-    speaking_style: persona?.speaking_style ?? null,
-    age: persona?.age ?? null,
-    occupation: persona?.occupation ?? null,
-    background: persona?.background ?? null
-  }
-}
-
-export function PersonaSection({
-  editorOpen,
-  onEditRequested,
-  onEditorClosed
+/**
+ * 两组人物设定：组内就地编辑，组间共享同一份草稿；
+ * 保存与冲突核对由页面统一负责，这里只渲染与写入字段值。
+ */
+export function PersonaGroups({
+  disabled,
+  errors,
+  onDraftNeeded,
+  onToggleGroup,
+  openGroups
 }: {
-  editorOpen: boolean
-  onEditRequested: () => void
-  onEditorClosed: () => void
+  disabled: boolean
+  errors: PersonaFieldErrors
+  onDraftNeeded: () => void
+  onToggleGroup: (id: PersonaGroupId) => void
+  openGroups: readonly PersonaGroupId[]
 }): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
   const persona = useStore($persona)
   const draft = useStore($companionEditors).persona
-  const [busy, setBusy] = useState(false)
-  const [hint, setHint] = useState<string | null>(null)
-  const begin = useAsyncGuard()
+  const values = draft?.values ?? personaValues(persona)
+  const meta = personaFieldMeta(t)
 
-  const fields: readonly PersonaField[] = [
-    { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
-    { key: 'age', label: t.ageLabel, placeholder: t.agePlaceholder },
-    { key: 'occupation', label: t.occupationLabel, placeholder: t.occupationPlaceholder },
-    { key: 'background', label: t.backgroundLabel, placeholder: t.backgroundPlaceholder },
-    {
-      key: 'relationship',
-      label: t.relationshipLabel,
-      placeholder: t.relationshipPlaceholder,
-      presets: RELATIONSHIP_PRESETS
-    },
-    {
-      key: 'personality',
-      label: t.personalityLabel,
-      placeholder: t.personalityPlaceholder,
-      presets: PERSONALITY_PRESETS
-    },
-    {
-      key: 'speaking_style',
-      label: t.speakingStyleLabel,
-      placeholder: t.speakingStylePlaceholder,
-      presets: SPEAKING_STYLE_PRESETS
-    }
-  ]
-
-  const dirty = draft && fields.some(({ key }) => draft.values[key].trim() !== (draft.base[key] ?? ''))
-  const latest = valuesOf(persona)
-  const latestBase = baseOf(persona)
-  const conflict = draft && fields.some(({ key }) => latestBase[key] !== draft.base[key])
-
-  const save = (): void => {
-    if (!draft) {
-      return
-    }
-
-    if (!draft.values.name.trim() || !draft.values.speaking_style.trim()) {
-      setHint(!draft.values.name.trim() ? t.hintEmptyName : t.hintEmptySpeakingStyle)
-
-      return
-    }
-
-    if (!draft.values.personality.trim()) {
-      setHint(dict.settings.persona.personalityRequired)
-
-      return
-    }
-
-    const isLive = begin()
-    const isCurrent = captureAuthScope()
-
-    if (!isCurrent) {
-      return
-    }
-
-    setBusy(true)
-    setHint(null)
-
-    void (async () => {
-      try {
-        const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
-
-        const body: PersonaUpdateRequest = {
-          definition_json: {
-            name: draft.values.name.trim(),
-            personality: draft.values.personality.trim(),
-            relationship: draft.values.relationship.trim(),
-            speaking_style: draft.values.speaking_style.trim(),
-            age: draft.values.age.trim(),
-            occupation: draft.values.occupation.trim(),
-            background: draft.values.background.trim()
-          },
-          expected_fields: expectedFields
-        }
-
-        const saved = await authedResource('companion.put_persona', { body })
-
-        if (!saved.ok) {
-          if (saved.reason === 'err') {
-            throw saved.error
-          }
-
-          return
-        }
-
-        if (!isCurrent()) {
-          return
-        }
-
-        if (!saved.value) {
-          throw new Error(t.hintSaveFailed)
-        }
-
-        applyPersonaResponse(saved.value)
-
-        if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
-          updateCompanionEditors({ persona: null })
-        }
-      } catch (error) {
-        if (!isCurrent()) {
-          return
-        }
-
-        const refreshed = await hydratePersona({ silent: true })
-
-        if (!isCurrent()) {
-          return
-        }
-
-        const current = valuesOf($persona.get())
-
-        if (refreshed.ok && fields.every(({ key }) => current[key] === draft.values[key].trim())) {
-          if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
-            updateCompanionEditors({ persona: null })
-          }
-        } else if (isLive()) {
-          setHint(failureText(error, ipcErrorStatus(error) === 409 ? dict.common.changedElsewhere : t.hintSaveFailed))
-        }
-      } finally {
-        if (isLive()) {
-          setBusy(false)
-        }
-      }
-    })()
-  }
-
-  if (!draft || !editorOpen) {
-    return (
-      <section>
-        <p className={cn(SECTION_TITLE, 'mb-2')}>{t.sectionTitle}</p>
-        <div className="liquid-glass-card rounded-2xl p-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="break-words text-[15px] font-medium text-strong">{persona?.name || t.defaultName}</p>
-              <dl className="mt-2 space-y-2">
-                {fields
-                  .filter(({ key }) => key !== 'name' && latest[key])
-                  .map(({ key, label }) => (
-                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3" key={key}>
-                      <dt className="w-24 shrink-0 text-xs text-muted">{label}</dt>
-                      <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-body">
-                        {latest[key]}
-                      </dd>
-                    </div>
-                  ))}
-              </dl>
-            </div>
-            <button
-              className={cn(BTN_GHOST, 'shrink-0')}
-              onClick={() => {
-                if (!draft) {
-                  updateCompanionEditors({ persona: { values: latest, base: latestBase } })
-                }
-
-                onEditRequested()
-                setHint(null)
-              }}
-              type="button"
-            >
-              {t.editAction}
-            </button>
-          </div>
-        </div>
-      </section>
-    )
+  const change = (key: PersonaEditableField, value: string): void => {
+    const next = draft ?? { values: personaValues(persona), base: personaBase(persona) }
+    updateCompanionEditors({ persona: { ...next, values: { ...next.values, [key]: value } } })
   }
 
   return (
-    <WizardModal
-      closeDisabled={busy}
-      escClose={!busy}
-      footer={
-        <CreationActionBar
-          description={
-            (busy || hint) && (
-              <CreationFeedback
-                state={busy ? 'working' : 'error'}
-                title={busy ? undefined : hint || t.hintSaveFailed}
-              />
-            )
-          }
-        >
-          <button
-            aria-atomic="true"
-            aria-live="polite"
-            className={BTN_SUBTLE}
-            disabled={busy || !dirty || !!conflict}
-            onClick={save}
-            type="button"
-          >
-            {busy ? dict.common.saving : dict.common.saveChanges}
-          </button>
-          <button
-            className={BTN_GHOST}
-            disabled={busy}
-            onClick={() => {
-              updateCompanionEditors({ persona: null })
-              setHint(null)
-              onEditorClosed()
-            }}
-            type="button"
-          >
-            {dict.common.cancel}
-          </button>
-        </CreationActionBar>
-      }
-      onClose={onEditorClosed}
-      regionId="persona-editor"
-      title={t.editHeading}
-    >
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className={SECTION_TITLE}>{t.editHeading}</p>
-          {dirty && <span className={HINT_TEXT}>{dict.common.unsavedChanges}</span>}
-        </div>
-        {fields.map(({ key, label, placeholder, presets }) => {
-          const Control = key === 'background' ? 'textarea' : 'input'
+    <div className="space-y-4">
+      {PERSONA_GROUPS.map(group => {
+        const open = openGroups.includes(group.id)
+        const unfilled = group.fields.filter(key => !values[key].trim()).length
 
-          return (
-            <label className="block" key={key}>
-              <span className={FIELD_LABEL}>{label}</span>
-              <Control
-                className={INPUT_CLASS}
-                disabled={busy}
-                maxLength={key === 'background' ? 2000 : 500}
-                onChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-                  updateCompanionEditors({
-                    persona: { ...draft, values: { ...draft.values, [key]: event.target.value } }
-                  })
-                }
-                placeholder={placeholder}
-                rows={key === 'background' ? 5 : undefined}
-                value={draft.values[key]}
-              />
-              {presets && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {presets.map(value => (
-                    <Chip
-                      active={draft.values[key] === value}
-                      key={value}
-                      label={value}
-                      onClick={() => {
-                        if (!busy) {
-                          updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
-                        }
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-            </label>
-          )
-        })}
-        {conflict && (
-          <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
-            <p>{dict.common.changedElsewhere}</p>
-            <dl className="mt-2 space-y-1">
-              {fields
-                .filter(({ key }) => latest[key] !== (draft.base[key] ?? ''))
-                .map(({ key, label }) => (
-                  <div key={key}>
-                    <dt>{label}</dt>
-                    <dd className="whitespace-pre-wrap break-words text-body">{latest[key] || '—'}</dd>
+        return (
+          <section className="liquid-glass-card rounded-2xl p-4" key={group.id}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className={SECTION_TITLE}>{personaGroupTitle(t, group.id)}</p>
+                {unfilled > 0 ? <Badge>{t.unfilledCount(unfilled)}</Badge> : null}
+              </div>
+              <button
+                aria-expanded={open}
+                className={BTN_GHOST}
+                disabled={disabled}
+                onClick={() => {
+                  if (!open) {
+                    onDraftNeeded()
+                  }
+
+                  onToggleGroup(group.id)
+                }}
+                type="button"
+              >
+                {open ? t.collapseAction : t.editAction}
+              </button>
+            </div>
+            {open ? (
+              <div className="mt-3 space-y-3">
+                {group.fields.map(key => {
+                  const { label, placeholder } = meta[key]
+                  const presets = FIELD_PRESETS[key]
+                  const error = errors[key]
+
+                  return (
+                    <div key={key}>
+                      <label className="block" htmlFor={`persona-field-${key}`}>
+                        <span className={FIELD_LABEL}>{label}</span>
+                        {isMultilineField(key) ? (
+                          <textarea
+                            aria-describedby={error ? `persona-field-${key}-error` : undefined}
+                            aria-invalid={Boolean(error)}
+                            className={INPUT_CLASS}
+                            disabled={disabled}
+                            id={`persona-field-${key}`}
+                            maxLength={fieldMaxLength(key)}
+                            onChange={(event: ChangeEvent<HTMLTextAreaElement>) => change(key, event.target.value)}
+                            placeholder={placeholder}
+                            rows={5}
+                            value={values[key]}
+                          />
+                        ) : (
+                          <input
+                            aria-describedby={error ? `persona-field-${key}-error` : undefined}
+                            aria-invalid={Boolean(error)}
+                            className={INPUT_CLASS}
+                            disabled={disabled}
+                            id={`persona-field-${key}`}
+                            maxLength={fieldMaxLength(key)}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => change(key, event.target.value)}
+                            placeholder={placeholder}
+                            value={values[key]}
+                          />
+                        )}
+                      </label>
+                      {presets ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {presets.map(value => (
+                            <Chip
+                              active={values[key] === value}
+                              key={value}
+                              label={value}
+                              onClick={() => {
+                                if (!disabled) {
+                                  change(key, value)
+                                }
+                              }}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                      {error ? (
+                        <p className="mt-1 text-[11px] text-danger-fg" id={`persona-field-${key}-error`}>
+                          {error}
+                        </p>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <dl className="mt-3 space-y-2">
+                {group.fields.map(key => (
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-3" key={key}>
+                    <dt className="w-24 shrink-0 text-[11px] text-muted">{meta[key].label}</dt>
+                    <dd
+                      className={cn(
+                        'min-w-0 flex-1 whitespace-pre-wrap break-words text-[13px] leading-6',
+                        values[key].trim() ? 'text-body' : 'text-muted'
+                      )}
+                    >
+                      {values[key].trim() || t.unfilled}
+                    </dd>
                   </div>
                 ))}
-            </dl>
-            <button
-              className={cn(BTN_SUBTLE, 'mt-2')}
-              disabled={busy}
-              onClick={() => updateCompanionEditors({ persona: { ...draft, base: latestBase } })}
-              type="button"
-            >
-              {dict.common.keepMyEdits}
-            </button>
-          </div>
-        )}
-      </div>
-    </WizardModal>
+              </dl>
+            )}
+          </section>
+        )
+      })}
+    </div>
   )
 }

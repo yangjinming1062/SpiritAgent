@@ -48,8 +48,21 @@
 .category svg {
   flex-shrink: 0;
 }
-.label {
+.textBlock {
   min-width: 0;
+}
+.label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hint {
+  color: var(--ui-text-muted);
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
