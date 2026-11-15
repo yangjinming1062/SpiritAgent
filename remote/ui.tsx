@@ -335,7 +335,8 @@ export function LibraryCard({
   cardKey: string
   imageAlt: string
   imageUrl: string
-  meta: string
+  /** 状态标记：没有需要用户知道的状态时省略，不占行。 */
+  meta?: string
   onSelect: () => void
   submeta?: string
   title: string
@@ -346,7 +347,7 @@ export function LibraryCard({
         {imageUrl ? <img alt={imageAlt} loading="lazy" src={imageUrl} /> : <div className="asset-placeholder">✦</div>}
         <div>
           <strong>{title}</strong>
-          <small>{meta}</small>
+          {meta ? <small>{meta}</small> : null}
           {submeta ? <small>{submeta}</small> : null}
         </div>
       </button>
@@ -371,6 +372,29 @@ export function Notice({ children, error }: { children?: ReactNode; error?: stri
         </details>
       ) : null}
     </div>
+  )
+}
+
+export function AssetSteps({
+  step,
+  upload = false,
+  labels
+}: {
+  step: number
+  upload?: boolean
+  labels?: readonly [string, string, string]
+}): ReactElement {
+  const steps = labels ?? [upload ? '选择图片' : '描述想法', '预览确认', '完成制作']
+
+  return (
+    <ol aria-label="制作步骤" className="creation-steps">
+      {steps.map((label, index) => (
+        <li aria-current={step === index + 1 ? 'step' : undefined} key={label}>
+          <span>{index + 1}</span>
+          {label}
+        </li>
+      ))}
+    </ol>
   )
 }
 

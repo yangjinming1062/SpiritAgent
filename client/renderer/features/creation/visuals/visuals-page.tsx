@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { openCompanionMainChat } from '@/app/navigation/app-navigation'
 import { useDetailFlow } from '@/app/navigation/use-detail-flow'
@@ -13,21 +13,20 @@ import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import {
   Badge,
-  BTN_GHOST,
   BTN_PRIMARY,
   BTN_SUBTLE,
+  CapsuleTabs,
   confirmAction,
   EmptyState,
-  ErrorBanner,
+  LibraryStatusBanner,
+  LibraryToolbar,
   LoadingBlock,
+  OverflowMenu,
+  OverflowMenuAction,
+  OverflowMenuToggle,
   Pager,
-  PanelSelect,
-  PolicyToggleRow,
-  SettingCard,
-  SettingsContent,
-  SettingsSectionIntro
+  SettingsContent
 } from '@/ui'
-import { LibraryToolbar } from '@/ui/asset-library-header'
 
 import { $actions, refreshActions } from '../actions'
 import { $sceneLibrary, loadSceneLibrary } from '../environment'
@@ -65,7 +64,10 @@ import { $visualsUi, updateStudio, updateVisualsUi } from './visuals-state'
 
 const PAGE_SIZE = 12
 
-/** 影像页：库内预览不产生播放回执。制作面板按需展开，列表是页面主体。 */
+/**
+ * 影像页：库视图是页面主体（命令栏 → 状态条 → 网格 → 分页），制作与上传是专注视图，
+ * 详情单独成视图。库内预览不产生播放回执。
+ */
 export function VisualsPage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.visuals
@@ -85,6 +87,7 @@ export function VisualsPage(): React.JSX.Element {
   const actions = useStore($actions)
   const [draftQuery, setDraftQuery] = useState(ui.query)
   const [draftSource, setDraftSource] = useState(ui.source)
+  const [queueOpen, setQueueOpen] = useState(false)
   const { run, busy } = usePanelAction()
 
   // 详情随组件生命周期；导航指向影像分区时才消费 visualId 直达，离开的导航不回退详情。
@@ -144,13 +147,40 @@ export function VisualsPage(): React.JSX.Element {
     }
   }, [detailVisible, selectedId])
 
+  // 库视图与制作视图共用同一个滚动容器：进制作前记住列表位置，退出制作回库时恢复。
+  const libraryScroll = useRef(0)
+  const previousComposerOpen = useRef(false)
+
+  useLayoutEffect(() => {
+    if (composerOpen === previousComposerOpen.current) {
+      return
+    }
+
+    previousComposerOpen.current = composerOpen
+
+    if (composerOpen) {
+      libraryScroll.current = scrollRef.current?.scrollTop ?? 0
+      scrollRef.current?.scrollTo({ top: 0 })
+
+      return
+    }
+
+    // 制作完成会直接进详情，此时滚动位置归详情视图管，不回退列表位置。
+    if (!detailVisible) {
+      scrollRef.current?.scrollTo({ top: libraryScroll.current })
+    }
+  }, [composerOpen, detailVisible, scrollRef])
+
   const detail = detailState?.id === selectedId ? detailState.detail : null
   const currentVisualId = projection?.current_visual?.id ?? null
   const defaultVisualId = projection?.default_wallpaper?.visual.id ?? null
   const activeJobs = jobs.filter(job => !['succeeded', 'cancelled'].includes(job.state))
 
-  const sourceSummary = (item: VisualItem): string =>
-    [item.outfit_name, item.scene_title, item.action_name].filter(Boolean).join(' · ')
+  const attentionJobs = activeJobs.filter(
+    job => job.state === 'failed' || job.state === 'unknown' || job.stage === 'review_pending'
+  )
+
+  const workingJobs = activeJobs.filter(job => !attentionJobs.includes(job))
 
   const submitFilters = (): void => {
     updateVisualsUi({ query: draftQuery.trim(), source: draftSource.trim(), page: 0 })
@@ -276,9 +306,9 @@ export function VisualsPage(): React.JSX.Element {
     updateStudio({ mode: mode === 'upload' ? 'upload' : 'describe' })
   }
 
-  return (
-    <SettingsContent scrollRef={scrollRef}>
-      {detailVisible ? (
+  if (detailVisible) {
+    return (
+      <SettingsContent scrollRef={scrollRef}>
         <VisualDetailView
           busy={busy}
           current={currentVisualId === selectedId}
@@ -293,181 +323,198 @@ export function VisualsPage(): React.JSX.Element {
           onRetryLoad={() => void reloadDetail()}
           onSetDefaultWallpaper={setDefaultWallpaper}
         />
-      ) : (
-        <>
-          <SettingsSectionIntro hint={t.intro} title={t.title} />
-          <SettingCard className="mb-3" divided={false}>
-            <div className="space-y-3 p-3">
-              {composerOpen ? (
-                <VisualCreatePanel
-                  onDone={async visualId => {
-                    setDraftQuery('')
-                    setDraftSource('')
-                    updateVisualsUi({
-                      query: '',
-                      source: '',
-                      mediaKind: 'all',
-                      page: 0
-                    })
+      </SettingsContent>
+    )
+  }
 
-                    if (visualId) {
-                      openDetail(visualId)
-                    }
+  if (composerOpen) {
+    return (
+      <SettingsContent scrollRef={scrollRef}>
+        <VisualCreatePanel
+          onDone={async visualId => {
+            setDraftQuery('')
+            setDraftSource('')
+            updateVisualsUi({
+              query: '',
+              source: '',
+              mediaKind: 'all',
+              page: 0
+            })
 
-                    await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
-                  }}
-                />
-              ) : null}
-              <LibraryToolbar
-                createLabel={t.composer.create}
-                filters={
-                  <>
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={composerOpen && ui.studio?.mode === 'upload'}
-                      onClick={() => openComposer('upload')}
-                      type="button"
-                    >
-                      <ImagePlus aria-hidden="true" className="size-3.5" />
-                      {t.composer.upload}
-                    </button>
-                    <PanelSelect
-                      ariaLabel={t.mediaKindLabel}
-                      onChange={value => updateVisualsUi({ mediaKind: value, page: 0 })}
-                      options={[
-                        { value: 'all', label: t.mediaKindAll },
-                        { value: 'image', label: t.mediaKindImage },
-                        { value: 'video', label: t.mediaKindVideo }
-                      ]}
-                      value={ui.mediaKind}
-                    />
-                    <SearchSourceField
-                      label={t.sourceLabel}
-                      onChange={setDraftSource}
-                      onSubmit={submitFilters}
-                      placeholder={t.sourcePlaceholder}
-                      value={draftSource}
-                    />
-                  </>
-                }
-                onCreate={() => openComposer('create')}
-                onQueryChange={setDraftQuery}
-                onSearch={submitFilters}
-                query={draftQuery}
-                searchLabel={t.searchAria}
-                searchMode="submit"
-              />
-              {hasFilters ? (
-                <div>
-                  <button className={BTN_GHOST} onClick={clearFilters} type="button">
-                    {t.clearFilters}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </SettingCard>
-          {error && (
-            <ErrorBanner
-              message={t.loadFailed}
-              onRetry={() => void refreshVisuals({})}
-              retryLabel={dict.common.retry}
-            />
-          )}
+            if (visualId) {
+              openDetail(visualId)
+            }
 
-          {activeJobs.length > 0 && (
-            <section className="mb-3">
-              <h3 className="mb-2 text-xs font-medium text-muted">{t.jobsTitle}</h3>
-              <SettingCard className="border border-accent-line bg-accent-soft/10" divided>
-                {activeJobs.map(job => (
-                  <VisualJobRow
-                    busy={busy}
-                    job={job}
-                    key={job.id}
-                    onCommand={command => jobCommand(job, command)}
-                    t={t}
-                  />
-                ))}
-              </SettingCard>
-            </section>
-          )}
+            await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
+          }}
+          onExit={() => updateStudio({ mode: 'idle' })}
+        />
+      </SettingsContent>
+    )
+  }
 
-          {loading && items.length === 0 ? (
-            <LoadingBlock label={t.loading} />
-          ) : items.length === 0 ? (
-            <EmptyState
-              action={
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button className={BTN_PRIMARY} onClick={() => openComposer('upload')} type="button">
-                    <ImagePlus aria-hidden="true" className="size-3.5" />
-                    {t.composer.upload}
-                  </button>
-                  <button className={BTN_SUBTLE} onClick={() => openComposer('create')} type="button">
-                    <Sparkles aria-hidden="true" className="size-3.5" />
-                    {t.composer.create}
-                  </button>
-                  <button className={BTN_SUBTLE} onClick={openCompanion} type="button">
-                    <MessageCircle aria-hidden="true" className="size-3.5" />
-                    {t.contactCompanion}
-                  </button>
-                </div>
-              }
-              description={`${t.emptyHint}${readiness ? ` ${readiness}` : ''}`}
-              title={hasFilters ? t.emptySearch : t.emptyTitle}
-            />
-          ) : (
+  return (
+    <SettingsContent scrollRef={scrollRef}>
+      <div className="space-y-3">
+        <LibraryToolbar
+          createLabel={t.composer.create}
+          filters={
             <>
-              <SettingCard className="mb-3" divided={false}>
-                <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {items.map(item => (
-                    <VisualCard
-                      current={currentVisualId === item.id}
-                      defaultWallpaper={defaultVisualId === item.id}
-                      item={item}
-                      key={item.id}
-                      onSelect={() => openDetail(item.id)}
-                      sourceSummary={sourceSummary(item)}
-                      t={t}
-                    />
-                  ))}
-                </div>
-              </SettingCard>
-              <Pager
-                busy={busy}
-                hasMore={Boolean(nextCursor)}
-                onPageChange={next =>
-                  next > ui.page &&
-                  nextCursor &&
-                  updateVisualsUi({
-                    page: next,
-                    cursors: [...ui.cursors.slice(0, ui.page + 1), nextCursor]
-                  })
-                }
-                page={ui.page}
-                total={total}
+              <CapsuleTabs
+                ariaLabel={t.mediaKindLabel}
+                onChange={value => updateVisualsUi({ mediaKind: value, page: 0 })}
+                options={[
+                  { value: 'all' as const, label: t.mediaKindAll },
+                  { value: 'image' as const, label: t.mediaKindImage },
+                  { value: 'video' as const, label: t.mediaKindVideo }
+                ]}
+                size="sm"
+                value={ui.mediaKind}
+                variant="segmented"
+              />
+              <SearchSourceField
+                label={t.sourceLabel}
+                onChange={setDraftSource}
+                onSubmit={submitFilters}
+                placeholder={t.sourcePlaceholder}
+                value={draftSource}
               />
             </>
-          )}
-
-          <section className="mt-4">
-            <h3 className="mb-2 text-xs font-medium text-muted">{t.prefsTitle}</h3>
-            <SettingCard>
-              <PolicyToggleRow
-                ariaLabel={t.autonomousLabel}
+          }
+          onCreate={() => openComposer('create')}
+          onQueryChange={setDraftQuery}
+          onSearch={submitFilters}
+          overflow={
+            <OverflowMenu label={dict.common.moreActions}>
+              <OverflowMenuToggle
                 checked={projection?.autonomous_enabled ?? true}
                 description={t.autonomousDesc}
                 disabled={busy}
                 label={t.autonomousLabel}
-                onChange={() =>
+                onClick={() =>
                   void run(
                     () => setVisualPreferences({ autonomous_enabled: !(projection?.autonomous_enabled ?? true) }),
                     { failure: t.prefsFailed }
                   )
                 }
               />
-            </SettingCard>
+              {hasFilters ? <OverflowMenuAction label={t.clearFilters} onClick={clearFilters} /> : null}
+              <OverflowMenuAction label={t.contactCompanion} onClick={openCompanion} />
+            </OverflowMenu>
+          }
+          query={draftQuery}
+          searchLabel={t.searchAria}
+          searchMode="submit"
+          secondary={
+            <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
+              <ImagePlus aria-hidden="true" className="size-3.5" />
+              {t.composer.upload}
+            </button>
+          }
+        />
+
+        <LibraryStatusBanner
+          candidates={[
+            error
+              ? {
+                  state: 'error',
+                  title: t.loadFailed,
+                  actions: (
+                    <button className={BTN_SUBTLE} onClick={() => void refreshVisuals({})} type="button">
+                      {dict.common.retry}
+                    </button>
+                  )
+                }
+              : null,
+            attentionJobs.length > 0
+              ? {
+                  state: attentionJobs.some(job => job.stage !== 'review_pending') ? 'error' : 'review',
+                  title: t.jobsTitle,
+                  description: attentionJobs.map(job => visualJobLabel(job, t)).join(' · '),
+                  actions: (
+                    <button className={BTN_SUBTLE} onClick={() => setQueueOpen(value => !value)} type="button">
+                      {queueOpen ? t.jobsHide : t.jobsShow}
+                    </button>
+                  )
+                }
+              : null,
+            workingJobs.length > 0
+              ? {
+                  state: workingJobs.some(job => job.state === 'paused') ? 'paused' : 'working',
+                  title: t.jobsTitle,
+                  description: workingJobs.map(job => visualJobLabel(job, t)).join(' · '),
+                  actions: (
+                    <button className={BTN_SUBTLE} onClick={() => setQueueOpen(value => !value)} type="button">
+                      {queueOpen ? t.jobsHide : t.jobsShow}
+                    </button>
+                  )
+                }
+              : null
+          ]}
+        />
+
+        {queueOpen && activeJobs.length > 0 && (
+          <section className="rounded-xl border border-line-hairline bg-fill-faint/40">
+            {activeJobs.map(job => (
+              <VisualJobRow busy={busy} job={job} key={job.id} onCommand={command => jobCommand(job, command)} t={t} />
+            ))}
           </section>
-        </>
-      )}
+        )}
+
+        {loading && items.length === 0 ? (
+          <LoadingBlock label={t.loading} />
+        ) : items.length === 0 ? (
+          <EmptyState
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <button className={BTN_PRIMARY} onClick={() => openComposer('create')} type="button">
+                  <Sparkles aria-hidden="true" className="size-3.5" />
+                  {t.composer.create}
+                </button>
+                <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
+                  <ImagePlus aria-hidden="true" className="size-3.5" />
+                  {t.composer.upload}
+                </button>
+                <button className={BTN_SUBTLE} onClick={openCompanion} type="button">
+                  <MessageCircle aria-hidden="true" className="size-3.5" />
+                  {t.contactCompanion}
+                </button>
+              </div>
+            }
+            description={`${t.emptyHint}${readiness ? ` ${readiness}` : ''}`}
+            title={hasFilters ? t.emptySearch : t.emptyTitle}
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {items.map(item => (
+                <VisualCard
+                  current={currentVisualId === item.id}
+                  defaultWallpaper={defaultVisualId === item.id}
+                  item={item}
+                  key={item.id}
+                  onSelect={() => openDetail(item.id)}
+                  t={t}
+                />
+              ))}
+            </div>
+            <Pager
+              busy={busy}
+              hasMore={Boolean(nextCursor)}
+              onPageChange={next =>
+                next > ui.page &&
+                nextCursor &&
+                updateVisualsUi({
+                  page: next,
+                  cursors: [...ui.cursors.slice(0, ui.page + 1), nextCursor]
+                })
+              }
+              page={ui.page}
+              total={total}
+            />
+          </>
+        )}
+      </div>
     </SettingsContent>
   )
 }
@@ -504,18 +551,20 @@ function SearchSourceField({
   )
 }
 
+/**
+ * 库卡片只承载浏览决策：封面 + 标题 + 至多两个状态标记；
+ * 媒体类型、资产类型、版本与来源事实都在详情里看。
+ */
 function VisualCard({
   item,
   current,
   defaultWallpaper,
-  sourceSummary,
   onSelect,
   t
 }: {
   item: VisualItem
   current: boolean
   defaultWallpaper: boolean
-  sourceSummary: string
   onSelect: () => void
   t: VisualsCopy
 }): React.JSX.Element {
@@ -525,6 +574,23 @@ function VisualCard({
   })
 
   const analysisPending = isPendingState(item.analysis_state)
+  const marks: React.JSX.Element[] = []
+
+  if (current) {
+    marks.push(<Badge tone="accent">{t.currentMark}</Badge>)
+  }
+
+  if (defaultWallpaper) {
+    marks.push(<Badge tone="accent">{t.defaultWallpaperMark}</Badge>)
+  }
+
+  if (marks.length < 2 && analysisPending) {
+    marks.push(<Badge>{t.analysis.states[item.analysis_state ?? 'queued']}</Badge>)
+  }
+
+  if (marks.length < 2 && !analysisPending && !item.auto_playable) {
+    marks.push(<PlayBadge label={t.autoPlayOff} playable={false} />)
+  }
 
   return (
     <button
@@ -539,7 +605,12 @@ function VisualCard({
       onClick={onSelect}
       type="button"
     >
-      <div className="relative aspect-video overflow-hidden rounded-xl bg-fill-trough">
+      <div
+        className={cn(
+          'relative overflow-hidden rounded-xl bg-fill-trough',
+          item.height > item.width ? 'aspect-[4/5]' : 'aspect-video'
+        )}
+      >
         {cover.status === 'ready' ? (
           <img
             alt={t.coverAlt(item.title)}
@@ -547,19 +618,11 @@ function VisualCard({
             src={cover.src}
           />
         ) : null}
-        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          <Badge>{item.media_kind === 'video' ? t.mediaKindVideo : t.mediaKindImage}</Badge>
-          {current && <Badge tone="accent">{t.currentMark}</Badge>}
-          {defaultWallpaper && <Badge tone="accent">{t.defaultWallpaperMark}</Badge>}
-        </div>
       </div>
       <div className="flex flex-wrap items-center gap-1">
         <span className="min-w-0 flex-1 truncate text-xs font-semibold text-strong">{item.title}</span>
-        <Badge>{t.assetKindLabels[item.asset_kind]}</Badge>
-        {item.analysis_state && <Badge>{t.analysis.states[item.analysis_state]}</Badge>}
-        {!analysisPending && !item.auto_playable && <PlayBadge label={t.autoPlayOff} playable={false} />}
+        {marks.slice(0, 2)}
       </div>
-      {sourceSummary && <p className="truncate text-[11px] text-faint">{sourceSummary}</p>}
     </button>
   )
 }

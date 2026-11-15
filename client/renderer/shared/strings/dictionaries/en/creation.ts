@@ -62,6 +62,12 @@ export const creation: Pick<Dictionary, 'creation' | 'selfSource' | 'generationA
     regenerateHint: 'Redraws the whole image from the references and your brief'
   },
   studio: {
+    steps: {
+      describe: 'Describe the idea',
+      pick: 'Choose an image',
+      confirm: 'Review and confirm',
+      done: 'Creation done'
+    },
     intents: {
       photo: 'A photo',
       photoHint: 'Capture a single moment',
@@ -87,7 +93,6 @@ export const creation: Pick<Dictionary, 'creation' | 'selfSource' | 'generationA
     stepOutfit: 'Prepare an outfit first',
     stepScene: 'Create an environment first',
     invalidated: 'Materials changed. Interpret the description again before confirming.',
-    activityTitle: 'In progress',
     attentionTitle: 'Needs your attention',
     actionCreate: 'When does it happen, and how does it move',
     actionEditTitle: 'What should change',

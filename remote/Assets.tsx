@@ -19,6 +19,7 @@ import { MediaReviewButton } from './MediaReviewButton'
 import type { Outfit, Scene } from './types'
 import {
   AssetResultRecovery,
+  AssetSteps,
   Empty,
   FileInput,
   focusAfterRender,
@@ -44,21 +45,6 @@ interface MotionPlan {
   feasible: boolean
   reason: string
   inputs: MotionPlanInputs
-}
-
-function AssetSteps({ step, upload = false }: { step: number; upload?: boolean }): ReactElement {
-  const labels = [upload ? '选择图片' : '描述想法', '预览确认', '完成制作']
-
-  return (
-    <ol aria-label="制作步骤" className="creation-steps">
-      {labels.map((label, index) => (
-        <li aria-current={step === index + 1 ? 'step' : undefined} key={label}>
-          <span>{index + 1}</span>
-          {label}
-        </li>
-      ))}
-    </ol>
-  )
 }
 
 function AssetPolicyToggle({

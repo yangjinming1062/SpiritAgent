@@ -17,6 +17,7 @@ export {
   IconCommand as Command,
   IconCopy as Copy,
   IconCpu as Cpu,
+  IconDots as Dots,
   IconDownload as Download,
   IconEye as Eye,
   IconEyeOff as EyeOff,

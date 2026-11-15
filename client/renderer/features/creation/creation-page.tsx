@@ -4,7 +4,6 @@ import type React from 'react'
 import { $creationSection, openCreation } from '@/app/navigation/app-navigation'
 import { MediaViewerOverlay, MediaViewHost } from '@/features/media'
 import { Activity, Home, Shirt, Video } from '@/shared/lib/icons'
-import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { AppPageProps } from '@/shared/types/app-page'
 import { SectionShell } from '@/ui/section-shell/section-shell'
@@ -23,7 +22,10 @@ const ENTRIES = [
   { id: 'actions', icon: Activity }
 ] as const
 
-/** 创作页：影像、造型、环境与动作按"一起做什么"组织为四个分区。 */
+/**
+ * 创作页：影像、造型、环境与动作按"一起做什么"组织为四个分区。
+ * 外壳只提醒需要用户处理的事项；进行中的制作由各分区自己的状态条承载。
+ */
 export function CreationPage({ containerRef, mediaViewId }: AppPageProps): React.JSX.Element {
   const section = useStore($creationSection)
   const activity = useStore($creationActivity)
@@ -31,7 +33,6 @@ export function CreationPage({ containerRef, mediaViewId }: AppPageProps): React
   const labels = strings.settings.persona.sections
   const studio = strings.studio
   const attention = activity.filter(item => item.group === 'attention')
-  const working = activity.filter(item => item.group === 'working')
 
   const openTarget = (item: CreationActivityItem): void => {
     void openCreation(item.section, {
@@ -42,10 +43,7 @@ export function CreationPage({ containerRef, mediaViewId }: AppPageProps): React
 
   const chip = (item: CreationActivityItem): React.JSX.Element => (
     <button
-      className={cn(
-        'rounded-full border px-2 py-0.5 text-[11px] hover:bg-fill-hover',
-        item.group === 'attention' ? 'border-warning/60 text-warning' : 'border-line-hairline text-body'
-      )}
+      className="rounded-full border border-warning/60 px-2 py-0.5 text-[11px] text-warning hover:bg-fill-hover"
       key={item.id}
       onClick={() => openTarget(item)}
       type="button"
@@ -85,13 +83,6 @@ export function CreationPage({ containerRef, mediaViewId }: AppPageProps): React
               <span className="text-[11px] font-medium text-warning">{studio.attentionTitle}</span>
               {attention.slice(0, 4).map(chip)}
               {attention.length > 4 && <span className="text-[11px] text-muted">+{attention.length - 4}</span>}
-            </div>
-          )}
-          {working.length > 0 && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line-hairline bg-fill-faint/40 px-3 py-2">
-              <span className="text-[11px] font-medium text-muted">{studio.activityTitle}</span>
-              {working.slice(0, 4).map(chip)}
-              {working.length > 4 && <span className="text-[11px] text-muted">+{working.length - 4}</span>}
             </div>
           )}
           <div className="flex min-h-0 flex-1 flex-col">{content(section)}</div>

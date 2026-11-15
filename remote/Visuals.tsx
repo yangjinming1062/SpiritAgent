@@ -55,14 +55,21 @@ function analysisPending(state: VisualItem['analysis_state'] | null | undefined)
   return state === 'queued' || state === 'running' || state === 'paused' || state === 'awaiting_input'
 }
 
-function sourceSummary(item: Pick<VisualItem, 'action_name' | 'outfit_name' | 'scene_title'>): string {
-  return [
-    item.outfit_name ? `衣柜：${item.outfit_name}` : '',
-    item.scene_title ? `环境：${item.scene_title}` : '',
-    item.action_name ? `动作：${item.action_name}` : ''
-  ]
-    .filter(Boolean)
-    .join(' · ')
+/** 卡片状态标记：只标需要用户知道的身份与待办，至多两个；媒体与来源事实进详情。 */
+function cardMarks(row: VisualItem, currentVisualId: string | null): string[] {
+  const marks: string[] = []
+
+  if (currentVisualId === row.id) {
+    marks.push('当前呈现')
+  }
+
+  if (analysisPending(row.analysis_state)) {
+    marks.push('等待分析')
+  } else if (!row.auto_playable) {
+    marks.push('不参与自动演出')
+  }
+
+  return marks.slice(0, 2)
 }
 
 function visualJobLabel(job: VisualJob, visualTitle?: string): string {
@@ -177,33 +184,42 @@ function VisualDetailPanel({
           {showOriginal ? '查看可呈现版本' : '查看原始文件'}
         </button>
       )}
-      {visual.analysis ? (
-        <>
-          <p className="muted">
-            {visual.auto_playable
-              ? visualMaterialCopy.zh.approved
-              : visualMaterialCopy.zh[visualAnalysisControls(visual.analysis).status]}
-          </p>
-          <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />
-        </>
-      ) : null}
-      {!visual.analysis && visual.description ? (
+      {!visual.analysis && source.kind !== 'analysis' && (
         <details className="optional-details">
-          <summary>描述</summary>
-          <p>{visual.description}</p>
+          <summary>重做</summary>
+          <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
+          <textarea
+            aria-label="修改要求"
+            disabled={busy || submitted}
+            maxLength={2000}
+            onChange={event => setFeedback(event.target.value)}
+            placeholder="例如：背景换成傍晚的光线，动作保持不变"
+            rows={3}
+            value={feedback}
+          />
+          <div className="button-row">
+            <button
+              disabled={busy || submitted}
+              onClick={() =>
+                run(() =>
+                  submit(async () => {
+                    await api.invoke('companion_visuals.regenerate_visual', {
+                      path: { visual_id: visual.id },
+                      body: { expected_version: visual.version, feedback: feedback.trim() || null }
+                    })
+                    setFeedback('')
+                    await onChanged()
+                    clearSubmission()
+                  })
+                )
+              }
+              type="button"
+            >
+              提交重做
+            </button>
+          </div>
         </details>
-      ) : null}
-      {!visual.analysis && !pendingAnalysis && !visual.auto_playable ? (
-        <div className="muted">
-          <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
-          {visual.snapshot.review_reason ? (
-            <details className="optional-details">
-              <summary>内容检查</summary>
-              <p>{visual.snapshot.review_reason}</p>
-            </details>
-          ) : null}
-        </div>
-      ) : null}
+      )}
       {!visual.analysis && (
         <section className="card">
           <h3>影像来源</h3>
@@ -259,52 +275,46 @@ function VisualDetailPanel({
           })()}
         </section>
       )}
+      {visual.analysis ? (
+        <>
+          <p className="muted">
+            {visual.auto_playable
+              ? visualMaterialCopy.zh.approved
+              : visualMaterialCopy.zh[visualAnalysisControls(visual.analysis).status]}
+          </p>
+          <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />
+        </>
+      ) : (
+        <>
+          {visual.description ? (
+            <details className="optional-details">
+              <summary>描述</summary>
+              <p>{visual.description}</p>
+            </details>
+          ) : null}
+          {!pendingAnalysis && !visual.auto_playable ? (
+            <div className="muted">
+              <p>这个版本已完成并保留，目前不参与常驻轮换或生活演出。你仍可在影像库查看成品与检查记录。</p>
+              {visual.snapshot.review_reason ? (
+                <details className="optional-details">
+                  <summary>内容检查</summary>
+                  <p>{visual.snapshot.review_reason}</p>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      )}
       {jobs.length ? (
-        <section className="card">
-          <h3>制作工作项</h3>
+        <details className="optional-details">
+          <summary>制作记录</summary>
           <ul className="visual-list">
             {jobs.map(job => (
               <VisualJobRow api={api} job={job} key={job.id} onChanged={onChanged} />
             ))}
           </ul>
-        </section>
-      ) : null}
-      {!visual.analysis && source.kind !== 'analysis' && (
-        <details className="optional-details">
-          <summary>重做</summary>
-          <p className="muted">按原来的素材组合重新制作，可以附上修改要求。不需要电脑在线。</p>
-          <textarea
-            aria-label="修改要求"
-            disabled={busy || submitted}
-            maxLength={2000}
-            onChange={event => setFeedback(event.target.value)}
-            placeholder="例如：背景换成傍晚的光线，动作保持不变"
-            rows={3}
-            value={feedback}
-          />
-          <div className="button-row">
-            <button
-              disabled={busy || submitted}
-              onClick={() =>
-                run(() =>
-                  submit(async () => {
-                    await api.invoke('companion_visuals.regenerate_visual', {
-                      path: { visual_id: visual.id },
-                      body: { expected_version: visual.version, feedback: feedback.trim() || null }
-                    })
-                    setFeedback('')
-                    await onChanged()
-                    clearSubmission()
-                  })
-                )
-              }
-              type="button"
-            >
-              提交重做
-            </button>
-          </div>
         </details>
-      )}
+      ) : null}
       {visual.original_url ? (
         <button
           disabled={busy}
@@ -485,8 +495,8 @@ export function Visuals({
             </div>
           </details>
           {jobs.length ? (
-            <section className="card">
-              <h3>制作工作项</h3>
+            <details className="optional-details">
+              <summary>制作队列 · {jobs.length} 项</summary>
               <ul className="visual-list">
                 {jobs.map(job => (
                   <VisualJobRow
@@ -498,7 +508,7 @@ export function Visuals({
                   />
                 ))}
               </ul>
-            </section>
+            </details>
           ) : null}
           {error ? <Notice>{error}</Notice> : null}
           <div className="asset-grid">
@@ -509,15 +519,7 @@ export function Visuals({
                 imageAlt={row.title || '影像'}
                 imageUrl={row.poster_url || row.media_url}
                 key={row.id}
-                meta={`${row.media_kind === 'video' ? '视频' : '图片'}${
-                  durationText(row.duration_ms) ? ` · ${durationText(row.duration_ms)}` : ''
-                }${currentVisualId === row.id ? ' · 当前呈现' : ''}${
-                  analysisPending(row.analysis_state)
-                    ? ' · 等待分析'
-                    : !row.auto_playable
-                      ? ' · 此版本不参与自动演出'
-                      : ''
-                }`}
+                meta={cardMarks(row, currentVisualId).join(' · ') || undefined}
                 onSelect={() => {
                   void run(async () => {
                     const detail = await api.invoke('companion_visuals.get_visual', {
@@ -528,7 +530,6 @@ export function Visuals({
                     }
                   })
                 }}
-                submeta={sourceSummary(row) || undefined}
                 title={row.title || '未命名影像'}
               />
             ))}

@@ -128,3 +128,75 @@ export function CreationActionBar({
     </div>
   )
 }
+
+export interface LibraryBannerCandidate {
+  state: CreationFeedbackState
+  title?: string
+  description?: ReactNode
+  actions?: ReactNode
+}
+
+/**
+ * 素材库状态条：候选按优先级排列（失败 > 待核对 > 进行中），同屏只渲染第一条；
+ * 无候选时零占位。各页只负责按自己的业务排出候选，不复制选择逻辑。
+ */
+export function LibraryStatusBanner({
+  candidates,
+  className
+}: {
+  candidates: ReadonlyArray<LibraryBannerCandidate | null | undefined>
+  className?: string
+}): React.JSX.Element | null {
+  const banner = candidates.find((candidate): candidate is LibraryBannerCandidate => Boolean(candidate))
+
+  if (!banner) {
+    return null
+  }
+
+  return (
+    <CreationFeedback
+      actions={banner.actions}
+      className={className}
+      description={banner.description}
+      state={banner.state}
+      title={banner.title}
+    />
+  )
+}
+
+/** 制作步骤条：描述想法 → 预览确认 → 完成制作，跨端同构；仅标注当前步骤，不拦截流程。 */
+export function CreationSteps({
+  step,
+  labels
+}: {
+  step: number
+  labels: readonly [string, string, string]
+}): React.JSX.Element {
+  return (
+    <ol aria-label={labels.join(' → ')} className="flex flex-wrap items-center gap-2">
+      {labels.map((label, index) => {
+        const current = index + 1 === step
+        const done = index + 1 < step
+
+        return (
+          <li aria-current={current ? 'step' : undefined} className="flex items-center gap-1.5" key={label}>
+            <span
+              className={cn(
+                'grid size-4 shrink-0 place-items-center rounded-full text-[10px] font-medium',
+                current ? 'bg-accent text-on-accent' : done ? 'bg-accent-soft text-accent' : 'bg-fill-faint text-faint'
+              )}
+            >
+              {index + 1}
+            </span>
+            <span className={cn('text-[11px]', current ? 'font-medium text-strong' : 'text-faint')}>{label}</span>
+            {index < labels.length - 1 && (
+              <span aria-hidden="true" className="px-1 text-faint">
+                →
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}

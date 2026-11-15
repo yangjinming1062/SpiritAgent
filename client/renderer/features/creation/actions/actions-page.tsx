@@ -11,7 +11,6 @@ import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import {
-  Badge,
   BTN_DANGER,
   BTN_GHOST,
   BTN_PRIMARY,
@@ -19,11 +18,14 @@ import {
   CapsuleTabs,
   confirmAction,
   CreationFeedback,
+  CreationSteps,
   EmptyState,
   ErrorBanner,
   FIELD_LABEL,
   INPUT_CLASS,
   LoadingBlock,
+  OverflowMenu,
+  OverflowMenuAction,
   Pager,
   SettingCard,
   SettingsContent,
@@ -97,9 +99,9 @@ function ActionMediaPanel({
         {entries.map(entry => (
           <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted" key={entry.visual_id}>
             <span>{visualsLabels.assetKindLabels[entry.asset_kind]}</span>
-            <Badge>{entry.media_kind === 'video' ? visualsLabels.mediaKindVideo : visualsLabels.mediaKindImage}</Badge>
+            <span>{entry.media_kind === 'video' ? visualsLabels.mediaKindVideo : visualsLabels.mediaKindImage}</span>
             {entry.stage_ready ? (
-              <Badge tone="accent">{t.mediaStageReady}</Badge>
+              <span className="text-accent">{t.mediaStageReady}</span>
             ) : (
               <span>{t.mediaStageUnavailable}</span>
             )}
@@ -386,6 +388,16 @@ function ActionsPageContent(): React.JSX.Element {
     void run(() => retryActionReview(action), { failure: t.retryFailed, key: `retry:${action.id}` })
   }
 
+  const openEditor = (action: ActionDefinition): void => {
+    updateActionsComposer({
+      actionId: action.id,
+      expectedUpdatedAt: action.updated_at,
+      description: '',
+      refinement: '',
+      preview: null
+    })
+  }
+
   const focusRowRef = (node: HTMLDivElement | null): void => {
     if (node && focusActionId && focusScrolledRef.current !== focusActionId) {
       focusScrolledRef.current = focusActionId
@@ -425,19 +437,7 @@ function ActionsPageContent(): React.JSX.Element {
             <span className="text-sm font-medium text-strong">{focusTarget.name}</span>
             <span className="text-[11px] text-faint">{t.statusLabels[focusTarget.status]}</span>
             {focusTarget.source !== 'preset' && focusTarget.status !== 'approved' && (
-              <button
-                className={BTN_SUBTLE}
-                onClick={() =>
-                  updateActionsComposer({
-                    actionId: focusTarget.id,
-                    expectedUpdatedAt: focusTarget.updated_at,
-                    description: '',
-                    refinement: '',
-                    preview: null
-                  })
-                }
-                type="button"
-              >
+              <button className={BTN_SUBTLE} onClick={() => openEditor(focusTarget)} type="button">
                 {t.edit}
               </button>
             )}
@@ -448,6 +448,10 @@ function ActionsPageContent(): React.JSX.Element {
         <SettingCard className="mb-3">
           <div className="flex flex-col gap-3 p-4">
             <h3 className="text-sm font-medium">{composer.actionId ? studio.actionEditTitle : t.create}</h3>
+            <CreationSteps
+              labels={[studio.steps.describe, studio.steps.confirm, studio.actionSave]}
+              step={composer.preview ? 2 : 1}
+            />
             {composerError && <p className="text-[11px] text-danger-fg">{composerError}</p>}
             {!composer.preview && (
               <label className="block">
@@ -549,11 +553,12 @@ function ActionsPageContent(): React.JSX.Element {
               ref={action.id === focusActionId ? focusRowRef : undefined}
             >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-strong">{action.name}</span>
-                <Badge>{action.clip_kind === 'loop' ? t.clipLoop : t.clipOnce}</Badge>
-                <Badge>{`${action.duration_seconds}${t.durationSuffix}`}</Badge>
-                <Badge>{t.motionIntensities[action.motion_intensity]}</Badge>
-                <Badge>{action.source === 'preset' ? t.builtin : t.custom}</Badge>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-strong">{action.name}</span>
+                <span className="text-[11px] text-faint">
+                  {`${action.clip_kind === 'loop' ? t.clipLoop : t.clipOnce} · ${action.duration_seconds}${t.durationSuffix} · ${
+                    t.motionIntensities[action.motion_intensity]
+                  } · ${action.source === 'preset' ? t.builtin : t.custom}`}
+                </span>
               </div>
               <p className="whitespace-pre-wrap text-xs text-muted">{action.motion_description}</p>
               {group === 'not_in_library' && (
@@ -573,7 +578,7 @@ function ActionsPageContent(): React.JSX.Element {
                   title={t.statusLabels[action.status]}
                 />
               )}
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {group === 'in_library' && defaultOutfit && action.status === 'approved' && (
                   <button
                     className={BTN_SUBTLE}
@@ -596,43 +601,31 @@ function ActionsPageContent(): React.JSX.Element {
                       ? t.mediaHide
                       : t.mediaShow}
                 </button>
-                {action.source !== 'preset' && (
-                  <button
-                    className={BTN_GHOST}
-                    disabled={busyKey !== null || action.status === 'pending' || action.status === 'reviewing'}
-                    onClick={() =>
-                      updateActionsComposer({
-                        actionId: action.id,
-                        expectedUpdatedAt: action.updated_at,
-                        description: '',
-                        refinement: '',
-                        preview: null
-                      })
-                    }
-                    type="button"
-                  >
-                    {t.edit}
-                  </button>
-                )}
-                {(action.status === 'failed' || action.status === 'deferred') && (
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busyKey !== null}
-                    onClick={() => retryReview(action)}
-                    type="button"
-                  >
-                    {t.retry}
-                  </button>
-                )}
-                {action.source !== 'preset' && (
-                  <button
-                    className={BTN_DANGER}
-                    disabled={busyKey !== null}
-                    onClick={() => remove(action)}
-                    type="button"
-                  >
-                    {t.deleteLabel}
-                  </button>
+                {(action.source !== 'preset' || action.status === 'failed' || action.status === 'deferred') && (
+                  <OverflowMenu className="ml-auto" label={dict.common.moreActions}>
+                    {action.source !== 'preset' && (
+                      <OverflowMenuAction
+                        disabled={busyKey !== null || action.status === 'pending' || action.status === 'reviewing'}
+                        label={t.edit}
+                        onClick={() => openEditor(action)}
+                      />
+                    )}
+                    {(action.status === 'failed' || action.status === 'deferred') && (
+                      <OverflowMenuAction
+                        disabled={busyKey !== null}
+                        label={t.retry}
+                        onClick={() => retryReview(action)}
+                      />
+                    )}
+                    {action.source !== 'preset' && (
+                      <OverflowMenuAction
+                        danger
+                        disabled={busyKey !== null}
+                        label={t.deleteLabel}
+                        onClick={() => remove(action)}
+                      />
+                    )}
+                  </OverflowMenu>
                 )}
               </div>
               {mediaPanel.expandedId === action.id && (

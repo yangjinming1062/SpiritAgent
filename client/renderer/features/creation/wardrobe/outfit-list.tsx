@@ -5,12 +5,13 @@ import { cn } from '@/shared/lib/utils'
 import {
   AssetLibraryCard,
   AssetLibraryGrid,
-  AssetLibraryHeader,
   BTN_SUBTLE,
   confirmAction,
   CreationFeedback,
   Disclosure,
   LibraryToolbar,
+  OverflowMenu,
+  OverflowMenuToggle,
   SettingCard,
   SettingsContent
 } from '@/ui'
@@ -70,32 +71,27 @@ export function OutfitList({ model }: { model: OutfitSectionModel }): React.JSX.
             title={session.resultUnknown ? dict.creation.unknown : t.generating}
           />
         )}
-        <AssetLibraryHeader
-          policies={[
-            {
-              id: 'outfit-autonomy',
-              label: t.policyLabel,
-              description: t.policyDesc,
-              status: policyBusy
-                ? common.saving
-                : outfitPolicy === 'locked'
-                  ? t.policyStatusLocked
-                  : t.policyStatusUnlocked,
-              checked: outfitPolicy !== 'locked',
-              disabled: policyBusy,
-              ariaLabel: t.policyToggleAria,
-              onChange: () => void togglePolicy()
-            }
-          ]}
-        >
-          <LibraryToolbar
-            createLabel={t.startAction}
-            onCreate={startDesign}
-            onQueryChange={search.onQueryChange}
-            query={search.query}
-            searchLabel={t.search}
-          />
-        </AssetLibraryHeader>
+        <LibraryToolbar
+          createLabel={t.startAction}
+          onCreate={startDesign}
+          onQueryChange={search.onQueryChange}
+          overflow={
+            <OverflowMenu label={common.moreActions}>
+              <OverflowMenuToggle
+                checked={outfitPolicy !== 'locked'}
+                description={t.policyDesc}
+                disabled={policyBusy}
+                label={t.policyLabel}
+                onClick={() => void togglePolicy()}
+                status={
+                  policyBusy ? common.saving : outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked
+                }
+              />
+            </OverflowMenu>
+          }
+          query={search.query}
+          searchLabel={t.search}
+        />
 
         <AssetLibraryGrid>
           {visibleOutfits.map(outfit => {

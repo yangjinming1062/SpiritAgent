@@ -58,6 +58,7 @@ export const creation = {
     regenerateHint: '按参考与要求整体重绘'
   },
   studio: {
+    steps: { describe: '描述想法', pick: '选择图片', confirm: '预览确认', done: '完成制作' },
     intents: {
       photo: '一张照片',
       photoHint: '记录此刻的画面',
@@ -83,7 +84,6 @@ export const creation = {
     stepOutfit: '先准备一套造型',
     stepScene: '先创建一个环境',
     invalidated: '素材已变化，请重新整理后再确认',
-    activityTitle: '正在制作',
     attentionTitle: '需要你处理',
     actionCreate: '它会在什么时候、大概怎么动',
     actionEditTitle: '想改哪里',

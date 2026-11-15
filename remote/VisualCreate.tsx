@@ -8,7 +8,7 @@ import { InterpretationGuard } from '../shared/interpretation-guard'
 import { isStaleDraftError } from '../shared/visuals'
 
 import { ApiError, type RemoteApi } from './api'
-import { Notice, useAlive, usePageState, useTask } from './ui'
+import { AssetSteps, Notice, useAlive, usePageState, useTask } from './ui'
 
 type Intent = 'photo' | 'video' | 'motion'
 
@@ -188,6 +188,7 @@ export function VisualCreate({
               收起
             </button>
           </div>
+          <AssetSteps step={file ? 2 : 1} upload />
           <p className="muted">保留原始文件，自动分析内容并优先关联已有素材。存在歧义时再由你确认。</p>
           <label>
             选择图片或视频
@@ -267,6 +268,7 @@ export function VisualCreate({
               收起
             </button>
           </div>
+          <AssetSteps step={plan ? 2 : 1} />
           <p className="muted">描述你想要的画面，确认后再开始制作。</p>
           {!plan && (
             <>

@@ -191,38 +191,14 @@ function VisualDetailContent({
 
   return (
     <>
-      <div>
-        <div className="flex items-start gap-2">
-          <h2 className="min-w-0 break-words text-[15px] font-semibold leading-6 text-strong">{detail.title}</h2>
-          {current ? (
-            <Badge className="mt-1 shrink-0" tone="accent">
-              {t.currentMark}
-            </Badge>
-          ) : null}
-        </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-muted">{meta}</p>
+      <div className="flex items-start gap-2">
+        <h2 className="min-w-0 break-words text-[15px] font-semibold leading-6 text-strong">{detail.title}</h2>
+        {current ? (
+          <Badge className="mt-1 shrink-0" tone="accent">
+            {t.currentMark}
+          </Badge>
+        ) : null}
       </div>
-
-      {detail.asset_kind !== 'actor' && source.kind !== 'analysis' ? (
-        <SettingCard divided={false}>
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-strong">{t.defaultWallpaperTitle}</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                {canSetDefaultWallpaper ? t.defaultWallpaperHint : t.defaultWallpaperUnavailable}
-              </p>
-            </div>
-            <button
-              className={defaultWallpaper ? BTN_SUBTLE : BTN_PRIMARY}
-              disabled={busy || (!canSetDefaultWallpaper && !defaultWallpaper)}
-              onClick={onSetDefaultWallpaper}
-              type="button"
-            >
-              {defaultWallpaper ? t.clearDefaultWallpaper : t.setDefaultWallpaper}
-            </button>
-          </div>
-        </SettingCard>
-      ) : null}
 
       <SettingCard divided={false}>
         <div className="relative bg-fill-trough">
@@ -290,103 +266,38 @@ function VisualDetailContent({
         </div>
       </SettingCard>
 
-      {detail.analysis ? (
-        <>
-          <PlayBadge
-            label={detail.auto_playable ? t.autoPlayOn : t.analysis[visualAnalysisControls(detail.analysis).status]}
-            playable={detail.auto_playable}
-          />
-          <VisualImportAnalysis visual={detail} />
-        </>
-      ) : (
+      <p className="text-[11px] leading-relaxed text-muted">{meta}</p>
+
+      {detail.description ? (
+        <ExpandableText
+          action="button"
+          className={VISUAL_BODY}
+          collapseLabel={t.collapse}
+          expandLabel={t.expand}
+          lines={4}
+          text={detail.description}
+        />
+      ) : null}
+
+      {detail.asset_kind !== 'actor' && source.kind !== 'analysis' ? (
         <SettingCard divided={false}>
-          <div className="space-y-5 p-4">
-            {detail.description ? (
-              <FactSection title={t.descriptionTitle}>
-                <ExpandableText
-                  action="button"
-                  className={VISUAL_BODY}
-                  collapseLabel={t.collapse}
-                  expandLabel={t.expand}
-                  lines={4}
-                  text={detail.description}
-                />
-              </FactSection>
-            ) : null}
-            <div className={cn('grid gap-5', !analysisPending && 'md:grid-cols-2')}>
-              {!analysisPending ? (
-                <FactSection title={t.eligibilityTitle}>
-                  <div className="space-y-2">
-                    <PlayBadge
-                      label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff}
-                      playable={detail.auto_playable}
-                    />
-                    <p className={VISUAL_BODY}>{detail.auto_playable ? t.analysis.approved : t.autoPlayHint}</p>
-                    {!detail.auto_playable && detail.snapshot.review_reason ? (
-                      <Disclosure chevron title={t.autoPlayReview} variant="inline">
-                        <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
-                          {detail.snapshot.review_reason}
-                        </p>
-                      </Disclosure>
-                    ) : null}
-                  </div>
-                </FactSection>
-              ) : null}
-              <FactSection title={t.sourceTitle}>
-                <div className="rounded-xl border border-line-hairline bg-fill-faint p-3">
-                  {source.kind === 'analysis' ? (
-                    <dl className="space-y-2">
-                      <SourceRow label={t.composer.original} value={source.original_filename} />
-                    </dl>
-                  ) : source.kind === 'scene' ? (
-                    <dl className="space-y-2">
-                      <SourceRow
-                        label={t.sourceScene}
-                        value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
-                      />
-                    </dl>
-                  ) : (
-                    <>
-                      <dl className="space-y-2">
-                        <SourceRow label={t.sourceOutfit} value={materialValue(detail.outfit_id, source.outfit.name)} />
-                        {source.kind === 'cinematic' ? (
-                          <SourceRow
-                            label={t.sourceScene}
-                            value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
-                          />
-                        ) : null}
-                        <SourceRow
-                          label={t.sourceAction}
-                          value={
-                            <>
-                              {materialValue(detail.action_id, source.action.name)}
-                              {actionMeta ? <span className="ml-1.5 text-[11px] text-faint">{actionMeta}</span> : null}
-                            </>
-                          }
-                        />
-                      </dl>
-                      {source.action.motion_description ? (
-                        <p className="mt-3 whitespace-pre-wrap border-t border-line-hairline pt-2 text-[12px] leading-relaxed text-faint">
-                          {source.action.motion_description}
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </FactSection>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-strong">{t.defaultWallpaperTitle}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                {canSetDefaultWallpaper ? t.defaultWallpaperHint : t.defaultWallpaperUnavailable}
+              </p>
             </div>
+            <button
+              className={defaultWallpaper ? BTN_SUBTLE : BTN_PRIMARY}
+              disabled={busy || (!canSetDefaultWallpaper && !defaultWallpaper)}
+              onClick={onSetDefaultWallpaper}
+              type="button"
+            >
+              {defaultWallpaper ? t.clearDefaultWallpaper : t.setDefaultWallpaper}
+            </button>
           </div>
         </SettingCard>
-      )}
-
-      {detail.jobs.length > 0 ? (
-        <FactSection title={t.jobsHistoryTitle}>
-          <SettingCard divided>
-            {detail.jobs.map(job => (
-              <VisualJobRow busy={busy} job={job} key={job.id} onCommand={command => onCommand(job, command)} t={t} />
-            ))}
-          </SettingCard>
-        </FactSection>
       ) : null}
 
       {!detail.analysis && source.kind !== 'analysis' ? (
@@ -419,6 +330,83 @@ function VisualDetailContent({
               {t.redoSubmit}
             </button>
           </div>
+        </Disclosure>
+      ) : null}
+
+      <FactSection title={t.sourceTitle}>
+        <div className="rounded-xl border border-line-hairline bg-fill-faint p-3">
+          {source.kind === 'analysis' ? (
+            <dl className="space-y-2">
+              <SourceRow label={t.composer.original} value={source.original_filename} />
+            </dl>
+          ) : source.kind === 'scene' ? (
+            <dl className="space-y-2">
+              <SourceRow
+                label={t.sourceScene}
+                value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
+              />
+            </dl>
+          ) : (
+            <>
+              <dl className="space-y-2">
+                <SourceRow label={t.sourceOutfit} value={materialValue(detail.outfit_id, source.outfit.name)} />
+                {source.kind === 'cinematic' ? (
+                  <SourceRow
+                    label={t.sourceScene}
+                    value={materialValue(detail.scene_id, source.scene.title || t.untitledScene)}
+                  />
+                ) : null}
+                <SourceRow
+                  label={t.sourceAction}
+                  value={
+                    <>
+                      {materialValue(detail.action_id, source.action.name)}
+                      {actionMeta ? <span className="ml-1.5 text-[11px] text-faint">{actionMeta}</span> : null}
+                    </>
+                  }
+                />
+              </dl>
+              {source.action.motion_description ? (
+                <p className="mt-3 whitespace-pre-wrap border-t border-line-hairline pt-2 text-[12px] leading-relaxed text-faint">
+                  {source.action.motion_description}
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+      </FactSection>
+
+      {detail.analysis ? (
+        <>
+          <PlayBadge
+            label={detail.auto_playable ? t.autoPlayOn : t.analysis[visualAnalysisControls(detail.analysis).status]}
+            playable={detail.auto_playable}
+          />
+          <VisualImportAnalysis visual={detail} />
+        </>
+      ) : analysisPending ? null : (
+        <FactSection title={t.eligibilityTitle}>
+          <div className="space-y-2">
+            <PlayBadge label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff} playable={detail.auto_playable} />
+            <p className={VISUAL_BODY}>{detail.auto_playable ? t.analysis.approved : t.autoPlayHint}</p>
+            {!detail.auto_playable && detail.snapshot.review_reason ? (
+              <Disclosure chevron title={t.autoPlayReview} variant="inline">
+                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
+                  {detail.snapshot.review_reason}
+                </p>
+              </Disclosure>
+            ) : null}
+          </div>
+        </FactSection>
+      )}
+
+      {detail.jobs.length > 0 ? (
+        <Disclosure title={t.jobsHistoryTitle} variant="panel">
+          <SettingCard divided>
+            {detail.jobs.map(job => (
+              <VisualJobRow busy={busy} job={job} key={job.id} onCommand={command => onCommand(job, command)} t={t} />
+            ))}
+          </SettingCard>
         </Disclosure>
       ) : null}
 

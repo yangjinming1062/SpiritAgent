@@ -3,50 +3,13 @@ import type { ReactNode } from 'react'
 import { Plus, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 
-import { SearchField, SettingCard } from './components'
+import { SearchField } from './components'
 import { BTN_PRIMARY, BTN_SUBTLE } from './palette'
-import { PolicyToggleRow } from './policy-toggle-row'
-
-/**
- * 素材库页头：政策开关区（可选）+ 说明 + 工具栏 + 筛选插槽。
- * 公共件只接数据和回调，不持有查询状态。
- */
-export function AssetLibraryHeader({
-  policies,
-  description,
-  children
-}: {
-  policies?: Array<{
-    id: string
-    label: string
-    description?: string
-    status?: string
-    checked: boolean
-    disabled: boolean
-    ariaLabel: string
-    onChange: () => void
-  }>
-  description?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="space-y-4">
-      {policies && policies.length > 0 && (
-        <SettingCard>
-          {policies.map(policy => (
-            <PolicyToggleRow key={policy.id} {...policy} />
-          ))}
-        </SettingCard>
-      )}
-      {description ? <p className="text-[11px] leading-relaxed text-faint">{description}</p> : null}
-      {children}
-    </div>
-  )
-}
 
 /**
  * 统一素材库工具栏：搜索（即时过滤或提交式）+ 筛选插槽 + 单个主创建按钮。
- * 每屏只有一个主操作（创建）；`mode` 区分搜索语义：
+ * 每屏只有一个主操作（创建）；次级命令（上传、自备图）进 `secondary`，
+ * 偏好开关与说明进 `overflow`，不再纵向占节。`mode` 区分搜索语义：
  * - `live`：输入即过滤，本地列表用；
  * - `submit`：回车或点搜索按钮提交，服务端搜索用。
  */
@@ -57,6 +20,8 @@ export function LibraryToolbar({
   searchMode = 'live',
   createDisabled = false,
   filters,
+  secondary,
+  overflow,
   onQueryChange,
   onSearch,
   onCreate
@@ -68,6 +33,10 @@ export function LibraryToolbar({
   createDisabled?: boolean
   /** 筛选插槽（下拉、类型切换等），排在搜索框之后。 */
   filters?: ReactNode
+  /** 次级命令插槽（上传等），排在主按钮之后。 */
+  secondary?: ReactNode
+  /** 溢出菜单插槽（偏好、说明等），排在最后。 */
+  overflow?: ReactNode
   onQueryChange: (query: string) => void
   onSearch?: () => void
   onCreate: () => void
@@ -109,6 +78,8 @@ export function LibraryToolbar({
         <Plus className="size-3.5" />
         <span>{createLabel}</span>
       </button>
+      {secondary}
+      {overflow}
     </form>
   )
 }

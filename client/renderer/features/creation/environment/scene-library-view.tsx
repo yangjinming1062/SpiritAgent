@@ -4,9 +4,19 @@ import type React from 'react'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { RefreshCw, Sparkles } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
-import { BTN_PRIMARY, BTN_SUBTLE, CreationFeedback, HINT_TEXT, Pager, SettingCard, Spinner } from '@/ui'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  HINT_TEXT,
+  LibraryStatusBanner,
+  LibraryToolbar,
+  OverflowMenu,
+  OverflowMenuToggle,
+  Pager,
+  SettingCard,
+  Spinner
+} from '@/ui'
 import { AssetLibraryCard, AssetLibraryGrid } from '@/ui/asset-library-card'
-import { AssetLibraryHeader, LibraryToolbar } from '@/ui/asset-library-header'
 
 import { $sceneCreationIssue, finishSceneCreationWait, PAGE_SIZE, type SceneAsset, type ScenePolicy } from './scene'
 
@@ -38,6 +48,7 @@ export function SceneLibraryView({
   onCheckStatus,
   onOpen,
   onPolicyChange,
+  policyBusy,
   onRetryLoad,
   onSearch,
   onSetPage,
@@ -45,7 +56,6 @@ export function SceneLibraryView({
   page,
   pending,
   policy,
-  policyBusy,
   query,
   regenerating,
   slow,
@@ -65,106 +75,101 @@ export function SceneLibraryView({
     void run(() => onCheckStatus(), { failure: t.loadFailed, key: 'check' })
   }
 
-  // 列表顶部单一状态条：加载失败 > 提交未知 > 进行中任务，同屏至多一条。
-  const statusBanner =
-    status === 'error' ? (
-      <CreationFeedback
-        actions={
-          <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
-            <RefreshCw className="size-3.5" />
-            <span>{strings.common.retry}</span>
-          </button>
-        }
-        state="error"
-        title={t.loadFailed}
-      />
-    ) : creationIssue?.outcome === 'unknown' ? (
-      <CreationFeedback
-        actions={
-          <>
-            <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
-              {checking ? strings.common.loading : t.inspectLibrary}
-            </button>
-            {creationIssue.inspected ? (
-              <button
-                className={BTN_PRIMARY}
-                disabled={checking}
-                onClick={() => finishSceneCreationWait(creationIssue)}
-                type="button"
-              >
-                {strings.creation.finishWaiting}
-              </button>
-            ) : null}
-          </>
-        }
-        description={creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown}
-        state="unknown"
-        title={strings.creation.unknown}
-      />
-    ) : task ? (
-      <CreationFeedback
-        actions={
-          <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
-            {t.openDetails}
-          </button>
-        }
-        description={
-          pending?.stage === 'waiting_upload'
-            ? t.waitingUploadHint
-            : regenerating
-              ? strings.creation.canLeave
-              : t.pendingOverlayHint
-        }
-        state={pending?.stage === 'waiting_upload' ? 'waiting' : 'working'}
-        title={
-          pending?.stage === 'waiting_upload'
-            ? t.waitingUploadOverlay
-            : stage === 'analyze'
-              ? t.analyzing
-              : stage === 'evaluating' || stage === 'submitting'
-                ? t.checking
-                : regenerating
-                  ? t.imageRegenerating
-                  : slow
-                    ? t.slow
-                    : t.pendingOverlay
-        }
-      />
-    ) : null
-
   return (
     <>
-      <AssetLibraryHeader
-        description={t.intro}
-        policies={[
-          {
-            id: 'scene-autonomy',
-            label: t.policyLabel,
-            description: t.policyDesc,
-            status: policyBusy
-              ? strings.common.saving
-              : policy === 'locked'
-                ? t.policyStatusLocked
-                : t.policyStatusUnlocked,
-            checked: policy !== 'locked',
-            disabled: policyBusy,
-            ariaLabel: t.policyToggleAria,
-            onChange: onPolicyChange
-          }
-        ]}
-      >
-        <LibraryToolbar
-          createLabel={t.generateButton}
-          onCreate={onCreate}
-          onQueryChange={onQueryChange}
-          onSearch={onSearch}
-          query={query}
-          searchLabel={t.search}
-          searchMode="submit"
-        />
-      </AssetLibraryHeader>
+      <LibraryToolbar
+        createLabel={t.generateButton}
+        onCreate={onCreate}
+        onQueryChange={onQueryChange}
+        onSearch={onSearch}
+        overflow={
+          <OverflowMenu label={strings.common.moreActions}>
+            <OverflowMenuToggle
+              checked={policy !== 'locked'}
+              description={t.policyDesc}
+              disabled={policyBusy}
+              label={t.policyLabel}
+              onClick={onPolicyChange}
+              status={
+                policyBusy ? strings.common.saving : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked
+              }
+            />
+          </OverflowMenu>
+        }
+        query={query}
+        searchLabel={t.search}
+        searchMode="submit"
+      />
 
-      {statusBanner}
+      {/* 列表顶部单一状态条：加载失败 > 提交未知 > 进行中任务，同屏至多一条。 */}
+      <LibraryStatusBanner
+        candidates={[
+          status === 'error'
+            ? {
+                state: 'error',
+                title: t.loadFailed,
+                actions: (
+                  <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
+                    <RefreshCw className="size-3.5" />
+                    <span>{strings.common.retry}</span>
+                  </button>
+                )
+              }
+            : null,
+          creationIssue?.outcome === 'unknown'
+            ? {
+                state: 'unknown',
+                title: strings.creation.unknown,
+                description: creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown,
+                actions: (
+                  <>
+                    <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
+                      {checking ? strings.common.loading : t.inspectLibrary}
+                    </button>
+                    {creationIssue.inspected ? (
+                      <button
+                        className={BTN_PRIMARY}
+                        disabled={checking}
+                        onClick={() => finishSceneCreationWait(creationIssue)}
+                        type="button"
+                      >
+                        {strings.creation.finishWaiting}
+                      </button>
+                    ) : null}
+                  </>
+                )
+              }
+            : null,
+          task
+            ? {
+                state: pending?.stage === 'waiting_upload' ? 'waiting' : 'working',
+                title:
+                  pending?.stage === 'waiting_upload'
+                    ? t.waitingUploadOverlay
+                    : stage === 'analyze'
+                      ? t.analyzing
+                      : stage === 'evaluating' || stage === 'submitting'
+                        ? t.checking
+                        : regenerating
+                          ? t.imageRegenerating
+                          : slow
+                            ? t.slow
+                            : t.pendingOverlay,
+                description:
+                  pending?.stage === 'waiting_upload'
+                    ? t.waitingUploadHint
+                    : regenerating
+                      ? strings.creation.canLeave
+                      : t.pendingOverlayHint,
+                actions: (
+                  <button className={BTN_SUBTLE} onClick={() => onOpen(task.id)} type="button">
+                    {t.openDetails}
+                  </button>
+                )
+              }
+            : null
+        ]}
+      />
 
       {status === 'error' ? null : entries.length > 0 ? (
         <AssetLibraryGrid>
