@@ -197,12 +197,18 @@ async def _get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob |
 
 
 def _compatible_video_configs(
-    chain: list[ProviderConfig], *, reference_images: bool, duration: int, resolution: str
+    chain: list[ProviderConfig],
+    *,
+    reference_images: bool,
+    reference_image_count: int | None = None,
+    duration: int,
+    resolution: str,
 ) -> list[ProviderConfig]:
     compatible = []
+    count = reference_image_count if reference_image_count is not None else int(reference_images)
     for config in chain:
         provider = build_provider(config, VideoGenProvider)
-        if reference_images and not provider.supports_reference_images:
+        if count and not provider.supports_reference_image_count(count):
             continue
         if reference_images:
             maximum = provider.max_resolution(duration=duration, reference_images=True)
@@ -226,6 +232,7 @@ async def ensure_video_capability(
     *,
     task: AiTaskKey,
     reference_images: bool,
+    reference_image_count: int | None = None,
     duration: int,
     resolution: str,
     allowed_durations: Collection[int] | None = None,
@@ -236,10 +243,17 @@ async def ensure_video_capability(
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     if not chain:
         raise MissingLlmConfigError("视频生成服务未配置")
-    if _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=resolution):
+    if _compatible_video_configs(
+        chain,
+        reference_images=reference_images,
+        reference_image_count=reference_image_count,
+        duration=duration,
+        resolution=resolution,
+    ):
         return
     providers = [build_provider(config, VideoGenProvider) for config in chain]
-    candidates = [p for p in providers if p.supports_reference_images or not reference_images]
+    count = reference_image_count if reference_image_count is not None else int(reference_images)
+    candidates = [p for p in providers if (p.supports_reference_image_count(count) if count else True)]
     if not candidates:
         raise MissingLlmConfigError("已配置的视频供应商都不支持角色参考生视频")
     hints = []
@@ -252,7 +266,13 @@ async def ensure_video_capability(
             for provider in candidates
             for value in provider.resolutions or ()
             if value.upper() in (allowed_resolutions or (value.upper(),))
-            and _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=value)
+            and _compatible_video_configs(
+                chain,
+                reference_images=reference_images,
+                reference_image_count=reference_image_count,
+                duration=duration,
+                resolution=value,
+            )
         }
     )
     if options and resolution.upper() not in options:
@@ -262,14 +282,24 @@ async def ensure_video_capability(
 
 
 async def select_video_resolution(
-    user_id: int, *, task: AiTaskKey, reference_images: bool, duration: int, preferred: Sequence[str]
+    user_id: int,
+    *,
+    task: AiTaskKey,
+    reference_images: bool,
+    reference_image_count: int | None = None,
+    duration: int,
+    preferred: Sequence[str],
 ) -> str | None:
     """按偏好顺序返回供应商链里有能接单的第一档分辨率，大小写写法沿用首个可接单供应商的声明；没有则返回 None，由调用方在付费前处理。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     for resolution in preferred:
         compatible = _compatible_video_configs(
-            chain, reference_images=reference_images, duration=duration, resolution=resolution
+            chain,
+            reference_images=reference_images,
+            reference_image_count=reference_image_count,
+            duration=duration,
+            resolution=resolution,
         )
         if compatible:
             declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
@@ -301,7 +331,11 @@ async def prepare_video_job(
         raise ValueError("Self video requires an identity reference and snapshot")
     chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     compatible = _compatible_video_configs(
-        chain, reference_images=bool(reference_images), duration=duration, resolution=resolution
+        chain,
+        reference_images=bool(reference_images),
+        reference_image_count=len(reference_images),
+        duration=duration,
+        resolution=resolution,
     )
     if not compatible:
         raise MissingLlmConfigError("未配置支持本次参考输入、时长和分辨率的视频供应商")

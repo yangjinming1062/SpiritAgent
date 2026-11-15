@@ -79,6 +79,7 @@ from infrastructure.ai.providers.grok.video import GrokVideoGenProvider
 from infrastructure.ai.providers.local.chat import LocalChatProvider
 from infrastructure.ai.providers.local.embedding import LocalEmbeddingProvider
 from infrastructure.ai.providers.local.image import LocalImageGenProvider
+from infrastructure.ai.providers.local.video import LocalVideoGenProvider
 from infrastructure.ai.providers.mimo.chat import MiMoChatProvider
 from infrastructure.ai.providers.mimo.stt import MiMoSTTProvider
 from infrastructure.ai.providers.mimo.tts import MiMoTTSProvider
@@ -143,6 +144,7 @@ def register_providers() -> None:
     register_provider(ServiceType.llm, "local", LocalChatProvider)
     register_provider(ServiceType.embedding, "local", LocalEmbeddingProvider)
     register_provider(ServiceType.image_gen, "local", LocalImageGenProvider)
+    register_provider(ServiceType.video_gen, "local", LocalVideoGenProvider)
     register_provider(ServiceType.llm, "custom", CustomChatProvider)
     register_provider(ServiceType.embedding, "custom", CustomEmbeddingProvider)
 

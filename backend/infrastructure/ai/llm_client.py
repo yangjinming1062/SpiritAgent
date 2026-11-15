@@ -58,7 +58,9 @@ def _chain_entry(
         return None
     return ProviderConfig(
         base_url=base_url,
-        api_key=provider.api_key if not (provider_type == "local" and service_type == ServiceType.image_gen) else "",
+        api_key=provider.api_key
+        if not (provider_type == "local" and service_type in {ServiceType.image_gen, ServiceType.video_gen})
+        else "",
         model=card.model_name,
         service_type=service_type,
         provider_name=provider_type,

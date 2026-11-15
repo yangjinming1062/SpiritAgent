@@ -102,7 +102,9 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     supports_first_frame = True
     supports_loop_frames = True
     supports_reference_images = True
+    max_reference_images = 9
     supports_reference_videos = True
+    max_reference_videos = 3
     supports_adaptive_aspect_ratio = True
     aspect_ratios = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
     adaptive_aspect_ratio_range = (0.4, 2.5)

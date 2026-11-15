@@ -1122,9 +1122,17 @@ function aiModelModalities(metadata = null) {
 }
 
 function newAiModel(providerId, service, providerType, modelName = '') {
-    const name = service === 'image_gen' && providerType === 'local' ? 'qwen' : modelName;
+    const name =
+        providerType === 'local' && service === 'image_gen'
+            ? 'qwen'
+            : providerType === 'local' && service === 'video_gen'
+              ? 'minimax_h3_video'
+              : modelName;
     return { id: newAiId(), provider_id: providerId, model_name: name,
         ...aiModelModalities(),
+        ...(providerType === 'local' && service === 'video_gen'
+            ? { input_modalities: ['text', 'image', 'video'], output_modalities: ['video'] }
+            : {}),
         ...(service === 'llm' ? { context_window: '', max_output_tokens: '' } : {}) };
 }
 
@@ -1140,7 +1148,7 @@ function aiTokenField(card, field, label, choices, required = false) {
         <datalist id="${listId}">${choices.map(value => `<option value="${value}">${value.toLocaleString()}</option>`).join('')}</datalist></div>`;
 }
 
-function aiModelFields(card, service, settings, localImage) {
+function aiModelFields(card, service, settings, localWorkflow) {
     const state = aiModelDiscoveryState(card, service);
     const choices = aiCatalogModels(state.catalog, service);
     const selected = state.metadata;
@@ -1148,7 +1156,7 @@ function aiModelFields(card, service, settings, localImage) {
     const missingMetadata = [['input_modalities', '输入类型'], ['output_modalities', '输出类型']].filter(([field]) => !selected?.[field]?.length).map(([, label]) => label);
     const capabilityIssue = aiModelCapabilityIssue(card, service);
     const types = (field, title) => `<div class="field"><span>${title}</span><div>${Object.entries(AI_MODALITIES).filter(([type]) => type !== 'embeddings' || field === 'output_modalities').map(([type, label]) => `<label style="display:inline-flex;gap:.35rem;margin-right:1rem"><input type="checkbox" data-ai-modality="${field}" value="${type}"${(card[field] ?? []).includes(type) ? ' checked' : ''}>${label}</label>`).join('')}</div></div>`;
-    return `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" list="models-${card.id}" value="${esc(card.model_name)}" placeholder="搜索列表或填写供应商模型 ID" required${localImage ? ' readonly' : ''}></label>
+    return `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" list="models-${card.id}" value="${esc(card.model_name)}" placeholder="搜索列表或填写供应商模型 ID" required${localWorkflow ? ' readonly' : ''}></label>
         <datalist id="models-${card.id}">${choices.map(model => `<option value="${esc(model.model_name)}">${esc(model.display_name || model.model_name)}</option>`).join('')}</datalist>
         <div class="layer-actions"><button class="btn btn--ghost" data-ai-action="model-info"${state.loading || !card.model_name ? ' disabled' : ''}>获取模型信息</button></div>
         ${state.loading ? '<p class="hint">正在获取模型信息…</p>' : ''}
@@ -1157,7 +1165,8 @@ function aiModelFields(card, service, settings, localImage) {
         <p class="hint" data-ai-capability-issue${capabilityIssue ? '' : ' hidden'}>${capabilityIssue ? esc(capabilityIssue) + '，补全后才能保存。' : ''}</p>
         ${candidates.length ? `<label>请选择对应的 OpenRouter 模型<select data-ai-catalog-choice><option value="">模型名称有多个匹配</option>${candidates.map(model => `<option value="${esc(model.catalog_id || model.model_name)}">${esc(model.display_name + ' · ' + model.model_name)}</option>`).join('')}</select></label>` : ''}
         ${selected ? `<p class="hint">${aiModelMetadataHtml(selected)}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
-        ${localImage ? '<p class="hint">本地固定使用 Qwen-Image-2.1-Turbo 工作流，权重由服务匹配。</p>' : ''}
+        ${localWorkflow && service === 'image_gen' ? '<p class="hint">本地固定使用 Qwen-Image-2.1-Turbo 工作流，权重由服务匹配。</p>' : ''}
+        ${localWorkflow && service === 'video_gen' ? '<p class="hint">本地固定使用 MiniMax H3 工作流，支持文生视频、首帧/首尾帧、最多 9 张参考图和最多 3 段参考视频。</p>' : ''}
         ${settings.voice_design_model ? `<p class="hint">自定义音色设计须配置 ${esc(settings.voice_design_model)} 模型。</p>` : ''}</div>
         ${settings.voice_clone_model ? `<p class="hint">声音克隆须配置 ${esc(settings.voice_clone_model)} 模型，输入类型勾选文字和音频。</p>` : ''}
         ${service === 'llm' ? aiTokenField(card, 'context_window', '上下文窗口（tokens）', [32768, 131072, 256000, 1048576], true) + aiTokenField(card, 'max_output_tokens', '输出 Token 上限（含推理）', [8192, 16384, 32768, 65536, 131072], true) + '<p class="hint">上下文窗口容纳输入与输出，输出上限包含推理。按实际供应商或部署填写；k = 1000，M = 1000000。建议值可修改，保存后即时生效。</p>' : ''}
@@ -1260,7 +1269,7 @@ function changeAiModelPickerProvider() {
     $('#aiModelPickerSearch').value = '';
     $('#aiModelPickerManual').value = '';
     const provider = aiSource(aiEditors[picker.editorName], picker.providerId);
-    $('#aiModelPickerManualField').hidden = picker.group === 'image_gen' && provider?.provider_type === 'local';
+    $('#aiModelPickerManualField').hidden = (picker.group === 'image_gen' || picker.group === 'video_gen') && provider?.provider_type === 'local';
     void loadAiModelPickerModels();
 }
 
@@ -1409,7 +1418,7 @@ function openAiModelCard(cardId) {
         const provider = aiSource(editor, ownCard.provider_id);
         const suppliers = aiProviderOptions(editor, service);
         const supplierField = `<div class="field"><label>供应商<select data-ai-field="provider_id">${suppliers.map(item => `<option value="${item.id}"${item.id === ownCard.provider_id ? ' selected' : ''}>${esc(item.scope + ' · ' + item.name)}</option>`).join('')}</select></label></div>`;
-        const fields = aiModelFields(ownCard, service, editor.defaults?.[service]?.[provider?.provider_type] ?? {}, service === 'image_gen' && provider?.provider_type === 'local');
+        const fields = aiModelFields(ownCard, service, editor.defaults?.[service]?.[provider?.provider_type] ?? {}, provider?.provider_type === 'local' && (service === 'image_gen' || service === 'video_gen'));
         const references = aiRemovalReferences(editor, service, cardId);
         $('#modelDetailBody').innerHTML = `<p class="layer-hint">${references.length ? `用于 ${references.length} 项任务 · 修改会同步影响这些引用` : '能力默认链中的模型'}</p><div data-ai-group="${service}"><article class="call-item" data-ai-index="${index}"><div class="call-item-body">${supplierField}${fields}</div></article></div>`;
     }

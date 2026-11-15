@@ -445,6 +445,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             resolution = await select_video_resolution(
                 row.user_id,
                 reference_images=bool(references),
+                reference_image_count=len(references),
                 duration=plan.duration,
                 preferred=_VIDEO_RESOLUTIONS,
                 task=AiTaskKey.posts,

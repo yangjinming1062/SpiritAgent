@@ -288,12 +288,23 @@ def _local_image_metadata() -> ModelMetadata:
     )
 
 
+def _local_video_metadata() -> ModelMetadata:
+    """本地 ComfyUI 固定使用 MiniMax H3 工作流，模型名称只作展示。"""
+    return ModelMetadata(
+        model_name="minimax_h3_video",
+        display_name="MiniMax H3 视频工作流",
+        services=["video_gen"],
+        input_modalities=[ModelModality.text, ModelModality.image, ModelModality.video],
+        output_modalities=[ModelModality.video],
+    )
+
+
 async def discover_models(
     provider: ProviderCard, service: ServiceType, *, model_name: str | None, catalog_id: str | None, refresh: bool
 ) -> ModelDiscoveryResponse:
     response = ModelDiscoveryResponse()
-    if provider.provider_type == "local" and service == ServiceType.image_gen:
-        response.models = [_local_image_metadata()]
+    if provider.provider_type == "local" and service in {ServiceType.image_gen, ServiceType.video_gen}:
+        response.models = [_local_image_metadata() if service == ServiceType.image_gen else _local_video_metadata()]
         return response
     try:
         async with asyncio.timeout(20.0):
