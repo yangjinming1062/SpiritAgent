@@ -4,10 +4,17 @@ from typing import Literal
 
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.media.review_contracts import review_dimension_passes, visual_reference_basis
 
-from .import_jobs import ImportCatalogCandidate, ImportContext, ImportWork, sync_import_assets
+from .import_jobs import (
+    ImportCatalogCandidate,
+    ImportContext,
+    ImportWork,
+    import_manual_review_available,
+    sync_import_assets,
+)
 from .import_operations import import_operations
 from .models import VisualImportJob
 from .publication import publish_import_revision
@@ -102,6 +109,35 @@ def update_pending_import_review(work: ImportWork) -> None:
     snapshot["source"] = source
     pending["snapshot"] = snapshot
     work.context.pending_application = pending
+
+
+async def _publish_pending_import(
+    db: AsyncSession,
+    user_id: int,
+    visual_id: int,
+    job: VisualImportJob,
+    pending: dict,
+) -> None:
+    """在调用方事务内发布已准备好的导入结果。
+
+    旧版 `apply_result` 命令和上传自动完成流程共用此路径，保证发布、版本核对和
+    资产保留具备幂等性。
+    """
+
+    item = await visual_item(db, user_id, visual_id, lock=True)
+    snapshot = VisualSnapshot.model_validate(pending["snapshot"])
+    asset = VisualAsset.model_validate(pending["asset"])
+    await publish_import_revision(
+        db, user_id, visual_id, pending["expected_version"], asset=asset, snapshot=snapshot, title=pending["title"]
+    )
+    job.expected_version = pending["expected_version"] + 1
+    job.state, job.stage, job.error = "succeeded", "complete", None
+    context = ImportContext.model_validate(job.context_json)
+    context.pending_application, context.selected_materials = None, []
+    job.context_json = context.model_dump(mode="json")
+    result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+    original = snapshot.source.original_path or item.media_path
+    await sync_import_assets(db, user_id, job.id, context, result, original)
 
 
 async def complete_import_analysis(
@@ -267,7 +303,17 @@ async def complete_import_analysis(
         job.context_json = work.context.model_dump(mode="json")
         job.result_json = work.result.model_dump(mode="json")
         await sync_import_assets(db, work.user_id, job.id, work.context, work.result, work.media_path)
-        job.state, job.stage, job.error = "paused", "review_pending" if verdict == "review" else "confirmation", None
+        # 用户上传原件通过基础校验后即可收藏。呈现审核可以取消自动演出资格，
+        # 但不能把原件变成候选；素材歧义以及生成或处理后的候选仍走各自确认流程。
+        materials_complete = all(
+            entry.status in {"created", "reused", "skipped", "undone"} for entry in work.result.components
+        )
+        auto_publish = materials_complete and source.kind != "analysis" and work.context.actor_asset is None
+        if auto_publish:
+            await _publish_pending_import(db, work.user_id, work.visual_id, job, work.context.pending_application)
+        else:
+            review_pending = import_manual_review_available(work.context, work.result, "review_pending")
+            job.state, job.stage, job.error = "paused", "review_pending" if review_pending else "confirmation", None
         await notify_visuals_updated(db, work.user_id)
         await db.commit()
         return True
@@ -289,20 +335,6 @@ async def apply_import_result(user_id: int, visual_id: int, expected_revision: i
             entry.state in {"queued", "running", "paused", "failed"} for entry in import_operations(job.selections_json)
         ):
             raise VisualStateError("素材操作尚未完成")
-        item = await visual_item(db, user_id, visual_id, lock=True)
-        snapshot = VisualSnapshot.model_validate(pending["snapshot"])
-        asset = VisualAsset.model_validate(pending["asset"])
-        await publish_import_revision(
-            db, user_id, visual_id, pending["expected_version"], asset=asset, snapshot=snapshot, title=pending["title"]
-        )
-        job.expected_version = pending["expected_version"] + 1
-        job.state, job.stage, job.error = "succeeded", "complete", None
-        # 已发布版本持有素材与原件引用，任务只需保留原件、检查依据和条目预览。
-        context = ImportContext.model_validate(job.context_json)
-        context.pending_application, context.selected_materials = None, []
-        job.context_json = context.model_dump(mode="json")
-        result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
-        original = snapshot.source.original_path or item.media_path
-        await sync_import_assets(db, user_id, job.id, context, result, original)
+        await _publish_pending_import(db, user_id, visual_id, job, pending)
         await notify_visuals_updated(db, user_id)
         await db.commit()

@@ -71,6 +71,10 @@ def automatic_media_blocks(
 
     blocks: list[VisualAutoPlayBlock] = []
 
+    recovery_step = (
+        "reanalyze" if reference_source is not None and reference_source.get("analysis_job_id") is not None else "redo"
+    )
+
     try:
         report = (
             review_result if isinstance(review_result, VisualReview) else VisualReview.model_validate(review_result)
@@ -97,7 +101,7 @@ def automatic_media_blocks(
                     if not asset_exists
                     else "当前版本的呈现检查依据不完整，请重新检查"
                 ),
-                next_step="redo",
+                next_step=recovery_step,
             )
         )
 
@@ -107,7 +111,7 @@ def automatic_media_blocks(
                 VisualAutoPlayBlock(
                     code="presentation_review",
                     reason="影像尚未完成与当前来源匹配的呈现审核",
-                    next_step="redo",
+                    next_step=recovery_step,
                 )
             )
     elif (
@@ -128,7 +132,7 @@ def automatic_media_blocks(
             VisualAutoPlayBlock(
                 code="presentation_review",
                 reason=("、".join(failed) + "，请完成呈现审核") if failed else "呈现审核尚未通过",
-                next_step="redo",
+                next_step=recovery_step,
             )
         )
 

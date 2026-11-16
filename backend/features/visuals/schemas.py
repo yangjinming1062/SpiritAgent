@@ -395,6 +395,8 @@ class ImportAnalysisView(BaseModel):
     revision: int
     error: str | None = None
     result: ImportAnalysisResultView | None = None
+    # 只有实际生成/处理候选才显示通用人工复核面板；上传原件的呈现审核不属于候选。
+    manual_review_available: bool = False
     updated_at: datetime
 
 

@@ -120,15 +120,25 @@ class ImportWork(BaseModel):
         return ImportSelection.model_validate(operation.model_dump(exclude={"id", "state", "stage"}))
 
 
+def import_manual_review_available(context: ImportContext, result: ImportAnalysisResult | None, stage: str) -> bool:
+    """判断导入任务是否存在需要人工复核的真实生成或处理候选。
+
+    用户上传原件的呈现审核属于自动演出资格判断，不属于候选选择；只有处理后的
+    主体媒体和图片生成链才显示通用候选复核面板。
+    """
+
+    if stage != "review_pending" or result is None:
+        return False
+    if context.actor_asset is not None:
+        return context.presentation_review is None or context.presentation_review.verdict == "review"
+    return any(chain.can_retry_goal_review() for chain in context.image_chains.values())
+
+
 def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
     result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+    context = ImportContext.model_validate(job.context_json)
     if result is not None:
-        result = import_result_view(
-            result,
-            ImportContext.model_validate(job.context_json).image_chains,
-            import_operations(job.selections_json),
-            job.state,
-        )
+        result = import_result_view(result, context.image_chains, import_operations(job.selections_json), job.state)
     return ImportAnalysisView(
         id=job.id,
         state=import_analysis_state(job.state, job.stage),
@@ -136,6 +146,7 @@ def import_job_view(job: VisualImportJob) -> ImportAnalysisView:
         revision=job.revision,
         error=job.error,
         result=result,
+        manual_review_available=import_manual_review_available(context, result, job.stage),
         updated_at=job.updated_at,
     )
 
@@ -162,6 +173,18 @@ async def ensure_import_job(user_id: int, visual_id: int) -> ImportAnalysisView 
             await db.flush()
             await bind_job_assets(db, user_id, job.id, {item.media_path}, RETAINED_JOB_ASSET_ROLE)
             await notify_visuals_updated(db, user_id)
+        elif job.stage == "review_pending":
+            # 旧任务可能仅因上传原件的呈现审核返回 `review` 而暂停。延迟归一化时
+            # 保留素材歧义的待确认状态，移除已经废弃的原件候选复核入口。
+            context = ImportContext.model_validate(job.context_json)
+            result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+            if not import_manual_review_available(context, result, job.stage):
+                # 旧客户端仍可使用 `apply_result`；新上传由后台工作流直接发布，不会进入此兼容分支。
+                job.state, job.stage, job.error = (
+                    "paused",
+                    "confirmation" if context.pending_application is not None else "interrupted",
+                    None if context.pending_application is not None else "原分析结果缺失，请继续处理",
+                )
         await db.commit()
         return import_job_view(job)
 
@@ -183,17 +206,9 @@ async def command_import_job(user_id: int, visual_id: int, body: ImportAnalysisR
         ):
             raise VisualStateError("分析状态已更新，请刷新后重试")
         context = ImportContext.model_validate(job.context_json)
-        if (
-            body.command == "retry"
-            and job.stage == "review_pending"
-            and (
-                context.presentation_review is not None
-                and context.presentation_review.verdict == "review"
-                or any(chain.can_retry_goal_review() for chain in context.image_chains.values())
-            )
-        ):
-            raise VisualStateError("原候选已保留，请查看候选后采用或重新生成")
         result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
+        if body.command == "retry" and import_manual_review_available(context, result, job.stage):
+            raise VisualStateError("原候选已保留，请查看候选后采用或重新生成")
         operations = import_operations(job.selections_json)
         if body.command == "cancel":
             if job.state not in {"queued", "running", "paused"}:
@@ -592,14 +607,11 @@ async def recover_import_jobs(user_id: int | None = None) -> list[tuple[int, int
         queued = []
         for job in jobs:
             context = ImportContext.model_validate(job.context_json)
+            result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
             interrupted = job.state == "running" or (job.state == "paused" and job.stage == "interrupted")
             if interrupted:
                 pause_import_operations(job)
-                if (
-                    job.stage in {"presentation_review", "reviewing"}
-                    or (context.presentation_review is not None and context.presentation_review.verdict == "review")
-                    or any(chain.can_retry_goal_review() for chain in context.image_chains.values())
-                ):
+                if import_manual_review_available(context, result, "review_pending"):
                     context.execution_key = ""
                     job.context_json = context.model_dump(mode="json")
                     job.state, job.stage, job.error = (
@@ -609,7 +621,6 @@ async def recover_import_jobs(user_id: int | None = None) -> list[tuple[int, int
                     )
                     await notify_visuals_updated(db, job.user_id)
                     continue
-                result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
                 operations = import_operations(job.selections_json)
                 # 只恢复被中断的操作；已经失败的条目等待显式重试。
                 unresolved = any(

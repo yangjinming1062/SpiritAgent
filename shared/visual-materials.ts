@@ -24,6 +24,12 @@ export function visualAnalysisControls(job: ApiSchemas['ImportAnalysisView'] | n
   return { active, canContinue, status } as const
 }
 
+export function visualAnalysisHasPendingMaterials(job: ApiSchemas['ImportAnalysisView'] | null | undefined): boolean {
+  return Boolean(
+    job?.result?.components.some(component => !['created', 'reused', 'skipped', 'undone'].includes(component.status))
+  )
+}
+
 export function visualMaterialGroups(analysis: ApiSchemas['ImportAnalysisView'] | null | undefined) {
   return (['outfit', 'scene', 'action'] as const).map(kind => ({
     kind,
@@ -84,7 +90,7 @@ export const visualMaterialCopy = {
     confirm: '确认素材',
     existing: '选择已有素材',
     select: '请选择',
-    applyResult: '应用分析结果',
+    applyResult: '保存并完成',
     apply: '关联',
     change: '更换关联',
     extract: '提取并入库',
@@ -130,8 +136,8 @@ export const visualMaterialCopy = {
       presentation_review: '检查播放条件'
     } as Record<string, string>,
     awaitingHint: '请在下方确认识别到的素材；确认后会继续检查播放条件。',
-    reviewHint: '请先选择要采用的候选，应用后系统会重新检查自动演出资格。',
-    confirmationHint: '确认素材后应用分析结果，完成最后的播放条件检查。',
+    reviewHint: '请先选择要保留的候选；完成后会继续处理影像。',
+    confirmationHint: '分析结果已准备好，保存后完成影像入库。',
     processingHint: '处理完成后会自动重新判断是否可以进入自动演出。',
     notices: {
       quality_rejected: '本次提取未通过检查，尚未入库。',
@@ -166,7 +172,7 @@ export const visualMaterialCopy = {
     confirm: 'Confirm material',
     existing: 'Choose an existing material',
     select: 'Select',
-    applyResult: 'Apply analysis results',
+    applyResult: 'Save and finish',
     apply: 'Link',
     change: 'Change link',
     extract: 'Extract and save',
@@ -212,8 +218,8 @@ export const visualMaterialCopy = {
       presentation_review: 'Checking playback conditions'
     } as Record<string, string>,
     awaitingHint: 'Confirm the identified materials below; processing will continue afterward.',
-    reviewHint: 'Choose the candidate to keep first. Applying it will run the automatic-playback checks again.',
-    confirmationHint: 'Confirm the materials and apply the analysis result for the final playback checks.',
+    reviewHint: 'Choose the candidate to keep; processing will continue afterward.',
+    confirmationHint: 'The analysis is ready. Save it to finish adding the visual.',
     processingHint: 'The automatic-playback decision will be updated when processing finishes.',
     notices: {
       quality_rejected: 'The extracted material did not pass checks and has not been saved.',

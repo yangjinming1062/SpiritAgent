@@ -13,6 +13,7 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Pill } fr
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import {
   visualAnalysisControls,
+  visualAnalysisHasPendingMaterials,
   visualMaterialControls,
   visualMaterialGroups
 } from '../../../../../shared/visual-materials'
@@ -36,14 +37,17 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
   const notesKey = `${visual.id}:analysis`
   const notes = ui.analysisNotes?.[notesKey] ?? ''
   const blockers = job?.result?.blocking_reasons ?? []
+  const hasPendingMaterials = visualAnalysisHasPendingMaterials(job)
+  const showCandidateReview = job?.stage === 'review_pending' && job.manual_review_available
+  const showApplyResult = job?.stage === 'confirmation' && !hasPendingMaterials
 
   const flowHint = job
-    ? job.stage === 'confirmation'
-      ? a.confirmationHint
-      : job.state === 'awaiting_input'
-        ? a.awaitingHint
-        : job.stage === 'review_pending'
-          ? a.reviewHint
+    ? job.state === 'awaiting_input'
+      ? a.awaitingHint
+      : job.stage === 'review_pending' && job.manual_review_available
+        ? a.reviewHint
+        : job.stage === 'confirmation' && !hasPendingMaterials
+          ? a.confirmationHint
           : active
             ? a.processingHint
             : null
@@ -91,8 +95,8 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   return (
     <div className="space-y-4">
-      {job?.stage === 'review_pending' ? <MediaReviewButton jobId={job.id} /> : null}
-      {job?.stage === 'confirmation' ? (
+      {showCandidateReview ? <MediaReviewButton jobId={job.id} /> : null}
+      {showApplyResult ? (
         <button disabled={busy} onClick={() => command({ command: 'apply_result' })} type="button">
           {a.applyResult}
         </button>
@@ -155,7 +159,9 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           </button>
         ) : (
           <>
-            {canContinue && job?.stage !== 'review_pending' && job?.stage !== 'confirmation' ? (
+            {canContinue &&
+            (job?.stage !== 'review_pending' || !job.manual_review_available) &&
+            job?.stage !== 'confirmation' ? (
               <button
                 className={BTN_SUBTLE}
                 disabled={busy}

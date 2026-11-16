@@ -308,7 +308,7 @@ def _import_block_next_step(analysis: ImportAnalysisView, code: str) -> str:
     if analysis.state in {"queued", "running"}:
         return "continue_analysis"
     if analysis.stage == "review_pending":
-        return "review_candidate"
+        return "review_candidate" if analysis.manual_review_available else "continue_analysis"
     if analysis.state in {"paused", "cancelled", "failed"} and analysis.stage not in {"confirmation"}:
         return "continue_analysis"
     if code == "animated":
@@ -321,8 +321,6 @@ def _import_block_next_step(analysis: ImportAnalysisView, code: str) -> str:
         analysis.state == "awaiting_input" or analysis.stage == "confirmation"
     ):
         return "confirm_materials"
-    if analysis.stage == "review_pending":
-        return "review_candidate"
     if analysis.state in {"queued", "running", "paused", "cancelled", "failed"}:
         return "continue_analysis"
     return "none"

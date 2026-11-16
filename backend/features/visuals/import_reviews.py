@@ -48,28 +48,29 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
         if result is not None:
             result = import_result_view(result, context.image_chains, import_operations(job.selections_json), job.state)
         path = context.actor_asset.media_path if context.actor_asset else item.media_path
-        slots = [
-            MediaSlotView(
-                slot=0,
-                media_id=f"{job.id}:presentation",
-                label=("Prepared media" if context.actor_asset else "Uploaded media")
-                if context.language == "en"
-                else ("处理后的影像" if context.actor_asset else "上传影像"),
-                status=job.stage,
-                review=report,
-                basis_id=report.evidence.basis_id if report and report.evidence else None,
-                can_review=job.stage == "review_pending"
-                and report is not None
-                and report.evidence is not None
-                and report.verdict == "review"
-                and report.status != "blocked",
-                candidates=await manual_candidate_views(
-                    [MediaCandidate(path=path, attempt=0, review=report)], media_type=item.media_kind
+        slots = []
+        # 原始上传已经是用户选定的影像，只有处理后的主体媒体需要人工采用。
+        if context.actor_asset is not None:
+            slots.append(
+                MediaSlotView(
+                    slot=0,
+                    media_id=f"{job.id}:presentation",
+                    label="Prepared media" if context.language == "en" else "处理后的影像",
+                    status=job.stage,
+                    review=report,
+                    basis_id=report.evidence.basis_id if report and report.evidence else None,
+                    can_review=job.stage == "review_pending"
+                    and report is not None
+                    and report.evidence is not None
+                    and report.verdict == "review"
+                    and report.status != "blocked",
+                    candidates=await manual_candidate_views(
+                        [MediaCandidate(path=path, attempt=0, review=report)], media_type=item.media_kind
+                    )
+                    if result
+                    else [],
                 )
-                if result
-                else [],
             )
-        ]
         for index, component in enumerate(result.components if result else (), 1):
             chain = context.image_chains.get(component.observation.key)
             candidate = (chain.best() or next(iter(chain.candidates), None)) if chain else None
@@ -120,11 +121,20 @@ async def manually_review_import(
     result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
     item = await visual_item(db, user_id, job.visual_id)
     snapshot = visual_snapshot(item)
-    if result is None or request.slot > len(result.components):
+    presentation_slot = context.actor_asset is not None
+    component_slot_start = 1
+    if (
+        result is None
+        or request.slot < 0
+        or request.slot > len(result.components)
+        or (request.slot == 0 and not presentation_slot)
+    ):
+        if not presentation_slot and request.slot == 0:
+            raise RequestError(status_code=409, message="上传原件已经收藏，不需要采用候选")
         raise RequestError(status_code=409, message="原分析条目已变化，请刷新")
     if context.identity and not await visual_identity_is_current(db, user_id, context.identity):
         raise RequestError(status_code=409, message="原任务身份已失效，请另建分析或制作请求")
-    if request.slot == 0:
+    if presentation_slot and request.slot == 0:
         if request.action != "approve":
             raise RequestError(status_code=409, message="导入原件已经收藏，请通过原分析入口重新分析")
         selected = MediaCandidate(
@@ -167,7 +177,7 @@ async def manually_review_import(
             audit_context={"context_json": original_context},
             result_snapshot={"context_json": context.model_dump(mode="json")},
         )
-    component = result.components[request.slot - 1]
+    component = result.components[request.slot - component_slot_start]
     if component.status in {"created", "reused", "skipped", "undone"} or component.observation.kind == "action":
         raise RequestError(status_code=409, message="这条素材已经完成或不属于图片候选")
     key = component.observation.key
