@@ -344,6 +344,35 @@ class ImportPlaybackBlock(BaseModel):
     reason: str
 
 
+class VisualAutoPlayBlock(BaseModel):
+    """一个成品为什么不能进入自动演出目录，以及用户可以采取的下一步。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Literal[
+        "analysis_pending",
+        "materials_incomplete",
+        "identity",
+        "presentation_review",
+        "semantics_unclear",
+        "timing_mismatch",
+        "unsupported_media",
+        "media_unavailable",
+        "actor_composition",
+    ]
+    reason: str
+    next_step: Literal[
+        "continue_analysis",
+        "confirm_materials",
+        "review_candidate",
+        "reanalyze",
+        "identity_setup",
+        "redo",
+        "replace_media",
+        "none",
+    ] = "none"
+
+
 class ImportAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -670,6 +699,7 @@ class VisualDetailView(VisualItemView):
     snapshot: VisualSnapshot
     jobs: list[VisualJobView] = Field(default_factory=list)
     analysis: ImportAnalysisView | None = None
+    auto_play_blocks: list[VisualAutoPlayBlock] = Field(default_factory=list)
 
 
 class ActorClipRef(BaseModel):

@@ -129,6 +129,10 @@ export const visualMaterialCopy = {
       save_material: '保存入库中',
       presentation_review: '检查播放条件'
     } as Record<string, string>,
+    awaitingHint: '请在下方确认识别到的素材；确认后会继续检查播放条件。',
+    reviewHint: '请先选择要采用的候选，应用后系统会重新检查自动演出资格。',
+    confirmationHint: '确认素材后应用分析结果，完成最后的播放条件检查。',
+    processingHint: '处理完成后会自动重新判断是否可以进入自动演出。',
     notices: {
       quality_rejected: '本次提取未通过检查，尚未入库。',
       action_rejected: '动作未通过评审，可在动作库调整后重试。',
@@ -207,6 +211,10 @@ export const visualMaterialCopy = {
       save_material: 'Saving to library',
       presentation_review: 'Checking playback conditions'
     } as Record<string, string>,
+    awaitingHint: 'Confirm the identified materials below; processing will continue afterward.',
+    reviewHint: 'Choose the candidate to keep first. Applying it will run the automatic-playback checks again.',
+    confirmationHint: 'Confirm the materials and apply the analysis result for the final playback checks.',
+    processingHint: 'The automatic-playback decision will be updated when processing finishes.',
     notices: {
       quality_rejected: 'The extracted material did not pass checks and has not been saved.',
       action_rejected: 'The action did not pass review. Adjust it in the action library before retrying.',

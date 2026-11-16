@@ -36,7 +36,18 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
   const notesKey = `${visual.id}:analysis`
   const notes = ui.analysisNotes?.[notesKey] ?? ''
   const blockers = job?.result?.blocking_reasons ?? []
-  const showBlockers = !blockers.some(block => block.code === 'materials_incomplete')
+
+  const flowHint = job
+    ? job.stage === 'confirmation'
+      ? a.confirmationHint
+      : job.state === 'awaiting_input'
+        ? a.awaitingHint
+        : job.stage === 'review_pending'
+          ? a.reviewHint
+          : active
+            ? a.processingHint
+            : null
+    : null
 
   const materialRevision = job?.result?.components
     .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
@@ -92,7 +103,8 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           {a.stages[job.stage] ?? a.working}
         </p>
       ) : null}
-      {showBlockers && blockers.length > 0 ? (
+      {flowHint ? <p className={VISUAL_BODY}>{flowHint}</p> : null}
+      {blockers.length > 0 ? (
         <ul className={`list-inside list-disc space-y-1 ${VISUAL_BODY}`} role="status">
           {blockers.map(block => (
             <li key={block.code}>{block.reason}</li>

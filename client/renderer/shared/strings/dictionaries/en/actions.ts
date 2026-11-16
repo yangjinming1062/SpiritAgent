@@ -179,11 +179,38 @@ export const actions: Pick<Dictionary, 'actions' | 'visuals'> = {
     defaultWallpaperSet: 'Default wallpaper set',
     defaultWallpaperCleared: 'Default wallpaper cleared',
     defaultWallpaperFailed: "Couldn't save the default wallpaper",
-    autoPlayOff: 'Auto-play off',
+    autoPlayOff: 'Auto-play temporarily unavailable',
     autoPlayOn: 'Auto-play on',
     autoPlayHint:
-      'This version is finished and kept, but is currently unavailable for automatic rotation or life scenes. You can still inspect the result and its review with the other visuals.',
-    autoPlayReview: 'Content review',
+      'This visual stays in your library and can be previewed, but it is not currently included in ambient rotation or life scenes. Complete the steps below and pass the checks before it can be selected automatically.',
+    autoPlayReadyHint:
+      'This visual passed the automatic-use checks. Whether it actually plays still depends on the current outfit, environment, life context and motion setting.',
+    autoPlayMeaningTitle: 'What does this mean?',
+    autoPlayMeaning:
+      '“Automatic playback” means the system may select this visual during ambient rotation or a life scene; it does not mean it will play every time. Previewing it in the library does not change formal presentation.',
+    autoPlayNextTitle: 'How to make it available for automatic playback',
+    autoPlayBlockTitles: {
+      analysis_pending: 'Processing is incomplete',
+      materials_incomplete: 'Materials need confirmation',
+      identity: 'Companion identity needs confirmation',
+      presentation_review: 'Presentation review is incomplete',
+      semantics_unclear: 'Applicable situations are unclear',
+      timing_mismatch: 'Action timing does not match',
+      unsupported_media: 'This media type is not supported yet',
+      media_unavailable: 'The file or review evidence is unavailable',
+      actor_composition: 'Character compositing data is incomplete'
+    },
+    autoPlayBlockSteps: {
+      continue_analysis: 'Continue the original task; eligibility will be checked again when it finishes.',
+      confirm_materials: 'Confirm or change the outfit, environment and action links below.',
+      review_candidate: 'Choose a candidate and apply the analysis result for the final checks.',
+      reanalyze: 'Add context and identify the visual again, or reorganize it.',
+      identity_setup: 'Complete or correct the companion appearance setup, then identify the visual again.',
+      redo: 'Use the existing redo action; the result will be checked again.',
+      replace_media: 'Use a supported image or video; animated originals are preview-only for now.',
+      none: 'The eligibility will update after the relevant checks finish.'
+    },
+    autoPlayReview: 'View review evidence',
     eligibilityTitle: 'Automatic playback',
     backToList: 'Back to library',
     expand: 'Read more',

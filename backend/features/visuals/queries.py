@@ -19,7 +19,7 @@ from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.service import video_attempt_queue_info
 
 from .client_assets import client_body
-from .eligibility import actor_body_ready, automatic_media_ready, existing_asset
+from .eligibility import actor_body_ready, automatic_media_blocks, automatic_media_ready, existing_asset
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .import_operations import import_analysis_state
@@ -50,6 +50,7 @@ from .schemas import (
     AnalyzingVisualSource,
     ComboMaterialRef,
     DefaultWallpaperView,
+    ImportAnalysisView,
     PresentedVisual,
     SceneMediaRef,
     StageComposition,
@@ -58,6 +59,7 @@ from .schemas import (
     StageIntent,
     StageLayerMedia,
     StagePresentation,
+    VisualAutoPlayBlock,
     VisualDetailView,
     VisualItemView,
     VisualJobListResponse,
@@ -282,12 +284,122 @@ def version_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
     return client_body(body)
 
 
-def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | None = None) -> VisualItemView:
+def _item_auto_play_blocks(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot) -> list[VisualAutoPlayBlock]:
+    source = snapshot.source
+    action = source.action if source.kind in ("actor", "cinematic", "analysis") else None
+    return automatic_media_blocks(
+        media_kind=item.media_kind,
+        asset_kind=item.asset_kind,
+        media_path=item.media_path,
+        auto_selectable=_frozen_auto_selectable(source),
+        clip_kind=visual_clip_kind(item, snapshot),
+        body=item.body_json,
+        presentation_approved=source.presentation_approved,
+        review_result=snapshot.review_result,
+        reference_source=source.model_dump(mode="json"),
+        media_content_hash=item.content_hash,
+        scene_reference=getattr(source, "scene", None) is not None,
+        action_clip_kind=action.clip_kind if action else None,
+    )
+
+
+def _import_block_next_step(analysis: ImportAnalysisView, code: str) -> str:
+    # 重试或恢复时，结果里可能还保留上一轮的阻塞原因；当前任务状态优先。
+    if analysis.state in {"queued", "running"}:
+        return "continue_analysis"
+    if analysis.stage == "review_pending":
+        return "review_candidate"
+    if analysis.state in {"paused", "cancelled", "failed"} and analysis.stage not in {"confirmation"}:
+        return "continue_analysis"
+    if code == "animated":
+        return "replace_media"
+    if code == "identity":
+        return "identity_setup"
+    if code in {"semantics", "timing", "review"}:
+        return "reanalyze"
+    if code in {"materials_incomplete", "outfit", "scene", "action"} and (
+        analysis.state == "awaiting_input" or analysis.stage == "confirmation"
+    ):
+        return "confirm_materials"
+    if analysis.stage == "review_pending":
+        return "review_candidate"
+    if analysis.state in {"queued", "running", "paused", "cancelled", "failed"}:
+        return "continue_analysis"
+    return "none"
+
+
+def _merge_import_auto_play_blocks(
+    eligibility_blocks: list[VisualAutoPlayBlock], import_blocks: list[VisualAutoPlayBlock]
+) -> list[VisualAutoPlayBlock]:
+    """用导入任务的细节替换同类通用提示，同时保留文件和主体等独立阻塞。"""
+
+    import_codes = {block.code for block in import_blocks}
+    return [block for block in eligibility_blocks if block.code not in import_codes] + import_blocks
+
+
+def _import_auto_play_blocks(analysis: ImportAnalysisView) -> list[VisualAutoPlayBlock]:
+    if analysis.result and analysis.result.blocking_reasons:
+        code_map = {
+            "materials_incomplete": "materials_incomplete",
+            "identity": "identity",
+            "outfit": "materials_incomplete",
+            "scene": "materials_incomplete",
+            "action": "materials_incomplete",
+            "semantics": "semantics_unclear",
+            "timing": "timing_mismatch",
+            "review": "presentation_review",
+            "animated": "unsupported_media",
+        }
+        blocks = [
+            VisualAutoPlayBlock(
+                code=code_map[block.code],
+                reason=block.reason,
+                next_step=_import_block_next_step(analysis, block.code),
+            )
+            for block in analysis.result.blocking_reasons
+            if block.code in code_map
+        ]
+        if blocks:
+            return blocks
+    if analysis.state == "awaiting_input":
+        return [
+            VisualAutoPlayBlock(
+                code="analysis_pending",
+                reason="请先确认下方识别到的衣着、环境或动作，确认后会继续检查自动演出条件",
+                next_step="confirm_materials",
+            )
+        ]
+    if analysis.state in {"queued", "running"}:
+        return [
+            VisualAutoPlayBlock(
+                code="analysis_pending",
+                reason="影像仍在整理和检查中，完成后会重新判断自动演出资格",
+                next_step="continue_analysis",
+            )
+        ]
+    if analysis.state in {"paused", "cancelled", "failed"}:
+        return [
+            VisualAutoPlayBlock(
+                code="analysis_pending",
+                reason="影像整理尚未完成，原件和已取得的结果仍已保留",
+                next_step="continue_analysis",
+            )
+        ]
+    return []
+
+
+def item_view(
+    item: VisualItem | PresentedVisual,
+    snapshot: VisualSnapshot | None = None,
+    *,
+    auto_play_blocks: list[VisualAutoPlayBlock] | None = None,
+) -> VisualItemView:
     snapshot = snapshot or visual_snapshot(item)
     source = snapshot.source
     outfit = source.outfit if source.kind in ("actor", "cinematic", "analysis") else None
     scene = source.scene if source.kind in ("scene", "cinematic", "analysis") else None
     action = source.action if source.kind in ("actor", "cinematic", "analysis") else None
+    auto_play_blocks = auto_play_blocks if auto_play_blocks is not None else _item_auto_play_blocks(item, snapshot)
     return VisualItemView(
         id=item.id,
         media_kind=item.media_kind,
@@ -313,20 +425,7 @@ def item_view(item: VisualItem | PresentedVisual, snapshot: VisualSnapshot | Non
         updated_at=item.updated_at,
         body=version_body(item),
         original_url=client_asset_url(source.original_path) if source.original_path else None,
-        auto_playable=automatic_media_ready(
-            media_kind=item.media_kind,
-            asset_kind=item.asset_kind,
-            media_path=item.media_path,
-            auto_selectable=_frozen_auto_selectable(source),
-            clip_kind=visual_clip_kind(item, snapshot),
-            body=item.body_json,
-            presentation_approved=source.presentation_approved,
-            review_result=snapshot.review_result,
-            reference_source=source.model_dump(mode="json"),
-            media_content_hash=item.content_hash,
-            scene_reference=getattr(source, "scene", None) is not None,
-            action_clip_kind=action.clip_kind if action else None,
-        ),
+        auto_playable=not auto_play_blocks,
     )
 
 
@@ -567,11 +666,18 @@ async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
                     )
                 }
             )
+        auto_play_blocks = _item_auto_play_blocks(item, snapshot)
+        view = item_view(item, snapshot, auto_play_blocks=auto_play_blocks)
+        if analysis is not None and not view.auto_playable:
+            import_blocks = _import_auto_play_blocks(analysis)
+            if import_blocks:
+                auto_play_blocks = _merge_import_auto_play_blocks(auto_play_blocks, import_blocks)
         return VisualDetailView(
-            **item_view(item, snapshot).model_dump(),
+            **view.model_dump(),
             snapshot=snapshot,
             jobs=await job_views(db, jobs),
             analysis=analysis,
+            auto_play_blocks=auto_play_blocks,
         )
 
 

@@ -22,8 +22,6 @@ import {
   SettingCard
 } from '@/ui'
 
-import { visualAnalysisControls } from '../../../../../shared/visual-materials'
-
 import { loadVisualDetail } from './library'
 import { type VisualDetail, type VisualJob, type VisualJobCommand } from './types'
 import { VisualImportAnalysis } from './visual-import-analysis'
@@ -376,29 +374,8 @@ function VisualDetailContent({
         </div>
       </FactSection>
 
-      {detail.analysis ? (
-        <>
-          <PlayBadge
-            label={detail.auto_playable ? t.autoPlayOn : t.analysis[visualAnalysisControls(detail.analysis).status]}
-            playable={detail.auto_playable}
-          />
-          <VisualImportAnalysis visual={detail} />
-        </>
-      ) : analysisPending ? null : (
-        <FactSection title={t.eligibilityTitle}>
-          <div className="space-y-2">
-            <PlayBadge label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff} playable={detail.auto_playable} />
-            <p className={VISUAL_BODY}>{detail.auto_playable ? t.analysis.approved : t.autoPlayHint}</p>
-            {!detail.auto_playable && detail.snapshot.review_reason ? (
-              <Disclosure chevron title={t.autoPlayReview} variant="inline">
-                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
-                  {detail.snapshot.review_reason}
-                </p>
-              </Disclosure>
-            ) : null}
-          </div>
-        </FactSection>
-      )}
+      <AutoPlayGuidance detail={detail} />
+      {detail.analysis ? <VisualImportAnalysis visual={detail} /> : null}
 
       {detail.jobs.length > 0 ? (
         <Disclosure title={t.jobsHistoryTitle} variant="panel">
@@ -414,6 +391,61 @@ function VisualDetailContent({
         <PortraitLightbox name={detail.title} onClose={() => setZoom(false)} url={preview.src} />
       ) : null}
     </>
+  )
+}
+
+function AutoPlayGuidance({ detail }: { detail: VisualDetail }): React.JSX.Element {
+  const t = useStrings().visuals
+  const [open, setOpen] = useState(!detail.auto_playable)
+  const blocks = detail.auto_play_blocks
+
+  useEffect(() => {
+    setOpen(!detail.auto_playable)
+  }, [detail.auto_playable, detail.id, detail.version])
+
+  return (
+    <FactSection title={t.eligibilityTitle}>
+      <div className="space-y-2">
+        <PlayBadge label={detail.auto_playable ? t.autoPlayOn : t.autoPlayOff} playable={detail.auto_playable} />
+        <p className={VISUAL_BODY}>{detail.auto_playable ? t.autoPlayReadyHint : t.autoPlayHint}</p>
+        <Disclosure
+          chevron
+          onOpenChange={setOpen}
+          open={open}
+          title={detail.auto_playable ? t.autoPlayMeaningTitle : t.autoPlayNextTitle}
+          variant="inline"
+        >
+          <div className="space-y-3">
+            <p className={VISUAL_BODY}>{t.autoPlayMeaning}</p>
+            {!detail.auto_playable ? (
+              <div className="space-y-2">
+                <p className="text-[12px] font-medium text-strong">{t.autoPlayNextTitle}</p>
+                {blocks.length > 0 ? (
+                  <ol className="list-inside list-decimal space-y-2 text-[12px] leading-relaxed text-muted">
+                    {blocks.map(block => (
+                      <li key={`${block.code}:${block.reason}`}>
+                        <span className="font-medium text-body">{t.autoPlayBlockTitles[block.code]}</span>
+                        {`：${block.reason}`}
+                        <span className="block pl-5 text-faint">{t.autoPlayBlockSteps[block.next_step]}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className={VISUAL_BODY}>{t.autoPlayBlockSteps.none}</p>
+                )}
+                {detail.snapshot.review_reason ? (
+                  <Disclosure chevron title={t.autoPlayReview} variant="inline">
+                    <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted">
+                      {detail.snapshot.review_reason}
+                    </p>
+                  </Disclosure>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </Disclosure>
+      </div>
+    </FactSection>
   )
 }
 
