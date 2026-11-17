@@ -57,7 +57,7 @@ VISUAL_CREATION_PLAN = """为即将制作的图片或视频确定具体活动、
 action 给出已经选定的活动名称和内容，requirements 是这次要满足的要求。personality 只帮助安排自然神态与活动细节；character_context 中的 voice_style 提供声音气质，current_time 给出时间，life_context 记录当前活动、所处情况、尚未结束的事情和近期变化，relevant_memories 是与本次活动相关的记忆。这些内容帮助安排活动细节，声音气质不要求画面发声；计划和未完成步骤不代表已经经历，制作图片或视频也不代表亲自经历了其中的事。资料缺失时保持未知，用户经历不能改写为画中角色的经历。人物外观、穿着与环境以相应图片参考为准，不从姓名、性格或关系推导身材、服装或夸张姿态。
 feedback 是画面与活动的通用修改要求，video_feedback 是视频修改要求；两者为空时由你完成具体安排。customization_priority=general 表示通用要求较新，video 表示视频要求较新；只在两者明确提到且冲突的维度上采用较新要求，其余有效要求继续保留。用户未明确更换活动时沿用 action，结合实际身体、性格和环境说明起始姿态、支撑接触、必要物品与可见运动。opening_description 描述一张静态图中可见的内容及后续运动所需条件，后续运动过程写入 motion_requirements，不要求一张图同时展示多个动作阶段。
 reference_mode=opening 时图 1 是已存在的画面，身份、身体结构、服装和环境以它为准；可以规划增加与活动相容的必要日用品及调整姿态和取景。reference_mode=sources 时各图职责以 reference_roles 为准。参考姿态不限制新构图。
-asset_kind=actor 时制作可独立放入不同背景的主体动画，角色及附肢始终完整入画，周围留有动作空间，背景使用干净纯色幕布；动作须适合实际身体结构，不强制人类站姿、呼吸或挥手。仅保留可随身体一起运动的必要小物品；必须依靠桌椅、固定道具或复杂空间接触才能成立的活动，supported=false，说明需要包含完整环境的影像，不删除必要道具或改变活动。asset_kind=cinematic 时按环境参考安排完整画面及接触关系。
+asset_kind=actor 时制作可独立合成的主体动画，背景使用干净纯色幕布，取景让动作成立必需的身体部位和物品在相应时刻可见。需要表现表情、视线或手部互动时可安排合适的半身或近景。动作须适合实际身体结构，不强制人类站姿、呼吸或挥手。仅保留可随身体一起运动的必要小物品。必须依靠桌椅、固定道具或复杂空间接触才能成立的活动，supported=false，说明需要包含完整环境的影像，不删除必要道具或改变活动。asset_kind=cinematic 时按环境参考安排画面及接触关系。
 动作明确需要书、杯子等小型道具时，保留其用途及操作关系，不能删去道具后把活动改成相似手势。普通阅读、书写等活动须明确必要物品如何在起始图中可见且可操作，人物已进入活动的单一状态；不把多个阶段画在一起。物品与空间可以在图片阶段合理准备，不能因为参考中缺少杯子或书就判定活动不支持。只有无法在保留身份、身体结构、明确环境与用户要求的前提下实现目标时 supported=false，不编造肢体、改变物种或偷偷替换活动。
 opening_description 只描述活动所需的准备状态、支撑接触、取景、光线与必要物品；人物尺度可信，身份可辨认，支撑适合实际穿着与身体结构。只补充活动必需的条件，不预先指定具体表情、手势、精确脚距或运动次数。不重述参考图已有的外形、整套服装与环境陈设，不写图号或未经提供的身份特征；参考职责由后续生成请求单独说明。
 activity 与 motion_requirements 以希望传达的效果和活动目标为主，保留用户明确要求及必要物品、接触和过程。角色性格用于说明整体气质，不转写成眼、口等部位的操作指令，也不要求维持某种面部状态。
@@ -114,10 +114,9 @@ kind=loop 时选择可持续阶段，首尾状态、支撑与物品状态自然�
 )
 
 VISUAL_VIDEO_MOTION_TEMPLATE = (
-    "从提供的首帧开始制作一段 {duration_seconds} 秒的视频，固定镜头，单个连续的 {aspect_ratio} 镜头。"
-    "首帧确定角色的起始姿态、造型、构图和画面质感。{background}\n"
-    "保持首帧的脸型、五官比例、眼鼻口轮廓、发际线和面部光照。"
-    "自然改变表情和视角，面容及主体细节始终清晰可辨。\n"
+    "从提供的首帧开始制作一段 {duration_seconds} 秒、画幅 {aspect_ratio} 的视频。"
+    "首帧确定角色的起始姿态、造型、构图和画面质感。{background}{framing}\n"
+    "人物表情随动作自然变化，同时维持首帧的脸型、五官比例、发型、妆容和面部光照。\n"
     "活动目标：{action}\n希望呈现的效果：{effect}\n角色性格：{personality}\n"
     "表现用途：{performance_role}\n默认动态程度：{motion_intensity}\n"
     "优先清楚呈现活动目标，角色性格影响与目标相符的整体气质。结合实际身体、穿着与画面，"
@@ -129,9 +128,18 @@ VISUAL_VIDEO_MOTION_TEMPLATE = (
     "其余有效要求保留。\n{cycle}"
 )
 
-ACTOR_VIDEO_BACKGROUND = (
-    "全片在平整、静止、无纹理的中性灰色无缝背景前进行。"
-    "保持固定构图，角色、附肢及随身体运动的服饰始终完整入画，与背景清楚分离。"
+ACTOR_VIDEO_BACKGROUND = "角色与随身物品在平整、静止、无纹理的中性灰背景前清楚分离。"
+
+ACTOR_VIDEO_REACTION_FRAMING = (
+    "取景跟随回应。可以从原景别自然推近，或在视线、表情或手势最有表现力时切到半身或近景。"
+    "转场延续角色的位置、视线和动作方向，保留相应时刻需要看见的动作及物品，使主体叠在舞台上仍连贯。"
+)
+ACTOR_VIDEO_LOOP_FRAMING = (
+    "取景服务于持续活动，安静陪伴时保持舒适、稳定的主体位置和体量。"
+    "需要改变景别时使动作、视线和空间关系连贯，并让循环接点的构图和人物大小自然相接。"
+)
+CINEMATIC_VIDEO_FRAMING = (
+    "以活动和情绪安排镜头。适时使用半身、近景、推移或切镜，保持人物与环境的空间关系、视线、动作方向及光线连贯。"
 )
 
 
@@ -180,9 +188,10 @@ VISUAL_VIDEO_REVIEW = """检查视频是否符合活动要求。图 1 是本段�
 motion_intensity 说明默认动作幅度：subtle 是轻微、安定的变化，normal 是日常自然幅度，expressive 是清楚的较大动作；用户明确调整幅度时按当前有效要求判断。实际明显超出目标幅度或把安静陪伴演成主动招呼时需要复核，不能仅因活动名称相近就通过。
 kind=loop 时比较采样首尾与图 1 的姿态、视线、支撑接触、物品位置及可见状态、镜头及光线；仅人物姿态复原不足以证明衔接，采样物品可见状态出现重置或不连续时需要复核。稀疏采样不能证明整段节奏或接点瞬间连续，不因采样稀疏本身判失败，也不声称观察到了未采样过程；不能因少数姿态差异就断言存在周期摇摆。
 media_semantics 概括采样实际表现及其适用条件，按 schema 的有限词表填写；不把动作定义的所有通用用途都赋给这份视频。activity_type 选实际可见活动的类别，例如阅读视频是 reading，即使通用动作也能用于写作。semantic_tags 只保留可见证据支持的含义；motion_intensity 根据可见幅度区分 subtle 轻微、normal 日常、expressive 明显大幅，采样不足以确认轻微时不用 subtle。
-isolated_subject=true 时，视频采样来自透明成片叠在统一底色上的实际合成。分辨真实遮挡、透纱等自然现象与肢体、头发、衣饰被异常挖空或出现旧背景残留。明确的透明处理缺陷使 quality_verdict=fail。首帧或活动要求中没有、并明显改变动作含义的额外道具使 verdict=fail。
+根据活动判断景别与转场。半身、近景、推移或切镜可以突出视线、表情和手势，镜头应延续人物身份、动作方向与空间关系，并在相关时刻呈现活动必需的身体部位和物品。明显错位的跳变、双影或割裂动作的切换属于画面质量问题。
+isolated_subject=true 时，视频采样来自透明成片叠在统一底色上的实际合成。按取景判断可见轮廓，分辨构图边缘、真实遮挡和透纱，与肢体、头发或衣饰的异常挖空和旧背景残留。明确的透明处理缺陷使 quality_verdict=fail。首帧或活动要求中没有、并明显改变动作含义的额外道具使 verdict=fail。
 scene_tags 保存片段必须匹配的环境和物品条件：indoor 室内、outdoor 室外、desk 桌面、seat 座位、bed 床、open_space 开阔空间、book 书、computer 电脑、cup 杯子、tools 工具。完整场景影像按实际可见背景及必要物品填写；透明主体仅登记合成环境必须提供的条件，自带的随身物品不重复要求外部提供。action_conditions 的适用和避免条件若能对应活动类别或环境标签，分别体现到 scene_tags、avoid_activity_types 与 avoid_scene_tags；条件相互冲突、缺少判断依据，或还要求当前标签无法表达的必要条件时，auto_selectable=false。没有这些限制且当前活动和环境足以判断适用时为 true；不根据这次画面的合格结论推断所有生活情境都适用。
-只输出 JSON 对象，恰好包含 verdict、reason、quality_verdict、quality_reason、head_anchor 和 media_semantics。verdict 为 pass、review 或 fail；明确满足目标为 pass，明确目标偏差为 fail，关键证据不足为 review。quality_verdict 独立检查自然度、支撑、接触、身体连接和画面融合，明确缺陷为 fail、充分协调为 pass、关键证据不足为 review；quality_reason 说明可见依据。通过时 media_semantics 必须非空，不能确认实际表现时用 review。reason 使用 output_language，不超过 500 字符，说明可见依据，不写 Markdown 或额外字段。isolated_subject=true 表示只有可独立合成的角色主体；此时确认采样中的角色及附肢完整可见，动作不缺少必需的接触对象，轮廓能独立合成；若能从第一个视频采样图（图 2）清楚辨认实际头部，head_anchor 为其中心坐标对象 {x,y}，坐标范围 0 到 1，原点在左上，横纵分别除以图像宽高；头部不可辨认或身体没有头部时为 null，不从轮廓最宽处猜测。isolated_subject=false 时 head_anchor 为 null。"""
+只输出 JSON 对象，恰好包含 verdict、reason、quality_verdict、quality_reason、head_anchor 和 media_semantics。verdict 为 pass、review 或 fail；明确满足目标为 pass，明确目标偏差为 fail，关键证据不足为 review。quality_verdict 独立检查自然度、支撑、接触、身体连接和画面融合，明确缺陷为 fail、充分协调为 pass、关键证据不足为 review；quality_reason 说明可见依据。通过时 media_semantics 必须非空，不能确认实际表现时用 review。reason 使用 output_language，不超过 500 字符，说明可见依据，不写 Markdown 或额外字段。isolated_subject=true 时确认可见轮廓能独立合成，并核对动作必需的接触对象。若能从第一个视频采样图（图 2）清楚辨认实际头部，head_anchor 为其中心坐标对象 {x,y}，坐标范围 0 到 1，原点在左上，横纵分别除以图像宽高；头部不可辨认或身体没有头部时为 null，不从轮廓最宽处猜测。isolated_subject=false 时 head_anchor 为 null。"""
 
 VISUAL_VIDEO_IDENTITY_REVIEW = (
     "图 1 和图 2 按所述职责提供原始身份与造型参考，后续原始图片是按时间排序的视频采样。"

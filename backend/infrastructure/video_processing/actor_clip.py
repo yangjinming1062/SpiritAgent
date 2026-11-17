@@ -13,6 +13,7 @@ from PIL import Image
 
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import (
+    ActionMaterialRejectedError,
     VideoProcessError,
     alpha_input_args,
     ffmpeg_stdout,
@@ -56,7 +57,7 @@ def _bounds(alpha: np.ndarray) -> tuple[int, int, int, int]:
 def _validate_alpha(alpha: np.ndarray) -> float:
     coverage = float((alpha > 128).mean())
     if not 0.02 <= coverage <= 0.9 or float((alpha <= 8).mean()) < 0.10:
-        raise VideoProcessError("透明主体视频的主体或透明背景不完整，请重新生成")
+        raise ActionMaterialRejectedError("透明主体视频的主体或透明背景不完整，请重新生成")
     return coverage
 
 
@@ -154,8 +155,8 @@ def prepare_actor_clip(
                     try:
                         segmented = keep_screen_foreground(rgb, matte.apply(rgb))
                         rgba = refine_foreground_edges(rgb, segmented, max_pixels=_VIDEO_MATTING_MAX_PIXELS)
-                    except VideoProcessError as exc:
-                        raise VideoProcessError(f"第 {index + 1} 帧：{exc}", internal=exc.internal) from exc
+                    except ActionMaterialRejectedError as exc:
+                        raise ActionMaterialRejectedError(f"第 {index + 1} 帧：{exc}", internal=exc.internal) from exc
                 else:
                     rgba = frame.convert("RGBA")
             alpha = np.asarray(rgba.getchannel("A"))
@@ -163,7 +164,7 @@ def prepare_actor_clip(
             if matte is not None and len(coverages) >= 3:
                 before, middle, after = coverages[-3:]
                 if middle < 0.65 * min(before, after):
-                    raise VideoProcessError(f"第 {index} 帧的主体透明面积突变，请重新生成")
+                    raise ActionMaterialRejectedError(f"第 {index} 帧的主体透明面积突变，请重新生成")
             bounds = _bounds(alpha)
             union = (
                 bounds

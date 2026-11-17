@@ -2,6 +2,9 @@
 
 from .prompts import (
     ACTOR_VIDEO_BACKGROUND,
+    ACTOR_VIDEO_LOOP_FRAMING,
+    ACTOR_VIDEO_REACTION_FRAMING,
+    CINEMATIC_VIDEO_FRAMING,
     SCENE_VIDEO_MOTION_TEMPLATE,
     VISUAL_VIDEO_LOOP,
     VISUAL_VIDEO_MOTION_TEMPLATE,
@@ -44,9 +47,14 @@ def video_generation_prompt(
     props = "使用首帧已有的物品，保持这些物品与角色的真实接触，不引入额外物品。"
     if source.kind == "actor" and required_props == []:
         props = "角色使用自身动作完成活动，首帧中空着的手保持空着，原有穿戴和随身物品随角色自然运动。"
+    if source.kind == "actor":
+        framing = ACTOR_VIDEO_LOOP_FRAMING if clip_kind == "loop" else ACTOR_VIDEO_REACTION_FRAMING
+    else:
+        framing = CINEMATIC_VIDEO_FRAMING
     # 旧检查点也可能保存逐部位脚本；角色视频始终从冻结目标装配，不转发该脚本。
     return VISUAL_VIDEO_MOTION_TEMPLATE.format(
         background=ACTOR_VIDEO_BACKGROUND if source.kind == "actor" else "环境与光线沿用首帧。",
+        framing=framing,
         props=props,
         action=source.action.name,
         effect=source.action.motion_description,

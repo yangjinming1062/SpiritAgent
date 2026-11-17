@@ -8,7 +8,11 @@ import onnxruntime as ort
 from PIL import Image, ImageFilter
 
 from infrastructure.config import SETTINGS
-from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
+from infrastructure.video_processing.ffmpeg import (
+    ActionMaterialRejectedError,
+    VideoProcessError,
+    VideoToolUnavailableError,
+)
 
 _IMAGE_MATTING_MAX_PIXELS = 1_000_000
 
@@ -56,16 +60,23 @@ def keep_screen_foreground(image: Image.Image, segmented: Image.Image) -> Image.
     """在中性幕布前，把分割漏掉的有色轮廓交给边缘估计。"""
     size = tuple(max(2, round(edge * min(1, 256 / max(image.size)))) for edge in image.size)
     rgb = np.asarray(image.resize(size, Image.Resampling.BILINEAR), dtype=np.int16)
-    strip = max(1, size[0] // 20)
-    border = np.concatenate((rgb[:, :strip], rgb[:, -strip:]), axis=1).reshape(-1, 3)
+    strip = max(1, min(size) // 20)
+    alpha = segmented.getchannel("A")
+    probe = alpha.resize(size, Image.Resampling.BILINEAR)
+    background = np.asarray(probe) <= 32
+    perimeter = np.ones(background.shape, dtype=bool)
+    perimeter[strip:-strip, strip:-strip] = False
+    # 近景可与画框相交。幕布测试只从画面边缘可见的背景取样。
+    border = rgb[background & perimeter]
+    if len(border) < 64:
+        return segmented
     low, high = np.quantile(border.mean(axis=1), (0.05, 0.95))
     if high - low > 90 or np.quantile(np.ptp(border, axis=1), 0.9) > 28:
-        raise VideoProcessError("主体视频出现了复杂布景，无法可靠分离人物，请重新生成")
+        raise ActionMaterialRejectedError("主体视频出现了复杂布景，无法可靠分离人物，请重新生成")
     screen_color = np.median(border, axis=0)
     chroma = np.ptp(rgb - screen_color, axis=2)
     cutoff = max(16.0, float(np.quantile(np.ptp(border - screen_color, axis=1), 0.95)) + 8)
-    alpha = segmented.getchannel("A")
-    near_subject = alpha.resize(size, Image.Resampling.BILINEAR).filter(ImageFilter.MaxFilter(21))
+    near_subject = probe.filter(ImageFilter.MaxFilter(21))
     uncertain = (chroma > cutoff) & (np.asarray(near_subject) > 64)
     # 只扩展三分图的未知区域，因为颜色差异无法直接给出袖纱、发丝等半透明像素的 alpha。
     support = Image.fromarray(uncertain.astype(np.uint8) * 40).resize(image.size, Image.Resampling.BILINEAR)

@@ -40,6 +40,7 @@ def sample_desktop_video_frames(
     max_edge: int = 1024,
     preserve_alpha: bool = False,
     background: tuple[int, int, int] | None = None,
+    include_opening_transition: bool = False,
 ) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
@@ -48,12 +49,10 @@ def sample_desktop_video_frames(
         raise ValueError("视频采样尺寸无效")
     times = video_frame_times(src)
     first, last = times[0], times[-1]
-    indices = sorted(
-        {
-            min(range(len(times)), key=lambda index: abs(times[index] - target))
-            for target in (first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count))
-        }
-    )
+    targets = [first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count)]
+    if include_opening_transition:
+        targets.extend(first + offset for offset in (0.25, 0.5) if first + offset < last)
+    indices = sorted({min(range(len(times)), key=lambda index: abs(times[index] - target)) for target in targets})
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
         scale = min(1.0, max_edge / max(frame.size))
         width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)

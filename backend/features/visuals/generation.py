@@ -32,7 +32,12 @@ from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, centered_cr
 from infrastructure.text import resolve_language, utc_now
 from infrastructure.video_processing.actor_clip import prepare_actor_clip
 from infrastructure.video_processing.desktop import prepare_desktop_video, sample_desktop_video_frames
-from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
+from infrastructure.video_processing.face_detail import review_face_details
+from infrastructure.video_processing.ffmpeg import (
+    ActionMaterialRejectedError,
+    VideoProcessError,
+    VideoToolUnavailableError,
+)
 from infrastructure.video_processing.matting import require_matting_model
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -136,6 +141,7 @@ from .schemas import (
     CinematicSource,
     MediaSemantics,
     OpeningReview,
+    RejectedVisualVideo,
     SceneMediaSource,
     VisualAsset,
     VisualJobProgress,
@@ -353,6 +359,8 @@ async def restart_video_generation(user_id: int, clip_kind: str, progress: Visua
     ).model_dump_json()
     progress.duration_seconds = seconds
     progress.source_path = None
+    progress.rejected_video_sources = []
+    progress.local_video_quality_retried = False
     progress.candidate = None
     progress.identity_evidence = None
     progress.video_evidence = None
@@ -1170,7 +1178,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         sample_desktop_video_frames,
         resolved[0],
         sample_count=9,
+        max_edge=1536,
         background=(172, 195, 213) if source.kind == "actor" else None,
+        include_opening_transition=True,
     )
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     references = (reference,)
@@ -1186,6 +1196,11 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
 
     if review.identity is None or review.identity.verdict == "review":
         identity_references = await _references(source)
+        face_details = (
+            await asyncio.to_thread(review_face_details, samples.frames, samples.times_seconds)
+            if progress.identity_evidence is None
+            else ()
+        )
         identity_review = await review_character_frames_with_references(
             user_id,
             identity_references,
@@ -1197,6 +1212,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
             save_evidence=save_identity_evidence,
             media_path=candidate.media_path,
             frame_times_seconds=samples.times_seconds,
+            face_details=tuple((time, build_data_uri(detail, "image/webp")) for time, detail in face_details),
         )
         if identity_review is not None:
             review.identity = ReviewDecision(verdict=identity_review.verdict, reason=identity_review.reason)
@@ -1764,6 +1780,27 @@ async def _ensure_video_chain(
     return chain
 
 
+def _continue_after_video_rejection(progress: VisualJobProgress, chain: MediaChainState) -> bool:
+    index = chain.active_index
+    if (
+        not chain.stop_reason
+        and not progress.local_video_quality_retried
+        and index is not None
+        and index + 1 == chain.next_index
+        and chain.providers[index].provider == "local"
+    ):
+        chain.providers.insert(chain.next_index, chain.providers[index])
+        progress.local_video_quality_retried = True
+    if not chain.needs_next():
+        return False
+    chain.result_url = None
+    chain.active_index = None
+    chain.phase = "ready"
+    chain.queue_request_id = None
+    progress.source_path = None
+    return True
+
+
 async def _review_video_candidate(
     user_id: int,
     job: VisualJob,
@@ -1785,7 +1822,7 @@ async def _review_video_candidate(
     candidate = current_visual_candidate(progress, chain)
     if candidate.review is None or candidate.review.verdict == "review":
         chain.stop_reason = "review_pending"
-    if candidate.accepted or not chain.needs_next():
+    if candidate.accepted or not _continue_after_video_rejection(progress, chain):
         chain.stop_reason = "accepted" if candidate.accepted else chain.stop_reason or "exhausted"
         progress.video_chain_json = chain.model_dump_json()
         await _save_progress(user_id, job.id, progress, stage="review")
@@ -1796,11 +1833,6 @@ async def _review_video_candidate(
     progress.identity_evidence = None
     progress.video_evidence = None
     progress.review_result = None
-    chain.result_url = None
-    chain.active_index = None
-    chain.phase = "ready"
-    chain.queue_request_id = None
-    progress.source_path = None
     progress.video_chain_json = chain.model_dump_json()
     await _save_progress(user_id, job.id, progress, stage="video")
     return "retry"
@@ -2117,9 +2149,17 @@ async def _produce_visual_video(
             if decision == "done":
                 break
             continue
-        if progress.source_path:
+        if source_path := progress.source_path:
             await _save_progress(user_id, job_id, progress, stage="process")
-            progress.candidate = await _process_candidate(user_id, job, progress, directory)
+            try:
+                progress.candidate = await _process_candidate(user_id, job, progress, directory)
+            except ActionMaterialRejectedError as exc:
+                if not allow_model_steps or not _continue_after_video_rejection(progress, chain):
+                    raise
+                progress.rejected_video_sources.append(RejectedVisualVideo(path=source_path, reason=str(exc)))
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, job_id, progress, stage="video")
+                continue
             progress.review_result = None
             progress.identity_evidence = progress.video_evidence = None
             await _save_progress(user_id, job_id, progress, stage="review")

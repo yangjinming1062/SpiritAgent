@@ -83,7 +83,7 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
                 action_id=action.id,
                 target_width=1024,
                 target_height=1024,
-                requirements="按参考中的实际身体结构表现这项动作，缺少的身体部位及不适用的生理动态不需要表现；全身完整入画。",
+                requirements="按参考中的实际身体结构表现动作，让动作所需的身体部位和物品在相应时刻可见。",
             )
         source = snapshot.source
         if not isinstance(source, ActorClipSource):

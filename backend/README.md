@@ -132,6 +132,8 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 全身及衣柜需要数据目录中的 `models/<matting_model>.onnx`，默认文件名和解析见 [matting.py](infrastructure/video_processing/matting.py)，镜像不自动下载。新付费阶段前检查模型，已有源素材保留供恢复；本地抠图入口为 [image.py](infrastructure/video_processing/image.py)。
 
+视频身份审核可从 [UltraFace 项目](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB) 获取 RFB-640 ONNX 权重，在数据目录的 `models/` 中以 `face-detector-rfb-640.onnx` 保存。后端通过 ONNX Runtime 在 CPU 上定位清晰面部。缺少权重或无法可靠定位时沿用全帧证据。
+
 ### 免费社交资讯来源
 
 客户端「设置 → 资讯来源」管理个人登录。登录方式由平台注册表的 `auth_kind` 决定：cookie 平台接受 Cookie 请求头或浏览器导出的 Cookie JSON，仅保存需要的字段，保存成功表示结构有效，平台拒绝后需重新配置；qr 平台使用扫码登录，必要时补充短信验证码。

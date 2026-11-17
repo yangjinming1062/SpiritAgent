@@ -290,17 +290,25 @@ async def review_character_frames_with_references(
     save_evidence: EvidenceWriter | None = None,
     media_path: str | None = None,
     frame_times_seconds: tuple[float, ...] = (),
+    face_details: tuple[tuple[float, str], ...] = (),
 ) -> IdentityReview:
+    context: dict[str, object] = {"reference_count": len(identity_uris), "frame_times_seconds": frame_times_seconds}
+    if face_details:
+        prompt += (
+            " 全帧样张之后追加 face_detail_times_seconds 对应时刻的面部局部。"
+            "这些图片截自同一视频，可与全帧互证眼鼻口、脸型和固定标记，遮挡与侧脸按实际可见特征判断。"
+        )
+        context["face_detail_times_seconds"] = tuple(time for time, _uri in face_details)
     return await _review_media(
         user_id,
         prompt,
-        (*identity_uris, *frame_uris),
+        (*identity_uris, *frame_uris, *(uri for _time, uri in face_details)),
         before_submit,
         task=task,
         evidence=evidence,
         save_evidence=save_evidence,
         media_path=media_path,
-        context={"reference_count": len(identity_uris), "frame_times_seconds": frame_times_seconds},
+        context=context,
     )
 
 

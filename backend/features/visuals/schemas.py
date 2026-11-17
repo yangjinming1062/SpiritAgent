@@ -545,6 +545,11 @@ class VisualAsset(BaseModel):
     video_feedback: str = ""
 
 
+class RejectedVisualVideo(BaseModel):
+    path: str
+    reason: str
+
+
 class VisualJobProgress(BaseModel):
     """制作工作项的持久化进度；恢复沿冻结输入继续，不重置预算。"""
 
@@ -592,6 +597,8 @@ class VisualJobProgress(BaseModel):
     submission_unknown: bool = False
     failure_reason: str = ""
     source_path: str | None = None
+    rejected_video_sources: list[RejectedVisualVideo] = Field(default_factory=list)
+    local_video_quality_retried: bool = False
 
 
 def visual_snapshot_hash(snapshot: VisualSnapshot) -> str:
