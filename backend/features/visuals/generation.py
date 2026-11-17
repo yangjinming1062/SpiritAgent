@@ -1166,7 +1166,12 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
     reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
     if resolved is None or not reference:
         raise VisualStateError("视频或已确认的参考画面无法读取")
-    samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0], sample_count=9)
+    samples = await asyncio.to_thread(
+        sample_desktop_video_frames,
+        resolved[0],
+        sample_count=9,
+        background=(172, 195, 213) if source.kind == "actor" else None,
+    )
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     references = (reference,)
     async with SESSION_LOCAL() as db:

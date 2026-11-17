@@ -34,7 +34,12 @@ class DesktopVideoFrames:
 
 
 def sample_desktop_video_frames(
-    src: Path, *, sample_count: int = 5, max_edge: int = 1024, preserve_alpha: bool = False
+    src: Path,
+    *,
+    sample_count: int = 5,
+    max_edge: int = 1024,
+    preserve_alpha: bool = False,
+    background: tuple[int, int, int] | None = None,
 ) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
@@ -53,10 +58,11 @@ def sample_desktop_video_frames(
         scale = min(1.0, max_edge / max(frame.size))
         width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)
     selector = "+".join(f"eq(n\\,{index})" for index in indices)
-    pixel_format, mode, channels = ("rgba", "RGBA", 4) if preserve_alpha else ("rgb24", "RGB", 3)
+    decode_alpha = preserve_alpha or background is not None
+    pixel_format, mode, channels = ("rgba", "RGBA", 4) if decode_alpha else ("rgb24", "RGB", 3)
     raw = ffmpeg_stdout(
         [
-            *(alpha_input_args(probe_video(src)) if preserve_alpha else []),
+            *(alpha_input_args(probe_video(src)) if decode_alpha else []),
             "-i",
             str(src),
             "-map",
@@ -81,7 +87,12 @@ def sample_desktop_video_frames(
     for index in range(len(indices)):
         data = raw[index * frame_size : (index + 1) * frame_size]
         with Image.frombytes(mode, (width, height), data) as frame, BytesIO() as output:
-            frame.save(output, format="WEBP", lossless=True)
+            if background is not None:
+                with Image.new("RGB", frame.size, background) as composite:
+                    composite.paste(frame, mask=frame.getchannel("A"))
+                    composite.save(output, format="WEBP", lossless=True)
+            else:
+                frame.save(output, format="WEBP", lossless=True)
             frames.append(output.getvalue())
     return DesktopVideoFrames(tuple(frames), tuple(times[index] - first for index in indices))
 

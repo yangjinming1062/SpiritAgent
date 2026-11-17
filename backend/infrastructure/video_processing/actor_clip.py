@@ -19,10 +19,16 @@ from infrastructure.video_processing.ffmpeg import (
     probe_video,
     run_ffmpeg,
 )
-from infrastructure.video_processing.matting import ForegroundMatte, refine_foreground_edges, require_matting_model
+from infrastructure.video_processing.matting import (
+    ForegroundMatte,
+    keep_screen_foreground,
+    refine_foreground_edges,
+    require_matting_model,
+)
 
 _FRAME_RATE = 24
 _MAX_EDGE = 2048
+_VIDEO_MATTING_MAX_PIXELS = 450_000
 
 
 @dataclass(frozen=True)
@@ -47,13 +53,14 @@ def _bounds(alpha: np.ndarray) -> tuple[int, int, int, int]:
     return int(cols.min()), int(rows.min()), int(cols.max()) + 1, int(rows.max()) + 1
 
 
-def _validate_alpha(alpha: np.ndarray) -> None:
+def _validate_alpha(alpha: np.ndarray) -> float:
     coverage = float((alpha > 128).mean())
     if not 0.02 <= coverage <= 0.9 or float((alpha <= 8).mean()) < 0.10:
         raise VideoProcessError("透明主体视频的主体或透明背景不完整，请重新生成")
+    return coverage
 
 
-def _verify_alpha(video: Path, width: int, height: int) -> None:
+def _verify_alpha(video: Path, width: int, height: int, expected_frames: int) -> None:
     probe = probe_video(video)
     if not probe.has_alpha:
         raise VideoProcessError("透明主体视频缺少透明通道")
@@ -82,11 +89,9 @@ def _verify_alpha(video: Path, width: int, height: int) -> None:
         failure_message="透明主体视频解码失败",
     )
     frame_size = verify_width * verify_height * 4
-    if len(raw) == 0 or len(raw) % frame_size:
+    if len(raw) != frame_size * expected_frames:
         raise VideoProcessError("透明主体视频时间轴无法完整解码")
-    if len(raw) < frame_size * 2:
-        raise VideoProcessError("透明主体视频帧数不足")
-    for index in range(len(raw) // frame_size):
+    for index in range(expected_frames):
         alpha = np.frombuffer(raw, dtype=np.uint8, count=frame_size, offset=index * frame_size)
         try:
             _validate_alpha(alpha.reshape(verify_height, verify_width, 4)[..., 3])
@@ -120,6 +125,7 @@ def prepare_actor_clip(
     mask_frames: list[dict[str, float | str]] = []
     union: tuple[int, int, int, int] | None = None
     first_bounds: tuple[int, int, int, int] | None = None
+    coverages: list[float] = []
     foot = (0, 0)
     with TemporaryDirectory(prefix="actor-", dir=dst.parent) as temporary:
         pattern = str(Path(temporary) / "%06d.png")
@@ -145,11 +151,19 @@ def prepare_actor_clip(
             with Image.open(path) as frame:
                 if matte is not None:
                     rgb = frame.convert("RGB")
-                    rgba = refine_foreground_edges(rgb, matte.apply(rgb))
+                    try:
+                        segmented = keep_screen_foreground(rgb, matte.apply(rgb))
+                        rgba = refine_foreground_edges(rgb, segmented, max_pixels=_VIDEO_MATTING_MAX_PIXELS)
+                    except VideoProcessError as exc:
+                        raise VideoProcessError(f"第 {index + 1} 帧：{exc}", internal=exc.internal) from exc
                 else:
                     rgba = frame.convert("RGBA")
             alpha = np.asarray(rgba.getchannel("A"))
-            _validate_alpha(alpha)
+            coverages.append(_validate_alpha(alpha))
+            if matte is not None and len(coverages) >= 3:
+                before, middle, after = coverages[-3:]
+                if middle < 0.65 * min(before, after):
+                    raise VideoProcessError(f"第 {index} 帧的主体透明面积突变，请重新生成")
             bounds = _bounds(alpha)
             union = (
                 bounds
@@ -209,7 +223,7 @@ def prepare_actor_clip(
             ],
             label="透明主体视频编码",
         )
-    _verify_alpha(dst, width, height)
+    _verify_alpha(dst, width, height, len(mask_frames))
     if first_bounds is None or union is None:
         raise VideoProcessError("透明主体视频缺少主体边界")
     mask_dst.write_text(

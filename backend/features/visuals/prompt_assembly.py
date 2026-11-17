@@ -1,6 +1,12 @@
 """按冻结素材装配视频请求；角色表演由视频模型根据目标自行决定。"""
 
-from .prompts import SCENE_VIDEO_MOTION_TEMPLATE, VISUAL_VIDEO_LOOP, VISUAL_VIDEO_MOTION_TEMPLATE, VISUAL_VIDEO_ONCE
+from .prompts import (
+    ACTOR_VIDEO_BACKGROUND,
+    SCENE_VIDEO_MOTION_TEMPLATE,
+    VISUAL_VIDEO_LOOP,
+    VISUAL_VIDEO_MOTION_TEMPLATE,
+    VISUAL_VIDEO_ONCE,
+)
 from .schemas import ActorClipSource, CinematicSource, SceneMediaSource, VisualJobProgress
 
 _PERFORMANCE_EFFECTS = {
@@ -34,16 +40,22 @@ def video_generation_prompt(
     }
     if source.kind == "scene":
         return SCENE_VIDEO_MOTION_TEMPLATE.format(motion=progress.motion_prompt, **common)
+    required_props = progress.creation_plan.required_props if progress.creation_plan else None
+    props = "使用首帧已有的物品，保持这些物品与角色的真实接触，不引入额外物品。"
+    if source.kind == "actor" and required_props == []:
+        props = "角色使用自身动作完成活动，首帧中空着的手保持空着，原有穿戴和随身物品随角色自然运动。"
     # 旧检查点也可能保存逐部位脚本；角色视频始终从冻结目标装配，不转发该脚本。
     return VISUAL_VIDEO_MOTION_TEMPLATE.format(
+        background=ACTOR_VIDEO_BACKGROUND if source.kind == "actor" else "环境与光线沿用首帧。",
+        props=props,
         action=source.action.name,
         effect=source.action.motion_description,
         performance_role=_PERFORMANCE_EFFECTS[source.action.performance_role],
         motion_intensity=_MOTION_EFFECTS[source.action.motion_intensity],
         personality=source.persona.get("personality", "").strip() or "按参考角色自身的气质自然表现",
         requirements=source.requirements.strip() or "无",
-        required_props=("、".join(progress.creation_plan.required_props) or "无额外物品要求")
-        if progress.creation_plan
+        required_props=("、".join(required_props) or "无额外物品要求")
+        if required_props is not None
         else "以活动目标与起始图为准",
         newer_requirements="视频调整要求" if progress.customization_priority == "video" else "整体调整要求",
         **common,

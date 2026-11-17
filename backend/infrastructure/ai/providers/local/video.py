@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageOps
 
 from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers.base import (
@@ -32,8 +32,10 @@ logger = get_logger(__name__)
 _MAX_PROMPT_CHARS = 7000
 _MAX_REFERENCE_VIDEO_BYTES = 50 * 1024 * 1024
 _ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
-_RESOLUTION_SHORT_EDGE = {"512P": 352, "768P": 544}
-_H3_WIDESCREEN_SIZES = {"512P": (608, 352), "768P": (960, 544)}
+_ASPECT_RATIO_RANGE = (1 / 8, 8.0)
+_H3_WIDESCREEN_SIZES = {"512P": (896, 512), "768P": (1344, 768)}
+_UPSCALE_MODEL = "RealESRGAN_x2plus.pth"
+_DELIVERY_MAX_EDGE = 2048
 _UNET_PREFIXES = ("minimax_h3_fl2va_pruned_int8_convrot", "minimax_h3_fl2va")
 _CLIP_PREFIXES = ("qwen3vl_32b_minimax_h3_int8_convrot", "MiniMax-H3-TextEncoder")
 _VIDEO_VAE_PREFIXES = ("minimax_h3_video_vae",)
@@ -59,26 +61,54 @@ def _frames(duration: int) -> int:
 
 
 def _size(resolution: str, aspect_ratio: str) -> tuple[int, int]:
+    long_edge, short_edge = _H3_WIDESCREEN_SIZES[resolution]
+    ratio = _aspect_value(aspect_ratio)
+    height = min(short_edge / min(ratio, 1), long_edge / max(ratio, 1))
+    width, height = (max(32, round(value / 32) * 32) for value in (ratio * height, height))
+    return width, height
+
+
+def _aspect_value(aspect_ratio: str) -> float:
     try:
         ratio_w, ratio_h = (float(value) for value in aspect_ratio.split(":"))
     except (ValueError, AttributeError) as exc:
         raise ProviderError(f"local video_gen does not support aspect ratio {aspect_ratio!r}", status_code=400) from exc
     if not all(math.isfinite(value) and value > 0 for value in (ratio_w, ratio_h)):
         raise ProviderError(f"local video_gen does not support aspect ratio {aspect_ratio!r}", status_code=400)
-    if aspect_ratio == "16:9":
-        return _H3_WIDESCREEN_SIZES[resolution]
-    if aspect_ratio == "9:16":
-        width, height = _H3_WIDESCREEN_SIZES[resolution]
-        return height, width
+    ratio = ratio_w / ratio_h
+    lower, upper = _ASPECT_RATIO_RANGE
+    if not lower <= ratio <= upper:
+        raise ProviderError("local video_gen aspect ratio must be between 1:8 and 8:1", status_code=400)
+    return ratio
 
-    short_edge = _RESOLUTION_SHORT_EDGE[resolution]
-    scale = short_edge / min(ratio_w, ratio_h)
-    width, height = ratio_w * scale, ratio_h * scale
-    # H3 的 768p 工作流上限约为 1344×768；缩放后仍按 32 对齐。
-    scale = min(scale, 1344 / max(ratio_w, ratio_h), 768 / min(ratio_w, ratio_h))
-    width = max(32, round(ratio_w * scale / 32) * 32)
-    height = max(32, round(ratio_h * scale / 32) * 32)
-    return width, height
+
+def _add_upscale(nodes: dict[str, dict[str, Any]], width: int, height: int) -> None:
+    nodes["50"] = {"class_type": "UpscaleModelLoader", "inputs": {"model_name": _UPSCALE_MODEL}}
+    nodes["51"] = {
+        "class_type": "ImageUpscaleWithModel",
+        "inputs": {"image": ["12", 0], "upscale_model": ["50", 0]},
+    }
+    output = "51"
+    scale = _DELIVERY_MAX_EDGE / max(width, height)
+    if scale < 2:
+        nodes["52"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": [output, 0],
+                "upscale_method": "lanczos",
+                "width": round(width * scale / 2) * 2,
+                "height": round(height * scale / 2) * 2,
+                "crop": "disabled",
+            },
+        }
+        output = "52"
+    nodes["14"]["inputs"]["images"] = [output, 0]
+    # 在透明处理前保留颜色与边缘细节，避免对同一视频做低质量的有损中转。
+    save = nodes["15"]["inputs"]
+    del save["codec"]
+    save.update(
+        {"format": "mp4", "format.codec": "h264", "format.codec.encoding": "re-encode", "format.codec.encoding.crf": 16}
+    )
 
 
 def _view_url(base_url: str, item: dict[str, Any]) -> str | None:
@@ -93,17 +123,14 @@ def _view_url(base_url: str, item: dict[str, Any]) -> str | None:
 
 
 async def _adaptive_request(req: VideoGenRequest) -> VideoGenRequest:
-    """把视觉链的 adaptive 请求映射到 H3 工作流支持的最近画幅。"""
+    """从首帧读取自适应画幅，原生尺寸由 H3 的网格对齐。"""
     if req.aspect_ratio is not None or not req.first_frame_image:
         return req if req.aspect_ratio is not None else replace(req, aspect_ratio="16:9")
     data, _mime = await resolve_reference_bytes(req.first_frame_image)
     with Image.open(BytesIO(data)) as image:
+        ImageOps.exif_transpose(image, in_place=True)
         width, height = image.size
-    ratio = width / height
-    selected = min(
-        _ASPECT_RATIOS, key=lambda value: abs(float(value.split(":")[0]) / float(value.split(":")[1]) - ratio)
-    )
-    return replace(req, aspect_ratio=selected)
+    return replace(req, aspect_ratio=f"{width}:{height}")
 
 
 class LocalVideoGenProvider(VideoGenProvider):
@@ -113,7 +140,7 @@ class LocalVideoGenProvider(VideoGenProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
     requires_api_key: ClassVar[bool] = False
     durations: ClassVar[tuple[int, ...]] = tuple(range(4, 16))
-    resolutions: ClassVar[tuple[str, ...]] = tuple(_RESOLUTION_SHORT_EDGE)
+    resolutions: ClassVar[tuple[str, ...]] = tuple(_H3_WIDESCREEN_SIZES)
     supports_first_frame: ClassVar[bool] = True
     supports_loop_frames: ClassVar[bool] = True
     supports_reference_images: ClassVar[bool] = True
@@ -122,7 +149,7 @@ class LocalVideoGenProvider(VideoGenProvider):
     max_reference_videos: ClassVar[int | None] = 3
     supports_adaptive_aspect_ratio: ClassVar[bool] = True
     aspect_ratios: ClassVar[tuple[str, ...]] = _ASPECT_RATIOS
-    adaptive_aspect_ratio_range: ClassVar[tuple[float, float]] = (1 / 8, 8.0)
+    adaptive_aspect_ratio_range: ClassVar[tuple[float, float]] = _ASPECT_RATIO_RANGE
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -133,10 +160,16 @@ class LocalVideoGenProvider(VideoGenProvider):
         response = await self._client.get(f"/object_info/{node_name}")
         response.raise_for_status()
         required = response.json().get(node_name, {}).get("input", {}).get("required", {})
-        options = required.get(field, [[]])
-        return (
-            [name for name in options[0] if isinstance(name, str)] if options and isinstance(options[0], list) else []
-        )
+        spec = required.get(field, [])
+        if not spec:
+            return []
+        if isinstance(spec[0], list):
+            options = spec[0]
+        elif len(spec) > 1 and isinstance(spec[1], dict):
+            options = spec[1].get("options", [])
+        else:
+            options = []
+        return [name for name in options if isinstance(name, str)]
 
     async def _resolve_model_files(self) -> tuple[str, str, str, str, str, int]:
         if self._model_files is not None:
@@ -185,7 +218,7 @@ class LocalVideoGenProvider(VideoGenProvider):
 
     def resolution_size(self, resolution: str, aspect_ratio: str) -> tuple[int, int]:
         native = self.native_resolution(resolution)
-        if native is None or aspect_ratio not in self.aspect_ratios:
+        if native is None:
             raise ValueError(f"local video_gen does not support {resolution!r} at {aspect_ratio!r}")
         return _size(native, aspect_ratio)
 
@@ -205,8 +238,8 @@ class LocalVideoGenProvider(VideoGenProvider):
             raise ProviderError("local video_gen duration must be between 4 and 15 seconds", status_code=400)
         if self.native_resolution(req.resolution) is None:
             raise ProviderError(f"local video_gen resolution must be one of {self.resolutions}", status_code=400)
-        if req.aspect_ratio is not None and req.aspect_ratio not in self.aspect_ratios:
-            raise ProviderError(f"local video_gen aspect ratio must be one of {self.aspect_ratios}", status_code=400)
+        if req.aspect_ratio is not None:
+            _aspect_value(req.aspect_ratio)
 
     async def _upload_image(self, reference: str) -> str:
         data, mime = await resolve_reference_bytes(reference)
@@ -263,6 +296,7 @@ class LocalVideoGenProvider(VideoGenProvider):
         last_frame_name: str | None = None,
         reference_image_names: tuple[str, ...] = (),
         reference_video_names: tuple[str, ...] = (),
+        upscale: bool = False,
     ) -> dict[str, dict[str, Any]]:
         unet, clip, video_vae, audio_vae, lora, steps = files
         width, height = self.resolution_size(req.resolution, req.aspect_ratio or "16:9")
@@ -355,12 +389,15 @@ class LocalVideoGenProvider(VideoGenProvider):
         if last_frame_name:
             nodes["17"] = {"class_type": "LoadImage", "inputs": {"image": last_frame_name}}
             nodes["6"]["inputs"]["last_frame"] = ["17", 0]
+        if upscale:
+            _add_upscale(nodes, width, height)
         return nodes
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         req = await _adaptive_request(req)
         self.validate_request(req)
         files = await self._resolve_model_files()
+        upscale = _UPSCALE_MODEL in await self._loader_options("UpscaleModelLoader", "model_name")
         uploaded: dict[str, str] = {}
         for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images):
             if reference and reference not in uploaded:
@@ -383,6 +420,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                         last_frame_name=last_frame_name,
                         reference_image_names=reference_image_names,
                         reference_video_names=tuple(reference_video_names),
+                        upscale=upscale,
                     ),
                     "prompt_id": prompt_id,
                 },

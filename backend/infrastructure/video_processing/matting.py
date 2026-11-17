@@ -52,9 +52,33 @@ class ForegroundMatte:
         return Image.fromarray(np.round(rgba * 255).astype(np.uint8))
 
 
-def refine_foreground_edges(image: Image.Image, segmented: Image.Image) -> Image.Image:
+def keep_screen_foreground(image: Image.Image, segmented: Image.Image) -> Image.Image:
+    """在中性幕布前，把分割漏掉的有色轮廓交给边缘估计。"""
+    size = tuple(max(2, round(edge * min(1, 256 / max(image.size)))) for edge in image.size)
+    rgb = np.asarray(image.resize(size, Image.Resampling.BILINEAR), dtype=np.int16)
+    strip = max(1, size[0] // 20)
+    border = np.concatenate((rgb[:, :strip], rgb[:, -strip:]), axis=1).reshape(-1, 3)
+    low, high = np.quantile(border.mean(axis=1), (0.05, 0.95))
+    if high - low > 90 or np.quantile(np.ptp(border, axis=1), 0.9) > 28:
+        raise VideoProcessError("主体视频出现了复杂布景，无法可靠分离人物，请重新生成")
+    screen_color = np.median(border, axis=0)
+    chroma = np.ptp(rgb - screen_color, axis=2)
+    cutoff = max(16.0, float(np.quantile(np.ptp(border - screen_color, axis=1), 0.95)) + 8)
+    alpha = segmented.getchannel("A")
+    near_subject = alpha.resize(size, Image.Resampling.BILINEAR).filter(ImageFilter.MaxFilter(21))
+    uncertain = (chroma > cutoff) & (np.asarray(near_subject) > 64)
+    # 只扩展三分图的未知区域，因为颜色差异无法直接给出袖纱、发丝等半透明像素的 alpha。
+    support = Image.fromarray(uncertain.astype(np.uint8) * 40).resize(image.size, Image.Resampling.BILINEAR)
+    result = segmented.copy()
+    result.putalpha(Image.fromarray(np.maximum(np.asarray(alpha), np.asarray(support))))
+    return result
+
+
+def refine_foreground_edges(
+    image: Image.Image, segmented: Image.Image, *, max_pixels: int = _IMAGE_MATTING_MAX_PIXELS
+) -> Image.Image:
     """分割只提供已知区域；边缘另估计覆盖率与未混入背景的前景颜色。"""
-    # 首次导入会编译数值内核，只在图片处理线程中加载，避免阻塞服务启动。
+    # 首次导入会编译数值内核，只在媒体处理线程中加载，避免阻塞服务启动。
     from pymatting import estimate_alpha_cf, estimate_foreground_ml
 
     mask = segmented.getchannel("A")
@@ -71,7 +95,7 @@ def refine_foreground_edges(image: Image.Image, segmented: Image.Image) -> Image
     )
     source = image.convert("RGB").crop(bounds)
     region_mask = mask.crop(bounds)
-    scale = min(1.0, math.sqrt(_IMAGE_MATTING_MAX_PIXELS / (source.width * source.height)))
+    scale = min(1.0, math.sqrt(max_pixels / (source.width * source.height)))
     size = (int(source.width * scale), int(source.height * scale))
     if min(size) < 3:
         raise VideoProcessError("角色图片过于细长或尺寸过小，无法可靠处理透明边缘")
