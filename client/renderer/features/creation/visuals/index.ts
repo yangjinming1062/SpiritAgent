@@ -11,6 +11,7 @@ export {
   recordStageMediaFailure,
   retryStageMedia
 } from './director'
+export { enqueueGesture } from './gestures'
 export {
   clearVisualDetail,
   commandVisualJob,

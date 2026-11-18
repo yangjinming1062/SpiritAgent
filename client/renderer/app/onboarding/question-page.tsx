@@ -2,25 +2,22 @@ import { type KeyboardEvent, type RefObject, useId } from 'react'
 
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
-import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, DatePicker, INPUT_CLASS } from '@/ui'
+import { BTN_GHOST, Chip, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/ui'
 
 import { submitOnEnter } from './keyboard'
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
-import type { AnswerKind, Question } from './onboarding-questions'
+import type { Question } from './onboarding-questions'
 import styles from './onboarding.module.css'
 
 interface QuestionPageProps {
   question: Question
   qIndex: number
   questionCount: number
-  lockedLabel?: string
   input: string
-  answerKind: AnswerKind | null
   hint: string | null
   inputRef: RefObject<HTMLInputElement | null>
   textareaRef: RefObject<HTMLTextAreaElement | null>
   setInput: (value: string) => void
-  setAnswerKind: (kind: AnswerKind | null) => void
   canGoBack: boolean
   onBack: () => void
   onSend: () => void
@@ -31,14 +28,11 @@ export function QuestionPage({
   question,
   qIndex,
   questionCount,
-  lockedLabel,
   input,
-  answerKind,
   hint,
   inputRef,
   textareaRef,
   setInput,
-  setAnswerKind,
   canGoBack,
   onBack,
   onSend,
@@ -50,7 +44,10 @@ export function QuestionPage({
 
   const nextLabel = question.key === 'voice' ? t.nextVoice : qIndex === questionCount - 1 ? t.nextConfirm : t.next
 
-  const descriptionIds = [hint && `${id}-error`, lockedLabel && `${id}-locked`].filter(Boolean).join(' ') || undefined
+  const field = t.fields[question.key]
+  const required = question.key !== 'voice'
+  const species = question.key === 'biological_type'
+  const descriptionIds = [hint && `${id}-error`, species && `${id}-locked`].filter(Boolean).join(' ') || undefined
 
   const focusInput = (): void => {
     ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
@@ -77,14 +74,14 @@ export function QuestionPage({
               </button>
             )}
             <div className={styles.forward}>
-              {!question.requiredHint && (
+              {!required && (
                 <button className={BTN_GHOST} onClick={onSkip} type="button">
                   {t.skip}
                 </button>
               )}
               <button
                 className={ONBOARDING_PRIMARY_BUTTON}
-                disabled={Boolean(question.requiredHint && !input.trim())}
+                disabled={Boolean(required && !input.trim())}
                 onClick={onSend}
                 type="button"
               >
@@ -101,7 +98,7 @@ export function QuestionPage({
             <span>{t.questionProgress(qIndex + 1, questionCount)}</span>
           </div>
           <h2 className={styles.questionTitle} id={`${id}-title`}>
-            {question.text}
+            {field.label}
           </h2>
         </div>
         <div className={styles.answer}>
@@ -112,37 +109,9 @@ export function QuestionPage({
               ))}
             </div>
           )}
-          {question.kinds && (
-            <div className={styles.options}>
-              {question.kinds.map(k => (
-                <Chip
-                  active={answerKind?.chip === k.chip}
-                  key={k.chip}
-                  label={k.chip}
-                  onClick={() => {
-                    setAnswerKind(k)
-                    setInput('')
-                    focusInput()
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {answerKind && (
-            <>
-              <p className="text-xs text-body">{answerKind.label}</p>
-              {answerKind.values && (
-                <div className={styles.options}>
-                  {answerKind.values.map(v => (
-                    <Chip active={input === v} key={v} label={v} onClick={() => selectPreset(v)} />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {lockedLabel && (
+          {species && (
             <p className="text-xs leading-relaxed text-body" id={`${id}-locked`}>
-              {t.lockedHint(lockedLabel)}
+              {t.lockedHint(field.label)}
             </p>
           )}
           {question.multiline ? (
@@ -154,16 +123,9 @@ export function QuestionPage({
               maxLength={question.max}
               onChange={e => setInput(e.target.value)}
               onKeyDown={onAnswerKeyDown}
-              placeholder={question.placeholder}
+              placeholder={field.placeholder}
               ref={textareaRef}
               rows={3}
-              value={input}
-            />
-          ) : question.date ? (
-            <DatePicker
-              clearLabel={t.removeReference}
-              onChange={setInput}
-              placeholder={question.placeholder}
               value={input}
             />
           ) : (
@@ -175,7 +137,7 @@ export function QuestionPage({
               maxLength={question.max}
               onChange={e => setInput(e.target.value)}
               onKeyDown={onAnswerKeyDown}
-              placeholder={answerKind?.placeholder ?? question.placeholder}
+              placeholder={field.placeholder}
               ref={inputRef}
               value={input}
             />

@@ -132,7 +132,8 @@ class EntryComment(ModelBase, TimestampMixin):
         CheckConstraint("role IN ('user', 'companion')", name="entry_comment_role"),
         CheckConstraint("(role = 'companion') = (reply_status = 'none')", name="entry_comment_delivery"),
         CheckConstraint(
-            "reply_status IN ('none', 'pending', 'running', 'completed', 'failed')", name="entry_comment_state"
+            "reply_status IN ('none', 'pending', 'running', 'deferred', 'completed', 'silent', 'failed')",
+            name="entry_comment_state",
         ),
         CheckConstraint("reply_attempts >= 0", name="entry_comment_attempts"),
         Index("ix_entry_comments_order", "post_id", "created_at", "id"),
@@ -140,7 +141,7 @@ class EntryComment(ModelBase, TimestampMixin):
             "ix_entry_comments_pending",
             "user_id",
             "post_id",
-            postgresql_where=text("role = 'user' AND reply_status IN ('pending', 'running')"),
+            postgresql_where=text("role = 'user' AND reply_status IN ('pending', 'running', 'deferred')"),
         ),
     )
 
@@ -152,3 +153,5 @@ class EntryComment(ModelBase, TimestampMixin):
     reply_status: Mapped[str] = mapped_column(String(16), default="none", server_default=text("'none'"))
     reply_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
     reply_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    reply_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply_followup: Mapped[str | None] = mapped_column(Text)

@@ -14,7 +14,6 @@ import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
 import { setSpriteState } from './companion-store'
-import { handleDragEndInteraction } from './reactions/reaction-audio'
 import { useMediaPixelHitTest } from './rendering/media-hit-test'
 import {
   $expressionBoost,
@@ -40,6 +39,7 @@ import { emitVfx, SpriteVfxOverlay } from './vfx'
 interface SpriteStageProps {
   children: ReactNode
   onTap?: () => void
+  onDragReleased?: () => void
   onDoubleTap?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
   hidden?: boolean
@@ -62,6 +62,7 @@ export const SPRITE_REGION_ID = 'sprite-stage'
 export function SpriteStage({
   children,
   onTap,
+  onDragReleased,
   onDoubleTap,
   onContextMenu,
   hidden = false,
@@ -123,67 +124,70 @@ export function SpriteStage({
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest, windowId)
   useSpriteBodyGesture(bodyRef)
 
-  const finishGesture = useCallback((cancelled: boolean) => {
-    const drag = dragRef.current
-    dragRef.current = null
-    $spritePointerHeld.set(false)
+  const finishGesture = useCallback(
+    (cancelled: boolean) => {
+      const drag = dragRef.current
+      dragRef.current = null
+      $spritePointerHeld.set(false)
 
-    if (longPressTimerRef.current !== null) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
-    }
+      if (longPressTimerRef.current !== null) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
 
-    if (dragRafRef.current !== null) {
-      cancelAnimationFrame(dragRafRef.current)
-      dragRafRef.current = null
-    }
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
 
-    if (cancelled && tapTimerRef.current !== null) {
-      clearTimeout(tapTimerRef.current)
-      tapTimerRef.current = null
-    }
+      if (cancelled && tapTimerRef.current !== null) {
+        clearTimeout(tapTimerRef.current)
+        tapTimerRef.current = null
+      }
 
-    if (cancelled) {
-      lastTapRef.current = 0
-    }
+      if (cancelled) {
+        lastTapRef.current = 0
+      }
 
-    if (!drag) {
+      if (!drag) {
+        pendingPosRef.current = null
+
+        return null
+      }
+
+      lastDragPointRef.current = drag.moved ? { x: drag.lastX, y: drag.lastY } : null
+
+      lastDragPositionRef.current = drag.moved
+        ? { x: drag.originX + drag.lastX - drag.startX, y: drag.originY + drag.lastY - drag.startY }
+        : null
+
+      if (drag.moved) {
+        if (pendingPosRef.current) {
+          updateDragPosition(pendingPosRef.current)
+        }
+
+        endDragAt(cancelled ? $spatialPos.get() : (lastDragPositionRef.current ?? $spatialPos.get()), cancelled)
+      }
+
       pendingPosRef.current = null
 
-      return null
-    }
-
-    lastDragPointRef.current = drag.moved ? { x: drag.lastX, y: drag.lastY } : null
-
-    lastDragPositionRef.current = drag.moved
-      ? { x: drag.originX + drag.lastX - drag.startX, y: drag.originY + drag.lastY - drag.startY }
-      : null
-
-    if (drag.moved) {
-      if (pendingPosRef.current) {
-        updateDragPosition(pendingPosRef.current)
+      // 先清空手势再释放 DOM 捕获，避免 lostpointercapture 重复提交。
+      try {
+        if (drag.target.hasPointerCapture(drag.pointerId)) {
+          drag.target.releasePointerCapture(drag.pointerId)
+        }
+      } finally {
+        drag.releaseCapture()
       }
 
-      endDragAt(cancelled ? $spatialPos.get() : (lastDragPositionRef.current ?? $spatialPos.get()), cancelled)
-    }
-
-    pendingPosRef.current = null
-
-    // 先清空手势再释放 DOM 捕获，避免 lostpointercapture 重复提交。
-    try {
-      if (drag.target.hasPointerCapture(drag.pointerId)) {
-        drag.target.releasePointerCapture(drag.pointerId)
+      if (drag.moved && !cancelled) {
+        onDragReleased?.()
       }
-    } finally {
-      drag.releaseCapture()
-    }
 
-    if (drag.moved && !cancelled) {
-      handleDragEndInteraction()
-    }
-
-    return drag
-  }, [])
+      return drag
+    },
+    [onDragReleased]
+  )
 
   useEffect(() => {
     const cancel = () => {

@@ -190,7 +190,7 @@ async def _creation_input(user_id: int) -> dict:
     types = await available_types(user_id)
     if not types:
         raise PostBlockedError("发布开关已关闭")
-    ctx = await load_post_prompt_context(user_id)
+    ctx = await load_post_prompt_context(user_id, publication=True)
     async with SESSION_LOCAL() as db:
         recent = await recent_posts(db, user_id, since=ctx.now - timedelta(days=3), until=ctx.now)
         environment = scene_environment(await get_scene_state(db, user_id))
@@ -215,6 +215,14 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         raise PostError("模型配置不可用")
     language = payload["output_language"]
     instructions = render_post_instructions(POST_PUBLISH_INSTRUCTIONS, language)
+    instructions += (
+        "\nselected_life_excerpts 是你先前明确选给动态的摘选。可以择一继续表达，保留其发生时间、范围和事实性质。"
+        "近期用户发言只用于相处背景，私人交流、关系理解及记忆不直接成为动态素材。"
+        if language == "zh"
+        else "\nThe selected_life_excerpts are excerpts you explicitly chose for future posts. You may use one if it still fits, "
+        "preserving its date, scope and factual status. Recent user messages inform the relationship. Keep private exchanges, "
+        "relationship interpretations and memories out of the post itself."
+    )
     creation_payload = payload
 
     def parse_output(value: Any) -> PostPlan | None:

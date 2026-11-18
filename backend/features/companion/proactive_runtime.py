@@ -2,14 +2,15 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 
 from infrastructure.config import SETTINGS
 from pydantic import BaseModel, ConfigDict
 from runtime.presentation import PresentationMode
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.companion.models import Persona
+from features.companion.intent_models import CompanionIntent
 
 PRESENCE_TTL_SECONDS: int = 90
 _USER_PROACTIVE_STATE: dict[int, "UserProactiveRecord"] = {}
@@ -18,6 +19,8 @@ _USER_PROACTIVE_STATE: dict[int, "UserProactiveRecord"] = {}
 @dataclass
 class UserProactiveRecord:
     last_outreach_ts: float = 0.0
+    last_reaction_ts: float = 0.0
+    reaction_pending: bool = False
     last_user_contact_ts: float = 0.0
     contact_revision: int = 0
     busy_count: int = 0
@@ -68,6 +71,20 @@ def note_outreach_throttle(user_id: int) -> None:
     get_user_proactive_record(user_id).last_outreach_ts = time.monotonic()
 
 
+async def has_recent_contact_review(db: AsyncSession, user_id: int, since: datetime) -> bool:
+    return bool(
+        await db.scalar(
+            select(
+                exists().where(
+                    CompanionIntent.user_id == user_id,
+                    CompanionIntent.source_kind == "checkin",
+                    CompanionIntent.created_at >= since,
+                )
+            )
+        )
+    )
+
+
 def observe_companion_presence(user_id: int, available: bool, *, presentation_mode: PresentationMode | None) -> bool:
     rec = get_user_proactive_record(user_id)
     now = time.monotonic()
@@ -95,9 +112,3 @@ def can_start_companion_turn(user_id: int) -> bool:
             rec.last_user_contact_ts == 0 or now - rec.last_user_contact_ts >= SETTINGS.companion_contact_quiet_seconds
         )
     )
-
-
-async def get_personality_tags(db: AsyncSession, user_id: int) -> list[str]:
-    raw = (await db.execute(select(Persona.personality_tags_json).where(Persona.user_id == user_id))).scalar()
-    parsed = raw or []
-    return [tag for tag in parsed if isinstance(tag, str)] if isinstance(parsed, list) else []

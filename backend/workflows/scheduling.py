@@ -25,13 +25,13 @@ from features.companion.intents import claim_companion_intent, enqueue_companion
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.proactive_runtime import (
     can_start_companion_turn,
-    get_personality_tags,
     get_user_proactive_record,
+    has_recent_contact_review,
     note_outreach_throttle,
 )
 from features.companion.prompts import CHECK_IN_INTENT_TEXTS
 from features.companion.queries import complete_user_ids
-from features.companion.rhythm import due_rhythm_users
+from features.companion.rhythm import due_rhythm_users, read_rhythm
 from features.configuration.settings.queries import timezone_settings
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import companion_conversation_users
@@ -69,8 +69,7 @@ from workflows.nightly.window import in_nightly_window
 
 logger = get_logger(__name__)
 
-_IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
-_IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——沉默结束意图后的再触发安全网
+_CONTACT_REVIEW_INTERVAL_SECONDS = 3600
 # 每个 tick 最多推进 200 个到期 job；按当前时间计算下一次，停摆期间不逐次回追。
 _MAX_DUE_PER_TICK = 200
 
@@ -282,61 +281,51 @@ async def _advance_due_jobs(due_jobs: list[DueJob], now: datetime) -> None:
 async def _discover_companion_waits() -> list[ScheduledWork]:
     return [
         ScheduledWork("claim", partial(claim_companion_intent, user_id), user_id)
-        for user_id in MANAGER.local_user_ids()
+        for user_id in MANAGER.event_user_ids()
     ]
 
 
-def _outreach_eligible_now(user_id: int) -> tuple[bool, int]:
-    """先检查纯内存条件，命中后才读库；返回是否继续及被冷落分钟数。"""
-    cur_time = time.monotonic()
+async def _consider_contact(user_id: int) -> None:
+    """开放一次低频判断机会，是否联系由主动回合决定。"""
+    now = time.monotonic()
     rec = get_user_proactive_record(user_id)
-    if not can_start_companion_turn(user_id) or rec.last_user_contact_ts == 0.0:
-        return False, 0
-    ignored = cur_time - rec.last_user_contact_ts
-    if ignored < _IGNORED_OUTREACH_MIN_IGNORED_SECONDS:
-        return False, 0
-    if cur_time - rec.last_outreach_ts < _IGNORED_OUTREACH_MIN_SPACING_SECONDS:
-        return False, 0
-    return True, round(ignored / 60)
-
-
-async def _maybe_run_ignored_outreach(user_id: int) -> None:
-    """有可分享发现时低频考虑联系；无发现时保留常规档的性格问候。"""
-    eligible, ignored_minutes = _outreach_eligible_now(user_id)
-    if not eligible:
+    if not can_start_companion_turn(user_id) or (
+        rec.last_outreach_ts > 0 and now - rec.last_outreach_ts < _CONTACT_REVIEW_INTERVAL_SECONDS
+    ):
         return
-    # 档位、等待意图与性格标签的读库放在所有内存条件之后。
-    async with session_scope() as db:
-        tier = await get_disturbance_tier(user_id, db=db)
-        if tier == "still" or await has_pending_companion_intent(db, user_id):
-            return
-        has_topics = await has_unshared_topics(db, MemoryScope(user_id, COMPANION_PRESET_ID), utc_now())
-        if not has_topics and (tier != "normal" or "粘人" not in await get_personality_tags(db, user_id)):
-            return
-        language = resolve_language(await get_user_setting(db, user_id, "language"))
-
-    prompt = json.dumps(
-        {
-            "kind": "low_frequency_check_in",
-            "minutes_since_last_user_interaction": ignored_minutes,
-            "has_unshared_topics": has_topics,
-            "intent": resolve_prompt_text(CHECK_IN_INTENT_TEXTS, language),
-        },
-        ensure_ascii=False,
-    )
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return
-        note_outreach_throttle(user_id)
         async with session_scope() as db:
+            if (
+                await get_disturbance_tier(user_id, db=db) == "still"
+                or await has_pending_companion_intent(db, user_id)
+                or user_id not in await onboarded_user_ids(db, (user_id,))
+                or (await read_rhythm(db, user_id)).state == "asleep"
+            ):
+                return
+            checked_since = utc_now() - timedelta(seconds=_CONTACT_REVIEW_INTERVAL_SECONDS)
+            if await has_recent_contact_review(db, user_id, checked_since):
+                note_outreach_throttle(user_id)
+                return
+            language = resolve_language(await get_user_setting(db, user_id, "language"))
+            has_topics = await has_unshared_topics(db, MemoryScope(user_id, COMPANION_PRESET_ID), utc_now())
+            prompt = json.dumps(
+                {
+                    "kind": "contact_opportunity",
+                    "has_unshared_topics": has_topics,
+                    "intent": resolve_prompt_text(CHECK_IN_INTENT_TEXTS, language),
+                },
+                ensure_ascii=False,
+            )
             await enqueue_companion_intent(db, user_id, prompt, source_kind="checkin")
             await db.commit()
-    logger.info("cron: ignored-outreach turn requested", extra={"user_id": user_id, "ignored_minutes": ignored_minutes})
+        note_outreach_throttle(user_id)
 
 
-async def _discover_ignored_outreach() -> list[ScheduledWork]:
+async def _discover_contact_reviews() -> list[ScheduledWork]:
     return [
-        ScheduledWork("consider", partial(_maybe_run_ignored_outreach, user_id), user_id)
+        ScheduledWork("consider", partial(_consider_contact, user_id), user_id)
         for user_id in MANAGER.local_user_ids()
         if not is_user_in_maintenance(user_id)
     ]
@@ -349,7 +338,7 @@ async def _discover_gc() -> list[ScheduledWork]:
 async def run_tick() -> None:
     """登记周期扫描并派发到期 job；扫描在后台执行，不阻塞 tick。"""
     _SCANS.every("companion_waits", interval=0, discover=_discover_companion_waits)
-    _SCANS.every("ignored_outreach", interval=0, discover=_discover_ignored_outreach)
+    _SCANS.every("contact_reviews", interval=0, discover=_discover_contact_reviews)
     _SCANS.every("life_state", interval=60, discover=_discover_life_work)
     _SCANS.every(
         "nightly_activity", interval=SETTINGS.nightly_scan_interval_seconds, discover=_discover_nightly_activity

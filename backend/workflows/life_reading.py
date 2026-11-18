@@ -115,7 +115,7 @@ async def read_content(user_id: int, step: LifeStepView) -> ReadingResult:
         await save_checkpoint(user_id, step_id, sources=[item.model_dump(mode="json") for item in sources])
     if saved.get("notes"):
         return ReadingResult(sources=sources, notes=saved["notes"])
-    context = await load_companion_prompt_context(user_id)
+    context = await load_companion_prompt_context(user_id, memory_query=action.purpose)
     if context is None:
         raise ValueError("伙伴资料尚未就绪，不能整理阅读笔记")
     pursuit = None
@@ -133,10 +133,11 @@ async def read_content(user_id: int, step: LifeStepView) -> ReadingResult:
         {
             "persona": context.persona_extras,
             "current_time": context.current_time,
-            "memories": context.memories_block,
+            "memories": context.memory.model_dump(mode="json"),
             "life_context": life_content_payload(
                 {
                     "state": context.life_context.prompt_payload()["state"],
+                    "personal_growth": context.life_context.prompt_payload()["personal_growth"],
                     "pursuit": pursuit.prompt_payload() if pursuit is not None else None,
                     "events": [item.prompt_payload() for item in events],
                 }

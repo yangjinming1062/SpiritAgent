@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from infrastructure.api_ids import ResourceId
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, TypeAdapter
 
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE, ACTION_MOTION_INTENSITY_DESCRIPTION
 from features.action_library.schemas import ActionAssetDesign
@@ -146,6 +146,10 @@ class NextAction(ActionInput):
         default=None, min_length=1, max_length=1000, description="伙伴面向用户的第一人称计划；不代表已经执行"
     )
     action: LifeAction
+    add_to_user_library: StrictBool = Field(
+        default=False,
+        description="自主制作造型、环境、动作或影像时，明确选择把成品加入用户可见素材库",
+    )
     not_before: AwareDatetime | None = Field(
         default=None, description="最早执行时刻，须包含时区；省略表示当前条件允许即可执行"
     )

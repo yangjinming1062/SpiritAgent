@@ -17,7 +17,7 @@ import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import { ONBOARDING_PERSONA_FIELDS, type OnboardingPersonaConflict } from './onboarding-draft'
 import styles from './onboarding.module.css'
 
-type BackgroundField = 'age' | 'occupation' | 'background'
+type BackgroundField = 'gender' | 'personality' | 'relationship' | 'age' | 'occupation' | 'background'
 
 export function OnboardingConflictNotice({
   conflict,
@@ -94,6 +94,9 @@ export function BackgroundPage({
   }, [])
 
   const fields: { key: BackgroundField; label: string; placeholder: string }[] = [
+    { key: 'gender', label: t.genderLabel, placeholder: '' },
+    { key: 'personality', label: t.personalityLabel, placeholder: t.personalityPlaceholder },
+    { key: 'relationship', label: t.relationshipLabel, placeholder: t.relationshipPlaceholder },
     { key: 'age', label: t.ageLabel, placeholder: t.agePlaceholder },
     { key: 'occupation', label: t.occupationLabel, placeholder: t.occupationPlaceholder },
     { key: 'background', label: t.backgroundLabel, placeholder: t.backgroundPlaceholder }
@@ -136,6 +139,7 @@ export function BackgroundPage({
         {fields.map(({ key, label, placeholder }, index) => (
           <label className="block space-y-1" key={key}>
             <span className={FIELD_LABEL}>{label}</span>
+            {key === 'gender' && <p className={HINT_TEXT}>{strings.onboarding.lockedHint(t.genderLabel)}</p>}
             <textarea
               className={INPUT_CLASS}
               disabled={busy}

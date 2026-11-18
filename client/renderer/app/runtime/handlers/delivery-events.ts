@@ -30,8 +30,9 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
 
       const { preview: displayText, pending: pendingText } = pendingReplyText(undefined, bubbles)
 
-      // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
-      setCompanionSessionId(payload.session_id)
+      if (payload.is_main) {
+        setCompanionSessionId(payload.session_id)
+      }
 
       if (pendingText) {
         rememberPendingMessage(payload.session_id, pendingText)

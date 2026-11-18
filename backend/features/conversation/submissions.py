@@ -1,6 +1,6 @@
 """用户消息提交的持久幂等账本，连接恢复不重新执行已受理操作。"""
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -208,7 +208,6 @@ async def persist_submission_inputs(
     *,
     persisted_message_id: int | None = None,
     call_record_id: int | None = None,
-    on_accept: Callable[[AsyncSession], Awaitable[None]] | None = None,
 ) -> list[int]:
     """整批输入及受理关联共用短事务；重复调用复用已受理的完整消息序列。"""
     if not messages or (persisted_message_id is not None and len(messages) != 1):
@@ -271,8 +270,6 @@ async def persist_submission_inputs(
         else:
             identifiers = [persisted_message_id]
         await replace_submission_messages(db, submission, identifiers)
-        if on_accept is not None:
-            await on_accept(db)
         await commit_conversation(db)
     return identifiers
 
@@ -290,6 +287,8 @@ async def record_submission_state(
         )
         if row is None:
             return status, error
+        if row.status in ("silent", "deferred"):
+            return row.status, row.error
         if row.result_message_id is not None:
             values.update(status="completed", error=None)
         if message_ids is not None:
@@ -299,6 +298,25 @@ async def record_submission_state(
             setattr(row, key, value)
         await commit_conversation(db)
         return row.status, row.error
+
+
+async def settle_no_reply_in_session(
+    db: AsyncSession, user_id: int, conversation_id: int, request_id: str, status: str
+) -> None:
+    row = await db.scalar(
+        select(PromptSubmission)
+        .options(defer(PromptSubmission.message_ids, raiseload=True))
+        .where(
+            PromptSubmission.user_id == user_id,
+            PromptSubmission.conversation_id == conversation_id,
+            PromptSubmission.request_id == request_id,
+        )
+        .with_for_update()
+    )
+    if row is None or row.status != "running" or row.result_message_id is not None:
+        raise LookupError("Companion decision no longer belongs to an active submission")
+    row.status = status
+    row.error = None
 
 
 async def recover_interrupted_submissions() -> None:

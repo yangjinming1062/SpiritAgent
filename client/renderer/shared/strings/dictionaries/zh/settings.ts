@@ -192,7 +192,7 @@ export const settings = {
       tierHint: '只约束伙伴的主动行为，你发起的交互不受限。',
       tierAriaLabel: '打扰档位',
       tiers: {
-        still: { label: '只回应我', hint: '等你来聊天，平时安静陪着你' },
+        still: { label: '不主动联系', hint: '暂停主动联系，仍可发消息或拨打通话' },
         normal: { label: '偶尔主动问候', hint: '用文字轻轻打个招呼，保持在原处' },
         autonomous: { label: '自由互动', hint: '可以主动说话并与你自然互动' }
       },
@@ -290,7 +290,6 @@ export const settings = {
       profileAdditionalDetail: '补充资料',
       profileLatestContent: '其他设备保存的最新内容：',
       profileConflictHint: '资料已在其他设备修改，请核对最新内容：',
-      personalityRequired: '请填写性格。',
       fullbodyReference: {
         title: '伙伴的全身形象',
         hint: 'AI 会根据刚才确认的头像准备全身形象。满意后继续选择声音。',

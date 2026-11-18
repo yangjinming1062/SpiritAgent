@@ -12,13 +12,13 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
 from features.life.context import read_life_context_in_session
-from features.life.trajectory import has_trajectory_in_window
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
+from features.memory.memory_learning import evidence_fingerprint, forgotten_source_fingerprints, memory_versions
 from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
 from features.memory.memory_review import review_memories
-from features.memory.memory_store import schedule_embedding_rebuild
+from features.memory.memory_store import memory_write_lock, schedule_embedding_rebuild
 from features.posts.store import collect_post_interactions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -133,6 +133,7 @@ async def _stage_4_reflection(
     log_id: int,
     *,
     user_timezone: str,
+    fact_versions: dict[int, int],
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> bool:
     async with session_scope() as db:
@@ -180,6 +181,9 @@ async def _stage_4_reflection(
             await db.commit()
         return False
     async with session_scope() as db:
+        await memory_write_lock(db, scope)
+        if await memory_versions(db, scope) != fact_versions:
+            return False
         await save_companion_reflection(db, scope, content, date.fromisoformat(local_date_str))
         await save_narrative_result(db, log_id, "reflection", True)
         await db.commit()
@@ -336,7 +340,10 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     local_date_str = target_date.isoformat()
     # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话），活动统计才可比较。
     async with session_scope() as db:
+        await memory_write_lock(db, scope)
+        fact_versions = await memory_versions(db, scope)
         today_messages = await nightly_messages(db, user_id, scope.system_preset_id, utc_start, utc_end)
+        forgotten = await forgotten_source_fingerprints(db, scope)
         user_language = resolve_language(await get_user_setting(db, user_id, "language"))
         posts = await collect_post_interactions(
             db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
@@ -352,7 +359,21 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         persona = _persona_brief(persona_snapshot)
         previous_reflection = await load_companion_reflection(db, scope)
 
-    clean_messages = _clean_messages(today_messages, tz_str)
+    forgotten_messages = {
+        message.id
+        for message in today_messages
+        if evidence_fingerprint(message.content, message.created_at.isoformat()) in forgotten
+    }
+    revised_threads = {message.conversation_id for message in today_messages if message.id in forgotten_messages}
+    clean_messages = _clean_messages(
+        [
+            message
+            for message in today_messages
+            if message.id not in forgotten_messages
+            and (message.role == "user" or message.conversation_id not in revised_threads)
+        ],
+        tz_str,
+    )
     today_msg_count = sum(1 for message in today_messages if message.role == "user")
     tomorrow = target_date + timedelta(days=1)
     date_context = DateContext(
@@ -459,9 +480,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         posts = await collect_post_interactions(
             db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
-        has_life_material = await has_trajectory_in_window(db, user_id, start=utc_start, end=utc_end)
     action_facts = _successful_action_facts(action_results)
-    has_readable_messages = any(message.role == "user" and message.content for message in today_messages)
+    has_readable_messages = any(message["role"] == "user" for message in clean_messages)
     has_material = bool(has_readable_messages or action_facts or posts.threads)
     if has_material:
         await _run_stage(
@@ -481,6 +501,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 user_language,
                 log_id,
                 user_timezone=tz_str,
+                fact_versions=fact_versions,
                 diagnostics=stage_diagnostics.setdefault("reflection", []),
             ),
             lambda ok: ("ok" if ok else "skipped", {}),
@@ -493,35 +514,28 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             await db.commit()
         _record_stage(stages, {"stage": "reflection", "status": "skipped", "reason": "当日无互动或自主行动"})
 
-    if has_material or has_life_material:
-        await _run_stage(
-            stages,
-            "journal nightly",
-            partial(
-                project_today,
-                user_id,
-                target_date,
-                log_id=log_id,
-                contextual_memories=contextual_memories,
-                background_memories=background_memories,
-                user_timezone=tz_str,
-                messages=clean_messages,
-                nightly_actions=action_facts,
-                posts=posts,
-                persona=persona,
-                language=user_language,
-                diagnostics=stage_diagnostics.setdefault("journal nightly", []),
-            ),
-            lambda ok: ("ok" if ok else "skipped", {}),
-            user_id=user_id,
-            skipped=(NightlyWindowClosedError, NarrativeQualityError),
-        )
-    else:
-        async with session_scope() as db:
-            if await load_narrative_result(db, log_id, "journal") is None:
-                await save_narrative_result(db, log_id, "journal", False)
-                await db.commit()
-        _record_stage(stages, {"stage": "journal nightly", "status": "skipped"})
+    await _run_stage(
+        stages,
+        "journal nightly",
+        partial(
+            project_today,
+            user_id,
+            target_date,
+            log_id=log_id,
+            has_activity=has_material,
+            contextual_memories=contextual_memories,
+            background_memories=background_memories,
+            user_timezone=tz_str,
+            messages=clean_messages,
+            posts=posts,
+            persona=persona,
+            language=user_language,
+            diagnostics=stage_diagnostics.setdefault("journal nightly", []),
+        ),
+        lambda ok: ("ok" if ok else "skipped", {}),
+        user_id=user_id,
+        skipped=(NightlyWindowClosedError, NarrativeQualityError),
+    )
 
     has_errors = any(stage["status"] == "error" for stage in stages) or any(
         action.status in _FAILED_ACTION_STATUSES for action in action_results.values()

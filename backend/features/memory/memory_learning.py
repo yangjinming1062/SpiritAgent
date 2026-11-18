@@ -28,7 +28,13 @@ from features.memory.contracts import MemoryConflictError, MemoryEvidence, Memor
 from features.memory.memory_namespaces import participates_in_recall
 from features.memory.memory_policy import MemoryDecision
 from features.memory.memory_retrieval import keyword_match_score
-from features.memory.memory_store import forget_record, memory_write_lock, schedule_embedding_rebuild, scope_filter
+from features.memory.memory_store import (
+    clear_derived_companion_reflection,
+    forget_record,
+    memory_write_lock,
+    schedule_embedding_rebuild,
+    scope_filter,
+)
 from features.memory.models import Memory, MemoryEmbeddingRow, MemoryFingerprint
 from features.memory.records import clear_memory_details, load_evidence, memory_record, replace_evidence, save_revisions
 
@@ -88,7 +94,7 @@ async def list_memory_review_scopes(db: AsyncSession) -> list[MemoryScope]:
     return [MemoryScope(user_id, preset) for user_id, preset in dict.fromkeys(rows)]
 
 
-async def _forgotten_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:
+async def forgotten_source_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:
     """已遗忘记录保留的原始事件指纹；对应消息不得再作为证据。"""
     return set(
         await db.scalars(
@@ -128,7 +134,7 @@ async def load_review_context(
         query=query,
         limit=MESSAGE_LIMIT,
     )
-    blocked = await _forgotten_fingerprints(db, scope)
+    blocked = await forgotten_source_fingerprints(db, scope)
     messages: list[ReviewMessage] = []
     message_chars = 0
     for row in rows:
@@ -232,12 +238,13 @@ async def apply_memory_decisions(
     results: list[MemoryRecord] = []
     changed: list[tuple[Memory, list[MemoryEvidence]]] = []
     revisions: list[dict[str, Any]] = []
+    existing_fact_changed = False
     unchanged_ids: list[int] = []
     async with session_scope() as db:
         await memory_write_lock(db, scope)
         if await memory_versions(db, scope) != context.versions:
             raise MemoryConflictError("Memory changed during review; inspect again before writing")
-        blocked = await _forgotten_fingerprints(db, scope)
+        blocked = await forgotten_source_fingerprints(db, scope)
         originals: dict[int, OriginalMessageSnapshot] = {}
         if quoted_ids:
             originals = await original_user_messages(db, scope.user_id, scope.system_preset_id, quoted_ids)
@@ -341,6 +348,7 @@ async def apply_memory_decisions(
                 )
                 db.add(row)
             else:
+                existing_fact_changed = True
                 if decision.status != "forgotten":
                     revisions.append(
                         {
@@ -383,6 +391,8 @@ async def apply_memory_decisions(
             )
             for row, evidence in changed:
                 results.append(memory_record(row, evidence if row.status != "forgotten" else []))
+        if existing_fact_changed:
+            await clear_derived_companion_reflection(db, scope)
         if unchanged_ids:
             await db.execute(
                 update(Memory)

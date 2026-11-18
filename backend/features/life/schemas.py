@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_serializer
 
 from features.media.visual_semantics import ActivityType, SceneTags
 
@@ -116,6 +116,26 @@ class LifeNarrativePatch(BaseModel):
     )
 
 
+GrowthAspect = Literal["interest", "view", "habit", "boundary"]
+LifeShareChannel = Literal["life", "post", "diary"]
+
+
+class PersonalGrowth(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    text: str = Field(min_length=1, max_length=400)
+    evidence_event_id: ResourceId
+    updated_at: AwareDatetime
+
+
+class PersonalGrowthChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    aspect: GrowthAspect
+    text: str | None = Field(min_length=1, max_length=400)
+    evidence_event_id: ResourceId | None = None
+
+
 class LifeStateView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -127,6 +147,8 @@ class LifeStateView(BaseModel):
     scene_tags: SceneTags = Field(default_factory=list)
     activity_started_at: datetime | None = None
     activity_step_id: ResourceId | None = None
+    activity_shared_with_user: bool = False
+    personal_growth: dict[GrowthAspect, PersonalGrowth] = Field(default_factory=dict)
     presentation_revision: int = 0
     current_scene: dict
     mood: str | None
@@ -143,6 +165,7 @@ class LifePursuitView(LifeResultView):
     id: ResourceId
     title: str
     narrative: str | None = None
+    shared_with_user: bool = False
     reason: str
     desired_result: str
     progress: str
@@ -272,6 +295,7 @@ class LifeEventView(LifeResultView):
     step_id: ResourceId | None
     result_ref: dict
     is_meaningful: bool
+    shared_with_user: bool = False
     trajectory_kind: TrajectoryKind | None = None
     topic_id: ResourceId | None = None
     previous_episode_id: ResourceId | None = None
@@ -314,25 +338,45 @@ class LifeContext(BaseModel):
     recent_events: list[LifeEventView] = Field(default_factory=list)
     topic_heads: list[LifeEventView] = Field(default_factory=list)
 
-    def prompt_payload(self) -> dict[str, Any]:
+    def prompt_payload(self, *, shared_only: bool = False, for_publication: bool = False) -> dict[str, Any]:
+        state = self.state.model_dump(
+            mode="json",
+            exclude={
+                "user_id",
+                "activity_step_id",
+                "personal_growth",
+                "next_review_at",
+                "revision",
+                "scene_revision",
+                "presentation_revision",
+                "updated_at",
+            },
+        )
+        active = [item for item in self.active_pursuits if not shared_only or item.shared_with_user]
+        if shared_only:
+            if not self.state.activity_shared_with_user:
+                state = {"mood": state["mood"]}
+            else:
+                state.pop("current_activity")
+                state.pop("narrative")
+                if self.state.active_pursuit_id not in {item.id for item in active}:
+                    state["active_pursuit_id"] = None
         return {
-            "state": self.state.model_dump(
-                mode="json",
-                exclude={
-                    "user_id",
-                    "current_activity",
-                    "narrative",
-                    "activity_step_id",
-                    "next_review_at",
-                    "revision",
-                    "scene_revision",
-                    "presentation_revision",
-                    "updated_at",
-                },
-            ),
-            "active_pursuits": [item.prompt_payload() for item in self.active_pursuits],
-            "paused_pursuits": [item.prompt_payload() for item in self.paused_pursuits],
-            "recent_events": [item.trajectory_payload() for item in self.recent_events],
+            "state": state,
+            "personal_growth": {
+                aspect: value.model_dump(mode="json") for aspect, value in self.state.personal_growth.items()
+            }
+            if not shared_only
+            else {},
+            "active_pursuits": [item.prompt_payload() for item in active],
+            "paused_pursuits": [
+                item.prompt_payload() for item in self.paused_pursuits if not shared_only or item.shared_with_user
+            ],
+            "recent_events": [
+                item.trajectory_payload()
+                for item in self.recent_events
+                if (not shared_only or item.shared_with_user) and (not for_publication or item.source != "life_share")
+            ],
         }
 
 
@@ -477,6 +521,7 @@ class LifeEventInput(BaseModel):
     step_id: ResourceId | None = Field(default=None, gt=0)
     result_ref: dict = Field(default_factory=dict)
     is_meaningful: bool = True
+    shared_with_user: bool | None = None
     trajectory_kind: TrajectoryKind | None = None
     previous_episode_id: ResourceId | None = None
 
@@ -488,6 +533,20 @@ class PrivateLifeEpisode(LifeSceneChange):
     title: str = Field(min_length=1, max_length=120, description="这次独处日常的简短标题")
     narrative: str = Field(min_length=1, max_length=600, description="用一到三句第一人称表达具体的新发现或选择")
     activity_type: ActivityType = Field(description="虚拟情境内当前活动的类别")
+
+
+class LifeShare(BaseModel):
+    """伙伴选择公开到生活页的一段表达。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    event_id: ResourceId | None = Field(description="要分享的已有经历。仅分享本轮新生成的独处片段时填 null。")
+    channel: LifeShareChannel = Field(
+        default="life", description="仅允许在 life 生活页、post 动态或 diary 日记之一分享"
+    )
+    title: str = Field(min_length=1, max_length=120, description="愿意公开的标题")
+    narrative: str = Field(min_length=1, max_length=600, description="愿意公开的第一人称片段")
+    show_activity: StrictBool = Field(default=False, description="分享本轮独处片段时是否也向用户呈现当前活动类别和环境")
 
 
 class LifePursuitDetail(LifePursuitView):

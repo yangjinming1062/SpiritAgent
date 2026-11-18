@@ -331,11 +331,6 @@ export interface IpcInvokeContract {
   'spiritagent:media:video-upload': (
     payload: AttachmentVideoUploadPayload
   ) => Promise<DesktopApiResult<AttachmentVideoUploadResult>>
-  'spiritagent:onboardingAudio:read': (
-    tag: string
-  ) =>
-    | { bytes: number; dataUrl: string; mimeType: string; tag: string }
-    | Promise<{ bytes: number; dataUrl: string; mimeType: string; tag: string }>
 
   // 偏好与快捷键
   'spiritagent:prefs:apply-server-voice': (payload: DesktopServerVoiceSelection) => Promise<boolean>
@@ -505,7 +500,6 @@ export const IPC = {
     mediaVoiceSampleUpload: 'spiritagent:media:voice-sample-upload',
     mediaTts: 'spiritagent:media:tts',
     mediaVideoUpload: 'spiritagent:media:video-upload',
-    onboardingAudioRead: 'spiritagent:onboardingAudio:read',
     spriteHide: 'spiritagent:sprite:hide',
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',
     spriteGetPosition: 'spiritagent:sprite:get-position',

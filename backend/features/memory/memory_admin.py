@@ -13,6 +13,7 @@ from features.memory.contracts import MemoryConflictError, MemoryDetail, MemoryL
 from features.memory.memory_namespaces import MEMORY_KINDS, participates_in_recall
 from features.memory.memory_store import (
     active_memory_filter,
+    clear_derived_companion_reflection,
     forget_record,
     get_memory,
     memory_write_lock,
@@ -143,6 +144,8 @@ async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileCha
             db, [row.id for row in changed_rows if row.content_version > 1], suppress=False, keep_revisions=True
         )
         if changes:
+            if forgotten_ids or revised:
+                await clear_derived_companion_reflection(db, scope)
             emit_ws_event(
                 db,
                 user_id=scope.user_id,
@@ -205,6 +208,8 @@ async def update_memory(
         )
         row.source_kind, row.source_conversation_id, row.source_batch_id = "manual", None, None
         row.updated_at = utc_now()
+        if row.kind in ("recall", "user_profile"):
+            await clear_derived_companion_reflection(db, scope)
         emit_ws_event(
             db,
             user_id=scope.user_id,

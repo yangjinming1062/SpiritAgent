@@ -26,6 +26,8 @@ export const callCopy = {
     hangup: '挂断',
     cancel: '取消拨号',
     connecting: '正在连接…',
+    ringing: '等待接听…',
+    unanswered: '未接听',
     listening: '正在倾听',
     thinking: '正在思考',
     speaking: '正在讲话',
@@ -50,6 +52,8 @@ export const callCopy = {
     hangup: 'Hang up',
     cancel: 'Cancel call',
     connecting: 'Connecting…',
+    ringing: 'Ringing…',
+    unanswered: 'Unanswered',
     listening: 'Listening',
     thinking: 'Thinking',
     speaking: 'Speaking',
@@ -223,7 +227,8 @@ export function LiveCallPage({
             )}
             {part ? (
               <p ref={forcedCaption} role="status">
-                <strong>{name || copy.companion}</strong> {part.text}
+                {part.attributedToCompanion && <strong>{name || copy.companion} </strong>}
+                {part.text}
               </p>
             ) : (
               captions &&
@@ -254,7 +259,7 @@ export function LiveCallPage({
           </p>
         )}
         <footer className="sa-call-controls">
-          {failed ? (
+          {failed || state === 'unanswered' ? (
             <button onClick={close} type="button">
               {copy.back}
             </button>

@@ -70,6 +70,10 @@ class JsonRpcDispatcher:
     def set_sender(self, send: Sender | None) -> None:
         self._sender = send
 
+    @property
+    def has_sender(self) -> bool:
+        return self._sender is not None
+
     async def _send(self, frame: dict[str, Any]) -> bool:
         sender = self._sender
         return await sender(frame) if sender is not None else False

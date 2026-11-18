@@ -99,7 +99,7 @@ from infrastructure.ai.providers.registry import register as register_provider
 from runtime.channels import ChannelLifecycle, register_channel_lifecycle
 from runtime.desktop.connection import configure_event_audience
 from runtime.desktop.jsonrpc import configure_event_serializer
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
@@ -171,7 +171,8 @@ def register_internal_event_handlers() -> None:
     register_internal_event_handler("post.publication.continue", publication_continue_requested)
     register_internal_event_handler("visual.preparation.continue", preparation_continue_requested)
     register_internal_event_handler("outfit.creation.continue", outfit_creation_continue_requested)
-    register_internal_event_handler(COMPANION_TURN_EVENT, execute_companion_turn)
+    for event_type in COMPANION_TURN_EVENTS:
+        register_internal_event_handler(event_type, execute_companion_turn)
     register_internal_event_handler("companion.visual.initial_requested", initialize_visuals)
     register_internal_event_handler("companion.life.presentation_requested", life_presentation_requested)
 

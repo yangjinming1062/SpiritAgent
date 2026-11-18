@@ -47,6 +47,8 @@ def state_view(row: LifeState) -> LifeStateView:
         scene_tags=row.scene_tags_json,
         activity_started_at=row.activity_started_at,
         activity_step_id=row.activity_step_id,
+        activity_shared_with_user=row.activity_shared_with_user,
+        personal_growth=row.personal_growth_json,
         presentation_revision=row.presentation_revision,
         current_scene=row.current_scene_json,
         mood=row.mood,
@@ -64,7 +66,11 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
     if pursuit_id is None:
         return ""
     return (
-        await db.scalar(select(LifePursuit.title).where(LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id))
+        await db.scalar(
+            select(LifePursuit.title).where(
+                LifePursuit.user_id == user_id, LifePursuit.id == pursuit_id, LifePursuit.shared_with_user.is_(True)
+            )
+        )
         or ""
     )
 
@@ -107,6 +113,7 @@ def pursuit_view(row: LifePursuit) -> LifePursuitView:
         id=row.id,
         title=row.title,
         narrative=row.narrative,
+        shared_with_user=row.shared_with_user,
         reason=row.reason,
         desired_result=row.desired_result,
         progress=row.progress,
@@ -170,6 +177,7 @@ def event_view(row: LifeEvent) -> LifeEventView:
         step_id=row.step_id,
         result_ref=result_reference(row),
         is_meaningful=row.is_meaningful,
+        shared_with_user=row.shared_with_user,
         trajectory_kind=row.trajectory_kind,
         topic_id=(row.topic_id or row.id) if row.trajectory_kind else None,
         previous_episode_id=row.previous_episode_id,
@@ -268,9 +276,17 @@ async def pursuit_evidence(
 
 
 async def list_pursuits(
-    db: AsyncSession, user_id: int, *, status: str | None = None, cursor: str | None = None, limit: int = 20
+    db: AsyncSession,
+    user_id: int,
+    *,
+    status: str | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+    shared_only: bool = False,
 ) -> LifePursuitListResponse:
     where = [LifePursuit.user_id == user_id]
+    if shared_only:
+        where.append(LifePursuit.shared_with_user.is_(True))
     if status:
         where.append(LifePursuit.status == status)
     if before := decode_timestamp_cursor(cursor):
@@ -285,17 +301,33 @@ async def list_pursuits(
     )
     more = len(rows) > limit
     rows = rows[:limit]
+    items = [pursuit_view(row) for row in rows]
+    if shared_only:
+        visible_previous = await shared_pursuit_ids(
+            db, user_id, {item.previous_pursuit_id for item in items if item.previous_pursuit_id is not None}
+        )
+        for item in items:
+            if item.previous_pursuit_id not in visible_previous:
+                item.previous_pursuit_id = None
     return LifePursuitListResponse(
-        items=[pursuit_view(row) for row in rows],
+        items=items,
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].updated_at, rows[-1].id) if more else None,
     )
 
 
 async def list_events(
-    db: AsyncSession, user_id: int, *, pursuit_id: int | None = None, cursor: str | None = None, limit: int = 20
+    db: AsyncSession,
+    user_id: int,
+    *,
+    pursuit_id: int | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
+    shared_only: bool = False,
 ) -> LifeEventListResponse:
     where = [LifeEvent.user_id == user_id]
+    if shared_only:
+        where.append(LifeEvent.shared_with_user.is_(True))
     if pursuit_id is not None:
         where.append(LifeEvent.pursuit_id == pursuit_id)
     if position := decode_timestamp_cursor(cursor):
@@ -311,4 +343,16 @@ async def list_events(
         items=[event_view(row) for row in rows],
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
+    )
+
+
+async def shared_pursuit_ids(db: AsyncSession, user_id: int, ids: Collection[int]) -> set[int]:
+    if not ids:
+        return set()
+    return set(
+        await db.scalars(
+            select(LifePursuit.id).where(
+                LifePursuit.user_id == user_id, LifePursuit.id.in_(ids), LifePursuit.shared_with_user.is_(True)
+            )
+        )
     )

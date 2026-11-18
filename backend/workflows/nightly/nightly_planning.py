@@ -236,6 +236,12 @@ def _nightly_capability(name: str) -> NightlyCapability:
         "description": "伙伴面向用户的第一人称计划与缘由，不代表已经完成",
     }
     schema["required"] = list(dict.fromkeys([*schema["required"], "narrative"]))
+    if name in CREATION_CAPABILITIES:
+        schema["properties"]["add_to_user_library"] = {
+            "const": True,
+            "description": "选择让用户在素材库看到这项创作的成品",
+        }
+        schema["required"].append("add_to_user_library")
     return NightlyCapability(
         name=name,
         phase=_NIGHTLY_PHASES[name],
@@ -365,6 +371,8 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         if action.pursuit_id is not None and action.pursuit_id not in active_pursuits:
             raise LlmJsonValidationError("unknown_pursuit", fields=("pursuit_id",))
+        if capability_name in CREATION_CAPABILITIES and action.arguments.get("add_to_user_library") is not True:
+            raise LlmJsonValidationError("missing_library_choice", fields=("add_to_user_library",))
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
         # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
         dependencies = action.depends_on
@@ -501,7 +509,7 @@ def _action_input(
     row: NightlyActivityAction, *, language: str, plan_theme: str, date_context: DateContext, facts: list[str]
 ) -> NextAction:
     arguments = (row.arguments or {}).get("values", {})
-    payload = {key: value for key, value in arguments.items() if key != "narrative"}
+    payload = {key: value for key, value in arguments.items() if key not in {"narrative", "add_to_user_library"}}
     payload["capability"] = row.capability
     if row.capability == "outreach.schedule":
         parsed = OutreachScheduleArgs.model_validate(arguments)
@@ -531,6 +539,7 @@ def _action_input(
         )[:1000],
         narrative=arguments.get("narrative"),
         action=LIFE_ACTION.validate_python(payload),
+        add_to_user_library=arguments.get("add_to_user_library") is True,
     )
 
 

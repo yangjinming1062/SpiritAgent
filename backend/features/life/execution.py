@@ -18,7 +18,7 @@ from features.jobs.service import requested_job_id
 
 from .actions import CREATION_CAPABILITIES, LIFE_ACTION, NextAction, ReadingResult
 from .models import LifeActionAdmission, LifePursuit, LifeStep
-from .queries import step_view
+from .queries import shared_pursuit_ids, step_view
 from .schemas import LifeEventInput, LifeStepView
 from .service import (
     LifeInputError,
@@ -33,6 +33,11 @@ from .settlement import settle_business_steps
 _RETRY_DELAY = timedelta(minutes=15)
 
 
+async def notify_shared_step(db: AsyncSession, user_id: int, step: LifeStep) -> None:
+    if step.pursuit_id is not None and await shared_pursuit_ids(db, user_id, {step.pursuit_id}):
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step.id})
+
+
 async def enqueue_action(
     db: AsyncSession,
     user_id: int,
@@ -44,6 +49,12 @@ async def enqueue_action(
 ) -> LifeStepView:
     if not action.narrative or not action.narrative.strip():
         raise LifeInputError("登记生活行动必须提供伙伴叙事")
+    if (
+        action.action.capability in CREATION_CAPABILITIES
+        and not action.add_to_user_library
+        and not (pursuit_id is not None and await shared_pursuit_ids(db, user_id, {pursuit_id}))
+    ):
+        raise LifeInputError("自主素材制作会进入用户素材库，需要伙伴明确选择公开成品")
     row = await create_step(
         db,
         user_id,
@@ -179,7 +190,7 @@ async def defer_step(
         row.disposition, row.wait_reason = disposition, reason
         row.not_before = until or utc_now() + _RETRY_DELAY
         state.revision += 1
-        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step_id})
+        await notify_shared_step(db, user_id, row)
         await db.commit()
 
 
@@ -257,7 +268,8 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
         row.failure_code = None
         row.attempts += 1
-        set_step_activity(db, state, row, now)
+        shared = row.pursuit_id is not None and bool(await shared_pursuit_ids(db, user_id, {row.pursuit_id}))
+        set_step_activity(db, state, row, now, shared_with_user=shared)
         state.revision += 1
         await record_event(
             db,
@@ -274,7 +286,8 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
                 is_meaningful=False,
             ),
         )
-        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
+        if shared:
+            emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
         await db.commit()
         await db.refresh(row)
         return step_view(row)
@@ -331,7 +344,7 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
                     clear_activity_step(db, state)
             if db.is_modified(row):
                 state.revision += 1
-                emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
+                await notify_shared_step(db, user_id, row)
                 await db.commit()
                 await db.refresh(row)
         return step_view(row)
@@ -356,5 +369,4 @@ async def finish_step(
         await settle_business_steps(
             db, user_id, kind=row.kind, business_ref={"step_id": step_id}, state=state, result_ref=result, error=error
         )
-        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step_id})
         await db.commit()

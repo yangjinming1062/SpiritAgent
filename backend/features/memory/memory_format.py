@@ -40,12 +40,15 @@ def format_memory_record(
     return f"- [{' · '.join(parts)}] {content}"
 
 
-async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
-    rows = await db.scalars(
+async def format_memories_block(
+    db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE, limit: int | None = None
+) -> str:
+    query = (
         select(Memory)
         .where(scope_filter(scope), active_memory_filter(), Memory.kind == "recall")
         .order_by(Memory.updated_at.desc(), Memory.id)
     )
+    rows = await db.scalars(query.limit(limit) if limit is not None else query)
     return "\n".join(format_memory_record(r.content, r.basis, r.context, language=language) for r in rows)
 
 

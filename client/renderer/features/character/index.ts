@@ -21,15 +21,8 @@ export {
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { applyServerVoiceUpdate, onCharacterEvent } from './gateway-events'
 export { GenerationActionsGroup } from './generation-actions'
+export { assembleCharacterPersona, MAX_IMAGE_DESCRIPTION, MAX_USER_TEXT, type OnboardingAnswers } from './persona'
 export {
-  assembleCharacterPersona,
-  assemblePersona,
-  MAX_IMAGE_DESCRIPTION,
-  MAX_USER_TEXT,
-  type OnboardingAnswers
-} from './persona'
-export {
-  CHARACTER_GENDER_PRESETS,
   PERSONALITY_PRESETS,
   RELATIONSHIP_PRESETS,
   SPEAKING_STYLE_PRESETS,

@@ -3,7 +3,13 @@ import json
 
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.intent_contracts import CompanionIntentView, CompanionTurnRequest
-from features.companion.intents import begin_companion_intent, companion_turn_plan, finish_companion_intent
+from features.companion.intents import (
+    DeferredReplySource,
+    begin_companion_intent,
+    companion_turn_plan,
+    deferred_reply_source,
+    finish_companion_intent,
+)
 from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.prompts import PROACTIVE_CONTEXT_LABELS
 from features.configuration.settings.values import get_user_setting
@@ -16,6 +22,7 @@ from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from runtime.desktop.connection import MANAGER
+from runtime.tools.tool_result_classification import tool_may_have_effects
 from runtime.user_maintenance import user_request_scope
 
 from workflows.chat.chat_emitter import HeadlessEmitter
@@ -25,53 +32,14 @@ logger = get_logger(__name__)
 
 _FAILURE_REASON_MAX_CHARS = 200
 
-# 只收录无持久副作用、重试安全的查询工具（含访问外部服务的 web_search/web_extract），其余工具一律视为可能有副作用；新增查询工具时对照
-# tool_runtime/domains.py 的 DOMAIN_CATALOG 与 runner/tools/toolsets/catalog.py 同步更新。
-_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "search_tools",
-        "companion_wait",
-        "memory_inspect",
-        "memory_recall",
-        "scene_list",
-        "scene_get",
-        "action_search",
-        "action_inspect",
-        "visual_search",
-        "visual_inspect",
-        "outfit_list",
-        "life_inspect",
-        "life_recall",
-        "diary_recall",
-        "video_generate_status",
-        "read_file",
-        "list_directory",
-        "search_files",
-        "skills_list",
-        "skill_view",
-        "web_search",
-        "web_extract",
-        "system.snapshot",
-        "system.get_idle_seconds",
-        "system.is_screen_locked",
-        "system.get_focused_app",
-        "system.is_fullscreen",
-        "system.get_power_state",
-        "system.get_windows",
-        "system.get_work_area",
-        "system.get_cursor_pos",
-    }
-)
 
-
-def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str, language: str) -> str:
-    return (
-        resolve_prompt_text(PROACTIVE_CONTEXT_LABELS, language)
-        + "\n"
-        + json.dumps(
-            {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier}, ensure_ascii=False
-        )
-    )
+def _build_proactive_hint(
+    intent: CompanionIntentView, disturbance_tier: str, language: str, source: DeferredReplySource | None
+) -> str:
+    data = {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier}
+    if source is not None:
+        data["deferred_from_user_message"] = {"id": str(source.message_id), "content": source.content}
+    return resolve_prompt_text(PROACTIVE_CONTEXT_LABELS, language) + "\n" + json.dumps(data, ensure_ascii=False)
 
 
 def _failure_reason(exc: Exception, language: str) -> str:
@@ -101,7 +69,7 @@ def _turn_error(emitter: HeadlessEmitter, language: str) -> str | None:
 
 def _tools_may_have_effects(emitter: HeadlessEmitter) -> bool:
     return any(
-        message.get("type") == "tool_start" and message.get("name") not in _READ_ONLY_TOOLS
+        message.get("type") == "tool_start" and tool_may_have_effects(message.get("name"))
         for message in emitter.messages
     )
 
@@ -112,7 +80,7 @@ async def execute_companion_turn(user_id: int, payload: dict[str, object]) -> No
     except ValueError:
         logger.warning("Invalid companion turn event", extra={"user_id": user_id})
         return
-    if not MANAGER.is_connected(user_id):
+    if not (MANAGER.is_connected(user_id) or MANAGER.has_connected_remote(user_id)):
         return
     async with user_request_scope(user_id) as acquired:
         if acquired:
@@ -129,17 +97,25 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     reply = None
     delivered = False
     language = "zh"
+    source = None
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
         async with asyncio.timeout(max(0.0, remaining)):
             async with session_scope() as db:
-                conversation = await ensure_main_conversation(db, user_id)
+                if intent.source_kind and intent.source_kind.startswith("reply:"):
+                    source = await deferred_reply_source(db, user_id, intent.source_kind)
+                    conversation_id = source.conversation_id if source is not None else None
+                else:
+                    conversation_id = (await ensure_main_conversation(db, user_id)).id
                 message_id = await latest_user_message_id(db, user_id)
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
                 language = resolve_language(await get_user_setting(db, user_id, "language"))
+            if conversation_id is None:
+                await finish_companion_intent(user_id, trigger, contact_revision=revision, user_message_id=message_id)
+                return
             request = ChatRequest(
-                session_id=str(conversation.id),
-                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier, language)),
+                session_id=str(conversation_id),
+                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier, language, source)),
             )
             with companion_turn_plan(user_id, intent.id, intent.expires_at) as plan:
                 await run_chat_turn(
@@ -170,6 +146,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 followup=plan.followup,
                 contact_revision=revision,
                 user_message_id=message_id,
+                original_source=source,
                 error=_turn_error(emitter, language),
                 tools_started=_tools_may_have_effects(emitter),
             )
@@ -185,6 +162,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             trigger,
             contact_revision=revision,
             user_message_id=message_id,
+            original_source=source,
             interrupted=True,
             tools_started=_tools_may_have_effects(emitter),
         )
@@ -196,6 +174,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             trigger,
             contact_revision=revision,
             user_message_id=message_id,
+            original_source=source,
             error=_failure_reason(exc, language),
             tools_started=_tools_may_have_effects(emitter),
         )

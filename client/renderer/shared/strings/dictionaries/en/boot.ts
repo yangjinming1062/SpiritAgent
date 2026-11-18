@@ -10,6 +10,13 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
     }
   },
   onboarding: {
+    fields: {
+      name: { label: 'Companion name', placeholder: 'Enter a name' },
+      biological_type: { label: 'Species or being', placeholder: 'Choose a type or describe it in your own words' },
+      speaking_style: { label: 'Speaking style', placeholder: 'For example, concise, playful, or fond of metaphors' },
+      voice: { label: 'Voice preference', placeholder: 'Describe the timbre, pace, or pitch' }
+    },
+    requiredField: (label: string) => `Enter a value for ${label.toLowerCase()}.`,
     steps: {
       meet: 'Meet your companion',
       confirm: 'Confirm the look',
@@ -37,12 +44,6 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
     resumeFailed: 'Could not read your saved progress. Try again.',
     retrying: 'Retrying…',
     stepVoice: 'Choose a voice',
-    stepCompanion: 'Start together',
-    readyTitle: 'Your companion is ready',
-    readyHint:
-      'You can start chatting now. You can also tell your companion a little about yourself first, and add more at any time.',
-    knowMore: 'Let your companion know me (optional)',
-    savingProfile: 'Saving your answers…',
     portraitPreviewHint: 'Preview and confirm your avatar',
     portraitGenerating: 'Creating the avatar…',
     portraitFailed: 'The avatar step could not finish',

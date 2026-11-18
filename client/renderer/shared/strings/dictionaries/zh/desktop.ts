@@ -84,7 +84,7 @@ export const desktop = {
     disconnected: '连接中断',
     desktopSettings: '桌面设置',
     disturbance: '陪伴方式',
-    still: '只回应我',
+    still: '不主动联系',
     normal: '偶尔主动问候',
     autonomous: '自由活动',
     waiting: '准备桌面中…'

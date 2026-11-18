@@ -21,7 +21,6 @@ $SpiritAgentHome = $env:SPIRITAGENT_HOME
 $BundledRunnerDir = $env:SPIRITAGENT_BUNDLED_RUNNER_DIR
 $BundledDesktopDir = $env:SPIRITAGENT_BUNDLED_DESKTOP_DIR
 $BundledSkillsDir = $env:SPIRITAGENT_BUNDLED_SKILLS_DIR
-$BundledOnboardingAudioDir = $env:SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR
 $InstallerFormat = if ($env:SPIRITAGENT_INSTALLER_FORMAT) { $env:SPIRITAGENT_INSTALLER_FORMAT } else { "nsis" }
 
 function Emit-Manifest {
@@ -207,15 +206,6 @@ function Stage-UnpackRunner {
         }
     } finally {
         $ErrorActionPreference = $prevEAP
-    }
-
-    # onboarding 音频：语言子目录 1:1 映射至 audio/onboarding/<lang>/
-    if ($BundledOnboardingAudioDir -and (Test-Path $BundledOnboardingAudioDir -PathType Container)) {
-        Get-ChildItem -Path $BundledOnboardingAudioDir -Directory | ForEach-Object {
-            $audioTarget = Join-Path $SpiritAgentHome "audio\onboarding\$($_.Name)"
-            if (-not (Test-Path $audioTarget)) { New-Item -ItemType Directory -Force -Path $audioTarget | Out-Null }
-            Copy-Item -Recurse -Force (Join-Path $_.FullName "*") $audioTarget
-        }
     }
 
     return 0

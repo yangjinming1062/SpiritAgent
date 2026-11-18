@@ -315,7 +315,7 @@ function isComment(value: unknown): value is CommentWire {
     typeof value.updated_at === 'string' &&
     (value.role === 'user' || value.role === 'companion') &&
     typeof value.reply_status === 'string' &&
-    ['none', 'pending', 'running', 'completed', 'failed'].includes(value.reply_status) &&
+    ['none', 'pending', 'running', 'deferred', 'completed', 'silent', 'failed'].includes(value.reply_status) &&
     (value.reply_to_comment_id === null || typeof value.reply_to_comment_id === 'string') &&
     (value.reply_error === null || typeof value.reply_error === 'string')
   )

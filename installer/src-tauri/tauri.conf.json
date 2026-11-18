@@ -42,14 +42,13 @@
       "app",
       "dmg"
     ],
-    "resources": [
-      "../payload/runner/",
-      "../payload/client",
-      "../payload/skills",
-      "../payload/onboarding-audio",
-      "../payload/install.sh",
-      "../payload/install.ps1"
-    ],
+    "resources": {
+      "../payload/runner": "payload/runner",
+      "../payload/client": "payload/client",
+      "../payload/skills": "payload/skills",
+      "../payload/install.sh": "payload/install.sh",
+      "../payload/install.ps1": "payload/install.ps1"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

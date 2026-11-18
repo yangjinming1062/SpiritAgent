@@ -8,14 +8,12 @@ import type { PersonaResponse } from '@protocol'
 import type { PersonaPayload } from './persona'
 
 export const $persona = atom<PersonaPayload | null>(null)
-export const $personalityTags = atom<string[]>([])
 export const $companionMood = atom<string | null>(null)
 let requestGeneration = 0
 
 function resetPersona(): void {
   requestGeneration += 1
   $persona.set(null)
-  $personalityTags.set([])
   $companionMood.set(null)
 }
 
@@ -31,7 +29,7 @@ export function applyPersonaResponse(response: PersonaResponse): void {
   const parsed = response.definition_json
 
   $persona.set({
-    biological_type: parsed.biological_type,
+    biological_type: parsed.biological_type ?? '',
     gender: parsed.gender,
     age: parsed.age,
     occupation: parsed.occupation,
@@ -41,7 +39,6 @@ export function applyPersonaResponse(response: PersonaResponse): void {
     relationship: parsed.relationship,
     speaking_style: parsed.speaking_style ?? ''
   })
-  $personalityTags.set(response.personality_tags)
   $companionMood.set(response.current_mood?.trim() || null)
 }
 

@@ -21,7 +21,7 @@ import {
 } from '@/features/character'
 import { SpriteStage } from '@/features/character'
 import { CharacterStage } from '@/features/character/rendering'
-import { enqueueInteraction } from '@/features/creation/visuals'
+import { enqueueGesture } from '@/features/creation/visuals'
 import { MediaViewerOverlay } from '@/features/media'
 import { checkVoiceValidity } from '@/features/speech'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
@@ -41,6 +41,14 @@ import { SpriteContextMenu } from './context-menu'
 import { DeveloperOverlay } from './developer-overlay'
 import { ProactiveBubble } from './proactive-bubble'
 import { toggleWhisper, WhisperOverlay } from './whisper'
+
+function reportTap(): void {
+  enqueueGesture('tap', speakProactive)
+}
+
+function reportDragReleased(): void {
+  enqueueGesture('drag_released', speakProactive)
+}
 
 export function SpriteWindow(): React.JSX.Element {
   useWindowMouseCapture()
@@ -75,24 +83,6 @@ export function SpriteWindow(): React.JSX.Element {
       setActivationOpen(false)
     }
   }, [auth.kind])
-
-  // 仅开发期：Ctrl+Shift+P 直接调 speakProactive 验证主动气泡与朗读，不经网关 companion.message；生产构建剔除。
-  useEffect(() => {
-    if (import.meta.env.PROD) {
-      return
-    }
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
-        e.preventDefault()
-        void speakProactive('（测试）嘿，休息一下眼睛吧～')
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
 
   const authed = auth.kind === 'authenticated'
   const showOnboarding = authed && lifecycle === 'onboarding'
@@ -166,10 +156,8 @@ export function SpriteWindow(): React.JSX.Element {
           openContextMenu({ x: e.clientX, y: e.clientY })
         }}
         onDoubleTap={toggleWhisper}
-        onTap={() => {
-          // 单击伙伴：即时注意用户的互动演出；导演按可用素材与冷却决定是否播放。
-          enqueueInteraction('look')
-        }}
+        onDragReleased={reportDragReleased}
+        onTap={reportTap}
       >
         {showCompanion && <CharacterStage />}
       </SpriteStage>

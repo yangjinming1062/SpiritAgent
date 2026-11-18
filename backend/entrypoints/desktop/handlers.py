@@ -28,12 +28,14 @@ from runtime.conversation import ToolsSyncResult
 from runtime.desktop.connection import MANAGER
 from runtime.desktop.ipc import discard_user, pending_call_ids, resolve_future
 from runtime.desktop.jsonrpc import JsonRpcDispatcher, JsonRpcError
-from runtime.events.contracts import COMPANION_TURN_EVENT
-from runtime.events.loop import interrupt_user_event_tasks
 from runtime.task_supervisor import TASK_SUPERVISOR
 from runtime.tools.registry import REGISTRY
 from runtime.user_maintenance import is_user_in_maintenance
-from workflows.companion.operations import companion_signal, forget_companion_state
+from workflows.companion.operations import (
+    companion_signal,
+    forget_companion_state,
+    interrupt_unavailable_companion_turns,
+)
 
 from entrypoints.desktop.contracts import RPC_CONTRACTS, GatewayResumeResult
 
@@ -111,7 +113,7 @@ async def _terminate_user_gateway_locked(user_id: ResourceId, login_record_id: R
             await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
     observe_companion_presence(user_id, False, presentation_mode=None)
     await cancel_and_wait([session.grace_timer_task, *session.background_tasks])
-    await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+    await interrupt_unavailable_companion_turns(user_id)
     await MANAGER.aunregister_dispatcher(user_id)
     REGISTRY.clear_runner_tools(user_id)
     discard_user(user_id)
@@ -139,6 +141,7 @@ async def terminate_remote_sessions(user_id: ResourceId, device_id: ResourceId |
             release_account_runtime(user_id, connection_id)
         if not _REMOTE_SESSIONS.get(user_id):
             _REMOTE_SESSIONS.pop(user_id, None)
+            await interrupt_unavailable_companion_turns(user_id)
         release_unused_account_runtime(user_id)
 
 
@@ -286,6 +289,7 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
             TASK_SUPERVISOR.register(task, owner="channels.desktop.grace", user_id=user_id)
             task.add_done_callback(_GRACE_TIMER_TASKS.discard)
             session.grace_timer_task = task
+            await interrupt_unavailable_companion_turns(user_id)
 
 
 async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentity) -> None:
@@ -354,6 +358,7 @@ async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentit
                 TASK_SUPERVISOR.register(task, owner="channels.remote.grace", user_id=user_id)
                 task.add_done_callback(_GRACE_TIMER_TASKS.discard)
                 session.grace_timer_task = task
+                await interrupt_unavailable_companion_turns(user_id)
 
 
 def _register_session_handlers(session: UserGatewaySession) -> None:

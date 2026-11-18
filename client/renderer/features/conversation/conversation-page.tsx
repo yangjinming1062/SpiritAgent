@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 
-import { enqueueInteraction } from '@/features/creation/visuals'
+import { enqueueGesture } from '@/features/creation/visuals'
 import { MediaViewerOverlay, MediaViewHost } from '@/features/media'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
@@ -135,7 +135,7 @@ export function ConversationPage({
     const next = active && visible && foreground && companion
 
     if (next && !companionVisible.current) {
-      enqueueInteraction('look')
+      enqueueGesture('chat_opened')
     }
 
     companionVisible.current = next

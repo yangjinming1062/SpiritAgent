@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from features.realtime_voice.session import CALL_MANAGER
 from runtime.channels import terminate_remote_sessions, terminate_user_gateway
 from runtime.chat_accounts import wait_user_turns
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.loop import interrupt_user_event_tasks
 from runtime.lifecycle import RUNTIME_LIFECYCLE
 from runtime.user_maintenance import (
@@ -25,7 +25,7 @@ async def _stop_user_runtime(user_id: int) -> None:
     results = await asyncio.gather(
         terminate_user_gateway(user_id),
         terminate_remote_sessions(user_id),
-        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
+        interrupt_user_event_tasks(user_id, *COMPANION_TURN_EVENTS),
         return_exceptions=True,
     )
     await wait_user_turns(user_id)

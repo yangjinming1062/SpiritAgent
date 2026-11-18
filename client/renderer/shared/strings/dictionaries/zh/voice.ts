@@ -6,7 +6,7 @@ export const voice = {
     noTtsConfigured: '语音暂时不可用，你仍然可以继续用文字聊天。稍后再来选择声音。',
     noVoicesForLanguage: '暂时没有适合当前语言的声音，你仍然可以继续用文字聊天。',
     loadFailed: '音色列表加载失败',
-    sampleLine: (name: string) => (name ? `你好呀，我是${name}。这是我的声音～` : '你好呀，这是我的声音～'),
+    sampleLine: '声音试听。清晨的光落在窗边，树叶随风轻轻摇晃。',
     genderFilterAria: '声线筛选',
     genderFilters: {
       '': '全部',

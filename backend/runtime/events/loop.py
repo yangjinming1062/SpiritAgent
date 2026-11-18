@@ -61,11 +61,11 @@ _WAKEUP_STATE: _WakeupState = _WakeupState()
 _EVENT_LOOP = BackgroundTask("event_store.event_loop")
 
 
-async def interrupt_user_event_tasks(user_id: int, event_type: str) -> int:
+async def interrupt_user_event_tasks(user_id: int, *event_types: str) -> int:
     pending = [
         task
         for key in tuple(_EVENT_TASKS)
-        if key[:2] == (event_type, user_id) and (task := _EVENT_TASKS.running(key)) is not None
+        if key[1] == user_id and key[0] in event_types and (task := _EVENT_TASKS.running(key)) is not None
     ]
     await cancel_and_wait(pending)
     return len(pending)

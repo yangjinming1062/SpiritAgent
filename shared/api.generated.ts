@@ -85,6 +85,8 @@ export interface ApiSchemas {
   "FullbodyReferenceGenerateRequest": { "feedback"?: (string | null); "image"?: (string | null); "content_type"?: (string | null); "mode": "edit" | "regenerate"; "candidate_id"?: (string | null) }
   "GatewayTicketRequest": { "stream_id"?: (string | null) }
   "GatewayTicketResponse": { "ticket": string; "expires_in": number }
+  "GestureReactionRequest": { "request_id": string; "kind": "tap" | "drag_released" | "chat_opened"; "occurred_at": string; "count"?: number }
+  "GestureReactionResponse": { "visual": (ApiSchemas["ReactionVisual"] | null); "text": (string | null) }
   "HumanReviewApproval": { "request_id": string; "approved_at": string; "content_basis_id": string; "dimensions": Array<"identity" | "goal" | "quality"> }
   "ImageJobParams": { "request": string; "request_scope": string; "prompt": string; "size": string; "subject": ("self" | null); "reference_image": (string | null); "secondary_reference_image": (string | null); "identity_json": (string | null); "identity_reference_mode": "primary" | "portrait_and_outfit"; "task": ApiSchemas["AiTaskKey"]; "directory": string; "media_ids": Array<string>; "goal_ids": Array<string>; "parent_media_id": (string | null) }
   "ImagePromptResponse": { "prompt": string }
@@ -154,7 +156,7 @@ export interface ApiSchemas {
   "PortraitConfirmRequest": { "expected_avatar_id": string }
   "PostCommentCreateRequest": { "content": string }
   "PostCommentListResponse": { "comments": Array<ApiSchemas["PostCommentResponse"]>; "next_cursor": (string | null) }
-  "PostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["PostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "completed" | "failed"; "reply_error": (string | null) }
+  "PostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["PostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "deferred" | "completed" | "silent" | "failed"; "reply_error": (string | null) }
   "PostCommentRole": "user" | "companion"
   "PostContentType": "text" | "image" | "video" | "audio"
   "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
@@ -169,10 +171,11 @@ export interface ApiSchemas {
   "PromptPresetListResponse": { "presets": Array<ApiSchemas["PromptPresetSummary"]> }
   "PromptPresetSummary": { "id": string; "name": string; "description": string; "icon_key": string }
   "PromptSubmitRequest": { "request_id": string; "text"?: (string | null); "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null); "batch"?: (Array<ApiSchemas["PromptBatchMessage"]> | null); "edit_message_id"?: (string | null); "retry_message_id"?: (string | null); "replace_reply_message_id"?: (string | null); "response_preference"?: ("text" | "voice" | null) }
-  "PromptSubmitResult": { "queued": boolean; "request_id": string; "status": "accepted" | "running" | "completed" | "cancelled" | "interrupted" | "failed"; "error": (string | null); "message_ids": Array<string>; "messages": Array<ApiSchemas["SessionMessageView"]>; "replace_reply_message_id": (string | null); "result_message_id": (string | null) }
+  "PromptSubmitResult": { "queued": boolean; "request_id": string; "status": "accepted" | "running" | "completed" | "silent" | "deferred" | "cancelled" | "interrupted" | "failed"; "error": (string | null); "message_ids": Array<string>; "messages": Array<ApiSchemas["SessionMessageView"]>; "replace_reply_message_id": (string | null); "result_message_id": (string | null) }
   "ProviderCardPublic": { "id": string; "name": string; "provider_type": string; "api_key": string; "base_url": string; "api_key_set": boolean }
   "ProviderCardUpdate": { "id": string; "name": string; "provider_type": string; "api_key"?: string; "base_url"?: string; "api_key_set"?: boolean; "clear_api_key"?: boolean }
   "ProviderDefaults": { "base_url": string; "requires_api_key": boolean; "supports_voice_design": boolean; "voice_design_model": (string | null); "supports_voice_clone": boolean; "voice_clone_model": (string | null); "input_modalities": Array<ApiSchemas["ModelModality"]> }
+  "ReactionVisual": { "visual_id": string; "version": number }
   "ReadingResultView": { "sources": Array<ApiSchemas["ReadingSourceView"]>; "notes": string }
   "ReadingSourceView": { "url": string; "title": string; "retrieved_at": string; "content_kind": "extracted_text" | "summary"; "excerpted": boolean }
   "RefreshRequest": { "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
@@ -198,8 +201,8 @@ export interface ApiSchemas {
   "RpcComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
   "RpcCommandDispatchResult": { "command": string; "result": ApiSchemas["RpcCommandResult"] }
   "RpcCommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["RpcSessionClearResult"] | ApiSchemas["RpcSessionCompressionResult"] | ApiSchemas["RpcRememberCommandResult"] | null); "hydrate": boolean }
-  "RpcCompanionMessageEvent": { "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
-  "RpcCompanionReactionEvent": { "reaction": string; "occurred_at": string }
+  "RpcCompanionMessageEvent": { "is_main": boolean; "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
+  "RpcCompanionReactionEvent": { "visual_id": string; "version": number; "occurred_at": string }
   "RpcCompanionSessionMessageView": { "id": string; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
   "RpcCompanionSignalResult": { "queued": boolean }
   "RpcCompressionEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (string | null) }
@@ -224,7 +227,7 @@ export interface ApiSchemas {
   "RpcMemoryChangedEvent": { "system_preset_id": string; "memory_id": (string | null) }
   "RpcMessageAudioEvent": { "session_id": string; "message_id": string; "audio_url": string; "duration": (number | null); "transcript": (string | null) }
   "RpcMessageBubbleEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "message_id": string; "bubble_index": number; "bubble": ApiSchemas["RpcReplyBubbleView"] }
-  "RpcMessageCompleteEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "text": (string | null); "bubbles": (Array<ApiSchemas["RpcReplyBubbleView"]> | null); "reasoning": (string | null); "media": (Array<ApiSchemas["RpcClientMediaEntry"]> | null); "usage": (ApiSchemas["RpcTokenUsage"] | null); "cache_usage": (ApiSchemas["RpcCacheUsage"] | null); "message_id": (string | null); "can_replace_reply": boolean }
+  "RpcMessageCompleteEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "decision": ("silent" | "deferred" | null); "text": (string | null); "bubbles": (Array<ApiSchemas["RpcReplyBubbleView"]> | null); "reasoning": (string | null); "media": (Array<ApiSchemas["RpcClientMediaEntry"]> | null); "usage": (ApiSchemas["RpcTokenUsage"] | null); "cache_usage": (ApiSchemas["RpcCacheUsage"] | null); "message_id": (string | null); "can_replace_reply": boolean }
   "RpcMessageDeletedEvent": { "session_id": string; "messages": Array<ApiSchemas["RpcSessionMessageView"]>; "deleted_count": number; "anchor": ApiSchemas["RpcUndoAnchor"] }
   "RpcMessageDeltaEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "text": string }
   "RpcMessageEditedEvent": { "session_id": string; "messages": Array<ApiSchemas["RpcSessionMessageView"]> }
@@ -237,7 +240,7 @@ export interface ApiSchemas {
   "RpcPlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text"; "call_duration_ms": (number | null) }
   "RpcPostCommentDeletedEvent": { "post_id": string; "comment_id": string }
   "RpcPostCommentEvent": { "post_id": string; "comment": ApiSchemas["RpcPostCommentResponse"] }
-  "RpcPostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["RpcPostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "completed" | "failed"; "reply_error": (string | null) }
+  "RpcPostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["RpcPostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "deferred" | "completed" | "silent" | "failed"; "reply_error": (string | null) }
   "RpcPostCommentRole": "user" | "companion"
   "RpcPostContentType": "text" | "image" | "video" | "audio"
   "RpcPostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["RpcPostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["RpcPostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
@@ -451,6 +454,7 @@ export interface ApiOperations {
   "admin.upsert_model_config": { path: { "user_id": string }; query: Record<string, never>; body: ApiSchemas["UserModelConfigRequest"]; input: { path: { "user_id": string }; query?: never; body: ApiSchemas["UserModelConfigRequest"] }; response: ApiSchemas["MessageResponse"] }
   "admin.delete_model_config": { path: { "user_id": string }; query: Record<string, never>; body: undefined; input: { path: { "user_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "gateway.gateway_ticket": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["GatewayTicketRequest"] | null); input: { path?: never; query?: never; body?: (ApiSchemas["GatewayTicketRequest"] | null) }; response: ApiSchemas["GatewayTicketResponse"] }
+  "companion.react_to_gesture": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["GestureReactionRequest"]; input: { path?: never; query?: never; body: ApiSchemas["GestureReactionRequest"] }; response: ApiSchemas["GestureReactionResponse"] }
   "companion.retry_appearance_preparation": { path: { "avatar_id": string }; query: Record<string, never>; body: ApiSchemas["PreparationRetryRequest"]; input: { path: { "avatar_id": string }; query?: never; body: ApiSchemas["PreparationRetryRequest"] }; response: ApiSchemas["AvatarAssetResponse"] }
   "companion.get_persona": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PersonaResponse"] }
   "companion.put_persona": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PersonaUpdate"]; input: { path?: never; query?: never; body: ApiSchemas["PersonaUpdate"] }; response: ApiSchemas["PersonaResponse"] }
@@ -907,6 +911,17 @@ export const API_OPERATIONS = {
     ],
     "wait_for_model": false,
     "ipc": false
+  },
+  "companion.react_to_gesture": {
+    "path": "/api/companion/gesture",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": true,
+    "ipc": true
   },
   "companion.retry_appearance_preparation": {
     "path": "/api/companion/avatar/{avatar_id}/preparation/retry",

@@ -185,9 +185,6 @@ const desktopBridge = {
   logout: (sessionId: string) => invoke(IPC.invoke.authLogout, sessionId),
   media: {
     prepareOutput: () => invoke(IPC.invoke.mediaPrepareOutput),
-    onboardingAudio: {
-      read: (tag: string) => invoke(IPC.invoke.onboardingAudioRead, tag)
-    },
     uploadAudio: (payload: AudioUploadPayload) => invoke(IPC.invoke.mediaAudioUpload, payload),
     uploadVoiceSample: (payload: VoiceSampleUploadPayload) => invoke(IPC.invoke.mediaVoiceSampleUpload, payload),
     tts: (payload: MediaTtsPayload) => invoke(IPC.invoke.mediaTts, payload)

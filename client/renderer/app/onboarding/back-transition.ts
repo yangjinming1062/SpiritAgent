@@ -5,10 +5,8 @@ export type Phase =
   | 'hatching'
   | 'portrait-avatar'
   | 'fullbody-reference'
-  | 'q-user'
   | 'voice'
   | 'environment'
-  | 'finishing'
 
 export type VoiceStage = 'describe' | 'catalog'
 
@@ -28,10 +26,6 @@ interface BackIntent {
 }
 
 export function computeBackTransition(state: BackState, characterQuestionsCount: number): BackIntent | null {
-  if (state.phase === 'q-user') {
-    return { phase: 'voice', voiceStage: 'catalog' }
-  }
-
   if (state.phase === 'environment') {
     return { phase: 'voice', voiceStage: 'catalog' }
   }

@@ -89,6 +89,7 @@ class CacheUsage(BaseModel):
 
 
 class MessageCompleteEvent(TurnEvent):
+    decision: Literal["silent", "deferred"] | None = None
     text: str | None = None
     bubbles: list[ReplyBubbleView] | None = None
     reasoning: str | None = None
@@ -177,6 +178,7 @@ class SystemNotificationEvent(BaseModel):
 
 
 class CompanionMessageEvent(BaseModel):
+    is_main: bool = True
     session_id: str
     message_id: ResourceId
     bubbles: list[ReplyBubbleView]
@@ -187,7 +189,8 @@ class MoodEvent(BaseModel):
 
 
 class CompanionReactionEvent(BaseModel):
-    reaction: str
+    visual_id: ResourceId
+    version: int
     occurred_at: str
 
 

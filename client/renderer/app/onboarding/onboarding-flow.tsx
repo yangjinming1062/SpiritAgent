@@ -17,20 +17,11 @@ import { useStrings } from '@/shared/strings'
 import { computeBackTransition } from './back-transition'
 import { BackgroundPage } from './background-page'
 import { EnvironmentPage } from './environment-page'
-import { playOnboardingAudio } from './onboarding-audio'
 import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from './onboarding-components'
 import { OnboardingDraft, type OnboardingPersonaConflict } from './onboarding-draft'
-import {
-  type AnswerKind,
-  CHARACTER_QUESTIONS,
-  LOCKED_FIELD_LABELS,
-  mergeResumeAnswers,
-  PHASE_QUESTIONS,
-  resolveResumeTarget
-} from './onboarding-questions'
+import { CHARACTER_QUESTIONS, mergeResumeAnswers, resolveResumeTarget, VOICE_QUESTION } from './onboarding-questions'
 import { PortraitPages } from './portrait-pages'
 import { QuestionPage } from './question-page'
-import { ReadyPage } from './ready-page'
 import {
   advanceStage,
   backStage,
@@ -57,7 +48,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const { imageSealed, phase, qIndex, voiceStage } = stage
   const [answers, setAnswers] = useState<OnboardingAnswers>({})
   const [input, setInput] = useState('')
-  const [answerKind, setAnswerKind] = useState<AnswerKind | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [personaConflict, setPersonaConflict] = useState<OnboardingPersonaConflict | null>(null)
 
@@ -78,8 +68,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const answersRef = useLatestRef(answers)
   const onCompletedRef = useLatestRef(onCompleted)
-  const currentList = PHASE_QUESTIONS[phase]
-  const question = currentList[qIndex]
+  const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
+  const question = phase === 'voice' ? VOICE_QUESTION : CHARACTER_QUESTIONS[qIndex]
 
   useEffect(() => {
     draft.start()
@@ -105,33 +95,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const portraitRef = useLatestRef(portrait)
 
   useEffect(() => {
-    if (phase !== 'q-character' && !(phase === 'voice' && voiceStage === 'describe')) {
+    if (!isQuestionPhase || !question) {
       return
     }
 
-    const current = currentList[qIndex]
-
-    if (!current) {
-      return
-    }
-
-    setInput(answersRef.current[current.key] ?? '')
-    setAnswerKind(null)
+    setInput(answersRef.current[question.key] ?? '')
     setHint(null)
-    void playOnboardingAudio(current.audioTag)
-
-    return () => stopSpeaking()
-  }, [phase, voiceStage, qIndex, currentList, answersRef])
-
-  useEffect(() => {
-    if (
-      resumeState === 'ok' &&
-      (phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')) &&
-      question
-    ) {
-      ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
-    }
-  }, [phase, question, resumeState, voiceStage])
+    ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
+  }, [isQuestionPhase, question, answersRef])
 
   // 草稿读取失败暂停作答；连通后只恢复一次，取消的读取可在重连时继续。
   useEffect(() => {
@@ -217,21 +188,18 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }, [begin, draft, gatewayState, onCompletedRef, portraitRef, resumeAttempt])
 
-  const commit = (value: string | undefined): OnboardingAnswers => {
+  const commit = (value: string | undefined): void => {
     if (!question) {
-      return answers
+      return
     }
 
     const trimmed = value?.trim() || undefined
-    const cleaned = trimmed && question.max ? trimmed.slice(0, question.max) : trimmed
-    const nextAnswers = { ...answers, [question.key]: cleaned }
-    setAnswers(nextAnswers)
+    const cleaned = trimmed?.slice(0, question.max)
+    setAnswers(current => ({ ...current, [question.key]: cleaned }))
 
-    if (gatewayState === 'open') {
+    if (gatewayState === 'open' && question.key !== 'voice') {
       void draft.submit(question.key, cleaned ?? null)
     }
-
-    return nextAnswers
   }
 
   const enterPortraitStage = async (currentAnswers: OnboardingAnswers): Promise<void> => {
@@ -268,48 +236,20 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  const finish = async (currentAnswers: OnboardingAnswers): Promise<void> => {
-    const isLive = begin()
-
-    const selectedVoice = currentAnswers.voice_setup_skipped === 'true' ? null : (currentAnswers.voice ?? null)
-
-    const failure = await draft.saveComplete(currentAnswers, selectedVoice)
-
-    if (!isLive()) {
-      return
-    }
-
-    if (failure) {
-      setHint(failure)
-      setPersonaConflict(draft.personaConflict())
-      setStage(current => ({ ...current, phase: 'q-user' }))
-
-      return
-    }
-
-    portrait.updateRefImage(null)
-    onCompletedRef.current()
-  }
-
-  const advance = (_currentAnswers: OnboardingAnswers): void => {
-    setStage(current => advanceStage(current, currentList.length))
+  const advance = (value: string | undefined): void => {
+    commit(value)
+    setStage(current => advanceStage(current, CHARACTER_QUESTIONS.length))
   }
 
   const onSend = (): void => {
-    if (question?.requiredHint && !input.trim()) {
-      setHint(question.requiredHint)
+    if (question && question.key !== 'voice' && !input.trim()) {
+      setHint(t.requiredField(t.fields[question.key].label))
       ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
 
       return
     }
 
-    advance(commit(input))
-  }
-
-  const onSkip = (): void => {
-    if (!question?.requiredHint) {
-      advance(commit(undefined))
-    }
+    advance(input)
   }
 
   const backIntent = computeBackTransition(
@@ -381,18 +321,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     return true
   }
 
-  const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
-
   const progressStep =
-    phase === 'q-character' || phase === 'background'
-      ? 0
-      : phase === 'voice'
-        ? 2
-        : phase === 'environment'
-          ? 3
-          : phase === 'q-user' || phase === 'finishing'
-            ? 4
-            : 1
+    phase === 'q-character' || phase === 'background' ? 0 : phase === 'voice' ? 2 : phase === 'environment' ? 3 : 1
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
@@ -416,19 +346,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         )}
         {resumeState === 'ok' && isQuestionPhase && question && (
           <QuestionPage
-            answerKind={answerKind}
             canGoBack={backIntent !== null}
             hint={hint}
             input={input}
             inputRef={inputRef}
-            lockedLabel={phase === 'q-character' ? LOCKED_FIELD_LABELS[question.key] : undefined}
             onBack={onBack}
             onSend={onSend}
-            onSkip={onSkip}
+            onSkip={() => advance(undefined)}
             qIndex={qIndex}
             question={question}
-            questionCount={currentList.length}
-            setAnswerKind={setAnswerKind}
+            questionCount={phase === 'voice' ? 1 : CHARACTER_QUESTIONS.length}
             setInput={value => {
               setInput(value)
               setHint(null)
@@ -451,7 +378,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               setHint(null)
             }}
             onContinue={skip => {
-              const next = skip ? { ...answers, age: '', occupation: '', background: '' } : answers
+              const next = skip
+                ? { ...answers, gender: '', personality: '', relationship: '', age: '', occupation: '', background: '' }
+                : answers
+
               setAnswers(next)
               void enterPortraitStage(next)
             }}
@@ -471,7 +401,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           <VoicePage
             confirming={voiceSaving}
             error={hint}
-            name={answers.name ?? ''}
             onContinueText={() => void confirmVoice(true)}
             onDescribe={() => setStage(current => ({ ...current, voiceStage: 'describe' }))}
             onVoiceSelected={(voiceId, label, serverConfirmed, isSelectionCurrent) =>
@@ -487,29 +416,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             onBack={onBack}
             onBusyChange={setEnvironmentBusy}
             onCompleted={() => {
-              setHint(null)
-              setStage(current => ({ ...current, phase: 'q-user', qIndex: 0 }))
+              portrait.updateRefImage(null)
+              onCompletedRef.current()
             }}
             onError={message => setHint(message)}
           />
         )}
-        {phase === 'q-user' && (
-          <ReadyPage
-            answers={answers}
-            draft={draft}
-            hint={hint}
-            onBack={onBack}
-            onFinish={() => {
-              setHint(null)
-              setStage(current => ({ ...current, phase: 'finishing' }))
-              void finish(answers)
-            }}
-            onReviewConflict={reviewPersonaConflict}
-            personaConflict={personaConflict}
-            setAnswers={setAnswers}
-          />
-        )}
-        {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">{t.savingProfile}</p>}
       </DraggableDialog>
     </div>
   )

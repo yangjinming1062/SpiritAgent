@@ -23,7 +23,7 @@ from runtime.tools.tool_dispatch_helpers import (
     should_parallelize_tool_batch,
 )
 from runtime.tools.tool_guardrails import ToolCallGuardrailController, check_file_safety
-from runtime.tools.tool_result_classification import file_mutation_result_landed
+from runtime.tools.tool_result_classification import file_mutation_result_landed, tool_may_have_effects
 
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.message_sanitization import parse_tool_call_arguments
@@ -55,6 +55,7 @@ class _ToolDispatchContext:
     proactive_turn: bool
     user_messages: dict[int, str]
     unavailable_tool_names: frozenset[str] = frozenset()
+    open_contact: Callable[[], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -232,6 +233,8 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
             return make_tool_result_message(name, blocked, tc["call_id"])
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
+        if tool_location != "unknown" and ctx.open_contact is not None and tool_may_have_effects(name):
+            await ctx.open_contact()
         progress.started.add(tc["call_id"])
         match tool_location:
             case "backend":

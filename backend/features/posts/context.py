@@ -2,18 +2,16 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, format_local_iso
-from runtime.memory_scope import MemoryScope
 
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_companion_dialogue
 from features.entries.contracts import EntryView
-from features.memory.memory_bootstrap import build_user_profile_extras
-from features.memory.memory_format import format_companion_reflection_block
+from features.life.context import read_life_share_excerpts
 from features.posts.schemas import PostContext
 from features.posts.store import PostError
 
@@ -26,16 +24,19 @@ class PostPromptContext:
     payload: dict[str, Any]
 
 
-async def load_post_prompt_context(user_id: int) -> PostPromptContext:
+async def load_post_prompt_context(user_id: int, *, publication: bool = False) -> PostPromptContext:
     companion = await load_companion_prompt_context(user_id)
     if companion is None:
         raise PostError("伙伴资料尚未就绪")
     now = datetime.fromisoformat(companion.current_time)
-    scope = MemoryScope(user_id, "companion")
     async with SESSION_LOCAL() as db:
         dialogue = await load_companion_dialogue(db, user_id, now=now)
-        profile = await build_user_profile_extras(db, scope, language=companion.language)
-        reflection = await format_companion_reflection_block(db, scope, language=companion.language)
+        excerpts = (
+            await read_life_share_excerpts(db, user_id, channel="post", since=now - timedelta(days=3), until=now)
+            if publication
+            else []
+        )
+    messages = json.loads(dialogue.content or "[]")
     return PostPromptContext(
         now=ensure_utc(now),
         user_timezone=dialogue.user_timezone,
@@ -46,14 +47,17 @@ async def load_post_prompt_context(user_id: int) -> PostPromptContext:
             "user_timezone": dialogue.user_timezone,
             "timezone_configured": dialogue.timezone_configured,
             "persona": companion.persona_extras,
-            "user_profile": profile,
-            "long_term_memories": companion.memories_block,
-            "companion_reflection": reflection,
-            "life_context": companion.life_context.prompt_payload(),
+            "user_profile": companion.memory.user_profile,
+            "long_term_memories": companion.memory.recalled,
+            "companion_reflection": companion.memory.relationship,
+            "life_context": companion.life_context.prompt_payload(shared_only=True, for_publication=publication),
+            **({"selected_life_excerpts": excerpts} if publication else {}),
             "recent_dialogue": {
                 "window_start": dialogue.window_start.isoformat(),
                 "window_end": dialogue.window_end.isoformat(),
-                "messages": json.loads(dialogue.content or "[]"),
+                "messages": [message for message in messages if message.get("role") == "user"]
+                if publication
+                else messages,
             },
         },
     )

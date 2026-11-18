@@ -11,7 +11,7 @@ from features.companion.narrative_quality import NarrativeQualityError, review_n
 from features.entries.diary_search import schedule_diary_embeddings
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
-from features.life.context import read_life_context_in_session
+from features.life.context import read_life_context_in_session, read_life_share_excerpts
 from features.memory.memory_narratives import load_companion_reflection
 from features.posts.store import PostInteractions
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
@@ -36,8 +36,8 @@ async def project_today(
     target_date: date,
     *,
     log_id: int,
+    has_activity: bool,
     messages: list[dict[str, str]],
-    nightly_actions: list[dict[str, Any]],
     posts: PostInteractions,
     persona: dict[str, str],
     language: str,
@@ -62,8 +62,19 @@ async def project_today(
             result = None
             start, end = local_date_bounds(target_date, target_date, user_timezone)
             life_context_payload = (
-                await read_life_context_in_session(db, user_id, event_start=start, event_end=end)
-            ).prompt_payload()
+                await read_life_context_in_session(
+                    db, user_id, event_start=start, event_end=end, publication_events_only=True
+                )
+            ).prompt_payload(shared_only=True)
+            life_context_payload["selected_life_excerpts"] = await read_life_share_excerpts(
+                db, user_id, channel="diary", since=start, until=end
+            )
+            if not (
+                has_activity or life_context_payload["recent_events"] or life_context_payload["selected_life_excerpts"]
+            ):
+                await save_narrative_result(db, log_id, "journal", False)
+                await db.commit()
+                return False
             reflection = await load_companion_reflection(db, MemoryScope(user_id, "companion"))
             if reflection is not None:
                 previous_reflection = {"local_date": reflection.local_date, "content": reflection.content}
@@ -75,9 +86,8 @@ async def project_today(
         return False
     composed = await _compose_diary(
         await load_user_llm_config(user_id, AiTaskKey.nightly),
-        messages,
+        [message for message in messages if message.get("role") == "user"],
         target_date,
-        nightly_actions,
         persona,
         posts.threads,
         language,
@@ -107,7 +117,6 @@ async def _compose_diary(
     llm_cfg: UserLlmConfig,
     clean_messages: list[dict[str, str]],
     target_date: date,
-    nightly_actions: list[dict[str, Any]],
     persona: dict[str, str],
     post_interactions: list[dict[str, Any]],
     language: str,
@@ -122,7 +131,6 @@ async def _compose_diary(
     payload = {
         "local_date": target_date.isoformat(),
         "today_conversations": clean_messages,
-        "nightly_autonomous_actions": nightly_actions,
         "post_interactions": post_interactions,
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.entries.contracts import PostCommentRole, PostContentType
 
-ReplyStatus = Literal["none", "pending", "running", "completed", "failed"]
+ReplyStatus = Literal["none", "pending", "running", "deferred", "completed", "silent", "failed"]
 POST_COMMENT_MAX_CHARS = 500
 
 

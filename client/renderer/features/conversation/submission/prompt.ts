@@ -24,7 +24,7 @@ export function createPromptSubmission(base: SubmissionBase, peers: SubmissionPe
   } = base.state.stores
 
   const { splitUserBubblesEnabled, reconcilePersistedMessages } = base.messages.internal
-  const { markAssistantTerminal } = base.messages.api
+  const { finalizeAssistantMessage, markAssistantTerminal } = base.messages.api
 
   function bindTrailingUserMessageIds(ids: string[], requestId?: string): void {
     if (!requestId || requestId !== base.state.submission.submittedRequestId) {
@@ -204,6 +204,12 @@ export function createPromptSubmission(base: SubmissionBase, peers: SubmissionPe
       markAssistantTerminal({ cancelled: true })
     } else if (unfinished && !replacing && event.status === 'failed') {
       markAssistantTerminal({ error: event.error || getStrings().chat.sendFailed })
+    } else if (
+      $lastAssistantStreaming.get() &&
+      !replacing &&
+      (event.status === 'silent' || event.status === 'deferred')
+    ) {
+      finalizeAssistantMessage('')
     }
 
     const stopped =

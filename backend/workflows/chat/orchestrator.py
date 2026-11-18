@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -78,6 +79,7 @@ from workflows.chat.turn_inputs import (
 )
 from workflows.chat.types import TerminalReplyDelivery, TrackTask
 from workflows.companion_actions import build_action_view
+from workflows.companion_rhythm import open_rhythm_message
 from workflows.tool_availability import unavailable_action_tool_names
 
 logger = get_logger(__name__)
@@ -168,6 +170,7 @@ async def run_chat_turn(
     final_reply_only: bool = False,
     replace_reply_message_id: int | None = None,
     submission_request_id: str | None = None,
+    rhythm_contact_id: str | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
@@ -194,6 +197,7 @@ async def run_chat_turn(
                 final_reply_only=final_reply_only,
                 replace_reply_message_id=replace_reply_message_id,
                 submission_request_id=submission_request_id,
+                rhythm_contact_id=rhythm_contact_id,
                 ephemeral=ephemeral,
                 headless=headless,
                 has_viewer=has_viewer,
@@ -586,6 +590,7 @@ async def _run_chat_turn(
     final_reply_only: bool = False,
     replace_reply_message_id: int | None = None,
     submission_request_id: str | None = None,
+    rhythm_contact_id: str | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
@@ -632,7 +637,21 @@ async def _run_chat_turn(
             return
         inputs, current_context = turn.inputs, turn.current_context
         dispatch_ctx, active_tool_names = turn.dispatch_ctx, turn.active_tool_names
+        if rhythm_contact_id is not None:
+            contact_opened = False
+            contact_lock = asyncio.Lock()
+
+            async def open_contact() -> None:
+                nonlocal contact_opened
+                async with contact_lock:
+                    if not contact_opened:
+                        await open_rhythm_message(user_id, rhythm_contact_id)
+                        contact_opened = True
+
+            dispatch_ctx = replace(dispatch_ctx, open_contact=open_contact)
         media_turn = dispatch_ctx.media_turn
+        allow_silence = media_turn.structured_reply and setup.replacement is None
+        allow_deferral = allow_silence and not ephemeral and submission_request_id is not None
         generation_emitter = _BufferedReplacementEmitter() if setup.replacement is not None else emitter
         turn_reasoning_parts: list[str] = []
         base_instructions = current_context["instructions"]
@@ -703,7 +722,8 @@ async def _run_chat_turn(
                         if callable(reply_bubble_sink) and (not active_schemas or reply_only)
                         else None
                     ),
-                    allow_silence=ephemeral and media_turn.structured_reply,
+                    allow_silence=allow_silence,
+                    allow_deferral=allow_deferral,
                     pace_bubbles=has_viewer and not headless and setup.replacement is None,
                     final_reply_only=reply_only,
                     selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
@@ -726,7 +746,8 @@ async def _run_chat_turn(
                         request=req.message.content,
                         delivery=turn.delivery,
                         reply_bubble_sink=reply_bubble_sink,
-                        allow_silence=ephemeral and media_turn.structured_reply,
+                        allow_silence=allow_silence,
+                        allow_deferral=allow_deferral,
                         pace_bubbles=has_viewer and not headless and setup.replacement is None,
                         final_reply_only=True,
                         selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
@@ -780,6 +801,8 @@ async def _run_chat_turn(
                     track_task=track_task,
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=submission_request_id,
+                    submitted_message_id=setup.user_message_id,
+                    open_contact=dispatch_ctx.open_contact,
                     media_request_scope=media_turn.request_scope,
                     reply_delivery=reply_delivery,
                     call_record_id=call_record_id,

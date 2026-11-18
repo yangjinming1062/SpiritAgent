@@ -111,10 +111,6 @@ installer/payload/*
 # on first launch without a HuggingFace round-trip.
 !installer/payload/voices/
 !installer/payload/voices/**
-# Pre-rendered onboarding TTS clips — committed alongside manifest.json
-# so the desktop's onboarding flow plays offline without any cloud round-trip.
-!installer/payload/onboarding-audio/
-!installer/payload/onboarding-audio/**
 
 # Backend runtime data (generated media/logs from tests + runs, never tracked)
 data/

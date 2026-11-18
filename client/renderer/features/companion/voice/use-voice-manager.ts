@@ -25,7 +25,6 @@ import { useVoiceOperations, type VoiceSelectionHandler } from './use-voice-oper
 import { useVoicePreview } from './use-voice-preview'
 
 export interface VoiceManagerProps {
-  name: string
   intro?: ReactNode
   compact?: boolean
   preference?: string
@@ -33,13 +32,7 @@ export interface VoiceManagerProps {
   onVoiceSelected?: VoiceSelectionHandler
 }
 
-export function useVoiceManager({
-  compact = false,
-  disabled = false,
-  name,
-  onVoiceSelected,
-  preference
-}: VoiceManagerProps) {
+export function useVoiceManager({ compact = false, disabled = false, onVoiceSelected, preference }: VoiceManagerProps) {
   const dict = useStrings()
   const t = dict.voice
   const locale = useStore($locale)
@@ -101,7 +94,6 @@ export function useVoiceManager({
 
   const preview = useVoicePreview({
     active,
-    name,
     onBeforePlay: sample.clearError,
     viewEligible
   })
@@ -192,7 +184,7 @@ export function useVoiceManager({
   }, [active, gateway, locale, reload, preference, catalogRevision, t.loadFailed, begin])
 
   const runDesign = (mode: 'auto' | 'feedback' | 'preview'): void => {
-    preview.previewCreation(blocked, () => createDesignedVoice(mode, name, preference))
+    preview.previewCreation(blocked, () => createDesignedVoice(mode, preference))
   }
 
   const chooseTab = (value: VoiceTab): void => {

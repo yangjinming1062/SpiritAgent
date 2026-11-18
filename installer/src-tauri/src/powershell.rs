@@ -36,8 +36,6 @@ pub struct BundleContext {
     pub bundled_desktop_dir: Option<std::path::PathBuf>,
     /// Stage-InstallSkills 数据来源。
     pub bundled_skills_dir: Option<std::path::PathBuf>,
-    /// 按语言子目录的引导音频。
-    pub bundled_onboarding_audio_dir: Option<std::path::PathBuf>,
     /// `dmg` | `nsis`，unpack-desktop 据此选择安装方式。
     pub installer_format: String,
 }
@@ -66,9 +64,6 @@ pub async fn run_script(
     }
     if let Some(p) = &bundle.bundled_skills_dir {
         cmd.env("SPIRITAGENT_BUNDLED_SKILLS_DIR", p);
-    }
-    if let Some(p) = &bundle.bundled_onboarding_audio_dir {
-        cmd.env("SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR", p);
     }
     cmd.env("SPIRITAGENT_INSTALLER_FORMAT", &bundle.installer_format);
 

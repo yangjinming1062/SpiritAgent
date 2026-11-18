@@ -89,10 +89,6 @@ export function PersonaPage(): React.ReactElement {
       nextErrors.name = t.hintEmptyName
     }
 
-    if (!draft.values.personality.trim()) {
-      nextErrors.personality = t.personalityRequired
-    }
-
     if (!draft.values.speaking_style.trim()) {
       nextErrors.speaking_style = t.hintEmptySpeakingStyle
     }

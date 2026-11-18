@@ -1,5 +1,6 @@
 import {
   $effectiveTier,
+  $responsePreference,
   $spriteState,
   isCharacterStageVisible,
   observeCharacterStageVisibility,
@@ -28,8 +29,7 @@ export async function speakProactive(text: string): Promise<void> {
 
   const bubble = { text: content }
 
-  if (tier !== 'autonomous') {
-    // 普通档位：停留更久，让用户在没有语音的情况下也能读完文字。
+  if (tier !== 'autonomous' || $responsePreference.get() === 'text') {
     setProactiveBubble(bubble, 8000)
 
     return

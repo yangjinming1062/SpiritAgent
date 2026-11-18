@@ -1,4 +1,4 @@
-import { assembleCharacterPersona, assemblePersona, type OnboardingAnswers } from '@/features/character'
+import { assembleCharacterPersona, type OnboardingAnswers } from '@/features/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
@@ -7,7 +7,7 @@ import { sleep } from '@runtime'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
-import { type QKey, USER_QUESTIONS } from './onboarding-questions'
+import type { QKey } from './onboarding-questions'
 
 type OnboardingResumeState = ApiSchemas['OnboardingStateResponse']
 type PersonaRequest = ApiSchemas['PersonaUpdate']
@@ -147,42 +147,10 @@ export class OnboardingDraft {
     }
   }
 
-  async saveComplete(answers: OnboardingAnswers, selectedVoice: string | null): Promise<string | null> {
-    const isCurrent = this.captureOperation()
-    const completeAnswers = { ...answers }
-
-    if (selectedVoice && !completeAnswers.voice) {
-      completeAnswers.voice = selectedVoice
-    }
-
-    try {
-      const voiceSaved = !selectedVoice || (await this.retry(() => this.submit('voice', selectedVoice), isCurrent))
-
-      for (const { key } of USER_QUESTIONS) {
-        if (
-          completeAnswers[key] !== undefined &&
-          !(await this.retry(() => this.submit(key, completeAnswers[key] || null), isCurrent))
-        ) {
-          return '资料保存失败，请检查网络后再点「完成」重试'
-        }
-      }
-
-      await this.submissions
-
-      const saved =
-        voiceSaved && (await this.retry(() => this.savePersona(assemblePersona(completeAnswers), isCurrent), isCurrent))
-
-      return saved ? null : '资料保存失败，请检查网络后再点「完成」重试'
-    } catch (error) {
-      if (isCurrent()) {
-        log.warn('onboarding', 'final persona save rejected', error)
-      }
-
-      return backendDetailMessage(error, '资料保存失败，请检查填写内容后重试')
-    }
-  }
-
-  private async savePersona(payload: ReturnType<typeof assemblePersona>, isCurrent: () => boolean): Promise<boolean> {
+  private async savePersona(
+    payload: ReturnType<typeof assembleCharacterPersona>,
+    isCurrent: () => boolean
+  ): Promise<boolean> {
     if (!isCurrent()) {
       return false
     }

@@ -1,8 +1,8 @@
 """生活状态的流程入口，负责会话边界与提交。"""
 
 from collections.abc import Sequence
-from datetime import datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
+from secrets import token_hex
 
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
 
-from .execution import enqueue_action
+from .execution import enqueue_action, notify_shared_step
 from .lifecycle import transition_pursuit
 from .models import LifeEvent, LifeState, LifeStep
 from .queries import (
@@ -23,6 +23,7 @@ from .queries import (
     list_events,
     list_pursuits,
     pursuit_view,
+    shared_pursuit_ids,
     state_view,
     step_view,
 )
@@ -37,11 +38,14 @@ from .schemas import (
     LifePursuitPublicDetail,
     LifePursuitPublicListResponse,
     LifePursuitView,
+    LifeShare,
     LifeStatePublicView,
     LifeStateView,
     LifeStepRequest,
     LifeStepView,
     LifeTrajectoryListResponse,
+    PersonalGrowth,
+    PersonalGrowthChange,
     PrivateLifeEpisode,
 )
 from .service import (
@@ -58,7 +62,7 @@ from .service import (
     start_step,
 )
 from .settlement import settle_business_steps
-from .trajectory import list_trajectory
+from .trajectory import list_trajectory, public_result_reference
 
 
 async def read_state(user_id: int) -> LifeStateView:
@@ -77,6 +81,10 @@ async def read_public_state(user_id: int) -> LifeStatePublicView:
         view = LifeStatePublicView.model_validate(state)
         view.latest_episode = latest[0] if latest else None
         view.narrative = view.latest_episode.narrative if view.latest_episode else None
+        if not state.activity_shared_with_user:
+            view.activity_kind, view.activity_type, view.activity_started_at = "virtual_activity", "idle", None
+        if state.active_pursuit_id is not None and not await shared_pursuit_ids(db, user_id, {state.active_pursuit_id}):
+            view.active_pursuit_id = None
         return view
 
 
@@ -90,7 +98,8 @@ async def read_public_trajectory(
 async def read_public_pursuits(
     user_id: int, *, status: str | None, cursor: str | None, limit: int
 ) -> LifePursuitPublicListResponse:
-    response = await read_pursuits(user_id, status=status, cursor=cursor, limit=limit)
+    async with SESSION_LOCAL() as db:
+        response = await list_pursuits(db, user_id, status=status, cursor=cursor, limit=limit, shared_only=True)
     return LifePursuitPublicListResponse.model_validate(response, from_attributes=True)
 
 
@@ -120,19 +129,11 @@ async def require_step_submission(db: AsyncSession, user_id: int, request: LifeS
             raise LifeInputError("事项已暂停或结束，不能提交新的执行")
 
 
-_REVIEW_HOURS = (9, 14, 19)
-_REVIEW_END_HOUR = 22
-
-
-def _review_slot(local: datetime) -> str | None:
-    if local.hour < _REVIEW_HOURS[0] or local.hour >= _REVIEW_END_HOUR:
-        return None
-    hour = max(hour for hour in _REVIEW_HOURS if hour <= local.hour)
-    return f"{local.date().isoformat()}T{hour:02d}"
+DEFAULT_REVIEW_DELAY = timedelta(hours=2)
 
 
 async def reserve_review_in_session(db: AsyncSession, user_id: int, now: datetime) -> tuple[bool, str | None]:
-    """先占用本地时段，成果或明确调整可唤醒判断，但不再消耗一次日常机会。"""
+    """先持久认领本次判断。提交前保留可恢复的下一次期限。"""
     state = await get_or_create_state(db, user_id, lock=True)
     if state.next_review_at is not None and ensure_utc(state.next_review_at) > now:
         return False, None
@@ -140,20 +141,20 @@ async def reserve_review_in_session(db: AsyncSession, user_id: int, now: datetim
     if timezone is None:
         state.next_review_at = now + timedelta(hours=1)
         return False, None
-    zone = ZoneInfo(timezone)
-    local = now.astimezone(zone)
-    day = local.date()
-    next_hour = next((hour for hour in _REVIEW_HOURS if hour > local.hour), None)
-    state.next_review_at = datetime.combine(
-        day if next_hour is not None else day + timedelta(days=1), time(next_hour or _REVIEW_HOURS[0]), zone
+    state.next_review_at = now + DEFAULT_REVIEW_DELAY
+    state.review_slot = token_hex(8)
+    return True, state.review_slot
+
+
+async def set_next_review_in_session(
+    db: AsyncSession, user_id: int, *, slot: str, expected_revision: int, review_after_minutes: int | None
+) -> None:
+    row = await get_or_create_state(db, user_id, lock=True)
+    if row.revision != expected_revision or row.review_slot != slot:
+        raise LifeStateConflictError("生活状态或判断已在其他流程更新")
+    row.next_review_at = utc_now() + (
+        timedelta(minutes=review_after_minutes) if review_after_minutes is not None else DEFAULT_REVIEW_DELAY
     )
-    slot = _review_slot(local)
-    if slot is None:
-        return False, None
-    if state.review_slot is not None and state.review_slot >= slot:
-        return True, None
-    state.review_slot = slot
-    return True, slot
 
 
 async def pending_presentation_users(db: AsyncSession, *, user_id: int | None = None) -> set[int]:
@@ -180,19 +181,26 @@ async def presentation_revision_matches(db: AsyncSession, user_id: int, revision
     return await current_presentation_revision(db, user_id) == revision
 
 
-async def read_pursuit(user_id: int, pursuit_id: int) -> LifePursuitDetail | None:
+async def read_pursuit(user_id: int, pursuit_id: int, *, shared_only: bool = False) -> LifePursuitDetail | None:
     async with SESSION_LOCAL() as db:
         row = await get_pursuit(db, user_id, pursuit_id)
-        if row is None:
+        if row is None or (shared_only and not row.shared_with_user):
             return None
         steps = await db.scalars(
             select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.pursuit_id == pursuit_id).order_by(LifeStep.id)
         )
-        return LifePursuitDetail(**pursuit_view(row).model_dump(), steps=[step_view(step) for step in steps])
+        pursuit = pursuit_view(row)
+        if (
+            shared_only
+            and pursuit.previous_pursuit_id is not None
+            and not await shared_pursuit_ids(db, user_id, {pursuit.previous_pursuit_id})
+        ):
+            pursuit.previous_pursuit_id = None
+        return LifePursuitDetail(**pursuit.model_dump(), steps=[step_view(step) for step in steps])
 
 
 async def read_public_pursuit(user_id: int, pursuit_id: int) -> LifePursuitPublicDetail | None:
-    detail = await read_pursuit(user_id, pursuit_id)
+    detail = await read_pursuit(user_id, pursuit_id, shared_only=True)
     return LifePursuitPublicDetail.model_validate(detail) if detail is not None else None
 
 
@@ -209,7 +217,8 @@ async def read_events(user_id: int, *, pursuit_id: int | None, cursor: str | Non
 async def read_public_events(
     user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int
 ) -> LifeEventPublicListResponse:
-    response = await read_events(user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
+    async with SESSION_LOCAL() as db:
+        response = await list_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, shared_only=True)
     return LifeEventPublicListResponse.model_validate(response, from_attributes=True)
 
 
@@ -262,15 +271,15 @@ async def commit_private_episode_in_session(
     *,
     slot: str,
     expected_revision: int,
-    timezone: str,
     awake_until: datetime,
-) -> None:
+    show_activity: bool = False,
+) -> LifeEventView:
     row = await get_or_create_state(db, user_id, lock=True)
     if row.revision != expected_revision or row.review_slot != slot:
         raise LifeStateConflictError("生活状态或日常时段已经变化")
     now = utc_now()
-    if now >= awake_until or _review_slot(now.astimezone(ZoneInfo(timezone))) != slot:
-        raise LifeStateConflictError("伙伴已休息或认领的日常时段已结束")
+    if now >= awake_until:
+        raise LifeStateConflictError("伙伴已休息")
     previous_presentation = row.presentation_revision
     if row.activity_step_id is None:
         apply_decision(
@@ -286,6 +295,9 @@ async def commit_private_episode_in_session(
             ),
         )
         row.narrative = episode.narrative
+        if row.activity_shared_with_user != show_activity:
+            row.activity_shared_with_user = show_activity
+            row.presentation_revision += 1
     view = await record_event(
         db,
         user_id,
@@ -297,6 +309,7 @@ async def commit_private_episode_in_session(
             fact_type="virtual_activity",
             fact={"title": episode.title},
             narrative=episode.narrative,
+            shared_with_user=False,
             trajectory_kind="virtual",
             previous_episode_id=episode.previous_episode_id,
         ),
@@ -308,7 +321,69 @@ async def commit_private_episode_in_session(
             event_type="companion.life.presentation_requested",
             payload={"revision": row.presentation_revision},
         )
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": view.event_key})
+    return event_view(view)
+
+
+async def share_life_event_in_session(db: AsyncSession, user_id: int, share: LifeShare, source_id: int) -> None:
+    """公开一段独立写就的片段。保留原记录及其可见范围。"""
+    await get_or_create_state(db, user_id, lock=True)
+    original = await db.scalar(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id == source_id))
+    if original is None:
+        raise LifeInputError("分享来源不属于当前生活记录")
+    if await db.scalar(
+        select(LifeEvent.id).where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.source == "life_share",
+            LifeEvent.fact_json["event_id"].as_string() == str(source_id),
+            LifeEvent.fact_json["channel"].as_string() == share.channel,
+        )
+    ):
+        return
+    public = share.channel == "life"
+    await accept_event_in_session(
+        db,
+        user_id,
+        LifeEventInput(
+            event_key=f"life-share:{token_hex(12)}",
+            kind="life.episode.shared" if public else "life.share.prepared",
+            source="life_share",
+            fact_type=original.fact_type,
+            fact={"title": share.title, "channel": share.channel, "event_id": str(source_id)},
+            narrative=share.narrative,
+            occurred_at=original.occurred_at,
+            # 摘选有自己的轨迹身份，成果事实和完整阅读笔记仍属于来源事件。
+            trajectory_kind=("virtual" if original.trajectory_kind == "virtual" else "milestone") if public else None,
+            result_ref=public_result_reference(original) if public else {},
+            shared_with_user=public,
+        ),
+    )
+
+
+async def update_personal_growth_in_session(
+    db: AsyncSession, user_id: int, change: PersonalGrowthChange, evidence: LifeEventView | None
+) -> None:
+    row = await get_or_create_state(db, user_id, lock=True)
+    values = dict(row.personal_growth_json)
+    if change.text is None:
+        values.pop(change.aspect, None)
+    else:
+        if (
+            evidence is None
+            or evidence.subject != "companion"
+            or evidence.fact_type not in ("virtual_activity", "result")
+        ):
+            raise LifeInputError("个人认识需要来自伙伴自己的经历或已确认成果")
+        if not await db.scalar(select(LifeEvent.id).where(LifeEvent.user_id == user_id, LifeEvent.id == evidence.id)):
+            raise LifeInputError("个人认识的依据不属于当前生活记录")
+        previous = values.get(change.aspect)
+        if previous is not None and previous.get("text") == change.text:
+            return
+        values[change.aspect] = PersonalGrowth(
+            text=change.text, evidence_event_id=evidence.id, updated_at=utc_now()
+        ).model_dump(mode="json")
+    if row.personal_growth_json != values:
+        row.personal_growth_json = values
+        row.revision += 1
 
 
 async def _apply_pursuit_operation(
@@ -331,6 +406,8 @@ async def _apply_pursuit_operation(
             previous_episode_id=decision.episode_origin_id,
             previous_pursuit_id=previous_pursuit.id if previous_pursuit is not None else None,
             source_message_id=decision.source_message_id,
+            shared_with_user=decision.source == "user"
+            or (previous_pursuit is not None and previous_pursuit.shared_with_user),
         )
         row.active_pursuit_id = pursuit.id
         created = await get_pursuit(db, user_id, pursuit.id)
@@ -407,6 +484,7 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 fact={"title": decision.pursuit_title or None, "message_id": str(decision.source_message_id)},
                 narrative=decision.narrative.event,
                 trajectory_kind="milestone",
+                shared_with_user=True,
             ),
         )
         return state_view(row)
@@ -441,14 +519,20 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
                 narrative=decision.narrative.event,
             ),
         )
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": row.revision})
+    if decision.source == "user" or await shared_pursuit_ids(
+        db,
+        user_id,
+        {identifier for identifier in (decision.pursuit_id, row.active_pursuit_id) if identifier is not None},
+    ):
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": row.revision})
     return state_view(row)
 
 
 async def accept_event_in_session(db: AsyncSession, user_id: int, event: LifeEventInput) -> LifeEventView:
     """在调用方事务内接纳事件；只返回公开 DTO。"""
     view = event_view(await record_event(db, user_id, event))
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": view.event_key})
+    if view.shared_with_user:
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": view.event_key})
     return view
 
 
@@ -464,6 +548,7 @@ async def begin_pursuit_in_session(
     previous_episode_id: int | None = None,
     previous_pursuit_id: int | None = None,
     source_message_id: int | None = None,
+    shared_with_user: bool = False,
 ) -> LifePursuitView:
     row = await ensure_pursuit(
         db,
@@ -473,6 +558,7 @@ async def begin_pursuit_in_session(
         desired_result=desired_result,
         narrative=narrative,
         idempotency_key=idempotency_key,
+        shared_with_user=shared_with_user,
     )
     if previous_pursuit_id is not None:
         previous_episode_id = await db.scalar(
@@ -506,7 +592,8 @@ async def begin_pursuit_in_session(
             previous_episode_id=previous_episode_id,
         ),
     )
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"pursuit_id": row.id})
+    if row.shared_with_user:
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"pursuit_id": row.id})
     return pursuit_view(row)
 
 
@@ -515,7 +602,7 @@ async def bind_step_in_session(
 ) -> LifeStepView:
     row = await create_step(db, user_id, **request.model_dump())
     row = await start_step(db, user_id, row.id, business_ref=business_ref)
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
+    await notify_shared_step(db, user_id, row)
     return step_view(row)
 
 
@@ -534,7 +621,7 @@ async def update_business_steps_in_session(
     additional_events: Sequence[LifeEventInput] = (),
 ) -> None:
     """同一任务的步骤、事项、事实与投影批量结算，通知由调用方一并提交。"""
-    revision = await settle_business_steps(
+    await settle_business_steps(
         db,
         user_id,
         kind=kind,
@@ -547,8 +634,6 @@ async def update_business_steps_in_session(
         next_step=next_step,
         additional_events=additional_events,
     )
-    if revision is not None:
-        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": revision})
 
 
 async def wait_business_media_in_session(
@@ -579,7 +664,8 @@ async def wait_business_media_in_session(
         if state.activity_step_id == row.id:
             clear_activity_step(db, state)
     state.revision += 1
-    emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": state.revision})
+    if await shared_pursuit_ids(db, user_id, {row.pursuit_id for row in rows if row.pursuit_id is not None}):
+        emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"revision": state.revision})
 
 
 async def resume_business_media_in_session(

@@ -1,7 +1,6 @@
 """按同一事件身份读取生活轨迹、主题和阅读成果。"""
 
 from collections.abc import Sequence
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
@@ -18,9 +17,17 @@ from .schemas import LifeEventView, LifeTrajectoryEntry, LifeTrajectoryListRespo
 _PUBLIC_RESULTS = frozenset({"visual_id", "visual_version_id", "outfit_id", "scene_id", "action_id"})
 
 
-def trajectory_scope(*, pursuit_id: int | None = None, topic_id: int | None = None) -> ColumnElement[bool]:
+def public_result_reference(row: LifeEvent) -> dict:
+    return {key: value for key, value in result_reference(row).items() if key in _PUBLIC_RESULTS}
+
+
+def trajectory_scope(
+    *, pursuit_id: int | None = None, topic_id: int | None = None, shared_only: bool = False
+) -> ColumnElement[bool]:
     """每个事项保留自己的成果事件，跨事项浏览时每份成果只出现一次。"""
     scope = LifeEvent.trajectory_kind.is_not(None)
+    if shared_only:
+        scope = and_(scope, LifeEvent.shared_with_user.is_(True))
     if topic_id is not None:
         scope = and_(scope, func.coalesce(LifeEvent.topic_id, LifeEvent.id) == topic_id)
     if pursuit_id is not None:
@@ -31,6 +38,8 @@ def trajectory_scope(*, pursuit_id: int | None = None, topic_id: int | None = No
         earlier.trajectory_result_key == LifeEvent.trajectory_result_key,
         earlier.id < LifeEvent.id,
     )
+    if shared_only:
+        duplicate = duplicate.where(earlier.shared_with_user.is_(True))
     if topic_id is not None:
         duplicate = duplicate.where(func.coalesce(earlier.topic_id, earlier.id) == topic_id)
     return and_(scope, or_(LifeEvent.trajectory_result_key.is_(None), ~duplicate.correlate(LifeEvent).exists()))
@@ -76,7 +85,7 @@ async def trajectory_entries(db: AsyncSession, user_id: int, events: Sequence[Li
             previous_episode_id=row.previous_episode_id,
             pursuit_id=row.pursuit_id,
             reading_result=readings.get(row.step_id),
-            result_ref={key: value for key, value in result_reference(row).items() if key in _PUBLIC_RESULTS},
+            result_ref=public_result_reference(row),
         )
         for row in events
         if row.trajectory_kind is not None
@@ -92,7 +101,10 @@ async def list_trajectory(
     cursor: str | None = None,
     limit: int = 20,
 ) -> LifeTrajectoryListResponse:
-    where = [LifeEvent.user_id == user_id, trajectory_scope(pursuit_id=pursuit_id, topic_id=topic_id)]
+    where = [
+        LifeEvent.user_id == user_id,
+        trajectory_scope(pursuit_id=pursuit_id, topic_id=topic_id, shared_only=True),
+    ]
     if position := decode_timestamp_cursor(cursor):
         where.append(tuple_(LifeEvent.occurred_at, LifeEvent.id) < position)
     rows = list(
@@ -113,7 +125,11 @@ async def trajectory_topic_heads(db: AsyncSession, user_id: int, *, limit: int =
     topic = func.coalesce(LifeEvent.topic_id, LifeEvent.id)
     heads = (
         select(LifeEvent.id)
-        .where(LifeEvent.user_id == user_id, LifeEvent.trajectory_kind.is_not(None))
+        .where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.trajectory_kind.is_not(None),
+            LifeEvent.source != "life_share",
+        )
         .distinct(topic)
         .order_by(topic, LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
     )
@@ -124,19 +140,3 @@ async def trajectory_topic_heads(db: AsyncSession, user_id: int, *, limit: int =
         .limit(limit)
     )
     return [event_view(row) for row in events]
-
-
-async def has_trajectory_in_window(db: AsyncSession, user_id: int, *, start: datetime, end: datetime) -> bool:
-    return (
-        await db.scalar(
-            select(LifeEvent.id)
-            .where(
-                LifeEvent.user_id == user_id,
-                trajectory_scope(),
-                LifeEvent.occurred_at >= start,
-                LifeEvent.occurred_at < end,
-            )
-            .limit(1)
-        )
-        is not None
-    )

@@ -110,15 +110,17 @@ async def load_recent_context_window(db: AsyncSession, user_id: int) -> str:
     return (await load_companion_dialogue(db, user_id)).content
 
 
-async def load_recent_main_exchange(db: AsyncSession, user_id: int) -> str:
-    """读取本次判断可用的近期主陪伴文本及通话发言。"""
+async def load_recent_companion_exchange(db: AsyncSession, user_id: int, *, conversation_id: int | None = None) -> str:
+    """读取指定陪伴会话近期的文本及通话发言；账户级生活判断使用主会话。"""
     now = utc_now()
     rows = await db.scalars(
         select(Message)
         .join(Conversation)
         .where(
             Conversation.user_id == user_id,
-            Conversation.kind == "special",
+            Conversation.id == conversation_id if conversation_id is not None else Conversation.kind == "special",
+            Conversation.system_preset_id == COMPANION_PRESET_ID,
+            user_authored_conversation(),
             Message.id > Conversation.context_after_message_id,
             Message.role.in_(("user", "assistant")),
             context_visible_subtype(),

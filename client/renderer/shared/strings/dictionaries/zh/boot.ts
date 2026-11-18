@@ -9,6 +9,13 @@ export const boot = {
     }
   },
   onboarding: {
+    fields: {
+      name: { label: '伙伴的名字', placeholder: '输入名字' },
+      biological_type: { label: '生灵描述', placeholder: '选择一个类型或自由描述' },
+      speaking_style: { label: '说话方式', placeholder: '例如简短、爱用比喻或俏皮' },
+      voice: { label: '声音偏好', placeholder: '描述想要的音色、语速或音高' }
+    },
+    requiredField: (label: string) => `请填写${label}`,
     steps: { meet: '认识伙伴', confirm: '确认形象', voice: '选择声音', environment: '布置环境' },
     progressAria: '认识伙伴的进度',
     voiceTitle: '为伙伴选择声音',
@@ -30,11 +37,6 @@ export const boot = {
     resumeFailed: '没能读取之前保存的进度，请重试',
     retrying: '重试中…',
     stepVoice: '选择声音',
-    stepCompanion: '开始相伴',
-    readyTitle: '伙伴准备好了',
-    readyHint: '可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。',
-    knowMore: '让伙伴更了解我（可选）',
-    savingProfile: '保存资料中…',
     portraitPreviewHint: '预览并确认您的头像',
     portraitGenerating: '生成头像中…',
     portraitFailed: '头像操作未能完成',

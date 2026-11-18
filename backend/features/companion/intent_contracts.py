@@ -10,6 +10,13 @@ CompanionIntentStatus = Literal["waiting", "queued", "running", "completed", "ca
 MAX_COMPANION_FAILURES: int = 3
 
 
+class DeferredReply(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, strict=True)
+
+    after_seconds: int = Field(ge=60, le=23 * 3600)
+    purpose: str = Field(min_length=1, max_length=500)
+
+
 class CompanionWaitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -31,6 +38,7 @@ class CompanionIntentView(BaseModel):
     model_config = ConfigDict(from_attributes=True, str_strip_whitespace=True)
 
     id: ResourceId
+    source_kind: str | None = Field(default=None, exclude=True)
     intent: str = Field(min_length=1)
     status: CompanionIntentStatus
     not_before_at: datetime

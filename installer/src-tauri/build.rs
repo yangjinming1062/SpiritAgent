@@ -37,7 +37,7 @@ fn require_payload(payload: &Path) {
         .into_iter()
         .filter(|name| !payload.join(name).is_file())
         .collect();
-    for dir in ["runner", "client", "skills", "onboarding-audio"] {
+    for dir in ["runner", "client", "skills"] {
         if !non_empty_dir(&payload.join(dir)) {
             missing.push(dir);
         }

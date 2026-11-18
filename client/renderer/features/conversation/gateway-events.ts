@@ -299,7 +299,7 @@ export function handleConversationEvent(
         )
       }
 
-      effects.footGlow = 'completed'
+      effects.footGlow = payload.decision ? null : 'completed'
 
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)

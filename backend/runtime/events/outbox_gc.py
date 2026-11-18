@@ -5,7 +5,7 @@ from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from sqlalchemy import delete, or_, select
 
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.models import WSEvent
 
 logger = get_logger(__name__)
@@ -18,7 +18,7 @@ OUTBOX_GC_BATCH_SIZE = 1000
 
 
 async def run_outbox_gc() -> None:
-    """分批物理清理过期的 DELIVERED / FAILED 事件与内部 companion.turn.request 行。"""
+    """分批物理清理过期的已交付、失败及内部陪伴回合事件。"""
     now = utc_now()
     delivered_cutoff = now - timedelta(seconds=WS_EVENT_DELIVERED_RETENTION_SECONDS)
     failed_cutoff = now - timedelta(seconds=WS_EVENT_FAILED_RETENTION_SECONDS)
@@ -32,7 +32,7 @@ async def run_outbox_gc() -> None:
                     # 送达标记总是同时写 delivered_at。
                     (WSEvent.status == "DELIVERED") & (WSEvent.delivered_at < delivered_cutoff),
                     (WSEvent.status == "FAILED") & (WSEvent.created_at < failed_cutoff),
-                    (WSEvent.event_type == COMPANION_TURN_EVENT) & (WSEvent.created_at < companion_cutoff),
+                    WSEvent.event_type.in_(COMPANION_TURN_EVENTS) & (WSEvent.created_at < companion_cutoff),
                 )
             )
             .limit(OUTBOX_GC_BATCH_SIZE)

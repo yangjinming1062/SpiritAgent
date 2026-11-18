@@ -263,6 +263,23 @@ def forget_record(row: Memory) -> None:
     row.updated_at = utc_now()
 
 
+async def clear_derived_companion_reflection(db: AsyncSession, scope: MemoryScope) -> None:
+    """事实被修订后作废基于旧资料形成的整篇相处理解。"""
+    if scope.system_preset_id != "companion":
+        return
+    row = await db.scalar(
+        select(Memory).where(
+            scope_filter(scope),
+            Memory.kind == "reflection",
+            Memory.source_kind == "reflection",
+            active_memory_filter(),
+        )
+    )
+    if row is not None:
+        await clear_memory_details(db, [row.id], suppress=True)
+        forget_record(row)
+
+
 async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) -> bool:
     await memory_write_lock(db, scope)
     row = await get_memory(db, scope, memory_id)
@@ -270,6 +287,8 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
         return False
     await clear_memory_details(db, [row.id], suppress=True)
     forget_record(row)
+    if row.kind in ("recall", "user_profile"):
+        await clear_derived_companion_reflection(db, scope)
     emit_ws_event(
         db,
         user_id=scope.user_id,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { playDataUrl, sampleLine, speakScripted, type VoiceDesignPreview } from '@/features/speech'
+import { playDataUrl, playVoiceSample, sampleLine, type VoiceDesignPreview } from '@/features/speech'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { failureText } from '@/shared/lib/ipc-error'
 import { backendApi } from '@/shared/platform/desktop'
@@ -9,12 +9,10 @@ import { useStrings } from '@/shared/strings'
 /** 试听播放：持唯一播放身份与中断控制器，失去活动资格即释放，迟到结果不再出声。 */
 export function useVoicePreview({
   active,
-  name,
   onBeforePlay,
   viewEligible
 }: {
   active: boolean
-  name: string
   onBeforePlay: () => void
   viewEligible: () => boolean
 }) {
@@ -102,7 +100,7 @@ export function useVoicePreview({
 
   const previewFixed = (id: string): Promise<void> =>
     play(id, async signal => {
-      await speakScripted(sampleLine(name), id, 'voice.preview', signal)
+      await playVoiceSample(sampleLine(), id, 'voice.preview', signal)
     })
 
   // 先制作再试听：生成期间用户切页或重新播放都不能让旧预览出声。

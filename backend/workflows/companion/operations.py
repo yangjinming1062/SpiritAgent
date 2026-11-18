@@ -1,4 +1,4 @@
-from features.companion.intents import queue_companion_intent
+from features.companion.intents import contact_recipients, queue_companion_intent
 from features.companion.proactive_runtime import (
     PresentationSnapshot,
     get_presentation_snapshot,
@@ -7,7 +7,7 @@ from features.companion.proactive_runtime import (
 from features.visuals.repository import VisualError
 from features.visuals.service import restore_presentation
 from infrastructure.logger import get_logger
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENT, COMPANION_TURN_EVENTS
 from runtime.events.loop import interrupt_user_event_tasks
 
 logger = get_logger(__name__)
@@ -19,12 +19,19 @@ def forget_companion_state(user_id: int) -> None:
     _restored_presentations.pop(user_id, None)
 
 
+async def interrupt_unavailable_companion_turns(user_id: int) -> None:
+    desktop, remote = contact_recipients(user_id)
+    if not desktop:
+        unavailable = (COMPANION_TURN_EVENT,) if remote else COMPANION_TURN_EVENTS
+        await interrupt_user_event_tasks(user_id, *unavailable)
+
+
 async def companion_signal(user_id: int, params: dict) -> dict[str, bool]:
     available = params["available"]
     event = params.get("event")
     became_available = observe_companion_presence(user_id, available, presentation_mode=params["presentation_mode"])
     if not available:
-        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+        await interrupt_unavailable_companion_turns(user_id)
         return {"queued": False}
     presentation = get_presentation_snapshot(user_id)
     if presentation is not None and _restored_presentations.get(user_id) != presentation:

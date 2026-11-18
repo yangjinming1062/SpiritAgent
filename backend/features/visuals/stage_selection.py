@@ -31,10 +31,16 @@ class StageMediaCandidate:
 
 
 def project_stage_intent(life: LifeStateView, focus: str = "") -> StageIntent:
+    if not life.activity_shared_with_user:
+        return StageIntent(
+            mood=life.mood or "",
+            focus=focus,
+            visual_tags=_ACTIVITY_TAGS["idle"],
+            life_revision=life.presentation_revision,
+        )
     scene_title = life.current_scene.get("title")
     activity = life.activity_type if life.activity_kind != "intent" else "idle"
     return StageIntent(
-        activity=life.current_activity or "",
         scene_title=scene_title if isinstance(scene_title, str) else "",
         mood=life.mood or "",
         focus=focus,

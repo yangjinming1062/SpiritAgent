@@ -1,4 +1,5 @@
 import secrets
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -9,7 +10,8 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
 from infrastructure.domain_locks import lock_domain
 from infrastructure.text import utc_now
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.desktop.connection import MANAGER
+from runtime.events.contracts import COMPANION_TURN_EVENT, DEFERRED_REPLY_EVENT
 from runtime.events.emit import emit_ws_event
 from runtime.user_maintenance import user_request_scope
 from sqlalchemy import delete, func, or_, select, update
@@ -22,6 +24,7 @@ from features.companion.intent_contracts import (
     CompanionTurnRequest,
     CompanionWaitRequest,
     CompanionWakeEvent,
+    DeferredReply,
 )
 from features.companion.intent_models import CompanionIntent
 from features.companion.proactive_runtime import (
@@ -31,8 +34,10 @@ from features.companion.proactive_runtime import (
 )
 from features.companion.rhythm import read_rhythm
 from features.conversation.evidence import latest_user_message_id
+from features.conversation.formatting import message_text
 from features.conversation.proactive_messages import append_companion_message
 from features.conversation.replies import CompanionReply
+from features.conversation.turn_access import turn_conversation, turn_message
 
 # 待处理意图与回合间隔走 SETTINGS 动态配置；队列认领租约独立于模型等待。
 _QUEUE_LEASE_SECONDS: int = 180
@@ -49,6 +54,67 @@ class CompanionTurnPlan:
     followup: CompanionWaitRequest | None = None
 
 
+@dataclass(frozen=True)
+class DeferredReplySource:
+    conversation_id: int
+    message_id: int
+    content: str
+
+
+async def deferred_reply_source(db: AsyncSession, user_id: int, source_kind: str) -> DeferredReplySource | None:
+    message_id = int(source_kind.removeprefix("reply:"))
+    message = await turn_message(db, message_id)
+    if message is None or message.role != "user":
+        return None
+    conversation = await turn_conversation(db, str(message.conversation_id), user_id)
+    if conversation is None or message.id <= conversation.context_after_message_id:
+        return None
+    return DeferredReplySource(conversation.id, message.id, message_text(message))
+
+
+async def enqueue_deferred_reply(
+    db: AsyncSession, user_id: int, conversation_id: int, message_id: int, followup: DeferredReply
+) -> None:
+    source_kind = f"reply:{message_id}"
+    await lock_domain(db, user_id, "companion_intents")
+    source = await deferred_reply_source(db, user_id, source_kind)
+    if source is None or source.conversation_id != conversation_id:
+        raise LookupError("Deferred reply source is no longer available")
+    now = utc_now()
+    existing = await db.scalar(
+        select(CompanionIntent.id).where(
+            CompanionIntent.user_id == user_id,
+            CompanionIntent.source_kind == source_kind,
+            CompanionIntent.status.in_(_ACTIVE_STATUSES),
+            CompanionIntent.expires_at > now,
+        )
+    )
+    if existing is not None:
+        return
+    count = await db.scalar(
+        select(func.count())
+        .select_from(CompanionIntent)
+        .where(
+            CompanionIntent.user_id == user_id,
+            CompanionIntent.status.in_(_ACTIVE_STATUSES),
+            CompanionIntent.expires_at > now,
+        )
+    )
+    if count is not None and count >= SETTINGS.companion_max_pending_intents:
+        raise ValueError("Pending companion intent limit reached")
+    due = now + timedelta(seconds=followup.after_seconds)
+    db.add(
+        CompanionIntent(
+            user_id=user_id,
+            source_kind=source_kind,
+            intent=followup.purpose,
+            not_before_at=due,
+            wake_at=due,
+            expires_at=now + timedelta(days=1),
+        )
+    )
+
+
 @contextmanager
 def companion_turn_plan(user_id: int, intent_id: int, expires_at: datetime) -> Iterator[CompanionTurnPlan]:
     plan = CompanionTurnPlan(user_id, intent_id, expires_at)
@@ -59,9 +125,21 @@ def companion_turn_plan(user_id: int, intent_id: int, expires_at: datetime) -> I
         _TURN_PLAN.reset(token)
 
 
-async def _proactive_turn_allowed(db: AsyncSession, user_id: int) -> bool:
+def contact_recipients(user_id: int) -> tuple[bool, bool]:
+    desktop = MANAGER.is_connected(user_id) and can_start_companion_turn(user_id)
+    rec = get_user_proactive_record(user_id)
+    remote = (
+        MANAGER.has_connected_remote(user_id)
+        and rec.busy_count == 0
+        and time.monotonic() - rec.last_user_contact_ts >= SETTINGS.companion_contact_quiet_seconds
+    )
+    return desktop, remote
+
+
+async def _proactive_turn_allowed(db: AsyncSession, user_id: int, source_kind: str | None) -> bool:
+    desktop, remote = contact_recipients(user_id)
     return (
-        can_start_companion_turn(user_id)
+        (desktop or remote and (source_kind or "").startswith("reply:"))
         and await get_disturbance_tier(user_id, db=db) != "still"
         and (await read_rhythm(db, user_id)).state == "awake"
     )
@@ -316,7 +394,14 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         cooling = last_attempt is not None and now - last_attempt < timedelta(
             seconds=SETTINGS.companion_min_turn_interval_seconds
         )
-        if busy or cooling or not await _proactive_turn_allowed(db, user_id):
+        desktop, remote = contact_recipients(user_id)
+        if (
+            busy
+            or cooling
+            or not (desktop or remote)
+            or await get_disturbance_tier(user_id, db=db) == "still"
+            or (await read_rhythm(db, user_id)).state != "awake"
+        ):
             await db.commit()
             return False
         row = (
@@ -324,6 +409,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                 select(CompanionIntent)
                 .where(
                     scope,
+                    True if desktop else CompanionIntent.source_kind.startswith("reply:"),
                     CompanionIntent.status == "waiting",
                     CompanionIntent.expires_at > now,
                     CompanionIntent.not_before_at <= now,
@@ -344,7 +430,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         emit_ws_event(
             db,
             user_id=user_id,
-            event_type=COMPANION_TURN_EVENT,
+            event_type=DEFERRED_REPLY_EVENT if (row.source_kind or "").startswith("reply:") else COMPANION_TURN_EVENT,
             payload=CompanionTurnRequest(intent_id=row.id, lease_token=lease_token).model_dump(mode="json"),
         )
         await db.commit()
@@ -376,7 +462,7 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
         ).scalar_one_or_none()
         if row is None:
             return None
-        if not await _proactive_turn_allowed(db, user_id):
+        if not await _proactive_turn_allowed(db, user_id, row.source_kind):
             row.status = "waiting"
             row.not_before_at = now + timedelta(seconds=60)
             row.lease_token = None
@@ -398,6 +484,7 @@ async def finish_companion_intent(
     followup: CompanionWaitRequest | None = None,
     contact_revision: int,
     user_message_id: int,
+    original_source: DeferredReplySource | None = None,
     error: str | None = None,
     interrupted: bool = False,
     tools_started: bool = False,
@@ -418,18 +505,29 @@ async def finish_companion_intent(
             return False
         now = utc_now()
         tier = await get_disturbance_tier(user_id, db=db)
+        is_deferred_reply = (row.source_kind or "").startswith("reply:")
+        source = (
+            await deferred_reply_source(db, user_id, row.source_kind) if is_deferred_reply and row.source_kind else None
+        )
+        desktop, remote = contact_recipients(user_id)
         context_changed = (
             get_user_proactive_record(user_id).contact_revision != contact_revision
             or await latest_user_message_id(db, user_id) != user_message_id
-            or not can_start_companion_turn(user_id)
+            or not (desktop or remote and is_deferred_reply)
             or tier == "still"
             or (await read_rhythm(db, user_id, now=now)).state == "asleep"
+            or is_deferred_reply
+            and source != original_source
             or reply is not None
             and tier != "autonomous"
             and any(bubble.type == "voice" for bubble in reply.bubbles)
         )
         delivered = False
-        if row.expires_at <= now:
+        if is_deferred_reply and source is None:
+            row.status = "failed" if tools_started else "cancelled"
+            if tools_started:
+                row.last_error = "Original message is unavailable; verify previous tool effects."
+        elif row.expires_at <= now:
             row.status = "failed" if tools_started else "expired"
             if tools_started:
                 row.last_error = "Intent expired during execution; verify previous tool effects before rescheduling."
@@ -450,7 +548,9 @@ async def finish_companion_intent(
             if reply:
                 if reply_content is None:
                     raise ValueError("Companion reply requires original content")
-                await append_companion_message(db, user_id, reply, reply_content)
+                await append_companion_message(
+                    db, user_id, reply, reply_content, conversation_id=source.conversation_id if source else None
+                )
                 delivered = True
             if followup is None:
                 row.status = "completed"

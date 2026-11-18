@@ -3,12 +3,10 @@ import contextlib
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from functools import partial
 from typing import Any, Protocol
 from uuid import UUID
 
 from features.companion.proactive_runtime import user_turn_activity
-from features.companion.rhythm import begin_contact, track_contact
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
 from features.conversation.http_contracts import PromptSubmitRequest
@@ -33,7 +31,7 @@ from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
 from runtime.conversation import ActiveTurnSnapshot, RuntimeSession
 from runtime.desktop.connection import UserEventPublisher
-from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.loop import interrupt_user_event_tasks
 
 from workflows.chat.emitter import ChatEventEmitter, EventPublisher
@@ -95,10 +93,7 @@ def create_submission_handler(
             text = replacement.text
             attachments = []
         elif retry_message_id is not None:
-            try:
-                text = await retry_message_text(user_id, runtime.session_id, retry_message_id)
-            except ReplyRetryNotAllowedError as exc:
-                raise RequestError(422, str(exc)) from exc
+            text = await retry_message_text(user_id, runtime.session_id, retry_message_id)
             attachments = []
         elif batch is not None:
             validated_batch = []
@@ -148,8 +143,6 @@ def create_submission_handler(
                 )
             except EditNotAllowedError as exc:
                 raise RequestError(422, str(exc)) from exc
-        if contact_id is not None:
-            track_contact(user_id, contact_id)
         input_ids = await persist_submission_inputs(
             user_id,
             runtime.conversation_id,
@@ -157,9 +150,6 @@ def create_submission_handler(
             [*precursor_messages, req.message],
             persisted_message_id=persisted_message_id,
             call_record_id=call_record_id,
-            on_accept=partial(begin_contact, user_id=user_id, contact_id=contact_id, kind="message")
-            if contact_id is not None
-            else None,
         )
         persisted_message_id = input_ids[-1]
         if edited_messages is not None:
@@ -276,6 +266,7 @@ def create_submission_handler(
                     final_reply_only=retry_message_id is not None or replacement is not None,
                     replace_reply_message_id=replace_reply_message_id,
                     submission_request_id=params["request_id"],
+                    rhythm_contact_id=contact_id,
                     reply_delivery=reply_delivery,
                     call_record_id=call_record_id,
                     call_owner=call_owner,
@@ -358,9 +349,12 @@ def create_submission_handler(
             )
             if existing is not None:
                 return existing.to_result()
+            if body.retry_message_id is not None:
+                # 过期重试不能打断原延后意图。取得会话锁后再核对期间可能变化的原消息。
+                await retry_message_text(user_id, runtime.session_id, body.retry_message_id)
             with contextlib.ExitStack() as admission:
                 admission.enter_context(user_turn_activity(user_id, enabled=True))
-                await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+                await interrupt_user_event_tasks(user_id, *COMPANION_TURN_EVENTS)
                 async with conversation_history_lock(runtime.session_id, call_owner=call_owner):
                     if runtime.busy:
                         raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
@@ -398,7 +392,7 @@ def create_submission_handler(
                             user_id, request_id, "failed", error="消息未被受理，请修改后重新发送。"
                         )
                         raise
-        except SubmissionConflictError as exc:
+        except (SubmissionConflictError, ReplyRetryNotAllowedError) as exc:
             raise RequestError(422, str(exc)) from exc
 
     async def prompt_submit(session_id: str, body: PromptSubmitRequest) -> dict:

@@ -203,7 +203,7 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
       tierHint: "Only constrains the companion's proactive behaviour — your actions are never restricted.",
       tierAriaLabel: 'Disturbance tier',
       tiers: {
-        still: { label: 'Only reply to me', hint: 'Quiet company until you start a conversation' },
+        still: { label: 'No proactive contact', hint: 'Pause outreach. You can still send a message or call.' },
         normal: { label: 'Occasional greetings', hint: 'A gentle text greeting while staying in place' },
         autonomous: { label: 'Free to interact', hint: 'May speak and interact naturally' }
       },
@@ -305,7 +305,6 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
       profileAdditionalDetail: 'Additional detail',
       profileLatestContent: 'Latest content:',
       profileConflictHint: 'These details changed on another device. Review the latest values:',
-      personalityRequired: 'Enter a personality.',
       fullbodyReference: {
         title: 'Your companion’s full appearance',
         hint: 'AI uses the portrait you just confirmed to create the full appearance. When it looks right, continue to choose a voice.',

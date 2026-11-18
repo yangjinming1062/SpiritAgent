@@ -132,6 +132,6 @@ function voicePreview(res: DesignResponse): VoiceDesignPreview {
   }
 }
 
-export function sampleLine(name: string): string {
-  return getStrings().voice.sampleLine(name.trim())
+export function sampleLine(): string {
+  return getStrings().voice.sampleLine
 }

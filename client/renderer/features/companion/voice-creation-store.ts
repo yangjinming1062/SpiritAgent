@@ -202,11 +202,10 @@ async function createVoice(
 
 export function createDesignedVoice(
   mode: 'auto' | 'feedback' | 'preview',
-  name: string,
   preference?: string
 ): Promise<VoiceDesignPreview | null> {
   const state = $voiceCreation.get()
-  const previewText = sampleLine(name)
+  const previewText = sampleLine()
 
   return createVoice(mode === 'preview' ? 'generating' : 'describing', async (id, live) => {
     let description = state.prompt.trim()
@@ -241,14 +240,14 @@ export function createDesignedVoice(
   })
 }
 
-export function createClonedVoice(name: string): Promise<VoiceDesignPreview | null> {
+export function createClonedVoice(): Promise<VoiceDesignPreview | null> {
   const sample = $voiceCreation.get().sample
 
   if (!sample) {
     return Promise.resolve(null)
   }
 
-  return createVoice('generating', id => cloneVoice(sample.sample_id, sampleLine(name), id), sample.sample_id)
+  return createVoice('generating', id => cloneVoice(sample.sample_id, sampleLine(), id), sample.sample_id)
 }
 
 export async function cancelVoiceCreation(): Promise<void> {

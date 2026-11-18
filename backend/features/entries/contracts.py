@@ -37,6 +37,8 @@ class CommentView:
     reply_status: str
     reply_error: str | None
     reply_attempts: int
+    reply_not_before: datetime | None
+    reply_followup: str | None
     created_at: datetime
     updated_at: datetime
 

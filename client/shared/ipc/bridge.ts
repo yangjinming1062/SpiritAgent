@@ -147,9 +147,6 @@ export interface DesktopBridge {
     uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
     uploadVoiceSample: AsyncIpc<IpcInvokeContract['spiritagent:media:voice-sample-upload']>
     tts: AsyncIpc<IpcInvokeContract['spiritagent:media:tts']>
-    onboardingAudio: {
-      read: AsyncIpc<IpcInvokeContract['spiritagent:onboardingAudio:read']>
-    }
   }
   sprite: {
     onDefaultScaleChanged: EventSubscription<'spiritagent:sprite:default-scale-changed'>

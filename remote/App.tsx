@@ -187,7 +187,7 @@ export function App(): ReactElement {
         })
         client.subscribeEvent(event => {
           if (
-            (event.type === 'message.complete' || event.type === 'companion.message') &&
+            ((event.type === 'message.complete' && !event.payload.decision) || event.type === 'companion.message') &&
             (tabRef.current !== 'messages' || document.visibilityState !== 'visible')
           ) {
             setUnread(previous => ({ ...previous, messages: true }))

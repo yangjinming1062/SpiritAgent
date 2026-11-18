@@ -91,7 +91,7 @@ class PromptSubmitRequest(BusinessRequest):
 class PromptSubmitResult(BaseModel):
     queued: bool
     request_id: str
-    status: Literal["accepted", "running", "completed", "cancelled", "interrupted", "failed"]
+    status: Literal["accepted", "running", "completed", "silent", "deferred", "cancelled", "interrupted", "failed"]
     error: str | None = None
     message_ids: list[ResourceId] = Field(default_factory=list)
     messages: list[SessionMessageView] = Field(default_factory=list)

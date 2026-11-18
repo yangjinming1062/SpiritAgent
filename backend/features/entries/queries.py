@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import ensure_utc
-from sqlalchemy import Row, Select, func, or_, select, tuple_
+from sqlalchemy import ColumnElement, Row, Select, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -280,7 +280,7 @@ async def pending_reply(db: AsyncSession, user_id: int, post_id: int) -> Comment
             EntryComment.user_id == user_id,
             EntryComment.post_id == post_id,
             EntryComment.role == "user",
-            EntryComment.reply_status.in_(("pending", "running")),
+            eligible_reply(),
         )
         .order_by(EntryComment.created_at, EntryComment.id)
         .limit(1)
@@ -291,10 +291,17 @@ async def pending_reply(db: AsyncSession, user_id: int, post_id: int) -> Comment
 async def pending_reply_threads(db: AsyncSession) -> list[tuple[int, int]]:
     result = await db.execute(
         select(EntryComment.user_id, EntryComment.post_id)
-        .where(EntryComment.role == "user", EntryComment.reply_status.in_(("pending", "running")))
+        .where(EntryComment.role == "user", eligible_reply())
         .distinct()
     )
     return list(result.tuples())
+
+
+def eligible_reply() -> ColumnElement[bool]:
+    return or_(
+        EntryComment.reply_status.in_(("pending", "running")),
+        (EntryComment.reply_status == "deferred") & (EntryComment.reply_not_before <= func.now()),
+    )
 
 
 async def entry_asset_paths(db: AsyncSession, user_id: int) -> set[str]:

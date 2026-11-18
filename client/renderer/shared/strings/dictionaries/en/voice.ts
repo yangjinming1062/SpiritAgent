@@ -7,8 +7,7 @@ export const voice: Pick<Dictionary, 'voice' | 'whisper'> = {
     noTtsConfigured: 'Voice is temporarily unavailable. You can keep chatting with text and choose a voice later.',
     noVoicesForLanguage: 'No voice is currently available for this language. You can keep chatting with text.',
     loadFailed: "Couldn't load the voice list",
-    sampleLine: (name: string) =>
-      name ? `Hi, I'm ${name}. This is my voice.` : "Hi, I'm your companion. This is my voice.",
+    sampleLine: 'Voice sample. Morning light falls by the window as the leaves stir in the breeze.',
     genderFilterAria: 'Tone filter',
     genderFilters: {
       '': 'All',

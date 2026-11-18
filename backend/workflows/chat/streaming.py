@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from features.companion.intent_contracts import DeferredReply
 from features.conversation.replies import CompanionReply, LinkBubble
 from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
@@ -168,6 +169,8 @@ class _LLMTurnResult:
     reasoning: str | None = None
     reply: CompanionReply | None = None
     generation_origin: GenerationOrigin | None = None
+    decision: Literal["silent", "deferred"] | None = None
+    followup: DeferredReply | None = None
 
 
 def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
@@ -263,6 +266,7 @@ async def _generate_llm_response(
     reply_preference: Literal["text", "voice"] | None,
     voice_id: str,
     allow_silence: bool,
+    allow_deferral: bool = False,
     reply_format_error: CompanionReplyFormatError | None,
     media_turn: MediaTurnState,
     pace_bubbles: bool,
@@ -347,7 +351,8 @@ async def _generate_llm_response(
         schema = companion_reply_schema(
             speech_config,
             language=lang,
-            allow_silence=allow_silence,
+            allow_silence=allow_silence and not media_turn.required_goals,
+            allow_deferral=allow_deferral and not media_turn.required_goals,
             allow_media=bool(media_turn.artifacts),
             repair=reply_repair,
             topic_ids=tuple(topic_cards),
@@ -543,9 +548,10 @@ async def _generate_llm_response(
 
     async def _collect_reasoning(text: str) -> None:
         reasoning_parts.append(text)
-        pending_reasoning.append(text)
-        if text_emitted:
-            await _flush_reasoning()
+        if reply_preference is None:
+            pending_reasoning.append(text)
+            if text_emitted:
+                await _flush_reasoning()
 
     async def _send_text(text: str) -> None:
         nonlocal text_emitted
@@ -778,19 +784,16 @@ async def _generate_llm_response(
         _log_reply_format_failure(failure)
         raise failure
 
+    decision: Literal["silent", "deferred"] | None = None
+    followup: DeferredReply | None = None
     requires_text = not tool_decision and reply_preference is None and not media_turn.text_reply_media()
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
     if delivery != "stream" and not tool_calls_list and not tool_decision:
         text = "".join(pending_text)
-        if (
-            not text.strip()
-            and not allow_silence
-            and reply_format_error is None
-            and (reply_preference is not None or requires_text)
-        ):
+        if not text.strip() and reply_format_error is None and (reply_preference is not None or requires_text):
             # 模型完成响应却没有任何正文：不是可编辑的草稿。先按不完整终态重试；恢复预算用尽后仍为空，
             # 视为没有台词的回复，只交付本回合已生成的媒体（没有媒体则照常报告格式错误）。
-            if reply_preference is None or not allow_voice_fallback:
+            if reply_preference is None or not allow_voice_fallback or not media_turn.required_goals:
                 raise IncompleteResponseError("empty_output", text_emitted=False)
             text = '{"kind":"dialogue","bubbles":[]}'
         if reply_preference is not None:
@@ -803,6 +806,7 @@ async def _generate_llm_response(
                     voice_id=voice_id,
                     language=lang,
                     allow_silence=allow_silence,
+                    allow_deferral=allow_deferral,
                     media_turn=media_turn,
                     references=refs,
                     topic_cards=topic_cards,
@@ -841,6 +845,7 @@ async def _generate_llm_response(
                 )
             if resolved is not None:
                 text, reply = resolved.text, resolved.reply
+                decision, followup = resolved.decision, resolved.followup
                 pending_text = [text]
         else:
             await _emit_bubble_events(bubbles.feed(text))
@@ -870,4 +875,6 @@ async def _generate_llm_response(
         final_completion_tokens=final_completion_tokens,
         final_usage_payload=final_usage_payload,
         turn_duration_ms=turn_duration_ms,
+        decision=decision,
+        followup=followup,
     )

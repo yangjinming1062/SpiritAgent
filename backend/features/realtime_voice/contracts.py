@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 SAMPLE_RATE = 24_000
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MAX_AUDIO_FRAME_BYTES = 9_600
 MAX_INPUT_BYTES = SAMPLE_RATE * 2 * 60
 

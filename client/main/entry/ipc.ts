@@ -7,7 +7,6 @@ import { registerDesktopDock } from '../ipc/desktop-dock'
 import { clearPendingFeed, registerFilesIpc } from '../ipc/files'
 import { registerGatewayIpc } from '../ipc/gateway'
 import { registerLogIpc } from '../ipc/log'
-import { registerOnboardingAudioIpc } from '../ipc/onboarding-audio'
 import { registerPrefsIpc } from '../ipc/prefs'
 import { registerVoiceCallIpc } from '../ipc/realtime-voice'
 import { registerRunnerConfigIpc } from '../ipc/runner-config'
@@ -102,12 +101,6 @@ export function registerEntryIpc(services: EntryServices): ReturnType<typeof reg
     isFeedReceiver: sender => Boolean(surfaces?.isSurfaceSender(sender) || presentation?.isDesktopSender(sender)),
     ipcMain
   })
-  registerOnboardingAudioIpc({
-    appRoot: services.appRoot,
-    spiritagentHome,
-    ipcMain
-  })
-
   registerConnectionIpc({
     assetDiskCache,
     ensureBackend,

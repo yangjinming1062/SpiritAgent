@@ -42,11 +42,10 @@ function VoiceManagerSession({
   compact = false,
   disabled = false,
   intro,
-  name,
   onVoiceSelected,
   preference
 }: VoiceManagerProps): React.JSX.Element {
-  const model = useVoiceManager({ compact, disabled, name, onVoiceSelected, preference })
+  const model = useVoiceManager({ compact, disabled, onVoiceSelected, preference })
 
   const {
     dict,
@@ -266,7 +265,7 @@ function VoiceManagerSession({
                 disabled={blocked || !selectedSample}
                 onClick={() => {
                   if (selectedSample) {
-                    previewCreation(() => createClonedVoice(name))
+                    previewCreation(() => createClonedVoice())
                   }
                 }}
                 type="button"
@@ -505,7 +504,7 @@ function VoiceManagerSession({
                   <span>{prompt.length}/200</span>
                 </div>
                 {candidate ? (
-                  <p className="rounded-xl bg-fill-faint p-3 text-xs leading-relaxed text-body">{sampleLine(name)}</p>
+                  <p className="rounded-xl bg-fill-faint p-3 text-xs leading-relaxed text-body">{sampleLine()}</p>
                 ) : null}
                 {catalog.supportsVoicePromptGeneration && prompt.trim() ? (
                   <div className="space-y-2 border-t border-line-hairline pt-3">
@@ -616,7 +615,7 @@ function VoiceManagerSession({
                     </button>
                   </div>
                 ) : null}
-                {candidate ? <p className="text-xs leading-relaxed text-body">{sampleLine(name)}</p> : null}
+                {candidate ? <p className="text-xs leading-relaxed text-body">{sampleLine()}</p> : null}
               </div>
             ) : (
               <p className={HINT_TEXT}>{t.cloneUnavailable}</p>

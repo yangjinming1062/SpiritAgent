@@ -1,10 +1,20 @@
-export const REALTIME_CALL_VERSION = 2
+export const REALTIME_CALL_VERSION = 3
 
 // 出站积压上限：实时音频过期即丢，只有控制帧也发不出去才判定连接不可用。
 const AUDIO_SEND_QUEUE_LIMIT = 32
 const CONTROL_SEND_QUEUE_LIMIT = 64
 
-export type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ending' | 'stopped' | 'error'
+export type CallState =
+  | 'idle'
+  | 'connecting'
+  | 'ringing'
+  | 'unanswered'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'ending'
+  | 'stopped'
+  | 'error'
 export interface PlaybackVersion {
   turnSeq: number
   playbackEpoch: number
@@ -16,6 +26,7 @@ export interface CallPart {
   id: number
   text: string
   version: PlaybackVersion
+  attributedToCompanion: boolean
 }
 export interface RealtimeCallSnapshot {
   state: CallState
@@ -65,6 +76,7 @@ export class RealtimeCallController {
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private endingTimer: ReturnType<typeof setTimeout> | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null
   private ready: (() => void) | null = null
   private rejectReady: ((error: Error) => void) | null = null
   private queued = 0
@@ -94,7 +106,7 @@ export class RealtimeCallController {
     })
 
     void ready.catch(() => {})
-    const timer = setTimeout(() => this.fail('通话连接超时'), 15000)
+    this.handshakeTimer = setTimeout(() => this.fail('通话连接超时'), 15000)
 
     try {
       await this.options.transport.connect()
@@ -123,9 +135,15 @@ export class RealtimeCallController {
 
       throw error
     } finally {
-      clearTimeout(timer)
+      this.clearHandshakeTimer()
       this.ready = null
       this.rejectReady = null
+    }
+  }
+  private clearHandshakeTimer(): void {
+    if (this.handshakeTimer !== null) {
+      clearTimeout(this.handshakeTimer)
+      this.handshakeTimer = null
     }
   }
   private send(message: Record<string, unknown> | Uint8Array): void {
@@ -160,7 +178,7 @@ export class RealtimeCallController {
       })
   }
   beginInputTurn(): void {
-    if (this.closed || this.muted || this.value.state === 'connecting') {
+    if (this.closed || this.muted || this.value.connectedAt === null) {
       return
     }
 
@@ -195,7 +213,7 @@ export class RealtimeCallController {
     this.publish()
   }
   sendAudio(frame: ArrayBuffer): void {
-    if (!this.muted && !this.closed) {
+    if (!this.muted && !this.closed && this.value.connectedAt !== null) {
       this.send(new Uint8Array(frame))
     }
   }
@@ -296,6 +314,17 @@ export class RealtimeCallController {
     const payload = record(event.payload) ? event.payload : {}
 
     switch (event.type) {
+      case 'session.ringing':
+        this.clearHandshakeTimer()
+        this.value.state = 'ringing'
+
+        break
+
+      case 'session.unanswered':
+        this.finish(null, 'unanswered')
+
+        return
+
       case 'session.ready':
         if (payload.version !== REALTIME_CALL_VERSION) {
           this.fail('通话版本不匹配，请更新应用后重试')
@@ -304,6 +333,7 @@ export class RealtimeCallController {
         }
 
         this.lastPong = performance.now()
+        this.value.state = 'connecting'
         this.ready?.()
 
         break
@@ -392,7 +422,12 @@ export class RealtimeCallController {
                   ? '图片已生成。'
                   : '已提交影像任务。'
 
-          this.value.part = { id: payload.part_id, text, version }
+          this.value.part = {
+            id: payload.part_id,
+            text,
+            version,
+            attributedToCompanion: typeof bubble.text === 'string'
+          }
         }
 
         break
@@ -417,12 +452,16 @@ export class RealtimeCallController {
   fail(message: string): void {
     this.finish(message)
   }
-  private finish(message: string | null): void {
+  private finish(
+    message: string | null,
+    state: 'unanswered' | 'error' | 'stopped' = message ? 'error' : 'stopped'
+  ): void {
     if (this.closed) {
       return
     }
 
     this.closed = true
+    this.clearHandshakeTimer()
     if (this.connectTimer !== null) {
       clearTimeout(this.connectTimer)
       this.connectTimer = null
@@ -439,7 +478,7 @@ export class RealtimeCallController {
     }
 
     this.rejectReady?.(new Error(message ?? 'Call ended'))
-    this.value.state = message ? 'error' : 'stopped'
+    this.value.state = state
     this.value.error = message
     this.options.onClear()
     this.publish()

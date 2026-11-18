@@ -1,16 +1,19 @@
 """每条动态内串行、可恢复的评论回复。"""
 
 import asyncio
+from datetime import timedelta
+from typing import Literal, Self
 
-from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError
-from infrastructure.ai.prompt_engineer import call_llm_once
+from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import format_local_iso
+from infrastructure.text import ensure_utc, format_local_iso, utc_now
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.background import TaskScope
 
+from features.companion.intent_contracts import DeferredReply
 from features.entries.queries import comments_for_entries, pending_reply, pending_reply_threads
 from features.entries.service import begin_reply, fail_reply, finish_reply
 from features.posts.context import elapsed_seconds, load_post_prompt_context, post_prompt_entry
@@ -46,10 +49,18 @@ async def _run_thread(user_id: int, post_id: int) -> None:
                 await db.commit()
 
 
-def _validate_reply(text: str) -> None:
-    reply = text.strip()
-    if not reply or len(reply) > POST_COMMENT_MAX_CHARS:
-        raise LLMRuntimeError(ClassifiedError(FailoverReason.format_error, None, "Empty or oversized comment reply"))
+class CommentReplyDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["reply", "quiet", "defer"]
+    text: str | None = Field(default=None, min_length=1, max_length=POST_COMMENT_MAX_CHARS)
+    followup: DeferredReply | None = None
+
+    @model_validator(mode="after")
+    def validate_content(self) -> Self:
+        if (self.kind == "reply") != (self.text is not None) or (self.kind == "defer") != (self.followup is not None):
+            raise ValueError("Reply requires text, defer requires followup, and quiet has neither")
+        return self
 
 
 async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
@@ -62,9 +73,17 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
         if post is None:
             return
         attempt = target.reply_attempts
+        deadline = ensure_utc(target.created_at) + timedelta(days=1)
+        if target.reply_followup is not None and ctx.now >= deadline:
+            await finish_reply(db, user_id, post_id, comment_id, attempt, None)
+            await db.commit()
+            return
         comments = (await comments_for_entries(db, user_id, [post_id])).get(post_id, [])
         allowed_users = {
-            c.id for c in comments if c.role == "user" and (c.created_at, c.id) <= (target.created_at, target.id)
+            c.id
+            for c in comments
+            if c.role == "user"
+            and (target.reply_followup is not None or (c.created_at, c.id) <= (target.created_at, target.id))
         }
         thread = [
             c
@@ -76,6 +95,8 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
             **ctx.payload,
             "media_context": post_data.pop("media_context"),
             "post": post_data,
+            "previous_followup": target.reply_followup,
+            "max_delay_seconds": max(0, min(23 * 3600, int((deadline - ctx.now).total_seconds()) - 1)),
             "target_comment": {
                 "id": target.id,
                 "role": "user",
@@ -102,16 +123,41 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
         await db.commit()
     if not config.is_configured:
         raise RuntimeError("LLM is not configured")
-    reply = (
-        await call_llm_once(
-            config,
-            render_post_instructions(POST_REPLY_INSTRUCTIONS, ctx.language),
-            payload,
-            validate_output=_validate_reply,
-        )
-    ).strip()
+
+    def parse_reply(value: object) -> CommentReplyDecision:
+        result = CommentReplyDecision.model_validate(value)
+        if result.followup and result.followup.after_seconds > payload["max_delay_seconds"]:
+            raise ValueError("Followup exceeds the remaining time")
+        return result
+
+    reply = await call_llm_json(
+        config,
+        render_post_instructions(POST_REPLY_INSTRUCTIONS, ctx.language),
+        payload,
+        schema=CommentReplyDecision.model_json_schema(),
+        schema_name="companion_comment_reply",
+        parse_output=parse_reply,
+        repair_prompt="Preserve the original kind and content or followup. "
+        "Use only the fields for that kind and respect max_delay_seconds.",
+        preserve_choices=("kind",),
+    )
     async with SESSION_LOCAL() as db:
-        await finish_reply(db, user_id, post_id, comment_id, attempt, reply)
+        now = utc_now()
+        followup = reply.followup
+        if followup is not None:
+            due = now + timedelta(seconds=followup.after_seconds)
+            await finish_reply(
+                db,
+                user_id,
+                post_id,
+                comment_id,
+                attempt,
+                None,
+                deferred_until=due if due < deadline else None,
+                purpose=followup.purpose if due < deadline else None,
+            )
+        else:
+            await finish_reply(db, user_id, post_id, comment_id, attempt, reply.text)
         await db.commit()
 
 

@@ -27,7 +27,7 @@ export const PERSONA_FIELD_KEYS: readonly PersonaEditableField[] = [
 ]
 
 /** 提交前必须非空的字段；其余字段允许留空。 */
-export const REQUIRED_FIELDS: readonly PersonaEditableField[] = ['name', 'personality', 'speaking_style']
+export const REQUIRED_FIELDS: readonly PersonaEditableField[] = ['name', 'speaking_style']
 
 export const FIELD_PRESETS: Partial<Record<PersonaEditableField, readonly string[]>> = {
   relationship: RELATIONSHIP_PRESETS,

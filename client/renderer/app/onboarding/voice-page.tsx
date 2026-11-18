@@ -5,7 +5,6 @@ import { BTN_SUBTLE, HINT_TEXT } from '@/ui'
 import styles from './onboarding.module.css'
 
 interface VoicePageProps {
-  name: string
   preference?: string
   onDescribe: () => void
   onVoiceSelected: (
@@ -20,7 +19,6 @@ interface VoicePageProps {
 }
 
 export function VoicePage({
-  name,
   preference,
   onDescribe,
   onVoiceSelected,
@@ -39,7 +37,6 @@ export function VoicePage({
         compact
         disabled={confirming}
         intro={<p className={HINT_TEXT}>{voice.onboardingHint}</p>}
-        name={name}
         onVoiceSelected={onVoiceSelected}
         preference={preference}
       />

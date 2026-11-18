@@ -24,15 +24,18 @@ import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
 
-type InteractionKind = 'look' | 'smile' | 'stretch'
+interface ReactionVisual {
+  visual_id: string
+  version: number
+}
 
 export const $ambientLoopChoice = atom<AmbientChoice | null>(null)
 export const $wakePerformance = atom<WakePerformance | null>(null)
 
 const AMBIENT_INTERVAL_MS = 90_000
 const SUBTLE_AMBIENT_FACTOR = 2
-const INTERACTION_COOLDOWN_MS: Record<InteractionKind, number> = { look: 20_000, smile: 45_000, stretch: 5 * 60_000 }
-const INTERACTION_TTL_MS = 8_000
+const INTERACTION_COOLDOWN_MS = 20_000
+const INTERACTION_TTL_MS = 15_000
 const CLOCK_RETRY_MS = 5_000
 
 let presentation: VisualsPresentation | null = null
@@ -115,7 +118,9 @@ function consumeSignal(value: unknown): void {
     value.at > Date.now() + 5_000 ||
     Date.now() - value.at > INTERACTION_TTL_MS ||
     seenSignals.has(value.eventId) ||
-    (value.kind !== 'look' && value.kind !== 'smile' && value.kind !== 'stretch')
+    typeof value.visualId !== 'string' ||
+    typeof value.visualVersion !== 'number' ||
+    !Number.isSafeInteger(value.visualVersion)
   ) {
     return
   }
@@ -127,7 +132,7 @@ function consumeSignal(value: unknown): void {
     seenSignals.delete(oldest)
   }
 
-  performInteraction(value.kind, value.eventId, value.at)
+  performInteraction({ visual_id: value.visualId, version: value.visualVersion }, value.eventId, value.at)
 }
 
 function candidates(): CatalogEntry[] {
@@ -163,20 +168,7 @@ function syncAmbientChoice(): void {
   }
 }
 
-function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEntry | null {
-  const matches = catalog.filter(
-    entry =>
-      entry.asset_kind === 'actor' &&
-      entry.clip_kind === 'once' &&
-      entry.performance_role === 'reaction' &&
-      entry.preset_key === kind &&
-      contextAllowed(entry, presentation?.intent ?? null)
-  )
-
-  return matches.length > 0 ? matches[Math.floor(Math.random() * matches.length)] : null
-}
-
-function performInteraction(kind: InteractionKind, eventId: string, at: number): void {
+function performInteraction(visual: ReactionVisual, eventId: string, at: number): void {
   if (
     !stageEligible() ||
     mechanicallyBlocked() ||
@@ -187,7 +179,16 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
     return
   }
 
-  const entry = pickReaction(presentation.ambient_catalog, kind)
+  const entry = presentation.ambient_catalog.find(
+    candidate =>
+      candidate.visual_id === visual.visual_id &&
+      candidate.version === visual.version &&
+      candidate.asset_kind === 'actor' &&
+      candidate.clip_kind === 'once' &&
+      candidate.performance_role === 'reaction' &&
+      contextAllowed(candidate, presentation?.intent ?? null) &&
+      !$failedStageMedia.get().has(mediaKey(candidate))
+  )
 
   if (!entry) {
     return
@@ -203,8 +204,8 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
     createdAt: at,
     expiresAt: at + INTERACTION_TTL_MS,
     durationMs: entry.duration_ms,
-    cooldownKey: kind,
-    cooldownMs: INTERACTION_COOLDOWN_MS[kind]
+    cooldownKey: 'interaction',
+    cooldownMs: INTERACTION_COOLDOWN_MS
   })
 }
 
@@ -375,14 +376,14 @@ async function runClock(due: number): Promise<void> {
   }
 }
 
-/** 单击、进入对话和聊天反应共用入口；网关反应用其事件身份跨窗口去重。 */
+/** 模型选择的动作按事件身份跨窗口去重，并复核当前舞台上的成品版本。 */
 export function enqueueInteraction(
-  kind: InteractionKind,
+  visual: ReactionVisual,
   eventId: string = crypto.randomUUID(),
   at = Date.now()
 ): void {
   if (!directorBound) {
-    enqueueInteractionForward(kind, eventId, at)
+    enqueueInteractionForward(visual, eventId, at)
 
     return
   }
@@ -393,11 +394,18 @@ export function enqueueInteraction(
     return
   }
 
-  consumeSignal({ kind, eventId, at, accountId: auth.snapshot.accountId, stageEpoch: $presentation.get().stageEpoch })
+  consumeSignal({
+    visualId: visual.visual_id,
+    visualVersion: visual.version,
+    eventId,
+    at,
+    accountId: auth.snapshot.accountId,
+    stageEpoch: $presentation.get().stageEpoch
+  })
 }
 
 export function enqueueInteractionForward(
-  kind: InteractionKind,
+  visual: ReactionVisual,
   eventId: string = crypto.randomUUID(),
   at = Date.now()
 ): void {
@@ -410,7 +418,8 @@ export function enqueueInteractionForward(
   persistString(
     INTERACTION_SIGNAL_KEY,
     JSON.stringify({
-      kind,
+      visualId: visual.visual_id,
+      visualVersion: visual.version,
       eventId,
       at,
       accountId: auth.snapshot.accountId,

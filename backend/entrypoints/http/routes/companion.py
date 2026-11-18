@@ -101,6 +101,7 @@ from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from pydantic import ValidationError
+from workflows.companion_reactions import GestureReactionRequest, GestureReactionResponse, decide_desktop_gesture
 
 from entrypoints.http.auth import CurrentUser, OptionalSession
 from entrypoints.http.rate_limit import limiter
@@ -109,6 +110,15 @@ from entrypoints.http.routing import get_router
 
 router = get_router()
 logger = get_logger(__name__)
+
+
+@router.post("/gesture", response_model=GestureReactionResponse, openapi_extra=operation_policy(wait_for_model=True))
+async def react_to_gesture(user: CurrentUser, body: GestureReactionRequest) -> GestureReactionResponse:
+    try:
+        return await decide_desktop_gesture(user.id, body)
+    except LLMRuntimeError as exc:
+        logger.info("desktop gesture decision failed", extra={"user_id": user.id, "reason": exc.classified.reason})
+        raise RequestError(status_code=503, message="互动暂未生成") from exc
 
 
 @router.post(

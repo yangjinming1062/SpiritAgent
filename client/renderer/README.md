@@ -112,7 +112,7 @@
 
 [sprite-stage.tsx](features/character/sprite-stage.tsx) 持手势和捕获，[gesture.ts](features/character/sprite/gesture.ts) 将整体形变交容器、情绪缩放交形象层。绘制和命中共用最终 alpha，留白与装饰不扩大范围。
 
-按下后持有指针及窗口捕获，取消、失焦、隐藏或卸载统一释放，取消不触发反馈；单击等待双击判定。mousemove 先捕获，异步遮罩就绪后重判静止指针，相同状态复用在途 IPC，失败可重试，穿透释放防抖。精灵捕获 ID 为 0，主窗口／交互桌面及其 Portal 经 `CaptureWindowIdContext` 使用 1，不能混挂捕获循环。菜单仅登记自身区域，关闭不穿透成手势；预制反馈经 `speakScripted`。
+按下后持有指针及窗口捕获，取消、失焦、隐藏或卸载统一释放，取消不触发反馈；单击等待双击判定。mousemove 先捕获，异步遮罩就绪后重判静止指针，相同状态复用在途 IPC，失败可重试，穿透释放防抖。精灵捕获 ID 为 0，主窗口／交互桌面及其 Portal 经 `CaptureWindowIdContext` 使用 1，不能混挂捕获循环。菜单仅登记自身区域，关闭不穿透成手势。完成的手势经 `enqueueGesture` 合并，模型选择的动作按账户、舞台代次、成品版本和有效期核对。
 
 ### 偏好与形象水合
 
@@ -138,7 +138,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 自动入队及连播要求所属会话仍有可见视图，点播要求活动资格；失焦或菜单不阻止可见会话的新语音自动播放。视图登记变动在同轮末合并，防止窗口交接误判隐藏；锁屏、录音或真正隐藏使旧下载和播放回包失效，重新打开不自动重启队列。结果区分完成、中断和失败，抢占不等于不可用。
 
-语音直接经 HTMLAudioElement 输出；[audio-track.ts](features/speech/audio-track.ts) 通过 IPC 共享主进程的输出就绪结果。启动预热及运行期间的静音保活归主进程，渲染窗口不按播放或闲置时间重复预热。尚未就绪时保留 loading 和原断点，不报告台词进度或已听，取消照常释放本次播放。实际蓝牙首字听感须在对应设备验收，媒体时间轴检查不能证明硬件已出声。预制反馈和试听使用 `speakScripted`。
+语音直接经 HTMLAudioElement 输出；[audio-track.ts](features/speech/audio-track.ts) 通过 IPC 共享主进程的输出就绪结果。启动预热及运行期间的静音保活归主进程，渲染窗口不按播放或闲置时间重复预热。尚未就绪时保留 loading 和原断点，不报告台词进度或已听，取消照常释放本次播放。实际蓝牙首字听感须在对应设备验收，媒体时间轴检查不能证明硬件已出声。固定音色试听使用 `playVoiceSample`。
 
 [通话页](features/conversation/call-surface.tsx) 保留聊天视图和草稿，使用 [realtime-call-service.ts](features/speech/realtime-call-service.ts) 和根 shared 的通话控制、AudioWorklet 与页面组件。主进程经 `voiceConnect` 复用现有票据并独占媒体 WebSocket，渲染层的 `useRealtimeCall` 管理连接、AudioWorklet、静音和结束；AudioWorklet 持续采集/播放并以回声消除、降噪、自动增益和 VAD 产生输入回合。实时二进制音频不进入普通语音气泡的播放队列；出站音频按 100 ms 合帧，传输积压时丢弃过期帧而不是结束通话；插话清空旧代次的播放缓冲；锁屏、换号和视图关闭释放设备。
 

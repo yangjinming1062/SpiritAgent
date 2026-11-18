@@ -1,7 +1,7 @@
 """内容和评论的事务内操作；事务提交由业务用例负责。"""
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from runtime.events.emit import emit_ws_event
@@ -13,7 +13,7 @@ from features.assets.service import ensure_assets_in_session
 
 from .contracts import CommentView, EntryError, EntryNotFoundError, EntryView
 from .models import CompanionEntry, EntryAsset, EntryComment, EntryLink
-from .queries import comment_view, diary_for_date, entry_view, has_unread_entries
+from .queries import comment_view, diary_for_date, eligible_reply, entry_view, has_unread_entries
 
 
 def emit_comment(db: AsyncSession, row: CommentView) -> None:
@@ -249,7 +249,7 @@ async def begin_reply(db: AsyncSession, user_id: int, post_id: int, comment_id: 
             EntryComment.user_id == user_id,
             EntryComment.post_id == post_id,
             EntryComment.role == "user",
-            EntryComment.reply_status.in_(("pending", "running")),
+            eligible_reply(),
         )
         .values(reply_status="running", reply_error=None, reply_attempts=EntryComment.reply_attempts + 1)
         .returning(EntryComment)
@@ -267,9 +267,9 @@ async def fail_reply(db: AsyncSession, user_id: int, comment_id: int) -> None:
         .where(
             EntryComment.id == comment_id,
             EntryComment.user_id == user_id,
-            EntryComment.reply_status.in_(("pending", "running")),
+            eligible_reply(),
         )
-        .values(reply_status="failed", reply_error="回复暂未完成，可以重试")
+        .values(reply_status="failed", reply_error="回复暂未完成，可以重试", reply_not_before=None, reply_followup=None)
         .returning(EntryComment)
     )
     if row is not None:
@@ -277,7 +277,15 @@ async def fail_reply(db: AsyncSession, user_id: int, comment_id: int) -> None:
 
 
 async def finish_reply(
-    db: AsyncSession, user_id: int, post_id: int, comment_id: int, attempt: int, content: str
+    db: AsyncSession,
+    user_id: int,
+    post_id: int,
+    comment_id: int,
+    attempt: int,
+    content: str | None,
+    *,
+    deferred_until: datetime | None = None,
+    purpose: str | None = None,
 ) -> None:
     target = await db.scalar(
         update(EntryComment)
@@ -288,10 +296,18 @@ async def finish_reply(
             EntryComment.reply_attempts == attempt,
             EntryComment.reply_status == "running",
         )
-        .values(reply_status="completed", reply_error=None)
+        .values(
+            reply_status="completed" if content is not None else "deferred" if deferred_until is not None else "silent",
+            reply_error=None,
+            reply_not_before=deferred_until,
+            reply_followup=purpose,
+        )
         .returning(EntryComment)
     )
     if target is None:
+        return
+    if content is None:
+        emit_comment(db, comment_view(target))
         return
     reply = await db.scalar(
         insert(EntryComment)

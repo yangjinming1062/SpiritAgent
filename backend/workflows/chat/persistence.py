@@ -1,11 +1,11 @@
 import asyncio
 import json
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import asdict, replace
 from typing import Any
 
+from features.companion.intents import enqueue_deferred_reply
 from features.companion.mood import update_mood_from_companion_turn
-from features.companion.reaction import emit_companion_reaction
 from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import build_session_messages, client_media_entries
 from features.conversation.replies import LinkBubble, MediaBubble, TextBubble
@@ -18,6 +18,7 @@ from features.conversation.reply_audio import (
 from features.conversation.reply_media import plain_media_delivery_reply
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.store_contracts import AssistantTurnData
+from features.conversation.submissions import settle_no_reply_in_session
 from features.conversation.title_generation import auto_generate_title
 from features.conversation.turn_access import turn_conversation
 from features.conversation.turn_store import (
@@ -51,6 +52,7 @@ from workflows.chat.tool_dispatch import (
 )
 from workflows.chat.turn_inputs import parse_temperature
 from workflows.chat.types import TerminalReplyDelivery, TrackTask
+from workflows.companion_reactions import emit_companion_reaction
 
 logger = get_logger(__name__)
 
@@ -165,12 +167,42 @@ async def _persist_assistant_no_tool_turn(
     track_task: TrackTask | None,
     replace_reply_message_id: int | None = None,
     submission_request_id: str | None = None,
+    submitted_message_id: int | None = None,
+    open_contact: Callable[[], Awaitable[None]] | None = None,
     media_request_scope: str | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
     on_reply_persisted: Callable[[], None] | None = None,
     call_record_id: int | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
+    if result.decision is not None:
+        if persist and submission_request_id is not None and submitted_message_id is not None:
+            async with session_scope() as db:
+                if result.followup is not None:
+                    await enqueue_deferred_reply(db, user_id, conv.id, submitted_message_id, result.followup)
+                await settle_no_reply_in_session(db, user_id, conv.id, submission_request_id, result.decision)
+                await db.commit()
+            if memory_scope is not None and effective_settings.get("agent.enable_background_review", True) is True:
+                _spawn_post_turn_task(
+                    user_id,
+                    run_background_memory_review(
+                        memory_scope, session_id=conv.id, through_message_id=submitted_message_id
+                    ),
+                    track_task,
+                    session_id=str(conv.id),
+                    transcripts={},
+                )
+        await emitter.send_json(
+            {
+                "type": "message.complete",
+                "decision": result.decision,
+                "cache_usage": asdict(cache_usage),
+                "can_replace_reply": False,
+            }
+        )
+        return
+    if open_contact is not None and result.reply:
+        await open_contact()
     if reply_delivery is not None:
         if result.reply is None:
             raise ValueError("A call requires a validated companion reply")
@@ -234,6 +266,8 @@ async def _persist_assistant_no_tool_turn(
     reply = result.reply
     turn_content = result.turn_content
     turn_data = _turn_data(result)
+    if conv.system_preset_id == COMPANION_PRESET_ID:
+        turn_data = replace(turn_data, reasoning=None)
     if persist and reply is None and media_request_scope is not None:
         async with session_scope() as db:
             plain_reply = await plain_media_delivery_reply(db, user_id, str(conv.id), turn_content, media_request_scope)
@@ -358,7 +392,9 @@ async def _persist_assistant_no_tool_turn(
             **({"text": turn_content} if reply is None else {}),
             **({"bubbles": client_reply_bubbles(reply)} if reply else {}),
             **({"reply": reply.model_dump(mode="json"), "content": turn_content} if reply and not persist else {}),
-            **({"reasoning": turn_reasoning} if turn_reasoning else {}),
+            **(
+                {"reasoning": turn_reasoning} if turn_reasoning and conv.system_preset_id != COMPANION_PRESET_ID else {}
+            ),
             **({"media": client_media_entries(media)} if media else {}),
             **({"usage": result.final_usage_payload} if result.final_usage_payload else {}),
             "cache_usage": asdict(cache_usage),
@@ -408,9 +444,12 @@ async def _persist_assistant_with_tool_calls_and_results(
     dispatch_ctx.media_turn.tool_round += 1
     progress = _BatchProgress()
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
+    turn_data = _turn_data(result)
+    if conv.system_preset_id == COMPANION_PRESET_ID:
+        turn_data = replace(turn_data, reasoning=None)
     call_row = (
         _start_persistence_write(
-            persist_tool_call(conv.id, _turn_data(result), user_id=dispatch_ctx.user_id, call_record_id=call_record_id),
+            persist_tool_call(conv.id, turn_data, user_id=dispatch_ctx.user_id, call_record_id=call_record_id),
             "chat.persist-tool-call",
         )
         if persist

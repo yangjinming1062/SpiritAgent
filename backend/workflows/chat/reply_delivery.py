@@ -2,11 +2,13 @@ import json
 import re
 from collections import Counter
 from collections.abc import Mapping
+from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 
+from features.companion.intent_contracts import DeferredReply
 from features.conversation.replies import (
     CompanionReply,
     CompanionReplyInput,
@@ -48,6 +50,23 @@ class _ReplyEnvelope(BaseModel):
     kind: Literal["dialogue", "written"]
     bubbles: list[dict[str, JsonValue]]
     used_topic_ids: list[Annotated[ResourceId, Field(gt=0, strict=True)]] = Field(default_factory=list)
+
+
+class _QuietReply(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["quiet"]
+    bubbles: list[dict] = Field(max_length=0)
+    used_topic_ids: list[int] = Field(default_factory=list, max_length=0)
+
+
+class _DeferredReply(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["defer"]
+    bubbles: list[dict] = Field(max_length=0)
+    used_topic_ids: list[int] = Field(default_factory=list, max_length=0)
+    followup: DeferredReply
 
 
 # 英文句点还可用于小数、缩写和省略号，交付前单独检查句界。
@@ -124,6 +143,7 @@ def companion_reply_schema(
     *,
     language: str,
     allow_silence: bool,
+    allow_deferral: bool = False,
     allow_media: bool,
     repair: bool = False,
     topic_ids: tuple[int, ...] = (),
@@ -150,7 +170,7 @@ def companion_reply_schema(
     schema["properties"]["bubbles"] = {
         "type": "array",
         # 空修正表示无可恢复内容，交付时仍使用实际回合的沉默权限。
-        "minItems": 0 if allow_silence or repair else 1,
+        "minItems": 0 if allow_silence or allow_deferral or repair else 1,
         "items": {"anyOf": [{"$ref": f"#/$defs/{name}"} for name in bubble_types]},
     }
     if speech_config is not None:
@@ -162,17 +182,24 @@ def companion_reply_schema(
                 definitions[name]["properties"]["text"]["description"] = resolve_prompt_text(
                     COMPANION_REPAIR_TEXT_FIELD_GUIDANCES, language
                 )
-        return schema
-    if "VoiceBubbleInput" in definitions:
-        definitions["VoiceBubbleInput"]["properties"]["text"]["description"] = resolve_prompt_text(
-            COMPANION_DIALOGUE_FIELD_GUIDANCES, language
+    else:
+        if "VoiceBubbleInput" in definitions:
+            definitions["VoiceBubbleInput"]["properties"]["text"]["description"] = resolve_prompt_text(
+                COMPANION_DIALOGUE_FIELD_GUIDANCES, language
+            )
+        definitions["TextBubble"]["properties"]["text"]["description"] = (
+            "kind=dialogue: "
+            + resolve_prompt_text(COMPANION_DIALOGUE_FIELD_GUIDANCES, language)
+            + " kind=written: "
+            + resolve_prompt_text(COMPANION_WRITTEN_FIELD_GUIDANCES, language)
         )
-    definitions["TextBubble"]["properties"]["text"]["description"] = (
-        "kind=dialogue: "
-        + resolve_prompt_text(COMPANION_DIALOGUE_FIELD_GUIDANCES, language)
-        + " kind=written: "
-        + resolve_prompt_text(COMPANION_WRITTEN_FIELD_GUIDANCES, language)
-    )
+    kinds = schema["properties"]["kind"]["enum"]
+    if allow_silence:
+        kinds.append("quiet")
+    if allow_deferral:
+        kinds.append("defer")
+        definitions["DeferredReply"] = DeferredReply.model_json_schema()
+        schema["properties"]["followup"] = {"$ref": "#/$defs/DeferredReply"}
     return schema
 
 
@@ -184,7 +211,11 @@ def _draft_bubbles(raw: str) -> tuple[list[dict] | None, list]:
     original_ids = values.get("used_topic_ids", []) if isinstance(values, dict) else []
     if not isinstance(original_ids, list):
         original_ids = []
+    if values is None:
+        return [], original_ids
     if isinstance(values, dict):
+        if values.get("bubbles") is None and values.keys() <= {"kind", "bubbles", "followup", "used_topic_ids"}:
+            return [], original_ids
         values = values.get("bubbles", [values] if "type" in values else None)
     bubbles = values if isinstance(values, list) and all(isinstance(value, dict) for value in values) else None
     return bubbles, original_ids
@@ -399,6 +430,8 @@ def validate_companion_reply_repair(
     if original is None:
         return
     values = json.loads(content)
+    if not any(original) and any(bubble.get("type") in ("text", "voice") for bubble in values):
+        raise ValueError("A format repair cannot add speech or writing to an empty draft")
     preserve_written = True
     try:
         validate_reply_links(original, kind=kind, references=references)
@@ -645,6 +678,8 @@ class ResolvedCompanionReply:
     text: str
     reply: CompanionReply | None
     degraded: bool
+    decision: Literal["silent", "deferred"] | None = None
+    followup: DeferredReply | None = None
 
 
 def resolve_companion_reply(
@@ -654,6 +689,7 @@ def resolve_companion_reply(
     voice_id: str,
     language: str,
     allow_silence: bool,
+    allow_deferral: bool = False,
     media_turn: MediaTurnState,
     references: ReplyReferences = ReplyReferences(),
     topic_cards: Mapping[int, LinkBubble] | None = None,
@@ -667,6 +703,53 @@ def resolve_companion_reply(
     仍按同一路径校验。任一级失败统一抛 CompanionReplyFormatError，调用方只负责记录诊断与决定重试。
     """
     raw_reply = normalize_companion_reply_content(text)
+    draft = None
+    with suppress(ValueError):
+        draft = json.loads(raw_reply)
+    kind_value = draft.get("kind") if isinstance(draft, dict) else None
+    original: dict = {}
+    if repair is not None:
+        with suppress(ValueError):
+            parsed = json.loads(normalize_companion_reply_content(repair.raw_reply))
+            if isinstance(parsed, dict):
+                original = parsed
+        original_kind = original.get("kind")
+        if kind_value != original_kind and (
+            original_kind in ("dialogue", "written", "quiet", "defer")
+            or (kind_value in ("quiet", "defer") and not media_turn.required_goals)
+        ):
+            raise CompanionReplyFormatError(
+                ValueError("Reply repair must preserve the chosen outcome"), raw_reply, repair_attempt=True
+            )
+    if kind_value in ("quiet", "defer"):
+        try:
+            if media_turn.required_goals:
+                # 已受理的媒体仍须交付。静默决定不能生成额外台词。
+                content, media_reply = fallback_companion_voice_reply(
+                    "[]",
+                    speech_config=speech_config,
+                    voice_id=voice_id,
+                    language=language,
+                    allow_silence=False,
+                    media_turn=media_turn,
+                )
+                return ResolvedCompanionReply(text=content, reply=media_reply, degraded=True)
+            if kind_value == "quiet" and allow_silence:
+                _QuietReply.model_validate(draft)
+                return ResolvedCompanionReply(text="", reply=None, degraded=False, decision="silent")
+            if kind_value == "defer" and allow_deferral:
+                followup = _DeferredReply.model_validate(draft).followup
+                if repair is not None:
+                    # 容许可还原的格式差异，目的和等待时长都必须来自原稿。
+                    planned = DeferredReply.model_validate(original.get("followup"), strict=False, extra="ignore")
+                    if followup != planned:
+                        raise ValueError("Reply repair must preserve the original follow-up purpose and delay")
+                return ResolvedCompanionReply(
+                    text="", reply=None, degraded=False, decision="deferred", followup=followup
+                )
+            raise ValueError("The selected outcome is unavailable in this turn")
+        except ValueError as exc:
+            raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=repair is not None) from exc
     try:
         text, kind, used_topic_ids = decode_companion_reply(
             raw_reply, allow_voice_fallback=allow_voice_fallback, references=references
@@ -690,7 +773,7 @@ def resolve_companion_reply(
             speech_config=speech_config,
             voice_id=voice_id,
             language=language,
-            allow_silence=allow_silence,
+            allow_silence=False,
             media_turn=media_turn,
             references=references,
             kind=kind,
@@ -706,7 +789,7 @@ def resolve_companion_reply(
                 speech_config=speech_config,
                 voice_id=voice_id,
                 language=language,
-                allow_silence=allow_silence,
+                allow_silence=False,
                 media_turn=media_turn,
                 references=references,
                 kind=kind,

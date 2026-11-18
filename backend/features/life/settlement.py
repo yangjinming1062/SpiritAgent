@@ -6,6 +6,7 @@ from typing import Any
 
 from infrastructure.api_ids import parse_resource_id
 from infrastructure.text import utc_now
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import BigInteger, and_, case, cast, column, inspect, literal, select, update, values
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_dirty, set_committed_value
@@ -256,10 +257,20 @@ async def settle_business_steps(
     if step_changes:
         if state == "running":
             if life_state.activity_step_id not in step_objects:
-                set_step_activity(db, life_state, step_objects[next(iter(step_changes))], now)
+                activity_step = step_objects[next(iter(step_changes))]
+                pursuit = pursuit_objects.get(activity_step.pursuit_id)
+                set_step_activity(
+                    db,
+                    life_state,
+                    activity_step,
+                    now,
+                    shared_with_user=pursuit is not None and pursuit.shared_with_user,
+                )
         elif life_state.activity_step_id in step_changes:
             clear_activity_step(db, life_state, kind="result" if state == "completed" else "intent")
-    await _record_event_batch(db, user_id, events, life_state, state_changes=len(step_changes), changes=changes)
+    accepted = await _record_event_batch(
+        db, user_id, events, life_state, state_changes=len(step_changes), changes=changes
+    )
     for objects, updates in ((step_objects, step_changes), (pursuit_objects, pursuit_changes)):
         for identifier, change in updates.items():
             row = objects[identifier]
@@ -267,4 +278,10 @@ async def settle_business_steps(
                 set_committed_value(row, field, value)
             # Core CTE 不重复发 UPDATE，但 SAVEPOINT 回滚仍需让 ORM 视图失效。
             flag_dirty(row)
+    if any(event.shared_with_user for event in accepted) or any(
+        pursuit.shared_with_user for pursuit in pursuit_objects.values()
+    ):
+        emit_ws_event(
+            db, user_id=user_id, event_type="companion.life.updated", payload={"revision": life_state.revision}
+        )
     return life_state.revision

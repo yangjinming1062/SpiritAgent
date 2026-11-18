@@ -126,6 +126,7 @@ class ChatEventEmitter:
             usage = data.get("usage")
             cache_usage = data.get("cache_usage")
             return {
+                **({"decision": data["decision"]} if data.get("decision") in ("silent", "deferred") else {}),
                 **({"text": data["text"]} if "text" in data else {}),
                 **({"bubbles": data["bubbles"]} if isinstance(data.get("bubbles"), list) else {}),
                 **({"reasoning": data["reasoning"]} if data.get("reasoning") else {}),

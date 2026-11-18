@@ -49,14 +49,22 @@ export class RealtimeAudioBridge {
   private outgoingBytes = 0
   private acknowledgements = new Set<ReturnType<typeof setTimeout>>()
   constructor(private readonly controller: RealtimeCallController) {}
+
+  async unlockOutput(): Promise<void> {
+    const context = this.context ?? new AudioContext()
+    this.context = context
+    if (context.state !== 'running') {
+      await context.resume()
+    }
+  }
+
   async start(): Promise<void> {
     const revision = ++this.revision
-    const context = new AudioContext()
-    this.context = context
 
     try {
-      await context.resume()
-      if (revision !== this.revision) {
+      await this.unlockOutput()
+      const context = this.context
+      if (!context || revision !== this.revision) {
         return
       }
 
@@ -249,7 +257,8 @@ export class RealtimeAudioBridge {
   }
 
   private capture(samples: Float32Array): void {
-    if (!this.started || this.controller.muted || ['connecting', 'ending'].includes(this.controller.snapshot().state)) {
+    const { connectedAt, state } = this.controller.snapshot()
+    if (!this.started || this.controller.muted || connectedAt === null || state === 'ending') {
       return
     }
 

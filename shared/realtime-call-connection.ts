@@ -74,12 +74,12 @@ export function useCallConnection({
         if (!lifetime.signal.aborted) {
           await prepareOutput()
         }
-        if (!lifetime.signal.aborted) {
-          await audio.start()
-        }
       } else {
-        // Safari 要求 AudioContext.resume() 在用户手势内开始。
-        await Promise.all([controller.start(), audio.start()])
+        // Safari 只在拨号手势解锁播放，接听后才请求采集。
+        await Promise.all([controller.start(), audio.unlockOutput()])
+      }
+      if (!lifetime.signal.aborted) {
+        await audio.start()
       }
       if (!lifetime.signal.aborted) {
         controller.audioReady()

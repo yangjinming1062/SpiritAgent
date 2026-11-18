@@ -102,6 +102,7 @@ async def _search_events(
     pursuit_id: int | None = None,
     topic_id: int | None = None,
     trajectory_only: bool = True,
+    shared_only: bool = False,
     limit: int = 20,
 ) -> tuple[list[LifeEvent], SearchStatus]:
     if not 1 <= limit <= 50 or len(query) > 1000:
@@ -112,8 +113,10 @@ async def _search_events(
     await db.rollback()
     vector = await embed_search_query(user_id, query)
     where = [LifeEvent.user_id == user_id, LifeEvent.is_meaningful.is_(True)]
+    if shared_only:
+        where.append(LifeEvent.shared_with_user.is_(True))
     if trajectory_only:
-        where.append(trajectory_scope(pursuit_id=pursuit_id, topic_id=topic_id))
+        where.append(trajectory_scope(pursuit_id=pursuit_id, topic_id=topic_id, shared_only=shared_only))
     elif pursuit_id is not None:
         where.append(LifeEvent.pursuit_id == pursuit_id)
     if start is not None:
@@ -168,18 +171,21 @@ async def search_life(
     pursuit_id: int | None = None,
     limit: int = 20,
 ) -> LifeSearchResponse:
-    return LifeSearchResponse.model_validate(
-        await recall_life(
+    async with session_scope() as db:
+        rows, status = await _search_events(
+            db,
             user_id,
             query=query,
             date_from=date_from,
             date_to=date_to,
             pursuit_id=pursuit_id,
             trajectory_only=False,
+            shared_only=True,
             limit=limit,
-        ),
-        from_attributes=True,
-    )
+        )
+        return LifeSearchResponse.model_validate(
+            LifeRecallResponse(items=await _recall_items(db, user_id, rows), search=status), from_attributes=True
+        )
 
 
 async def search_trajectory(
@@ -201,6 +207,7 @@ async def search_trajectory(
             date_to=date_to,
             pursuit_id=pursuit_id,
             topic_id=topic_id,
+            shared_only=True,
             limit=limit,
         )
         return LifeTrajectorySearchResponse(items=await trajectory_entries(db, user_id, rows), search=status)

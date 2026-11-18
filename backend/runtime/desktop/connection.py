@@ -154,6 +154,9 @@ class ConnectionManager:
     def event_user_ids(self) -> list[int]:
         return list(self._dispatchers.keys() | self._remote_dispatchers.keys())
 
+    def has_connected_remote(self, user_id: int) -> bool:
+        return any(peer.has_sender for peer in self._remote_dispatchers.get(user_id, {}).values())
+
     def event_dispatchers(self, user_id: int, event_type: str | None = None) -> list[JsonRpcDispatcher]:
         peers = []
         if (desktop := self.get_dispatcher(user_id)) is not None:

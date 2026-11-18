@@ -13,6 +13,7 @@ LIFE_FACT_GUIDANCE = {
         "不表示伙伴的个人动机、心情或生活主题；这些需要结合角色和实际经历判断。"
         "trajectory_kind=virtual 是已保存的伙伴独处虚拟日常。按话题自然引用时保留这层性质与发生时间。"
         "它只为伙伴自己的选择提供背景，不能证明现实行动、共同经历或用户需要等待、联系或履约。"
+        "shared_with_user 标记已经进入用户生活页的内容。尚未分享的资料可以影响选择，是否表达取决于本次交流及当前渠道。"
     ),
     "en": (
         "In life data, activity_kind and event fact_type distinguish intent, virtual_activity (a simulated life scene), "
@@ -29,6 +30,8 @@ LIFE_FACT_GUIDANCE = {
         " trajectory_kind=virtual is a recorded solo activity in the companion's virtual setting. Preserve that framing "
         "and the original time when relevant. It may inform the companion's choices, but does not establish real activity, "
         "shared experiences or grounds to wait on, contact or make commitments for the user."
+        " shared_with_user marks information available in the user's life view. Private records can inform choices; "
+        "any disclosure depends on this exchange and the current channel."
     ),
 }
 

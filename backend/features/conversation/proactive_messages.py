@@ -2,21 +2,30 @@
 
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
+from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.topics.store import record_topic_usage
 
 from .asset_bindings import flush_conversation
 from .main_conversation import get_or_create_main_conversation
-from .models import Message
+from .models import Conversation, Message
 from .replies import CompanionReply
 from .reply_audio import client_reply_bubbles
 from .reply_media import bind_reply_videos
 
 
-async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply, content: str) -> None:
+async def append_companion_message(
+    db: AsyncSession, user_id: int, reply: CompanionReply, content: str, *, conversation_id: int | None = None
+) -> None:
     reply.validate_content(content)
-    conversation = await get_or_create_main_conversation(db, user_id, commit=False)
+    conversation = (
+        await Conversation.by_session_id(db, str(conversation_id), user_id=user_id)
+        if conversation_id is not None
+        else await get_or_create_main_conversation(db, user_id, commit=False)
+    )
+    if conversation is None or conversation.system_preset_id != COMPANION_PRESET_ID:
+        raise LookupError("Companion conversation is no longer available")
     message = Message(
         user_id=conversation.user_id,
         conversation_id=conversation.id,
@@ -36,5 +45,10 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
         db,
         user_id=user_id,
         event_type="companion.message",
-        payload={"bubbles": client_reply_bubbles(reply), "session_id": str(conversation.id), "message_id": message.id},
+        payload={
+            "bubbles": client_reply_bubbles(reply),
+            "session_id": str(conversation.id),
+            "message_id": message.id,
+            "is_main": conversation.kind == "special",
+        },
     )

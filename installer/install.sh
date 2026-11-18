@@ -17,7 +17,6 @@ SPIRITAGENT_HOME="${SPIRITAGENT_HOME:-$DEFAULT_SPIRITAGENT_HOME}"
 BUNDLED_RUNNER_DIR="${SPIRITAGENT_BUNDLED_RUNNER_DIR:-}"
 BUNDLED_DESKTOP_DIR="${SPIRITAGENT_BUNDLED_DESKTOP_DIR:-}"
 BUNDLED_SKILLS_DIR="${SPIRITAGENT_BUNDLED_SKILLS_DIR:-}"
-BUNDLED_ONBOARDING_AUDIO_DIR="${SPIRITAGENT_BUNDLED_ONBOARDING_AUDIO_DIR:-}"
 DESKTOP_FORMAT="${SPIRITAGENT_INSTALLER_FORMAT:-dmg}"
 UV_CMD="${UV_CMD:-}"
 
@@ -151,14 +150,6 @@ stage_unpack_runner() {
     return 1
   fi
 
-  # onboarding 音频按语言子目录映射至 audio/onboarding/<lang>/
-  if [[ -n "$BUNDLED_ONBOARDING_AUDIO_DIR" && -d "$BUNDLED_ONBOARDING_AUDIO_DIR" ]]; then
-    for lang_dir in "$BUNDLED_ONBOARDING_AUDIO_DIR"/*/; do
-      [[ -d "$lang_dir" ]] || continue
-      mkdir -p "$SPIRITAGENT_HOME/audio/onboarding/$(basename "$lang_dir")"
-      cp -R "$lang_dir"/. "$SPIRITAGENT_HOME/audio/onboarding/$(basename "$lang_dir")"/
-    done
-  fi
 }
 
 # 阶段 4：解包桌面端

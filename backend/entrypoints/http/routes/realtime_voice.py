@@ -32,7 +32,7 @@ from runtime.desktop.connection import MANAGER
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.turn_ownership import conversation_lock, release_call, reserve_call
 from runtime.user_maintenance import is_user_in_maintenance
-from workflows.companion_rhythm import close_rhythm_contact, open_rhythm_call
+from workflows.companion_rhythm import close_rhythm_contact, decide_incoming_call, open_rhythm_call
 from workflows.realtime_voice import CallInputOverflowError, RealtimeVoicePipeline
 
 from entrypoints.http.routing import get_router
@@ -59,6 +59,35 @@ async def realtime_voice_identity(
     if identity.device_id is not None and websocket.headers.get("origin") != remote_public_base_url():
         raise WebSocketException(code=4403, reason="远程请求来源无效")
     return identity
+
+
+async def _wait_for_pickup(websocket: WebSocket, session: CallSession) -> bool:
+    """拨号时只收取消或断连，模型判断前没有音频会话。"""
+    await session.emit("session.ringing")
+    decision = asyncio.create_task(decide_incoming_call(session.user_id, int(session.session_id)), name="call.pickup")
+    incoming = asyncio.create_task(websocket.receive(), name="call.wait-for-cancel")
+    try:
+        finished, _ = await asyncio.wait((decision, incoming), return_when=asyncio.FIRST_COMPLETED)
+        if incoming in finished:
+            frame = incoming.result()
+            if frame["type"] == "websocket.disconnect":
+                return False
+            raw = frame.get("text")
+            if isinstance(raw, str) and len(raw) <= 4096 and VoiceControl.model_validate_json(raw).type == "stop":
+                return False
+            raise ValueError("Unexpected frame while call is ringing")
+        try:
+            choice = decision.result()
+        except Exception:
+            logger.exception("Incoming call decision failed", extra={"user_id": session.user_id})
+            await session.emit("error", {"message": "暂时无法处理来电，请稍后重试", "fatal": True})
+            return False
+        if choice.choice == "leave_unanswered":
+            await session.emit("session.unanswered")
+            return False
+        return True
+    finally:
+        await cancel_and_wait([decision, incoming])
 
 
 @router.websocket("/{session_id}")
@@ -147,6 +176,9 @@ async def realtime_voice_websocket(
             try:
                 await websocket.accept()
                 monitor = asyncio.create_task(monitor_identity(), name="call.authorization")
+                activity.enter_context(user_turn_activity(identity.user_id, enabled=True))
+                if not await _wait_for_pickup(websocket, session) or not await authorized(identity):
+                    return
                 remote = identity.device_id is not None
                 actor = BusinessActor(
                     identity.user_id,
@@ -187,7 +219,6 @@ async def realtime_voice_websocket(
                 if owner is not None and owner.cancelling():
                     raise asyncio.CancelledError
                 pipeline = RealtimeVoicePipeline(session, actor, record_id)
-                activity.enter_context(user_turn_activity(identity.user_id, enabled=True))
                 if conv.kind == "special":
                     contact_id = f"call:{record_id}"
                     await open_rhythm_call(identity.user_id, contact_id)

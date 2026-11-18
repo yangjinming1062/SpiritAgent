@@ -26,7 +26,7 @@ from .models import (
     LifeStep,
     PursuitEvidence,
 )
-from .queries import result_reference
+from .queries import result_reference, shared_pursuit_ids
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
     PUBLISHED_ENTRY_KINDS,
@@ -102,6 +102,7 @@ def _event_matches(row: LifeEvent, event: LifeEventInput) -> bool:
             if key not in RESULT_REFERENCE_FIELDS or value is not None
         }
         and row.is_meaningful == event.is_meaningful
+        and (event.shared_with_user is None or row.shared_with_user == event.shared_with_user)
     )
 
 
@@ -165,6 +166,7 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
         if activity_changed:
             row.activity_started_at = utc_now()
             row.activity_step_id = None
+            row.activity_shared_with_user = decision.source == "user"
             row.activity_kind = decision.activity_kind or "virtual_activity"
             # 新活动未给出类别时不继承旧活动语义。
             row.activity_type = decision.activity_type or "idle"
@@ -197,7 +199,9 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
     row.revision += 1
 
 
-def set_step_activity(db: AsyncSession, state: LifeState, step: LifeStep, now: datetime) -> None:
+def set_step_activity(
+    db: AsyncSession, state: LifeState, step: LifeStep, now: datetime, *, shared_with_user: bool
+) -> None:
     activity_type = "reading" if step.kind == "content.read" else "creating"
     if (state.activity_step_id, state.activity_kind, state.activity_type, state.current_activity) != (
         step.id,
@@ -215,11 +219,13 @@ def set_step_activity(db: AsyncSession, state: LifeState, step: LifeStep, now: d
     state.current_activity, state.narrative = step.description, step.narrative
     state.activity_kind, state.activity_type = "execution", activity_type
     state.activity_step_id, state.activity_started_at = step.id, now
+    state.activity_shared_with_user = shared_with_user
 
 
 def clear_activity_step(db: AsyncSession, state: LifeState, *, kind: FactType = "intent") -> None:
     """执行结束或退回等待后作废原活动表现，不把已结束的活动继续投影为正在进行。"""
     state.activity_step_id = None
+    state.activity_shared_with_user = False
     state.narrative = None
     state.activity_kind = kind
     state.activity_type = "idle"
@@ -248,6 +254,7 @@ async def ensure_pursuit(
     desired_result: str = "",
     narrative: str | None = None,
     idempotency_key: str | None = None,
+    shared_with_user: bool = False,
 ) -> LifePursuit:
     state = await get_or_create_state(db, user_id, lock=True)
     if not title.strip():
@@ -266,6 +273,7 @@ async def ensure_pursuit(
         reason=reason,
         desired_result=desired_result,
         narrative=narrative,
+        shared_with_user=shared_with_user,
         status_reason=reason,
         status_changed_at=utc_now(),
     )
@@ -493,7 +501,7 @@ def _trajectory_result_key(event: LifeEventInput) -> str | None:
 
 
 async def _trajectory_fields(
-    db: AsyncSession, user_id: int, events: Sequence[LifeEventInput]
+    db: AsyncSession, user_id: int, events: Sequence[LifeEventInput], shared_pursuits: set[int]
 ) -> tuple[dict[str, dict[str, Any]], set[str]]:
     marked = [event for event in events if event.trajectory_kind is not None]
     if not marked:
@@ -553,6 +561,11 @@ async def _trajectory_fields(
                 continue
             seen.add((key, event.pursuit_id))
         previous = explicit.get(event.previous_episode_id) or heads.get(event.pursuit_id)
+        is_shared = event.shared_with_user is True or (
+            event.shared_with_user is None and event.pursuit_id in shared_pursuits
+        )
+        if is_shared and previous is not None and not previous.shared_with_user:
+            previous = None
         values[event.event_key] = {
             "trajectory_kind": event.trajectory_kind,
             "trajectory_result_key": key,
@@ -577,7 +590,12 @@ async def _record_event_batch(
             raise LifeInputError("同批生活事件键不能对应不同事实")
         unique[event.event_key] = event
     inputs = list(unique.values())
-    trajectory, new_results = await _trajectory_fields(db, user_id, inputs)
+    shared_pursuits = await shared_pursuit_ids(
+        db,
+        user_id,
+        {item.pursuit_id for item in inputs if item.shared_with_user is None and item.pursuit_id is not None},
+    )
+    trajectory, new_results = await _trajectory_fields(db, user_id, inputs, shared_pursuits)
     inserted: dict[str, LifeEvent] = {}
     for start in range(0, len(inputs), 500):
         values = [
@@ -594,6 +612,9 @@ async def _record_event_batch(
                 "pursuit_id": item.pursuit_id,
                 "step_id": item.step_id,
                 "is_meaningful": item.is_meaningful,
+                "shared_with_user": (
+                    item.pursuit_id in shared_pursuits if item.shared_with_user is None else item.shared_with_user
+                ),
                 "trajectory_kind": None,
                 "trajectory_result_key": None,
                 "topic_id": None,

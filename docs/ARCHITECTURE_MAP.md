@@ -106,7 +106,7 @@ flowchart LR
     Gen --> TS[shared/api.generated.ts]
     Gen --> Gate["--check 漂移门禁"]
     TS --> Builds[client 与 remote 构建]
-    Payload[installer 载荷<br/>桌面包、Runner wheel、技能、引导音频] --> Setup[Tauri 安装器]
+    Payload[installer 载荷<br/>桌面包、Runner wheel、技能] --> Setup[Tauri 安装器]
     Builds --> Payload
 ```
 

@@ -285,23 +285,20 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
     case 'companion.reaction': {
-      // 模型推断的身体反应只作为演出建议；导演按可用素材与冷却决定是否演出。
-      // 多窗口投递保留同一事件身份与发生时间，由当前宿主去重并丢弃过时反应。
-      const reaction = event.payload.reaction
+      const { visual_id, version, occurred_at } = event.payload
 
       const eventId =
         event.stream_id !== undefined && event.seq !== undefined
           ? `${event.stream_id}:${event.seq}`
-          : `${event.payload.occurred_at}:${reaction}`
+          : `${occurred_at}:${visual_id}:${version}`
 
-      const occurredAt = Date.parse(event.payload.occurred_at)
+      const visual = { visual_id, version }
+      const occurredAt = Date.parse(occurred_at)
 
-      if (reaction === 'look' || reaction === 'smile' || reaction === 'stretch') {
-        if (isPresentationHost || $surfaceRole.get() === 'desktop') {
-          enqueueInteraction(reaction, eventId, occurredAt)
-        } else {
-          enqueueInteractionForward(reaction, eventId, occurredAt)
-        }
+      if (isPresentationHost || $surfaceRole.get() === 'desktop') {
+        enqueueInteraction(visual, eventId, occurredAt)
+      } else {
+        enqueueInteractionForward(visual, eventId, occurredAt)
       }
 
       break
