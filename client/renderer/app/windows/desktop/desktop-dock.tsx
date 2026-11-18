@@ -618,7 +618,10 @@ export function DesktopDock({
                   <button
                     disabled={busy}
                     onClick={event =>
-                      openPicker({ entryId: menuEntry.id, kind: 'repair' }, triggerRef.current ?? event.currentTarget)
+                      openPicker(
+                        { entryId: menuEntry.id, kind: 'repair', name: menuEntry.name },
+                        triggerRef.current ?? event.currentTarget
+                      )
                     }
                     role="menuitem"
                     type="button"
