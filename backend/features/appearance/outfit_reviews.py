@@ -13,6 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
 from features.companion.visual_state import persona_snapshot
+from features.life.use_cases import (
+    resume_business_media_in_session,
+    update_business_steps_in_session,
+    wait_business_media_in_session,
+)
 from features.media.character_images import ImageChainState, run_frozen_image_chain
 from features.media.continuations import MediaWait, authorize_media_waits, finish_media_operation
 from features.media.identity_contracts import VisualIdentitySnapshot
@@ -81,6 +86,17 @@ async def list_outfit_review_jobs(user_id: int) -> list[MediaJobView]:
     return [await outfit_review_view(user_id, job_id) for job_id in ids]
 
 
+async def _queue_outfit_continuation(db: AsyncSession, row: OutfitCreationJob) -> None:
+    if not await resume_business_media_in_session(db, row.user_id, "outfit.create", row.id):
+        await wait_business_media_in_session(
+            db, row.user_id, "outfit.create", row.id, "等待继续制作", code="media_resume_waiting"
+        )
+        return
+    row.checkpoint = {**row.checkpoint, "permission_wait": False}
+    row.state, row.stage, row.error = "queued", "prepare", None
+    emit_ws_event(db, user_id=row.user_id, event_type="outfit.creation.continue", payload={"job_id": str(row.id)})
+
+
 async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | None:
     row = await db.scalar(
         select(OutfitCreationJob)
@@ -106,11 +122,7 @@ async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | 
             and frozen
             and await visual_identity_is_current(db, wait.user_id, VisualIdentitySnapshot.model_validate(frozen))
         ):
-            row.checkpoint = {**progress, "permission_wait": False}
-            row.state, row.stage, row.error = "queued", "prepare", None
-            emit_ws_event(
-                db, user_id=wait.user_id, event_type="outfit.creation.continue", payload={"job_id": str(row.id)}
-            )
+            await _queue_outfit_continuation(db, row)
         return None
     chain = ImageChainState.model_validate(progress.get("image_chain", {}))
     candidate = chain.best()
@@ -151,8 +163,7 @@ async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | 
         ):
             row.error = "原任务身份已失效，候选已保留，不能按当前身份采纳"
             return None
-        row.state, row.stage, row.error = "queued", "prepare", None
-        emit_ws_event(db, user_id=wait.user_id, event_type="outfit.creation.continue", payload={"job_id": str(row.id)})
+        await _queue_outfit_continuation(db, row)
         return None
     frozen = progress["manual_input"]
     identity = VisualIdentitySnapshot.model_validate(frozen["identity"])
@@ -233,11 +244,17 @@ async def manually_review_outfit(
     return ManualAction()
 
 
-async def run_manual_outfit_job(user_id: int, job_id: int) -> None:
+async def run_manual_outfit_job(user_id: int, job_id: int) -> bool | None:
     async with SESSION_LOCAL() as db:
         row = await db.get(OutfitCreationJob, job_id, with_for_update=True)
         if row is None or row.user_id != user_id or row.state != "queued":
             return
+        if not await resume_business_media_in_session(db, user_id, "outfit.create", job_id):
+            await wait_business_media_in_session(
+                db, user_id, "outfit.create", job_id, "等待继续制作", code="media_resume_waiting"
+            )
+            await db.commit()
+            return False
         chain = ImageChainState.model_validate(row.checkpoint["image_chain"])
         row.state, row.stage = "running", "manual_image"
         await db.commit()
@@ -267,5 +284,19 @@ async def run_manual_outfit_job(user_id: int, job_id: int) -> None:
                     else ("paused", "confirmation" if chain.best() else "review_pending")
                 )
                 current.error = error
+                if current.state == "unknown":
+                    await update_business_steps_in_session(
+                        db,
+                        user_id,
+                        kind="outfit.create",
+                        business_ref={"job_id": job_id},
+                        state="unknown",
+                        error=error,
+                        failure_code="result_unknown",
+                    )
+                else:
+                    await wait_business_media_in_session(
+                        db, user_id, "outfit.create", job_id, "候选已保留，等待检查", code="review_pending"
+                    )
                 emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
                 await db.commit()

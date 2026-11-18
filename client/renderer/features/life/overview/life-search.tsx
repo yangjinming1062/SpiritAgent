@@ -12,6 +12,7 @@ import styles from '../life.module.css'
 import { lifeSearch, searchLife } from '../search'
 
 import { $lifeUi, updateLifeUi } from './life-state'
+import { LifeTrajectory } from './life-trajectory'
 
 /**
  * 生活记录：未提交搜索时由调用方提供最近变化，提交后切换为搜索结果；
@@ -20,14 +21,18 @@ import { $lifeUi, updateLifeUi } from './life-state'
 export function LifeArchiveSearch({
   visible,
   pursuitId,
+  topicId,
   revision,
   onSelectPursuit,
+  onSelectTopic,
   fallback
 }: {
   visible: boolean
   pursuitId: string | null
+  topicId: string | null
   revision: string
   onSelectPursuit: (id: string | null) => void
+  onSelectTopic: (id: string | null) => void
   fallback: React.ReactNode
 }): React.JSX.Element {
   const ui = useStore($lifeUi)
@@ -42,11 +47,11 @@ export function LifeArchiveSearch({
 
   useEffect(() => {
     if (visible && applied) {
-      void searchLife(applied, pursuitId ?? undefined)
+      void searchLife(applied, pursuitId ?? undefined, topicId ?? undefined)
     } else if (!applied) {
       lifeSearch.clear()
     }
-  }, [visible, applied, pursuitId, revision])
+  }, [visible, applied, pursuitId, topicId, revision])
 
   return (
     <section className={styles.section}>
@@ -71,6 +76,14 @@ export function LifeArchiveSearch({
             {life.clearFilter}
           </button>
         )}
+        {topicId !== null && (
+          <>
+            <span className={HINT_TEXT}>{life.topicScope}</span>
+            <button className={BTN_SUBTLE} onClick={() => onSelectTopic(null)} type="button">
+              {life.recordsScopeClear}
+            </button>
+          </>
+        )}
         {pursuitId !== null && (
           <>
             <span className={HINT_TEXT}>{life.recordsScope}</span>
@@ -85,7 +98,7 @@ export function LifeArchiveSearch({
           {failed && (
             <ErrorBanner
               message={t.failed}
-              onRetry={() => void searchLife(applied, pursuitId ?? undefined)}
+              onRetry={() => void searchLife(applied, pursuitId ?? undefined, topicId ?? undefined)}
               retryLabel={t.retry}
             />
           )}
@@ -95,59 +108,12 @@ export function LifeArchiveSearch({
             result && (
               <>
                 <ArchiveSearchFeedback count={result.items.length} status={result.search} />
-                <ol className={styles.timeline}>
-                  {result.items.map(item => (
-                    <li key={item.id}>
-                      <time dateTime={item.occurred_at}>{new Date(item.occurred_at).toLocaleString(locale)}</time>
-                      <div className={styles.eventBody}>
-                        <span className={styles.eyebrow}>
-                          {t.subjects[item.subject]} · {t.facts[item.fact_type]}
-                        </span>
-                        {item.narrative && <p>{item.narrative}</p>}
-                        {item.reading_result && (
-                          <details>
-                            <summary>{t.notes}</summary>
-                            <p>{item.reading_result.notes}</p>
-                            <ul>
-                              {item.reading_result.sources.map(source => (
-                                <li key={source.url}>
-                                  <a href={source.url} rel="noreferrer" target="_blank">
-                                    {source.title || source.url}
-                                  </a>
-                                  {' · '}
-                                  {source.content_kind === 'summary'
-                                    ? locale === 'en'
-                                      ? 'Summary'
-                                      : '摘要'
-                                    : source.excerpted
-                                      ? locale === 'en'
-                                        ? 'Excerpt'
-                                        : '摘录'
-                                      : locale === 'en'
-                                        ? 'Text'
-                                        : '正文'}
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        )}
-                        {item.pursuit_id && (
-                          <button
-                            className={BTN_SUBTLE}
-                            onClick={() => {
-                              if (item.pursuit_id) {
-                                onSelectPursuit(item.pursuit_id)
-                              }
-                            }}
-                            type="button"
-                          >
-                            {t.details}
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
+                <LifeTrajectory
+                  entries={result.items}
+                  onPursuit={onSelectPursuit}
+                  onTopic={onSelectTopic}
+                  topicId={topicId}
+                />
               </>
             )
           )}

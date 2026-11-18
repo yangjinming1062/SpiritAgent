@@ -39,6 +39,7 @@ from .generation import (
     restart_video_generation,
     schedule_visual_job,
 )
+from .life import RECOVERY_WAITING, RESUME_WAITING, settle_visual_steps
 from .repository import notify_visuals_updated, visual_job_row, visual_progress, visual_snapshot
 from .schemas import OpeningReview, VisualAsset, VisualJobProgress
 
@@ -192,7 +193,10 @@ async def manually_review_visual(
             else:
                 progress.review_only = False
     progress.paused_by_user, progress.failure_reason, progress.submission_unknown = False, "", False
-    row.checkpoint, row.state, row.stage, row.error = progress.model_dump(mode="json"), "queued", "prepare", None
+    row.checkpoint = progress.model_dump(mode="json")
+    row.state, row.stage = "queued", RECOVERY_WAITING if progress.review_only else RESUME_WAITING
+    row.error, row.finished_at = None, None
+    await settle_visual_steps(db, user_id, row)
     await notify_visuals_updated(db, user_id)
     return ManualAction(restart_job_id=job_id, audit_context={"snapshot_json": row.snapshot_json})
 

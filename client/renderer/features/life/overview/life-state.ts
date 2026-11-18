@@ -11,6 +11,7 @@ const FALLBACK: LifeUiSnapshot = {
   pursuitPage: 0,
   pursuitCursors: [null],
   eventPage: 0,
+  topicId: null,
   scrollTop: 0
 }
 

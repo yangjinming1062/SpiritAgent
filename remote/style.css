@@ -1985,21 +1985,38 @@ dd {
 }
 .archive-life-results {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   padding: 0;
   list-style: none;
 }
 .archive-life-results > li {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
 }
-.archive-life-results p {
+.archive-life-results p,
+.life-featured p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.archive-life-results small,
-.archive-life-results time {
-  display: block;
+.life-featured {
+  padding-block-end: var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+.life-featured h2,
+.life-episode-meta {
+  color: var(--text-muted);
+  font-size: var(--fs-body-sm);
+}
+.life-episode-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.life-result a {
+  text-decoration: underline;
+}
+.companion-life-card .life-episode .row-actions button {
+  width: auto;
 }
 
 .status-row {

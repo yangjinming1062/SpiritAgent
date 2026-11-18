@@ -21,7 +21,16 @@ from .service import (
     clear_activity_step,
     get_or_create_state,
     result_values,
+    set_step_activity,
 )
+
+_LIFE_RESULT_FIELDS = {
+    "content.read": "reading_step_id",
+    "visual.generate": "visual_version_id",
+    "outfit.create": "outfit_id",
+    "scene.create": "scene_id",
+    "action.design": "action_id",
+}
 
 
 def _changes_cte(
@@ -108,15 +117,23 @@ async def settle_business_steps(
     step_objects = {}
     pursuit_objects = {}
     submitted_requests = set()
+    result_key = _LIFE_RESULT_FIELDS.get(kind)
     for row, pursuit, known_outcome in rows:
         step_objects[row.id] = row
         if pursuit is not None:
             pursuit_objects[pursuit.id] = pursuit
         if state == "running":
-            if (pursuit is not None and pursuit.status != "active") or row.state in {"completed", "cancelled"}:
+            if row.state in {"completed", "cancelled"} or (
+                row.state == "planned" and pursuit is not None and pursuit.status != "active"
+            ):
                 continue
             generation_id = business_ref.get("generation_id", row.generation_id)
-            if row.state == "running" and row.job_id == job_id and row.generation_id == generation_id:
+            if (
+                row.state == "running"
+                and row.disposition == "executing"
+                and row.job_id == job_id
+                and row.generation_id == generation_id
+            ):
                 continue
             step_changes[row.id] = {
                 "state": "running",
@@ -180,6 +197,9 @@ async def settle_business_steps(
                 pursuit_changes[pursuit.id] = current
         if finished_at is None or known_outcome:
             continue
+        share_result = (
+            final_state == "completed" and result_key is not None and final_result.get(result_key) is not None
+        )
         events.append(
             LifeEventInput(
                 event_key=f"step:{row.id}:{final_state}",
@@ -188,8 +208,15 @@ async def settle_business_steps(
                 fact_type="result" if final_state == "completed" else "execution",
                 step_id=row.id,
                 pursuit_id=row.pursuit_id,
-                fact={"description": row.description, "state": final_state, "failure_code": final_failure_code or ""},
+                fact={
+                    "description": row.description,
+                    "state": final_state,
+                    "failure_code": final_failure_code or "",
+                    **({"title": pursuit.title} if pursuit is not None else {}),
+                },
                 result_ref=final_result,
+                is_meaningful=final_state == "completed",
+                trajectory_kind="result" if share_result else None,
             )
         )
         if pursuit is not None and pursuit.status == "active" and final_state == "completed":
@@ -227,8 +254,10 @@ async def settle_business_steps(
             else:
                 changes.append(change)
     if step_changes:
-        life_state.next_review_at = now
-        if life_state.activity_step_id in step_changes:
+        if state == "running":
+            if life_state.activity_step_id not in step_objects:
+                set_step_activity(db, life_state, step_objects[next(iter(step_changes))], now)
+        elif life_state.activity_step_id in step_changes:
             clear_activity_step(db, life_state, kind="result" if state == "completed" else "intent")
     await _record_event_batch(db, user_id, events, life_state, state_changes=len(step_changes), changes=changes)
     for objects, updates in ((step_objects, step_changes), (pursuit_objects, pursuit_changes)):

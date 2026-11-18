@@ -42,14 +42,16 @@ class PromptOutcome(NamedTuple):
     reason: str | None
 
 
-async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext | None:
+async def load_companion_prompt_context(
+    user_id: int, *, include_life_topics: bool = False
+) -> CompanionPromptContext | None:
     """返回用于提示词的人设与记忆快照；人设未就绪时返回 None。从 user_settings 解析 language，驱动 persona_extras 的双语渲染。"""
     async with SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
             return None
         language = resolve_language(await get_user_setting(db, user_id, "language"))
-        life_context = await read_life_context_in_session(db, user_id)
+        life_context = await read_life_context_in_session(db, user_id, include_topic_heads=include_life_topics)
         return CompanionPromptContext(
             language=language,
             current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",

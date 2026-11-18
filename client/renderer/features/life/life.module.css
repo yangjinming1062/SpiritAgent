@@ -71,6 +71,27 @@
   align-items: center;
 }
 .overview > .actions { margin-top: 6px; }
+.featured {
+  display: grid;
+  gap: 12px;
+  padding: clamp(16px, 3vw, 28px);
+  background: var(--ui-fill-faint);
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 16px;
+}
+.featured h2 {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.trajectoryLayout {
+  display: grid;
+  align-items: start;
+  column-gap: clamp(24px, 4vw, 56px);
+}
+@media (min-width: 980px) {
+  .trajectoryLayout { grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); }
+}
 .section {
   display: flex;
   flex-direction: column;
@@ -137,21 +158,29 @@
   overflow-wrap: anywhere;
 }
 .timeline {
+  display: grid;
+  gap: 22px;
+}
+.episodeDay h3 {
+  color: var(--ui-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+.episodeDay ol {
   list-style: none;
   padding: 0;
-  margin: 0;
+  margin: 8px 0 0;
 }
-.timeline > li {
-  display: flex;
-  gap: 24px;
-  padding: 18px 0;
+.episodeDay li {
+  padding: 14px 0;
   border-top: 1px solid var(--ui-line-hairline);
 }
-.timeline time {
-  flex: 0 0 118px;
-  font-size: 11px;
-  line-height: 1.7;
-  color: var(--ui-text-faint);
+.episodeMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
 }
 .eventBody {
   min-width: 0;
@@ -164,6 +193,16 @@
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.eventBody .activity { font-size: 19px; }
+.reading {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reading summary { cursor: pointer; }
+.reading a {
+  color: var(--ui-accent);
+  text-decoration: underline;
 }
 .pagination {
   display: flex;
@@ -207,10 +246,3 @@
   box-shadow: 12px 0 32px rgb(0 0 0 / 15%);
 }
 .drawer[data-side='right'] { inset: 0 0 0 auto; }
-@media (max-width: 700px) {
-  .timeline > li {
-    flex-direction: column;
-    gap: 8px;
-  }
-  .timeline time { flex-basis: auto; }
-}

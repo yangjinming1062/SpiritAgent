@@ -32,7 +32,7 @@ from .generation import (
     visual_video_chain_exhausted,
 )
 from .geometry import visual_aspect_ratio
-from .life import bind_creation_step, restart_visual_steps, settle_visual_steps
+from .life import RECOVERY_WAITING, RESUME_WAITING, bind_creation_step, restart_visual_steps, settle_visual_steps
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPlayback, VisualPresentation, VisualVersion
 from .policy import visual_autonomous_block_reason
 from .ports import request_base_motion_preparation, scene_reference_exists
@@ -883,6 +883,7 @@ async def pause_job(user_id: int, job_id: int) -> VisualJobView:
             progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
             job.checkpoint = progress.model_dump(mode="json")
             job.state, job.stage, job.error = "paused", "paused", None
+            await settle_visual_steps(db, user_id, job)
             await notify_visuals_updated(db, user_id)
         view = await job_view(db, job)
         await db.commit()
@@ -893,8 +894,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
-        was_failed = job.state in {"failed", "unknown"}
-        if job.state == "running":
+        if job.state in {"queued", "running"}:
             return await job_view(db, job)
         if job.state in {"succeeded", "cancelled"}:
             raise VisualStateError("这个工作项已结束，请按需重新发起制作")
@@ -928,11 +928,13 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
             resume_known_result(progress)
         progress.failure_reason = ""
         job.checkpoint = progress.model_dump(mode="json")
-        job.state, job.stage, job.error = "running", "prepare", None
+        if await restart_visual_steps(db, user_id, job):
+            job.state, job.stage, job.error = "running", "prepare", None
+        else:
+            job.state, job.stage, job.error = "queued", RESUME_WAITING if allow_model_steps else RECOVERY_WAITING, None
+            await settle_visual_steps(db, user_id, job)
         await notify_visuals_updated(db, user_id)
         view = await job_view(db, job)
-        if was_failed:
-            await restart_visual_steps(db, user_id, job)
         await db.commit()
     schedule_visual_job(user_id, job_id, allow_model_steps=allow_model_steps)
     return view
@@ -1087,11 +1089,14 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
             stage = None
         if stage is not None:
             job.checkpoint = progress.model_dump(mode="json")
-            job.state, job.stage, job.error = "running", stage, None
+            if await restart_visual_steps(db, user_id, job):
+                job.state, job.stage, job.error = "running", stage, None
+            else:
+                job.state, job.stage, job.error = "queued", RESUME_WAITING, None
+                await settle_visual_steps(db, user_id, job)
             job.finished_at = None
             await notify_visuals_updated(db, user_id)
             view = await job_view(db, job)
-            await restart_visual_steps(db, user_id, job)
             await db.commit()
         else:
             view = None

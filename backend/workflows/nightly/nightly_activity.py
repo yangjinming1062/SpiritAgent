@@ -12,6 +12,7 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
 from features.life.context import read_life_context_in_session
+from features.life.trajectory import has_trajectory_in_window
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
 from features.memory.memory_format import format_memory_record
@@ -458,8 +459,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         posts = await collect_post_interactions(
             db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
+        has_life_material = await has_trajectory_in_window(db, user_id, start=utc_start, end=utc_end)
     action_facts = _successful_action_facts(action_results)
-    # 没有可读的用户发言、成功行动或动态互动时不虚构日记；反思与用户可见日记共用这一门控。
     has_readable_messages = any(message.role == "user" and message.content for message in today_messages)
     has_material = bool(has_readable_messages or action_facts or posts.threads)
     if has_material:
@@ -487,13 +488,12 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         )
     else:
         async with session_scope() as db:
-            for stage in ("reflection", "journal"):
-                if await load_narrative_result(db, log_id, stage) is None:
-                    await save_narrative_result(db, log_id, stage, False)
+            if await load_narrative_result(db, log_id, "reflection") is None:
+                await save_narrative_result(db, log_id, "reflection", False)
             await db.commit()
         _record_stage(stages, {"stage": "reflection", "status": "skipped", "reason": "当日无互动或自主行动"})
 
-    if has_material:
+    if has_material or has_life_material:
         await _run_stage(
             stages,
             "journal nightly",
@@ -517,6 +517,10 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             skipped=(NightlyWindowClosedError, NarrativeQualityError),
         )
     else:
+        async with session_scope() as db:
+            if await load_narrative_result(db, log_id, "journal") is None:
+                await save_narrative_result(db, log_id, "journal", False)
+                await db.commit()
         _record_stage(stages, {"stage": "journal nightly", "status": "skipped"})
 
     has_errors = any(stage["status"] == "error" for stage in stages) or any(

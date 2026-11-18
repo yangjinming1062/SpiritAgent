@@ -620,6 +620,23 @@ async def list_visuals(
         )
 
 
+async def visual_version(user_id: int, visual_id: int, version_id: int) -> VisualItemView | None:
+    async with SESSION_LOCAL() as db:
+        row = (
+            await db.execute(
+                select(VisualItem, VisualVersion)
+                .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
+                .where(
+                    VisualItem.user_id == user_id,
+                    VisualItem.id == visual_id,
+                    VisualVersion.user_id == user_id,
+                    VisualVersion.id == version_id,
+                )
+            )
+        ).one_or_none()
+        return item_view(version_view(*row)) if row else None
+
+
 async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
     async with SESSION_LOCAL() as db:
         item = await db.scalar(select(VisualItem).where(VisualItem.id == visual_id, VisualItem.user_id == user_id))

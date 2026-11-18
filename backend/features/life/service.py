@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 
 from infrastructure.api_ids import parse_resource_id
@@ -26,7 +27,14 @@ from .models import (
     PursuitEvidence,
 )
 from .queries import result_reference
-from .schemas import EVIDENCE_EVENT_KINDS, UNRESOLVED_STEP_STATES, FactType, LifeDecisionRequest, LifeEventInput
+from .schemas import (
+    EVIDENCE_EVENT_KINDS,
+    PUBLISHED_ENTRY_KINDS,
+    UNRESOLVED_STEP_STATES,
+    FactType,
+    LifeDecisionRequest,
+    LifeEventInput,
+)
 from .search import index_life_events
 
 
@@ -189,6 +197,26 @@ def apply_decision(row: LifeState, decision: LifeDecisionRequest) -> None:
     row.revision += 1
 
 
+def set_step_activity(db: AsyncSession, state: LifeState, step: LifeStep, now: datetime) -> None:
+    activity_type = "reading" if step.kind == "content.read" else "creating"
+    if (state.activity_step_id, state.activity_kind, state.activity_type, state.current_activity) != (
+        step.id,
+        "execution",
+        activity_type,
+        step.description,
+    ):
+        state.presentation_revision += 1
+        emit_ws_event(
+            db,
+            user_id=state.user_id,
+            event_type="companion.life.presentation_requested",
+            payload={"revision": state.presentation_revision},
+        )
+    state.current_activity, state.narrative = step.description, step.narrative
+    state.activity_kind, state.activity_type = "execution", activity_type
+    state.activity_step_id, state.activity_started_at = step.id, now
+
+
 def clear_activity_step(db: AsyncSession, state: LifeState, *, kind: FactType = "intent") -> None:
     """执行结束或退回等待后作废原活动表现，不把已结束的活动继续投影为正在进行。"""
     state.activity_step_id = None
@@ -274,6 +302,7 @@ async def _evidence_events(
             or not event.is_meaningful
             or event.pursuit_id not in (None, pursuit.id)
             or event.kind not in EVIDENCE_EVENT_KINDS
+            or (event.kind in PUBLISHED_ENTRY_KINDS and event.result_entry_id is None)
             or event.fact_type != "result"
             or not result_reference(event)
         ):
@@ -333,7 +362,11 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
         raise LifeInputError("只能推进进行中的持续事项")
     evidence_ids = set(decision.evidence_event_ids)
     evidence = await _evidence_events(db, user_id, pursuit, evidence_ids)
-    if decision.progress is not None and decision.progress != pursuit.progress and not evidence:
+    progress_changed = decision.progress is not None and decision.progress != pursuit.progress
+    plan_changed = decision.next_action is not None or (
+        decision.next_step is not None and decision.next_step != pursuit.next_step
+    )
+    if progress_changed and not evidence:
         raise LifeInputError("更新完成进度需要真实结果证据")
     if completing:
         if not evidence or not (decision.progress or "").strip():
@@ -372,6 +405,7 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
             )
             .on_conflict_do_nothing(constraint="uq_pursuit_evidence_event")
         )
+    milestone = completing or plan_changed or progress_changed
     await db.flush()
     await record_event(
         db,
@@ -387,7 +421,8 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
             fact={"title": pursuit.title, "progress": pursuit.progress, "next_step": pursuit.next_step},
             narrative=decision.narrative.event or decision.narrative.pursuit,
             result_ref=deepcopy(pursuit.result_ref_json) if completing else {"evidence_count": len(evidence_ids)},
-            is_meaningful=bool(evidence),
+            is_meaningful=milestone or bool(evidence),
+            trajectory_kind="milestone" if milestone else None,
         ),
     )
     return pursuit
@@ -445,6 +480,88 @@ async def create_step(
     return row
 
 
+def _trajectory_result_key(event: LifeEventInput) -> str | None:
+    if event.trajectory_kind != "result":
+        return None
+    result = event.result_ref
+    if result.get("visual_id") and result.get("visual_version_id"):
+        return f"visual:{result['visual_id']}:{result['visual_version_id']}"
+    for name in ("reading_step_id", "outfit_id", "scene_id", "action_id"):
+        if identifier := result.get(name):
+            return f"{name}:{identifier}"
+    raise LifeInputError("轨迹成果必须引用已保存的成果")
+
+
+async def _trajectory_fields(
+    db: AsyncSession, user_id: int, events: Sequence[LifeEventInput]
+) -> tuple[dict[str, dict[str, Any]], set[str]]:
+    marked = [event for event in events if event.trajectory_kind is not None]
+    if not marked:
+        return {}, set()
+    references = {event.previous_episode_id for event in marked if event.previous_episode_id is not None}
+    explicit = (
+        {
+            row.id: row
+            for row in await db.scalars(
+                select(LifeEvent).where(
+                    LifeEvent.user_id == user_id, LifeEvent.id.in_(references), LifeEvent.trajectory_kind.is_not(None)
+                )
+            )
+        }
+        if references
+        else {}
+    )
+    if references != explicit.keys():
+        raise LifeInputError("上一段经历不存在或不属于当前账户")
+    pursuits = {event.pursuit_id for event in marked if event.pursuit_id is not None}
+    heads = (
+        {
+            row.pursuit_id: row
+            for row in await db.scalars(
+                select(LifeEvent)
+                .where(
+                    LifeEvent.user_id == user_id,
+                    LifeEvent.pursuit_id.in_(pursuits),
+                    LifeEvent.trajectory_kind.is_not(None),
+                )
+                .distinct(LifeEvent.pursuit_id)
+                .order_by(LifeEvent.pursuit_id, LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
+            )
+        }
+        if pursuits
+        else {}
+    )
+    keys = {event.event_key: _trajectory_result_key(event) for event in marked}
+    candidates = {key for key in keys.values() if key is not None}
+    seen = (
+        set(
+            await db.execute(
+                select(LifeEvent.trajectory_result_key, LifeEvent.pursuit_id).where(
+                    LifeEvent.user_id == user_id, LifeEvent.trajectory_result_key.in_(candidates)
+                )
+            )
+        )
+        if candidates
+        else set()
+    )
+    new_results = candidates - {key for key, _ in seen}
+    values = {}
+    for event in marked:
+        key = keys[event.event_key]
+        if key is not None:
+            if (key, event.pursuit_id) in seen:
+                continue
+            seen.add((key, event.pursuit_id))
+        previous = explicit.get(event.previous_episode_id) or heads.get(event.pursuit_id)
+        values[event.event_key] = {
+            "trajectory_kind": event.trajectory_kind,
+            "trajectory_result_key": key,
+            "topic_id": (previous.topic_id or previous.id) if previous else None,
+            "previous_episode_id": previous.id if previous else None,
+        }
+    return values, new_results
+
+
 async def _record_event_batch(
     db: AsyncSession,
     user_id: int,
@@ -460,6 +577,7 @@ async def _record_event_batch(
             raise LifeInputError("同批生活事件键不能对应不同事实")
         unique[event.event_key] = event
     inputs = list(unique.values())
+    trajectory, new_results = await _trajectory_fields(db, user_id, inputs)
     inserted: dict[str, LifeEvent] = {}
     for start in range(0, len(inputs), 500):
         values = [
@@ -476,7 +594,12 @@ async def _record_event_batch(
                 "pursuit_id": item.pursuit_id,
                 "step_id": item.step_id,
                 "is_meaningful": item.is_meaningful,
+                "trajectory_kind": None,
+                "trajectory_result_key": None,
+                "topic_id": None,
+                "previous_episode_id": None,
                 **result_values(item.result_ref),
+                **trajectory.get(item.event_key, {}),
             }
             for item in inputs[start : start + 500]
         ]
@@ -497,6 +620,8 @@ async def _record_event_batch(
         }
         if existing.keys() != missing:
             raise LifeStateConflictError("生活事件的并发结果已变化，请重试")
+    if any(row.trajectory_result_key in new_results for row in inserted.values()):
+        state.next_review_at = utc_now()
     pending = {
         attribute.key: deepcopy(attribute.history.added[0])
         for attribute in inspect(state).attrs

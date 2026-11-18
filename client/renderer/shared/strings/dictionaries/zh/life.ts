@@ -1,10 +1,10 @@
 export const life = {
   life: {
     title: '生活',
-    intro: '看看伙伴正在继续的事，和最近发生的变化。',
+    intro: '看看伙伴最近经历了什么，又想怎样继续。',
     now: '近况',
     sectionHints: {
-      now: '正在继续的事与最近的变化',
+      now: '伙伴自己的日常、在意的事与真实成果',
       posts: '伙伴分享的文字、图片与视频',
       diary: '按日期留下的记录与感受'
     },
@@ -17,13 +17,12 @@ export const life = {
     hide: '收起生活区',
     close: '关闭生活区',
     pursuitsTitle: '在意的事',
-    recordsTitle: '生活记录',
-    searchLabel: '搜索记录',
+    recordsTitle: '生活轨迹',
+    searchLabel: '搜索经历',
     clearFilter: '清除筛选',
     recordsScope: '仅显示这件事的记录',
     recordsScopeClear: '查看全部记录',
     pursuitFallback: '这件事',
-    moreActions: '更多操作',
     statuses: { all: '全部', active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' },
     stepStates: {
       planned: '准备中',
@@ -31,7 +30,11 @@ export const life = {
       completed: '已完成',
       failed: '暂时没能继续',
       cancelled: '已取消',
-      unknown: '还在等结果'
+      unknown: '还在等结果',
+      mediaPaused: '制作已暂停',
+      mediaQueued: '等待继续制作',
+      reviewPending: '等待检查',
+      permissionWait: '等待确认授权或身份'
     },
     stepsTitle: '实际行动',
     readingNotes: '阅读笔记',
@@ -39,7 +42,7 @@ export const life = {
     sourceExcerpt: '摘录',
     sourceText: '正文',
     emptyPursuits: '这里还没有记录的事项。',
-    emptyEvents: '暂时没有可展示的生活变化。',
+    emptyEvents: '暂时没有更早的经历。',
     moreEvents: '更早的记录',
     failed: '暂时无法更新生活内容，已有内容仍可查看。',
     loading: '正在了解近况…',
@@ -51,22 +54,15 @@ export const life = {
     openOutfit: '查看造型',
     openScene: '查看环境',
     openAction: '查看动作',
-    openPosts: '打开动态',
-    openDiary: '打开日记',
-    eventLabels: {
-      activity: '近况变化',
-      started: '开始了一件事',
-      progressed: '有了进展',
-      completed: '完成了一件事',
-      visual: '制作了影像',
-      post: '发布了动态',
-      diary: '写了日记',
-      paused: '暂时停一停',
-      resumed: '继续这件事',
-      abandoned: '放下了这件事',
-      step: '完成了一次行动',
-      failed: '暂时没能继续',
-      unknown: '还在等结果'
+    latest: '最近的经历',
+    topicScope: '当前主题',
+    openTopic: '查看这个主题',
+    episodeLabels: {
+      virtual: '虚拟日常',
+      milestone: '事项变化',
+      reading: '阅读所得',
+      result: '已确认成果',
+      exchange: '一次交流'
     }
   }
 }

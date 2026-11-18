@@ -8,7 +8,7 @@ import { PageHeader, usePageState } from './ui'
 type Section = 'diary' | 'now' | 'posts'
 
 const ITEMS = [
-  { id: 'now', title: '近况', subtitle: '正在继续的事与最近的变化' },
+  { id: 'now', title: '近况', subtitle: '伙伴自己的日常、在意的事与真实成果' },
   { id: 'posts', title: '动态', subtitle: '伙伴分享的文字、图片与视频' },
   { id: 'diary', title: '日记', subtitle: '按日期留下的记录与感受' }
 ] as const

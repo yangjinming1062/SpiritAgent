@@ -4,6 +4,8 @@
 和日记分别拼出互相漂移的背景。
 """
 
+from datetime import datetime
+
 from infrastructure.text import utc_now
 from sqlalchemy import case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +13,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import LifeEvent, LifePursuit
 from .queries import empty_state_view, event_view, get_life_state_view, pursuit_view
 from .schemas import LifeContext
+from .trajectory import trajectory_scope, trajectory_topic_heads
 
 
 async def read_life_context_in_session(
-    db: AsyncSession, user_id: int, *, pursuit_limit: int = 5, event_limit: int = 12
+    db: AsyncSession,
+    user_id: int,
+    *,
+    pursuit_limit: int = 5,
+    event_limit: int = 12,
+    include_topic_heads: bool = False,
+    event_start: datetime | None = None,
+    event_end: datetime | None = None,
 ) -> LifeContext:
     """在调用方事务内读取一份一致的生活快照。"""
 
@@ -35,9 +45,14 @@ async def read_life_context_in_session(
                 .limit(max(1, pursuit_limit))
             )
         )
+    criteria = [LifeEvent.user_id == user_id, trajectory_scope()]
+    if event_start is not None:
+        criteria.append(LifeEvent.occurred_at >= event_start)
+    if event_end is not None:
+        criteria.append(LifeEvent.occurred_at < event_end)
     events = await db.scalars(
         select(LifeEvent)
-        .where(LifeEvent.user_id == user_id, LifeEvent.is_meaningful.is_(True))
+        .where(*criteria)
         .order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
         .limit(event_limit)
     )
@@ -46,4 +61,5 @@ async def read_life_context_in_session(
         active_pursuits=[pursuit_view(row) for row in pursuit_rows if row.status == "active"][:pursuit_limit],
         paused_pursuits=[pursuit_view(row) for row in pursuit_rows if row.status == "paused"][:pursuit_limit],
         recent_events=[event_view(row) for row in events],
+        topic_heads=await trajectory_topic_heads(db, user_id) if include_topic_heads else [],
     )

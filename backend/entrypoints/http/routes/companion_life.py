@@ -9,9 +9,16 @@ from features.life.schemas import (
     LifePursuitPublicDetail,
     LifePursuitPublicListResponse,
     LifeStatePublicView,
+    LifeTrajectoryListResponse,
 )
-from features.life.search import LifeSearchResponse, search_life
-from features.life.use_cases import read_public_events, read_public_pursuit, read_public_pursuits, read_public_state
+from features.life.search import LifeSearchResponse, LifeTrajectorySearchResponse, search_life, search_trajectory
+from features.life.use_cases import (
+    read_public_events,
+    read_public_pursuit,
+    read_public_pursuits,
+    read_public_state,
+    read_public_trajectory,
+)
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
@@ -21,6 +28,50 @@ from entrypoints.http.routing import get_router
 
 router = get_router(prefix="/api/companion/life", tag="companion-life", remote=True)
 _IDENTITIES = operation_policy(identities=("desktop", "remote"))
+
+
+@router.get("/trajectory", response_model=LifeTrajectoryListResponse, openapi_extra=_IDENTITIES)
+async def get_life_trajectory(
+    user: CurrentUser,
+    pursuit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    topic_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> LifeTrajectoryListResponse:
+    try:
+        return await read_public_trajectory(
+            user.id, pursuit_id=pursuit_id, topic_id=topic_id, cursor=cursor, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get(
+    "/trajectory/search",
+    response_model=LifeTrajectorySearchResponse,
+    openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
+)
+async def search_life_trajectory(
+    user: CurrentUser,
+    q: Annotated[str, Query(max_length=1000)] = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    pursuit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    topic_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> LifeTrajectorySearchResponse:
+    try:
+        return await search_trajectory(
+            user.id,
+            query=q,
+            date_from=date_from,
+            date_to=date_to,
+            pursuit_id=pursuit_id,
+            topic_id=topic_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(

@@ -6,7 +6,9 @@ import { createQueryResource } from '@/shared/lib/query-resource'
 import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-import type { LifeEvent, LifePursuit, LifePursuitDetail, LifeState } from './types'
+import type { LifeEpisode } from '../../../../shared/life-trajectory'
+
+import type { LifePursuit, LifePursuitDetail, LifeState } from './types'
 
 export const $lifeRevision = atom(0)
 export const $lifeState = atom<LifeState | null>(null)
@@ -19,7 +21,7 @@ interface LifePageData<T> {
   has_more: boolean
   next_cursor: string | null
 }
-interface LifeEventPage extends LifePageData<LifeEvent> {
+interface LifeEventPage extends LifePageData<LifeEpisode> {
   page: number
   revision: number
 }
@@ -135,8 +137,8 @@ export function loadLifePursuits(status: 'all' | LifePursuit['status'], cursor: 
   )
 }
 
-export function loadLifeEvents(page: number, pursuitId?: string): Promise<void> {
-  return events.load(`events:${pursuitId ?? ''}`, async current => {
+export function loadLifeEvents(page: number, pursuitId?: string, topicId?: string): Promise<void> {
+  return events.load(`trajectory:${pursuitId ?? ''}:${topicId ?? ''}`, async current => {
     const cached = events.$data.get()
     const revision = $lifeRevision.get()
     let items = cached.items
@@ -145,11 +147,14 @@ export function loadLifeEvents(page: number, pursuitId?: string): Promise<void> 
     let loadedPage = cached.page
 
     if (loadedPage < 0 || cached.revision !== revision) {
-      const response = await requestResource('companion_life.get_life_events', {
-        query: { pursuit_id: pursuitId, limit: LIFE_PAGE_SIZE }
+      const response = await requestResource('companion_life.get_life_trajectory', {
+        query: { pursuit_id: pursuitId, topic_id: topicId, limit: LIFE_PAGE_SIZE }
       })
 
-      if (loadedPage < 0 || !response.has_more) {
+      const existing = new Set(items.map(item => item.id))
+      const overlaps = response.items.some(item => existing.has(item.id))
+
+      if (!response.has_more || !overlaps) {
         items = response.items
         nextCursor = response.next_cursor
         hasMore = response.has_more
@@ -161,8 +166,8 @@ export function loadLifeEvents(page: number, pursuitId?: string): Promise<void> 
     }
 
     while (loadedPage < page && hasMore && nextCursor && current()) {
-      const response = await requestResource('companion_life.get_life_events', {
-        query: { pursuit_id: pursuitId, cursor: nextCursor, limit: LIFE_PAGE_SIZE }
+      const response = await requestResource('companion_life.get_life_trajectory', {
+        query: { pursuit_id: pursuitId, topic_id: topicId, cursor: nextCursor, limit: LIFE_PAGE_SIZE }
       })
 
       items = [...new Map([...items, ...response.items].map(item => [item.id, item])).values()]

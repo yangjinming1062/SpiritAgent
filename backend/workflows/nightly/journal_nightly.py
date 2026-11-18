@@ -20,6 +20,7 @@ from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.search import local_date_bounds
 from infrastructure.text import resolve_prompt_text, utc_now
 from runtime.memory_scope import MemoryScope
 
@@ -59,7 +60,10 @@ async def project_today(
             return False
         else:
             result = None
-            life_context_payload = (await read_life_context_in_session(db, user_id)).prompt_payload()
+            start, end = local_date_bounds(target_date, target_date, user_timezone)
+            life_context_payload = (
+                await read_life_context_in_session(db, user_id, event_start=start, event_end=end)
+            ).prompt_payload()
             reflection = await load_companion_reflection(db, MemoryScope(user_id, "companion"))
             if reflection is not None:
                 previous_reflection = {"local_date": reflection.local_date, "content": reflection.content}
@@ -91,9 +95,7 @@ async def project_today(
             diary = await publish_diary(
                 db, user_id, entry_date=target_date, content=composed, post_ids=posts.posted_ids
             )
-            await record_diary_published(
-                db, user_id, entry_date=target_date.isoformat(), title=diary.title, diary_id=diary.id
-            )
+            await record_diary_published(db, user_id, diary)
         await save_narrative_result(db, log_id, "journal", composed is not False)
         await db.commit()
     if composed is not False:

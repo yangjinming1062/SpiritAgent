@@ -1,4 +1,4 @@
-"""动态与日记保存前的语义审阅；修订次数由各创作入口限定。"""
+"""伙伴叙事写入前的语义审阅；修订次数由各入口限定。"""
 
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
@@ -47,6 +47,7 @@ async def review_narrative(
     draft: dict[str, str],
     language: str,
     *,
+    requirements: str = "",
     before_call: Callable[[], Awaitable[None]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> NarrativeReview:
@@ -58,7 +59,7 @@ async def review_narrative(
 
     return await call_llm_json(
         llm_cfg,
-        resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language),
+        resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language) + (f"\n\n{requirements}" if requirements else ""),
         {"output_language": language, "draft": draft, "source": source},
         schema=NarrativeReview.model_json_schema(),
         schema_name="narrative_review",

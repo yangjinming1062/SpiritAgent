@@ -153,7 +153,7 @@ async def commit_publication(
         row = await get_post(db, task.user_id, task.post_id)
         if row is None:
             raise PostError("发布记录缺少动态")
-        await notify_post_published(db, row.user_id, row.id)
+        await notify_post_published(db, row)
         await db.commit()
         return row
     if content_type != PostContentType.TEXT and not media_url:
@@ -190,7 +190,7 @@ async def commit_publication(
     task.outcome = "partial" if partial else "published"
     task.stage = "complete"
     await finish_media_operation(db, task.user_id, f"post:{task.source_key}:publish", {"post_id": str(row.id)})
-    await notify_post_published(db, row.user_id, row.id)
+    await notify_post_published(db, row)
     emit_ws_event(
         db,
         user_id=row.user_id,

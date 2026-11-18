@@ -2,10 +2,10 @@ import type { Dictionary } from '../zh'
 export const life: Pick<Dictionary, 'life'> = {
   life: {
     title: 'Life',
-    intro: 'What your companion is continuing, and what has changed recently.',
+    intro: 'See what your companion has experienced and where it’s taking them.',
     now: 'Now',
     sectionHints: {
-      now: 'What they are continuing, and what has changed',
+      now: 'Your companion’s daily life, pursuits, and confirmed outcomes',
       posts: 'Words, images, and videos your companion shares',
       diary: 'Records and reflections kept by date'
     },
@@ -18,13 +18,12 @@ export const life: Pick<Dictionary, 'life'> = {
     hide: 'Hide life area',
     close: 'Close life area',
     pursuitsTitle: 'Things that matter',
-    recordsTitle: 'Life records',
-    searchLabel: 'Search records',
+    recordsTitle: 'Life timeline',
+    searchLabel: 'Search experiences',
     clearFilter: 'Clear filters',
     recordsScope: 'Only records of this pursuit',
     recordsScopeClear: 'View all records',
     pursuitFallback: 'This pursuit',
-    moreActions: 'More actions',
     statuses: { all: 'All', active: 'Ongoing', paused: 'Paused', completed: 'Completed', abandoned: 'Set aside' },
     stepStates: {
       planned: 'Getting ready',
@@ -32,7 +31,11 @@ export const life: Pick<Dictionary, 'life'> = {
       completed: 'Completed',
       failed: 'Could not continue yet',
       cancelled: 'Cancelled',
-      unknown: 'Still waiting for an outcome'
+      unknown: 'Still waiting for an outcome',
+      mediaPaused: 'Production paused',
+      mediaQueued: 'Waiting to resume',
+      reviewPending: 'Waiting for review',
+      permissionWait: 'Waiting for permission or identity confirmation'
     },
     stepsTitle: 'Actions',
     readingNotes: 'Reading notes',
@@ -40,7 +43,7 @@ export const life: Pick<Dictionary, 'life'> = {
     sourceExcerpt: 'Excerpt',
     sourceText: 'Text',
     emptyPursuits: 'No pursuits have been recorded here yet.',
-    emptyEvents: 'No life changes to display yet.',
+    emptyEvents: 'There are no earlier experiences yet.',
     moreEvents: 'Earlier records',
     failed: 'Life updates are unavailable. Previously loaded content is still shown.',
     loading: 'Checking in…',
@@ -52,22 +55,15 @@ export const life: Pick<Dictionary, 'life'> = {
     openOutfit: 'View outfit',
     openScene: 'View environment',
     openAction: 'View action',
-    openPosts: 'Open posts',
-    openDiary: 'Open diary',
-    eventLabels: {
-      activity: 'Activity changed',
-      started: 'Started something',
-      progressed: 'Made progress',
-      completed: 'Finished something',
-      visual: 'Created a visual',
-      post: 'Published a post',
-      diary: 'Wrote a diary entry',
-      paused: 'Paused a pursuit',
-      resumed: 'Resumed a pursuit',
-      abandoned: 'Set a pursuit aside',
-      step: 'Completed an action',
-      failed: 'Could not continue yet',
-      unknown: 'Still waiting for an outcome'
+    latest: 'Most recent experience',
+    topicScope: 'Current theme',
+    openTopic: 'Explore this theme',
+    episodeLabels: {
+      virtual: 'Virtual daily life',
+      milestone: 'Pursuit update',
+      reading: 'Reading notes',
+      result: 'Confirmed result',
+      exchange: 'Conversation'
     }
   }
 }

@@ -32,6 +32,7 @@ RESERVED_KEYS = frozenset(
         "tool_call_id",
         "proactive_turn",
         "user_message",
+        "user_message_id",
         "llm_config",
         "user_settings",
         "scene_turn",

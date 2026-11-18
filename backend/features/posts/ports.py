@@ -4,7 +4,9 @@ from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-PostPublishedHandler = Callable[[AsyncSession, int, int], Awaitable[None]]
+from features.entries.contracts import EntryView
+
+PostPublishedHandler = Callable[[AsyncSession, EntryView], Awaitable[None]]
 _handler: PostPublishedHandler | None = None
 
 
@@ -13,6 +15,6 @@ def set_post_published_handler(handler: PostPublishedHandler) -> None:
     _handler = handler
 
 
-async def notify_post_published(db: AsyncSession, user_id: int, post_id: int) -> None:
+async def notify_post_published(db: AsyncSession, post: EntryView) -> None:
     if _handler is not None:
-        await _handler(db, user_id, post_id)
+        await _handler(db, post)

@@ -20,6 +20,7 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import (
     bind_step_in_session,
     require_step_submission,
+    resume_business_media_in_session,
     update_business_steps_in_session,
     wait_business_media_in_session,
 )
@@ -90,13 +91,12 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
             if row.state == "unknown" and (row.checkpoint or {}).get("failure_code") == "result_download_failed":
                 if row.not_before is not None and ensure_utc(row.not_before) > utc_now():
                     return OutfitCreation(row.id, row.state, row.result_outfit_id, row.error)
+                if not await resume_business_media_in_session(db, user_id, "outfit.create", job_id):
+                    return OutfitCreation(row.id, row.state, row.result_outfit_id, row.error)
                 row.state, row.error, row.not_before = "running", None, None
                 image_chain = ImageChainState.model_validate(row.checkpoint["image_chain"])
                 image_chain.resume_download()
                 row.checkpoint = {**row.checkpoint, "image_chain": image_chain.model_dump(mode="json")}
-                await update_business_steps_in_session(
-                    db, user_id, kind="outfit.create", business_ref={"job_id": job_id}, state="running"
-                )
             if row.state == "unknown" and row.result_outfit_id is not None:
                 outfit = await db.scalar(
                     select(CompanionOutfit).where(
@@ -227,7 +227,9 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                         row.error = str(exc)
                     if pending_review:
                         if row.request_source == "autonomous":
-                            await wait_business_media_in_session(db, user_id, "outfit.create", job_id, row.error)
+                            await wait_business_media_in_session(
+                                db, user_id, "outfit.create", job_id, row.error, code="review_pending"
+                            )
                     else:
                         await update_business_steps_in_session(
                             db,
@@ -267,6 +269,6 @@ async def _hold_outfit_permission(
         automatic=row.request_source == "autonomous",
         context={"source": row.request_source},
     )
-    await wait_business_media_in_session(db, user_id, "outfit.create", row.id, reason)
+    await wait_business_media_in_session(db, user_id, "outfit.create", row.id, reason, code="permission_wait")
     await db.commit()
     return OutfitCreation(row.id, row.state, row.result_outfit_id, row.error)

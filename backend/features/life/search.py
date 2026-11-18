@@ -18,7 +18,8 @@ from .actions import ReadingResultView
 from .models import LifeEvent, LifeEventSearchIndex, LifeStep
 from .prompts import life_content_payload
 from .queries import event_view, step_view
-from .schemas import LifeEventPublicView, LifeEventView
+from .schemas import LifeEventPublicView, LifeEventView, LifeTrajectoryEntry
+from .trajectory import trajectory_entries, trajectory_scope
 
 LIFE_SEARCH_WORKER = SearchIndexWorker("life.search", LifeEventSearchIndex)
 
@@ -38,6 +39,11 @@ class LifeRecallResponse(BaseModel):
 
 class LifeSearchResponse(BaseModel):
     items: list[LifeSearchItem]
+    search: SearchStatus
+
+
+class LifeTrajectorySearchResponse(BaseModel):
+    items: list[LifeTrajectoryEntry]
     search: SearchStatus
 
 
@@ -86,6 +92,49 @@ async def rebuild_life_search(db: AsyncSession, user_id: int) -> None:
         await index_life_events(db, user_id, events)
 
 
+async def _search_events(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    query: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    pursuit_id: int | None = None,
+    topic_id: int | None = None,
+    trajectory_only: bool = True,
+    limit: int = 20,
+) -> tuple[list[LifeEvent], SearchStatus]:
+    if not 1 <= limit <= 50 or len(query) > 1000:
+        raise ValueError("检索数量须为 1–50，搜索词不超过 1000 字符")
+    query = query.strip()
+    timezone = await resolve_user_timezone(db, user_id) or "UTC"
+    start, end = local_date_bounds(date_from, date_to, timezone)
+    await db.rollback()
+    vector = await embed_search_query(user_id, query)
+    where = [LifeEvent.user_id == user_id, LifeEvent.is_meaningful.is_(True)]
+    if trajectory_only:
+        where.append(trajectory_scope(pursuit_id=pursuit_id, topic_id=topic_id))
+    elif pursuit_id is not None:
+        where.append(LifeEvent.pursuit_id == pursuit_id)
+    if start is not None:
+        where.append(LifeEvent.occurred_at >= start)
+    if end is not None:
+        where.append(LifeEvent.occurred_at < end)
+    if query:
+        await rebuild_life_search(db, user_id)
+        await db.commit()
+        ids, status = await search_documents(
+            db, LifeEventSearchIndex, user_id, select(LifeEvent.id).where(*where), query, vector=vector, limit=limit
+        )
+        found = {row.id: row for row in await db.scalars(select(LifeEvent).where(*where, LifeEvent.id.in_(ids)))}
+        LIFE_SEARCH_WORKER.schedule(user_id, vector)
+        return [found[identifier] for identifier in ids if identifier in found], status
+    rows = await db.scalars(
+        select(LifeEvent).where(*where).order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit)
+    )
+    return list(rows), SearchStatus(mode="timeline")
+
+
 async def recall_life(
     user_id: int,
     *,
@@ -93,46 +142,21 @@ async def recall_life(
     date_from: date | None = None,
     date_to: date | None = None,
     pursuit_id: int | None = None,
+    trajectory_only: bool = True,
     limit: int = 20,
 ) -> LifeRecallResponse:
-    if not 1 <= limit <= 50 or len(query) > 1000:
-        raise ValueError("检索数量须为 1–50，搜索词不超过 1000 字符")
-    query = query.strip()
     async with session_scope() as db:
-        timezone = await resolve_user_timezone(db, user_id) or "UTC"
-    start, end = local_date_bounds(date_from, date_to, timezone)
-    vector = await embed_search_query(user_id, query)
-    async with session_scope() as db:
-        if query:
-            await rebuild_life_search(db, user_id)
-            await db.commit()
-        where = [LifeEvent.user_id == user_id, LifeEvent.is_meaningful.is_(True)]
-        if start is not None:
-            where.append(LifeEvent.occurred_at >= start)
-        if end is not None:
-            where.append(LifeEvent.occurred_at < end)
-        if pursuit_id is not None:
-            where.append(LifeEvent.pursuit_id == pursuit_id)
-        if query:
-            ids, status = await search_documents(
-                db, LifeEventSearchIndex, user_id, select(LifeEvent.id).where(*where), query, vector=vector, limit=limit
-            )
-            found = {row.id: row for row in await db.scalars(select(LifeEvent).where(*where, LifeEvent.id.in_(ids)))}
-            rows = [found[identifier] for identifier in ids if identifier in found]
-        else:
-            rows = list(
-                await db.scalars(
-                    select(LifeEvent)
-                    .where(*where)
-                    .order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
-                    .limit(limit)
-                )
-            )
-            status = SearchStatus(mode="timeline")
-        result = LifeRecallResponse(items=await _recall_items(db, user_id, rows), search=status)
-    if query:
-        LIFE_SEARCH_WORKER.schedule(user_id, vector)
-    return result
+        rows, status = await _search_events(
+            db,
+            user_id,
+            query=query,
+            date_from=date_from,
+            date_to=date_to,
+            pursuit_id=pursuit_id,
+            trajectory_only=trajectory_only,
+            limit=limit,
+        )
+        return LifeRecallResponse(items=await _recall_items(db, user_id, rows), search=status)
 
 
 async def search_life(
@@ -146,7 +170,37 @@ async def search_life(
 ) -> LifeSearchResponse:
     return LifeSearchResponse.model_validate(
         await recall_life(
-            user_id, query=query, date_from=date_from, date_to=date_to, pursuit_id=pursuit_id, limit=limit
+            user_id,
+            query=query,
+            date_from=date_from,
+            date_to=date_to,
+            pursuit_id=pursuit_id,
+            trajectory_only=False,
+            limit=limit,
         ),
         from_attributes=True,
     )
+
+
+async def search_trajectory(
+    user_id: int,
+    *,
+    query: str,
+    date_from: date | None,
+    date_to: date | None,
+    pursuit_id: int | None,
+    topic_id: int | None,
+    limit: int,
+) -> LifeTrajectorySearchResponse:
+    async with session_scope() as db:
+        rows, status = await _search_events(
+            db,
+            user_id,
+            query=query,
+            date_from=date_from,
+            date_to=date_to,
+            pursuit_id=pursuit_id,
+            topic_id=topic_id,
+            limit=limit,
+        )
+        return LifeTrajectorySearchResponse(items=await trajectory_entries(db, user_id, rows), search=status)

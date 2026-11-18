@@ -499,6 +499,7 @@ async def _prepare_turn(
         scene_turn=SceneTurnState(),
         proactive_turn=ephemeral,
         user_message=setup.memory_query if not ephemeral else "",
+        user_message_id=setup.user_message_id if not ephemeral else None,
         media_turn=media_turn,
     )
 

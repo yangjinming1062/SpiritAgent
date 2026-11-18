@@ -69,7 +69,7 @@ export function LifeOverview({
             }}
             type="button"
           >
-            {pursuit.narrative || t.pursuitFallback}
+            {pursuit.title || t.pursuitFallback}
           </button>
         ) : (
           <p className={styles.quiet}>

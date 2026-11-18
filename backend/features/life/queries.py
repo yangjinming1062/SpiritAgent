@@ -5,7 +5,7 @@ from datetime import datetime
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import utc_now
-from sqlalchemy import func, or_, select, tuple_
+from sqlalchemy import case, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .actions import ReadingResult
@@ -13,6 +13,7 @@ from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, 
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
     EVIDENCE_EVENTS_PER_PURSUIT,
+    PUBLISHED_ENTRY_KINDS,
     UNRESOLVED_STEP_STATES,
     LifeEventListResponse,
     LifeEventView,
@@ -157,6 +158,9 @@ def event_view(row: LifeEvent) -> LifeEventView:
         step_id=row.step_id,
         result_ref=result_reference(row),
         is_meaningful=row.is_meaningful,
+        trajectory_kind=row.trajectory_kind,
+        topic_id=(row.topic_id or row.id) if row.trajectory_kind else None,
+        previous_episode_id=row.previous_episode_id,
     )
 
 
@@ -195,7 +199,9 @@ async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: 
     return set(user_ids) - waiting
 
 
-async def pursuit_evidence(db: AsyncSession, user_id: int, pursuit_ids: Collection[int]) -> LifePursuitEvidence:
+async def pursuit_evidence(
+    db: AsyncSession, user_id: int, pursuit_ids: Collection[int], *, include_publications: bool = False
+) -> LifePursuitEvidence:
     """按事项补充未解决步骤与可引用的结果依据。"""
     if not pursuit_ids:
         return LifePursuitEvidence()
@@ -208,16 +214,27 @@ async def pursuit_evidence(db: AsyncSession, user_id: int, pursuit_ids: Collecti
         )
         .order_by(LifeStep.pursuit_id, LifeStep.id)
     )
+    scope = LifeEvent.pursuit_id.in_(pursuit_ids)
+    if include_publications:
+        scope = or_(
+            scope,
+            LifeEvent.pursuit_id.is_(None)
+            & LifeEvent.kind.in_(PUBLISHED_ENTRY_KINDS)
+            & LifeEvent.result_entry_id.is_not(None),
+        )
     ranked = (
         select(
             LifeEvent.id,
             func.row_number()
-            .over(partition_by=LifeEvent.pursuit_id, order_by=(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()))
+            .over(
+                partition_by=(LifeEvent.pursuit_id, case((LifeEvent.pursuit_id.is_(None), LifeEvent.kind))),
+                order_by=(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()),
+            )
             .label("position"),
         )
         .where(
             LifeEvent.user_id == user_id,
-            LifeEvent.pursuit_id.in_(pursuit_ids),
+            scope,
             LifeEvent.subject == "companion",
             LifeEvent.is_meaningful.is_(True),
             LifeEvent.kind.in_(EVIDENCE_EVENT_KINDS),

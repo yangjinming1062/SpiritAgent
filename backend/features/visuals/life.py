@@ -7,12 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.life.schemas import LifeEventInput, LifeStepRequest
 from features.life.use_cases import (
     bind_step_in_session,
+    resume_business_media_in_session,
     update_business_steps_in_session,
     wait_business_media_in_session,
 )
 
 from .models import VisualJob
 from .repository import visual_progress
+
+RESUME_WAITING = "resume_waiting"
+RECOVERY_WAITING = "recovery_waiting"
 
 
 async def bind_creation_step(db: AsyncSession, user_id: int, job: VisualJob, request: LifeStepRequest | None) -> None:
@@ -39,8 +43,26 @@ async def settle_visual_steps(
     result_ref: dict | None = None,
     additional_events: Sequence[LifeEventInput] = (),
 ) -> None:
-    if job.state == "paused" and job.stage == "review_pending":
-        await wait_business_media_in_session(db, user_id, "visual.generate", job.id, "媒体已保留，等待检查")
+    if job.state == "paused":
+        review = job.stage == "review_pending"
+        await wait_business_media_in_session(
+            db,
+            user_id,
+            "visual.generate",
+            job.id,
+            "媒体已保留，等待检查" if review else "制作已暂停",
+            code="review_pending" if review else "media_paused",
+        )
+        return
+    if job.state == "queued" and job.stage in {RESUME_WAITING, RECOVERY_WAITING}:
+        await wait_business_media_in_session(
+            db,
+            user_id,
+            "visual.generate",
+            job.id,
+            "等待继续制作",
+            code="media_resume_waiting",
+        )
         return
     if job.state not in {"succeeded", "failed", "cancelled", "unknown"}:
         return
@@ -68,7 +90,8 @@ async def settle_visual_steps(
     )
 
 
-async def restart_visual_steps(db: AsyncSession, user_id: int, job: VisualJob) -> None:
-    await update_business_steps_in_session(
-        db, user_id, kind="visual.generate", business_ref={"job_id": job.id}, state="running"
+async def restart_visual_steps(db: AsyncSession, user_id: int, job: VisualJob) -> bool:
+    progress = visual_progress(job)
+    return await resume_business_media_in_session(
+        db, user_id, "visual.generate", job.id, generation_id=progress.generation_id if progress else None
     )

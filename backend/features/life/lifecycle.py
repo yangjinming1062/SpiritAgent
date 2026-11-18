@@ -42,6 +42,8 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             raise LifeInputError("用户暂停的事项须由用户要求恢复")
         if decision.source != "user" and pursuit.resume_after and ensure_utc(pursuit.resume_after) > utc_now():
             raise LifeInputError("尚未到事项恢复时间")
+    if pursuit.status == target and pursuit.status_source == decision.source:
+        return pursuit
     pursuit.status = target
     pursuit.status_reason = decision.status_reason.strip()
     pursuit.narrative = (
@@ -52,7 +54,6 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
     pursuit.resume_after = decision.resume_after if target == "paused" else None
     if target == "active":
         state.active_pursuit_id = pursuit.id
-        state.next_review_at = utc_now()
     elif state.active_pursuit_id == pursuit.id:
         state.active_pursuit_id = await _latest_active_pursuit_id(db, user_id, exclude=pursuit.id)
     events = []
@@ -97,6 +98,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
                     pursuit_id=pursuit.id,
                     step_id=step.id,
                     fact={"description": step.description, "reason": decision.status_reason},
+                    is_meaningful=False,
                 )
             )
     events.append(
@@ -108,6 +110,7 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
             pursuit_id=pursuit.id,
             fact={"title": pursuit.title, "reason": pursuit.status_reason, "source": decision.source},
             narrative=decision.narrative.event or decision.narrative.pursuit,
+            trajectory_kind="milestone",
         )
     )
     await record_events(db, user_id, events)

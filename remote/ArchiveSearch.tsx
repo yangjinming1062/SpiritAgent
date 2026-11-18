@@ -19,6 +19,7 @@ export function ArchiveSearchPanel<T extends { search: ApiSchemas['SearchStatus'
   refresh,
   count,
   children,
+  collapseLabel,
   scope = ''
 }: {
   value: ArchiveSearchState
@@ -28,6 +29,7 @@ export function ArchiveSearchPanel<T extends { search: ApiSchemas['SearchStatus'
   refresh: number
   count: (result: T) => number
   children: (result: T) => ReactNode
+  collapseLabel?: string
   scope?: string
 }): ReactElement {
   const t = archiveSearchCopy()
@@ -63,53 +65,64 @@ export function ArchiveSearchPanel<T extends { search: ApiSchemas['SearchStatus'
     }
   }, [applied, load, refresh, retry, runLatest, scope])
 
+  const form = (
+    <form
+      aria-label={label}
+      className="archive-search-form"
+      onSubmit={event => {
+        event.preventDefault()
+        onChange({ ...value, applied: { ...value.draft } })
+      }}
+    >
+      <label className="archive-search-query">
+        {label}
+        <input
+          maxLength={1000}
+          onChange={event => onChange({ ...value, draft: { ...value.draft, query: event.target.value } })}
+          placeholder={t.query}
+          type="search"
+          value={value.draft.query}
+        />
+      </label>
+      <label>
+        {t.from}
+        <input
+          max={value.draft.dateTo || undefined}
+          onChange={event => onChange({ ...value, draft: { ...value.draft, dateFrom: event.target.value } })}
+          type="date"
+          value={value.draft.dateFrom}
+        />
+      </label>
+      <label>
+        {t.to}
+        <input
+          min={value.draft.dateFrom || undefined}
+          onChange={event => onChange({ ...value, draft: { ...value.draft, dateTo: event.target.value } })}
+          type="date"
+          value={value.draft.dateTo}
+        />
+      </label>
+      <div className="row-actions">
+        <button aria-busy={busy} disabled={busy} type="submit">
+          {busy ? t.loading : t.search}
+        </button>
+        <button className="subtle" onClick={() => onChange(emptyArchiveSearch())} type="button">
+          {t.clear}
+        </button>
+      </div>
+    </form>
+  )
+
   return (
     <div className="archive-search">
-      <form
-        aria-label={label}
-        className="archive-search-form"
-        onSubmit={event => {
-          event.preventDefault()
-          onChange({ ...value, applied: { ...value.draft } })
-        }}
-      >
-        <label className="archive-search-query">
-          {label}
-          <input
-            maxLength={1000}
-            onChange={event => onChange({ ...value, draft: { ...value.draft, query: event.target.value } })}
-            placeholder={t.query}
-            type="search"
-            value={value.draft.query}
-          />
-        </label>
-        <label>
-          {t.from}
-          <input
-            max={value.draft.dateTo || undefined}
-            onChange={event => onChange({ ...value, draft: { ...value.draft, dateFrom: event.target.value } })}
-            type="date"
-            value={value.draft.dateFrom}
-          />
-        </label>
-        <label>
-          {t.to}
-          <input
-            min={value.draft.dateFrom || undefined}
-            onChange={event => onChange({ ...value, draft: { ...value.draft, dateTo: event.target.value } })}
-            type="date"
-            value={value.draft.dateTo}
-          />
-        </label>
-        <div className="row-actions">
-          <button aria-busy={busy} disabled={busy} type="submit">
-            {busy ? t.loading : t.search}
-          </button>
-          <button className="subtle" onClick={() => onChange(emptyArchiveSearch())} type="button">
-            {t.clear}
-          </button>
-        </div>
-      </form>
+      {collapseLabel ? (
+        <details open={applied ? true : undefined}>
+          <summary>{collapseLabel}</summary>
+          {form}
+        </details>
+      ) : (
+        form
+      )}
       {applied && (
         <>
           {error && (

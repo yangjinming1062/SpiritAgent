@@ -10,6 +10,7 @@ export interface LifeUiSnapshot {
   pursuitPage: number
   pursuitCursors: (string | null)[]
   eventPage: number
+  topicId?: string | null
   scrollTop: number
 }
 
@@ -30,6 +31,7 @@ export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
     value.pursuitPage < value.pursuitCursors.length &&
     value.pursuitCursors[0] === null &&
     value.pursuitCursors.every(cursor => cursor === null || typeof cursor === 'string') &&
+    (value.topicId === undefined || value.topicId === null || isResourceId(value.topicId)) &&
     typeof value.scrollTop === 'number' &&
     Number.isFinite(value.scrollTop) &&
     value.scrollTop >= 0

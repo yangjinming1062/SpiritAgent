@@ -9,6 +9,7 @@ from typing import Any
 from infrastructure.models import ModelBase, TimestampMixin
 from infrastructure.search_index import SearchIndexRow, search_index_constraints
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -69,6 +70,7 @@ class LifeState(ModelBase, TimestampMixin):
         ForeignKey("life_pursuits.id", ondelete="SET NULL"), nullable=True, index=True
     )
     next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    review_slot: Mapped[str | None] = mapped_column(String(16))
     revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     scene_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
@@ -217,6 +219,10 @@ class LifeEvent(ModelBase, TimestampMixin):
     result_action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))
     result_ref_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_meaningful: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
+    trajectory_kind: Mapped[str | None] = mapped_column(String(16))
+    trajectory_result_key: Mapped[str | None] = mapped_column(String(96))
+    topic_id: Mapped[int | None] = mapped_column(BigInteger)
+    previous_episode_id: Mapped[int | None] = mapped_column(BigInteger)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -230,7 +236,38 @@ class LifeEvent(ModelBase, TimestampMixin):
         ),
         CheckConstraint("subject IN ('companion', 'user', 'system')", name="event_subject"),
         CheckConstraint("fact_type IN ('intent', 'virtual_activity', 'execution', 'result')", name="fact_type"),
+        CheckConstraint("trajectory_kind IN ('virtual', 'milestone', 'result')", name="trajectory_kind"),
+        ForeignKeyConstraint(
+            ["user_id", "topic_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_life_event_topic_owner",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "previous_episode_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_life_event_previous_episode_owner",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         UniqueConstraint("user_id", "event_key", name="uq_life_events_user_key"),
+        # 删除事项可清空多条关联；写入无所属事项的成果时由账户锁去重。
+        Index(
+            "uq_life_events_trajectory_result",
+            "user_id",
+            "trajectory_result_key",
+            "pursuit_id",
+            unique=True,
+            postgresql_where=text("trajectory_result_key IS NOT NULL"),
+        ),
+        Index(
+            "ix_life_events_trajectory",
+            "user_id",
+            text("occurred_at DESC"),
+            text("id DESC"),
+            postgresql_where=text("trajectory_kind IS NOT NULL"),
+        ),
         Index("ix_life_events_user_occurred", "user_id", text("occurred_at DESC"), text("id DESC")),
         Index("ix_life_events_pursuit_occurred", "user_id", "pursuit_id", text("occurred_at DESC"), text("id DESC")),
         Index("ix_life_events_user_kind", "user_id", "kind"),

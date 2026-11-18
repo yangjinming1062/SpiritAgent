@@ -105,7 +105,7 @@ from .creation import (
     review_existing_opening,
 )
 from .geometry import actor_reference_frame, probe_visual_image, visual_aspect_matches, visual_aspect_ratio
-from .life import restart_visual_steps, settle_visual_steps
+from .life import RECOVERY_WAITING, RESUME_WAITING, restart_visual_steps, settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready, request_base_motion_preparation
@@ -1519,6 +1519,7 @@ async def _pause_visual_job(
         progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
         job.checkpoint = progress.model_dump(mode="json")
         job.state, job.stage, job.error = "paused", "paused", None
+        await settle_visual_steps(db, user_id, job)
         await notify_visuals_updated(db, user_id)
         await db.commit()
 
@@ -2188,12 +2189,24 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
     directory = ""
     progress: VisualJobProgress | None = None
     try:
-        async with SESSION_LOCAL() as db:
-            row = await visual_job_row(db, user_id, job_id)
-            initial = visual_progress(row)
-            if initial is None or initial.paused_by_user or row.state not in {"queued", "running"}:
-                return
-            generation_id = initial.generation_id
+        while True:
+            async with SESSION_LOCAL() as db:
+                row = await visual_job_row(db, user_id, job_id, lock=True)
+                initial = visual_progress(row)
+                if initial is None or initial.paused_by_user or row.state not in {"queued", "running"}:
+                    return
+                if initial.review_only or row.stage == RECOVERY_WAITING:
+                    allow_model_steps = False
+                if row.stage not in {RESUME_WAITING, RECOVERY_WAITING}:
+                    generation_id = initial.generation_id
+                    break
+                if await restart_visual_steps(db, user_id, row):
+                    row.state, row.stage = "running", "prepare"
+                    await notify_visuals_updated(db, user_id)
+                    await db.commit()
+                    generation_id = initial.generation_id
+                    break
+            await asyncio.sleep(5)
         job_inputs = await _job_inputs(user_id, job_id, generation_id)
         job, snapshot, progress = job_inputs
         clip_kind = "loop" if snapshot.source.kind == "scene" else snapshot.source.action.clip_kind
@@ -2357,12 +2370,22 @@ async def pause_visual_job(job_id: int) -> None:
 
 async def resume_visual_jobs(user_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
-        query = select(VisualJob).where(VisualJob.state.in_(("queued", "running", "unknown")))
+        query = select(VisualJob).where(VisualJob.state.in_(("queued", "running", "unknown", "paused")))
         if user_id is not None:
             query = query.where(VisualJob.user_id == user_id)
         rows = list(await db.scalars(query))
     for row in rows:
         progress = visual_progress(row)
+        if row.state == "paused":
+            async with SESSION_LOCAL() as db:
+                current = await visual_job_row(db, row.user_id, row.id, lock=True)
+                if current.state == "paused":
+                    await settle_visual_steps(db, row.user_id, current)
+                    await db.commit()
+            continue
+        if row.state == "queued" and row.stage in {RESUME_WAITING, RECOVERY_WAITING}:
+            schedule_visual_job(row.user_id, row.id, allow_model_steps=row.stage == RESUME_WAITING)
+            continue
         if progress is not None and await reattach_visual_video_attempt(row.user_id, row.id, progress):
             async with SESSION_LOCAL() as db:
                 current = await visual_job_row(db, row.user_id, row.id, lock=True)
@@ -2376,7 +2399,11 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
                 ):
                     continue
                 current.checkpoint = progress.model_dump(mode="json")
-                current.state, current.stage, current.error = "running", "video", None
+                if await restart_visual_steps(db, row.user_id, current):
+                    current.state, current.stage, current.error = "running", "video", None
+                else:
+                    current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
+                    await settle_visual_steps(db, row.user_id, current)
                 await notify_visuals_updated(db, row.user_id)
                 await db.commit()
             schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
@@ -2384,7 +2411,10 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
         if row.stage in {"review", "reviewing", "checking"}:
             async with SESSION_LOCAL() as db:
                 current = await visual_job_row(db, row.user_id, row.id, lock=True)
+                if current.state not in {"queued", "running", "unknown"} or current.revision != row.revision:
+                    continue
                 current.state, current.stage = "paused", "review_pending"
+                await settle_visual_steps(db, row.user_id, current)
                 await notify_visuals_updated(db, row.user_id)
                 await db.commit()
             continue
@@ -2409,8 +2439,11 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
                     continue
                 resume_known_result(saved)
                 current.checkpoint = saved.model_dump(mode="json")
-                current.state, current.stage, current.error = "running", "download", None
-                await restart_visual_steps(db, row.user_id, current)
+                if await restart_visual_steps(db, row.user_id, current):
+                    current.state, current.stage, current.error = "running", "download", None
+                else:
+                    current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
+                    await settle_visual_steps(db, row.user_id, current)
                 await notify_visuals_updated(db, row.user_id)
                 await db.commit()
             schedule_visual_job(row.user_id, row.id, allow_model_steps=False)

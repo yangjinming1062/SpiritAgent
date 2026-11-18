@@ -11,6 +11,8 @@ LIFE_FACT_GUIDANCE = {
         "仍需区分来源观点和自己的看法；是否分享取决于当前情境，不必复述每次阅读。事项暂停或放弃不等于完成。"
         "narrative 是伙伴当时的表达，不能独立作为完成事实或用户经历的证据。能力、执行状态和失败类别说明行动的可行性与结果，"
         "不表示伙伴的个人动机、心情或生活主题；这些需要结合角色和实际经历判断。"
+        "trajectory_kind=virtual 是已保存的伙伴独处虚拟日常。按话题自然引用时保留这层性质与发生时间。"
+        "它只为伙伴自己的选择提供背景，不能证明现实行动、共同经历或用户需要等待、联系或履约。"
     ),
     "en": (
         "In life data, activity_kind and event fact_type distinguish intent, virtual_activity (a simulated life scene), "
@@ -24,6 +26,9 @@ LIFE_FACT_GUIDANCE = {
         "expression at that time, not independent evidence of completion or a user experience. Capabilities, execution "
         "state and failure categories describe feasibility and outcomes, not the companion's motivations, mood or life "
         "subject; decide those from character and actual experience."
+        " trajectory_kind=virtual is a recorded solo activity in the companion's virtual setting. Preserve that framing "
+        "and the original time when relevant. It may inform the companion's choices, but does not establish real activity, "
+        "shared experiences or grounds to wait on, contact or make commitments for the user."
     ),
 }
 
@@ -56,6 +61,8 @@ _INTERNAL_CONTENT_FIELDS = frozenset(
         "id",
         "user_id",
         "job_id",
+        "message_id",
+        "source_message_id",
         "entry_id",
         "visual_id",
         "visual_version_id",

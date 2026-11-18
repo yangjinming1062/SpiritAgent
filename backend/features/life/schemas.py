@@ -1,6 +1,6 @@
 """生活状态的公开 DTO 与请求。"""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
@@ -13,10 +13,12 @@ from .prompts import life_content_payload
 
 FactType = Literal["intent", "virtual_activity", "execution", "result"]
 PursuitStatus = Literal["active", "paused", "completed", "abandoned"]
+TrajectoryKind = Literal["virtual", "milestone", "result"]
 
 UNRESOLVED_STEP_STATES = frozenset({"planned", "running", "unknown"})
 TERMINAL_STEP_STATES = frozenset({"completed", "failed", "cancelled", "unknown"})
-EVIDENCE_EVENT_KINDS = frozenset({"life.step.completed", "visual.ready", "post.published", "diary.published"})
+PUBLISHED_ENTRY_KINDS = frozenset({"post.published", "diary.published"})
+EVIDENCE_EVENT_KINDS = PUBLISHED_ENTRY_KINDS | {"life.step.completed", "visual.ready"}
 EVIDENCE_EVENTS_PER_PURSUIT = 24
 
 
@@ -37,6 +39,8 @@ LIFE_REFERENCE_KEYS = frozenset(
         "action_id",
         "reading_step_id",
         "cron_job_id",
+        "topic_id",
+        "previous_episode_id",
     }
 )
 _REFERENCE_LIST_KEYS = frozenset({"event_ids", "evidence_event_ids", "step_ids"})
@@ -155,6 +159,28 @@ class LifePursuitView(LifeResultView):
     updated_at: datetime
 
 
+class LifeTrajectoryEntry(LifeResultView):
+    id: ResourceId
+    kind: TrajectoryKind
+    fact_type: FactType
+    title: str | None
+    topic_title: str | None
+    narrative: str | None
+    occurred_at: datetime
+    local_date: date
+    topic_id: ResourceId
+    previous_episode_id: ResourceId | None
+    pursuit_id: ResourceId | None
+    reading_result: ReadingResultView | None = None
+    result_ref: dict
+
+
+class LifeTrajectoryListResponse(BaseModel):
+    items: list[LifeTrajectoryEntry]
+    has_more: bool
+    next_cursor: str | None
+
+
 class LifeStatePublicView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -166,12 +192,14 @@ class LifeStatePublicView(BaseModel):
     active_pursuit_id: ResourceId | None
     revision: int
     updated_at: datetime
+    latest_episode: LifeTrajectoryEntry | None = None
 
 
 class LifePursuitPublicView(LifeResultView):
     model_config = ConfigDict(from_attributes=True)
 
     id: ResourceId
+    title: str
     narrative: str | None
     status: PursuitStatus
     status_source: str
@@ -244,6 +272,16 @@ class LifeEventView(LifeResultView):
     step_id: ResourceId | None
     result_ref: dict
     is_meaningful: bool
+    trajectory_kind: TrajectoryKind | None = None
+    topic_id: ResourceId | None = None
+    previous_episode_id: ResourceId | None = None
+
+    def trajectory_payload(self) -> dict[str, Any]:
+        payload = self.prompt_payload()
+        payload["fact"] = {
+            key: value for key, value in payload["fact"].items() if key not in {"description", "failure_code"}
+        }
+        return payload
 
 
 class LifeEventPublicView(LifeResultView):
@@ -274,6 +312,7 @@ class LifeContext(BaseModel):
     active_pursuits: list[LifePursuitView] = Field(default_factory=list)
     paused_pursuits: list[LifePursuitView] = Field(default_factory=list)
     recent_events: list[LifeEventView] = Field(default_factory=list)
+    topic_heads: list[LifeEventView] = Field(default_factory=list)
 
     def prompt_payload(self) -> dict[str, Any]:
         return {
@@ -281,6 +320,9 @@ class LifeContext(BaseModel):
                 mode="json",
                 exclude={
                     "user_id",
+                    "current_activity",
+                    "narrative",
+                    "activity_step_id",
                     "next_review_at",
                     "revision",
                     "scene_revision",
@@ -290,7 +332,7 @@ class LifeContext(BaseModel):
             ),
             "active_pursuits": [item.prompt_payload() for item in self.active_pursuits],
             "paused_pursuits": [item.prompt_payload() for item in self.paused_pursuits],
-            "recent_events": [item.prompt_payload() for item in self.recent_events],
+            "recent_events": [item.trajectory_payload() for item in self.recent_events],
         }
 
 
@@ -318,36 +360,32 @@ class LifeEventPublicListResponse(BaseModel):
     next_cursor: str | None
 
 
-class LifeDecisionFields(BaseModel):
-    """模型判断与领域提交共用的生活操作。"""
+PursuitOperation = Literal[
+    "start_pursuit",
+    "advance_pursuit",
+    "complete_pursuit",
+    "pause_pursuit",
+    "resume_pursuit",
+    "abandon_pursuit",
+    "redirect_pursuit",
+]
 
+
+class LifeSceneChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    operation: Literal[
-        "keep",
-        "update",
-        "start_pursuit",
-        "advance_pursuit",
-        "complete_pursuit",
-        "pause_pursuit",
-        "resume_pursuit",
-        "abandon_pursuit",
-        "redirect_pursuit",
-    ] = "keep"
-    activity_kind: Literal["intent", "virtual_activity"] | None = Field(
-        default=None, description="意向或虚拟生活情景；真实执行及成果由实际任务记录"
-    )
-    activity_type: ActivityType | None = Field(
+    current_scene: dict | None = Field(
         default=None,
-        description=(
-            "当前活动的结构化类别（idle/reading/working/creating/thinking/resting/organizing/socializing）；"
-            "描述伙伴现在实际进行的活动的性质，计划中的活动不能据此标记为正在进行"
-        ),
+        description="伙伴所处的生活环境与情境，如地点、周围事物和当前状况；变化时提供完整信息并保留未变内容，不变时省略或为 null。事项状态、进展和依据由对应事项字段表达",
     )
     scene_tags: SceneTags | None = Field(
         default=None,
         description="当前环境与可用物品的标签：indoor 室内、outdoor 室外、desk 桌面、seat 座位、bed 床、open_space 开阔空间、book 书、computer 电脑、cup 杯子、tools 工具。仅填写有依据的当前条件；变化时提供完整列表，未知或不再具备时用空列表，不变时省略。",
     )
+
+
+class PursuitDecisionFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     next_action: NextAction | None = Field(
         default=None, description="登记一个实际可执行的下一步；无须行动时省略，不代表已执行"
     )
@@ -362,14 +400,6 @@ class LifeDecisionFields(BaseModel):
     resume_after: AwareDatetime | None = Field(
         default=None, description="伙伴自行暂停后最早重新判断的时间，须包含时区；无确定时间时为空"
     )
-    current_activity: str | None = Field(
-        default=None, max_length=2000, description="伙伴此刻正在做或打算做的具体生活活动；活动本身不变时省略或为 null"
-    )
-    current_scene: dict | None = Field(
-        default=None,
-        description="伙伴所处的生活环境与情境，如地点、周围事物和当前状况；变化时提供完整信息并保留未变内容，不变时省略或为 null。事项状态、进展和依据由对应事项字段表达",
-    )
-    mood: str | None = Field(default=None, max_length=200, description="伙伴当前心情；不变时省略或为 null")
     pursuit_id: ResourceId | None = Field(default=None, gt=0, description="本次推进、结束或调整的已有事情的 id")
     pursuit_title: str = Field(default="", max_length=160, description="新事情的简短标题")
     pursuit_reason: str = Field(default="", max_length=1000, description="现在开始这件事的具体缘由")
@@ -381,14 +411,33 @@ class LifeDecisionFields(BaseModel):
     evidence_event_ids: list[ResourceId] = Field(
         default_factory=list, max_length=EVIDENCE_EVENTS_PER_PURSUIT, description="支持进展或完成总结的已提供事件 id"
     )
+    episode_origin_id: ResourceId | None = Field(
+        default=None, description="开始个人现实事项时，提供本轮主题中启发这个决定的经历 id"
+    )
 
 
-class LifeDecisionRequest(LifeDecisionFields):
+class LifeDecisionRequest(PursuitDecisionFields, LifeSceneChange):
     """内部乐观提交 DTO；HTTP 仅提供只读入口。"""
 
+    operation: Literal[PursuitOperation, "keep", "update", "note_exchange"] = "keep"
+    activity_kind: Literal["intent", "virtual_activity"] | None = Field(
+        default=None, description="意向或虚拟生活情景；真实执行及成果由实际任务记录"
+    )
+    activity_type: ActivityType | None = Field(
+        default=None,
+        description=(
+            "当前活动的结构化类别（idle/reading/working/creating/thinking/resting/organizing/socializing）；"
+            "描述伙伴现在实际进行的活动的性质，计划中的活动不能据此标记为正在进行"
+        ),
+    )
+    current_activity: str | None = Field(
+        default=None, max_length=2000, description="伙伴此刻正在做或打算做的具体生活活动；活动本身不变时省略或为 null"
+    )
+    mood: str | None = Field(default=None, max_length=200, description="伙伴当前心情；不变时省略或为 null")
     expected_revision: int = Field(ge=0)
     next_review_at: datetime | None = None
     source: Literal["companion", "user"] = "companion"
+    source_message_id: ResourceId | None = None
     request_id: str | None = Field(default=None, max_length=180)
 
 
@@ -428,6 +477,17 @@ class LifeEventInput(BaseModel):
     step_id: ResourceId | None = Field(default=None, gt=0)
     result_ref: dict = Field(default_factory=dict)
     is_meaningful: bool = True
+    trajectory_kind: TrajectoryKind | None = None
+    previous_episode_id: ResourceId | None = None
+
+
+class PrivateLifeEpisode(LifeSceneChange):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    previous_episode_id: ResourceId | None = Field(description="继续某个主题时填写其最近片段 id，新主题填 null")
+    title: str = Field(min_length=1, max_length=120, description="这次独处日常的简短标题")
+    narrative: str = Field(min_length=1, max_length=600, description="用一到三句第一人称表达具体的新发现或选择")
+    activity_type: ActivityType = Field(description="虚拟情境内当前活动的类别")
 
 
 class LifePursuitDetail(LifePursuitView):

@@ -18,6 +18,7 @@ from features.visuals.schemas import (
     VisualDetailView,
     VisualInterpretation,
     VisualInterpretRequest,
+    VisualItemView,
     VisualJobCommandRequest,
     VisualJobListResponse,
     VisualJobView,
@@ -197,6 +198,18 @@ async def get_visual(
     visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser
 ) -> VisualDetailView:
     return await _visuals.visual_detail(user_id=user.id, visual_id=visual_id)
+
+
+@router.get("/{visual_id}/versions/{version_id}", response_model=VisualItemView)
+async def get_visual_version(
+    visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
+    version_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)],
+    user: CurrentUser,
+) -> VisualItemView:
+    version = await _visual_queries.visual_version(user.id, visual_id, version_id)
+    if version is None:
+        raise RequestError(status_code=404, message="找不到这次经历中的影像版本")
+    return version
 
 
 @router.delete("/{visual_id}", status_code=204)

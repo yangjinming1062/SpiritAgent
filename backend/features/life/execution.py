@@ -20,7 +20,14 @@ from .actions import CREATION_CAPABILITIES, LIFE_ACTION, NextAction, ReadingResu
 from .models import LifeActionAdmission, LifePursuit, LifeStep
 from .queries import step_view
 from .schemas import LifeEventInput, LifeStepView
-from .service import LifeInputError, clear_activity_step, create_step, get_or_create_state, record_event
+from .service import (
+    LifeInputError,
+    clear_activity_step,
+    create_step,
+    get_or_create_state,
+    record_event,
+    set_step_activity,
+)
 from .settlement import settle_business_steps
 
 _RETRY_DELAY = timedelta(minutes=15)
@@ -97,7 +104,8 @@ def _pending_steps(now: datetime) -> Select[tuple[LifeStep]]:
         .where(
             LifeStep.action_json.is_not(None),
             or_(
-                LifeStep.state.in_(("running", "unknown")),
+                (LifeStep.state == "running") & (LifeStep.disposition == "executing"),
+                LifeStep.state == "unknown",
                 (LifeStep.state == "planned")
                 & or_(LifeStep.not_before.is_(None), LifeStep.not_before <= now)
                 & or_(LifeStep.pursuit_id.is_(None), LifePursuit.status == "active"),
@@ -190,7 +198,12 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
             return None
         if await db.scalar(
             select(LifeStep.id)
-            .where(LifeStep.user_id == user_id, LifeStep.state == "running", LifeStep.id != step_id)
+            .where(
+                LifeStep.user_id == user_id,
+                LifeStep.state == "running",
+                LifeStep.disposition == "executing",
+                LifeStep.id != step_id,
+            )
             .limit(1)
         ):
             return None
@@ -244,23 +257,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
         row.failure_code = None
         row.attempts += 1
-        activity_type = "reading" if row.kind == "content.read" else "creating"
-        if (state.current_activity, state.activity_kind, state.activity_type) != (
-            row.description,
-            "execution",
-            activity_type,
-        ):
-            state.presentation_revision += 1
-            emit_ws_event(
-                db,
-                user_id=user_id,
-                event_type="companion.life.presentation_requested",
-                payload={"revision": state.presentation_revision},
-            )
-        state.current_activity = row.description
-        state.narrative = row.narrative
-        state.activity_type = activity_type
-        state.activity_kind, state.activity_step_id, state.activity_started_at = "execution", row.id, now
+        set_step_activity(db, state, row, now)
         state.revision += 1
         await record_event(
             db,
@@ -274,6 +271,7 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
                 step_id=row.id,
                 fact={"description": row.description, "capability": row.kind},
                 narrative=row.narrative,
+                is_meaningful=False,
             ),
         )
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": row.id})
