@@ -5,7 +5,7 @@ import { shell } from 'electron'
 
 import { atomicWriteFile, safeReadJson } from '../../shared/utils'
 import { isMacosApplicationTarget, validateMacosApplicationTarget } from '../macos-application-target'
-import { isPackagedAppTarget } from '../windows-installed-apps'
+import { isPackagedAppTarget, isShellNamespaceTarget } from '../windows-installed-apps'
 
 export interface SavedDockEntry {
   id: string
@@ -26,6 +26,10 @@ export function fileSelection(target: string): DockSelection {
 export function targetIdentity(target: string): string {
   if (process.platform === 'darwin') {
     return path.normalize(target)
+  }
+
+  if (isShellNamespaceTarget(target)) {
+    return target.toLowerCase()
   }
 
   if (path.extname(target).toLowerCase() === '.lnk') {
@@ -75,6 +79,7 @@ export function isSavedEntry(raw: unknown): raw is SavedDockEntry {
     (process.platform === 'darwin'
       ? isMacosApplicationTarget(item.target)
       : isPackagedAppTarget(item.target) ||
+        isShellNamespaceTarget(item.target) ||
         (path.isAbsolute(item.target) && ['.exe', '.lnk'].includes(path.extname(item.target).toLowerCase())))
   )
 }
@@ -112,6 +117,10 @@ export async function validatedSelection(selection: DockSelection): Promise<Dock
     const application = await validateMacosApplicationTarget(selection.target)
 
     return { target: application.path, name: application.name || selection.name }
+  }
+
+  if (isShellNamespaceTarget(selection.target)) {
+    return selection
   }
 
   await validateFileTarget(selection.target)

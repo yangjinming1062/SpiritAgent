@@ -5,6 +5,8 @@ import { promisify } from 'node:util'
 import { app, nativeImage, shell } from 'electron'
 import log from 'electron-log/main'
 
+import { isShellNamespaceTarget } from './windows-installed-apps'
+
 const execFileAsync = promisify(execFile)
 const ICON_SIZE = 64
 const MAX_NATIVE_BATCH = 64
@@ -12,6 +14,8 @@ const MAX_NATIVE_BATCH = 64
 interface IconSource {
   file: string
   index: number
+  /** 外壳解析名不能当文件读取，交给 Shell 取项图标。 */
+  shell?: boolean
 }
 
 interface PendingIcon {
@@ -41,6 +45,62 @@ public static class ApplicationIcons {
     out IntPtr icon, out uint id, uint count, uint flags);
   [DllImport("user32.dll")]
   private static extern bool DestroyIcon(IntPtr icon);
+  [StructLayout(LayoutKind.Sequential)]
+  private struct ImageSize { public int width; public int height; }
+  [ComImport, Guid("bcc18b79-ba16-442f-80c4-8a59c30c463b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IShellItemImageFactory { void GetImage(ImageSize size, int flags, out IntPtr bitmap); }
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+  private static extern void SHCreateItemFromParsingName(string path, IntPtr bind,
+    ref Guid interfaceId, [MarshalAs(UnmanagedType.Interface)] out IShellItemImageFactory factory);
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+  private static extern IntPtr SHGetFileInfo(string path, uint attributes, out ShellFileInfo info, uint size, uint flags);
+  [DllImport("gdi32.dll")]
+  private static extern bool DeleteObject(IntPtr handle);
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  private struct ShellFileInfo {
+    public IntPtr icon;
+    public int index;
+    public uint attributes;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string displayName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string typeName;
+  }
+  public static string ReadShell(string parsingName) {
+    IntPtr bitmap = IntPtr.Zero;
+    try {
+      Guid interfaceId = typeof(IShellItemImageFactory).GUID;
+      IShellItemImageFactory factory;
+      SHCreateItemFromParsingName(parsingName, IntPtr.Zero, ref interfaceId, out factory);
+      ImageSize size;
+      size.width = ${ICON_SIZE};
+      size.height = ${ICON_SIZE};
+      factory.GetImage(size, 4, out bitmap);
+    } catch {
+      bitmap = IntPtr.Zero;
+    }
+    try {
+      if (bitmap != IntPtr.Zero) {
+        using (var image = Image.FromHbitmap(bitmap))
+        using (var stream = new MemoryStream()) {
+          image.Save(stream, ImageFormat.Png);
+          return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+        }
+      }
+      ShellFileInfo info;
+      if (SHGetFileInfo(parsingName, 0, out info, (uint)Marshal.SizeOf(typeof(ShellFileInfo)), 0x100) == IntPtr.Zero || info.icon == IntPtr.Zero) return null;
+      try {
+        using (var icon = Icon.FromHandle(info.icon))
+        using (var image = icon.ToBitmap())
+        using (var stream = new MemoryStream()) {
+          image.Save(stream, ImageFormat.Png);
+          return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+        }
+      } finally {
+        DestroyIcon(info.icon);
+      }
+    } finally {
+      if (bitmap != IntPtr.Zero) DeleteObject(bitmap);
+    }
+  }
   public static string Read(string file, int index) {
     IntPtr handle = IntPtr.Zero;
     uint id;
@@ -60,8 +120,10 @@ public static class ApplicationIcons {
 '@ -ReferencedAssemblies System.Drawing
 $sources = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())))
 $icons = @(foreach ($source in $sources) {
-  try { [ApplicationIcons]::Read([string]$source.file, [int]$source.index) }
-  catch { [Console]::Error.WriteLine($_.Exception.Message); $null }
+  try {
+    if ($source.shell) { [ApplicationIcons]::ReadShell([string]$source.file) }
+    else { [ApplicationIcons]::Read([string]$source.file, [int]$source.index) }
+  } catch { [Console]::Error.WriteLine($_.Exception.Message); $null }
 })
 ConvertTo-Json -InputObject $icons -Compress
 `
@@ -125,7 +187,7 @@ async function drainIcons(): Promise<void> {
 }
 
 function readNativeIcon(source: IconSource): Promise<string | null> {
-  const key = JSON.stringify([source.file, source.index])
+  const key = JSON.stringify([source.file, source.index, Boolean(source.shell)])
 
   return new Promise(resolve => {
     const existing = pending.get(key)
@@ -150,6 +212,10 @@ export async function readWindowsApplicationIcon(
   iconPath?: string | null,
   iconIndex = 0
 ): Promise<string | null> {
+  if (isShellNamespaceTarget(target)) {
+    return readNativeIcon({ file: target, index: 0, shell: true })
+  }
+
   const sources: IconSource[] = []
   let fallback = target
 

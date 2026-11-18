@@ -127,15 +127,6 @@ fn property_text(store: &IPropertyStore, key: &PROPERTYKEY) -> String {
     text.unwrap_or_default()
 }
 
-fn explorer_program() -> String {
-    std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("explorer.exe")
-        .to_string_lossy()
-        .into_owned()
-}
-
 fn contains_utf16(bytes: &[u8], value: &str) -> bool {
     let haystack = String::from_utf16_lossy(
         &bytes

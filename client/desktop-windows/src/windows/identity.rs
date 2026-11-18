@@ -125,6 +125,15 @@ pub(crate) fn process_named(pid: u32, names: &[&str]) -> bool {
         })
 }
 
+pub(crate) fn explorer_program() -> String {
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("explorer.exe")
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub(crate) fn normalize_target(value: &str) -> String {
     value.replace('/', "\\").to_lowercase()
 }

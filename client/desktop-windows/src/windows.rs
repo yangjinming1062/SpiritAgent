@@ -56,8 +56,8 @@ mod wallpaper;
 use command::{execute_command, interrupt_session};
 pub(crate) use geometry::{monitor_bounds, rectangle, window_on_display};
 pub(crate) use identity::{
-    Identity, actual_parent, class_name, created, is_explorer, normalize_target, owned_by, process, process_image,
-    system_popup, window_pid,
+    Identity, actual_parent, class_name, created, explorer_program, is_explorer, normalize_target, owned_by,
+    process, process_image, system_popup, window_pid,
 };
 pub(crate) use journal::{
     Journal, JournalPhase, RestoreWindow, RestoringSignal, atomic_write, read_journal, read_lease, read_state,

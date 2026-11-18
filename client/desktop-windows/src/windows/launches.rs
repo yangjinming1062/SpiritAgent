@@ -21,11 +21,26 @@ pub(super) struct LaunchRequest {
     app_id: String,
 }
 
+fn valid_namespace(value: &str) -> bool {
+    value
+        .strip_prefix("::{")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .is_some_and(|clsid| {
+            clsid.split('-').map(str::len).eq([8, 4, 4, 4, 12])
+                && clsid.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        })
+}
+
 fn validate_target(target: &str) -> Result<()> {
     if target.is_empty() || target.len() > 32_768 || target.contains('\0') {
         return Err("程序目标无效。".into());
     }
-    if let Some(id) = normalize_target(target).strip_prefix("shell:appsfolder\\") {
+    let normalized = normalize_target(target);
+    if let Some(value) = normalized.strip_prefix("shell:::") {
+        if !valid_namespace(value) {
+            return Err("Windows 外壳项身份无效。".into());
+        }
+    } else if let Some(id) = normalized.strip_prefix("shell:appsfolder\\") {
         let valid = id.split_once('!').is_some_and(|(family, app)| {
             family.rsplit_once('_').is_some_and(|(name, publisher)| {
                 !name.is_empty()
@@ -65,11 +80,22 @@ impl LaunchRequest {
         if app_id.is_empty() || app_id.len() > 32_768 || app_id.contains('\0') {
             return Err("程序身份无效。".into());
         }
+        let app_id = normalize_target(app_id);
+        if normalize_target(target).starts_with("shell:::") {
+            // 命名空间项由 explorer 打开，窗口归属按外壳进程本身关联。
+            let program = explorer_program();
+            return Ok(Self {
+                target: program.clone(),
+                arguments: target.into(),
+                directory: String::new(),
+                app_id: normalize_target(&program),
+            });
+        }
         Ok(Self {
             target: target.into(),
             arguments: String::new(),
             directory: String::new(),
-            app_id: normalize_target(app_id),
+            app_id,
         })
     }
 

@@ -29,7 +29,7 @@ import {
 } from './dock/registry'
 import { createRunningRegistry, type RunningDockApplication, windowsFor } from './dock/running'
 import { isMacosApplicationTarget, validateMacosApplicationTarget } from './macos-application-target'
-import { type InstalledApplication, isPackagedAppTarget } from './windows-installed-apps'
+import { type InstalledApplication, isPackagedAppTarget, isShellNamespaceTarget } from './windows-installed-apps'
 
 type DockProjection = Pick<DockEntry, 'icon' | 'status' | 'error'>
 
@@ -146,6 +146,10 @@ export function registerDesktopDock(options: {
     if (process.platform === 'darwin') {
       await validateMacosApplicationTarget(target)
 
+      return null
+    }
+
+    if (isShellNamespaceTarget(target)) {
       return null
     }
 
@@ -713,6 +717,12 @@ export function registerDesktopDock(options: {
       }
 
       const { target, fallbackIcon } = taskTarget(id)
+
+      // 外壳命名空间项没有可枚举的任务菜单。
+      if (isShellNamespaceTarget(target)) {
+        return []
+      }
+
       const tasks = await options.getJumpListTasks(event.sender, target)
       const projected = await projectTasks(tasks, fallbackIcon)
 

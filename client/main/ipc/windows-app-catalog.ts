@@ -117,6 +117,17 @@ function toShortcut(file: string, rootDir: string, target: string): CatalogAppli
   }
 }
 
+// 安装、卸载与更新操作入口不是可长期固定的程序。
+function isInstallationEntry(name: string, target: string): boolean {
+  const executable = path.basename(target).toLowerCase()
+
+  return (
+    executable === 'msiexec.exe' ||
+    /^(unins\d*|uninstall|unwise|卸载|移除)/.test(executable) ||
+    /^(install|uninstall|卸载|移除|安装)/.test(name.trim().toLowerCase())
+  )
+}
+
 async function scanSource(
   key: DockCatalogSourceKey,
   dir: string,
@@ -133,16 +144,23 @@ async function scanSource(
 
     budget.left -= 1
 
-    let target = ''
+    let shortcut: ReturnType<typeof shell.readShortcutLink>
 
     try {
-      target = shell.readShortcutLink(file).target
+      shortcut = shell.readShortcutLink(file)
     } catch {
       // 畸形快捷方式不进目录。
       continue
     }
 
+    const target = shortcut.target
+
     if (path.extname(target).toLowerCase() !== '.exe' || !(await isFile(target))) {
+      continue
+    }
+
+    // 用系统外壳打开目录的快捷方式不是程序，不能占用外壳的名称和图标。
+    if (shortcut.args?.trim() && path.basename(target).toLowerCase() === 'explorer.exe') {
       continue
     }
 
@@ -251,6 +269,10 @@ export function createWindowsAppCatalog(): {
     const seen = new Set<string>()
 
     for (const item of collected) {
+      if (isInstallationEntry(item.name, item.target)) {
+        continue
+      }
+
       const key = item.target.toLowerCase()
 
       if (!seen.has(key)) {

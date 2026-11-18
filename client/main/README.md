@@ -86,12 +86,12 @@ Windows 启动先处理待恢复记录；guardian 的异常原因与主进程失
 
 | 范围 | 实现约束 |
 |---|---|
-| Windows 身份 | [windows-app-catalog.ts](ipc/windows-app-catalog.ts)、[windows-installed-apps.ts](ipc/windows-installed-apps.ts) 合并开始菜单、桌面快捷方式、App Paths 和 AppsFolder；普通程序按规范 exe，打包程序按 AUMID 去重，同名 exe 的父子安装目录可关联启动器，其余目录分开 |
+| Windows 身份 | [windows-app-catalog.ts](ipc/windows-app-catalog.ts)、[windows-installed-apps.ts](ipc/windows-installed-apps.ts) 合并开始菜单、桌面快捷方式、App Paths 和 AppsFolder；普通程序按规范 exe，打包程序按 AUMID 去重，外壳命名空间项按 shell:::{CLSID} 解析名保存，同名 exe 的父子安装目录可关联启动器，其余目录分开；打开目录的外壳快捷方式与安装卸载入口不算程序，文件资源管理器按系统外壳程序单列 |
 | macOS 身份 | [macos-app-catalog.ts](ipc/macos-app-catalog.ts)、[macos-application-target.ts](ipc/macos-application-target.ts) 使用解析符号链接后且保留大小写的 `.app` 路径，所有入口复核 bundle 和可执行文件 |
 | 固定配置 | `desktop-dock.json` 只存固定项，Windows 优先保留快捷方式及参数，打包应用存 AppsFolder 入口；添加、修复和启动重核目标，修复保留 ID／顺序，写盘失败保留原值 |
 | 运行投影 | 原生快照保留各屏归属，Dock 只投影交互屏；运行查询失败保留最近快照并报告不可用，不能用过期数据完成授权 |
 | 扫描与图标 | 句柄限当前扫描版本，图标按可见项分批；固定标记更新复用同版目录，手动重扫才更新句柄，旧回执不能覆盖新扫描 |
-| Windows 图标及安装校验 | [windows-application-icon.ts](ipc/windows-application-icon.ts) 共用提取链，支持全 PNG 图标资源；AppsFolder 安装查询独立缓存，失败不拿过期结果冒充成功，也不替换仍在使用的目录句柄 |
+| Windows 图标及安装校验 | [windows-application-icon.ts](ipc/windows-application-icon.ts) 共用提取链，支持全 PNG 图标资源；打包应用按清单资源的限定名解析图标，精确文件缺失时取存在的清晰度变体，外壳命名空间项按系统外壳解析名取项图标；AppsFolder 安装查询独立缓存，失败不拿过期结果冒充成功，也不替换仍在使用的目录句柄 |
 | Jump List | 按菜单懒读 `CustomDestinations` 的 Task；helper 重新核验不透明任务 ID 后启动原参数，解析失败保留普通菜单，任务 ID 不落盘 |
 
 目录扫描各来源独立限时，过滤无效、网页、虚拟及隐藏入口；目录和固定项属于本机，不上云。启动与定位监听归桌面会话，目录启动不修改固定配置。
