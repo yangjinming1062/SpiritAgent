@@ -80,7 +80,7 @@
 
 [panel-activity](shared/context/panel-activity.tsx) 把活动资格传入子面板和 Portal，子级不能解除父级禁用。切页保留对话实例及草稿，但关闭录音和新播放资格；旧麦克风或上传回包不能因重新激活而复活。查看器归发起视图，离开来源页释放。参考图片由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 按账户保存并跨窗通知，不等同服务端成品。
 
-[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；无有效播放指令时优先消费影像详情指定的账户默认壁纸，短动作结束后回到默认目标，窗口模式不消费该桌面专用目标。静态回执共用 [performance.ts](features/creation/visuals/performance.ts) 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。
+[desktop-visual-wallpaper.ts](app/windows/desktop/desktop-visual-wallpaper.ts) 消费呈现状态、认领和回执；正式静态目标优先显示冻结素材并确认回执。短动作结束后接续当前活动，缺少合适画面时使用账户默认壁纸；该壁纸解码失败后，导演从其余合格候选中重新选择。静态回执共用 [performance.ts](features/creation/visuals/performance.ts) 的目标检查，按请求、呈现代次和状态修订去重。回执冲突不当作图片失败，服务端退避期间不重复上报。缓存与预加载使用成品 ID、版本及去签名不可变路径，不用签名 URL 作持久键。
 
 [背景播放器](app/windows/desktop/player/engine.ts) 双缓冲等实际首帧，切换先预加载，[入口](app/windows/desktop/desktop-background-entry.tsx) 只装配 refs；短动作只能回到仍有效的持续画面。环境层与透明主体层（`actor` 字节，WebM）独立接收与更换，主体层短动作结束后回常驻循环；预览、播放和过渡共用 [desktop-media-geometry.ts](../shared/desktop-media-geometry.ts)，媒体失败保留当前画面并释放临时 URL；主进程同时核对账户与选中路径。
 
@@ -160,15 +160,13 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 造型制作与衣柜列表归创作域的[造型子域](features/creation/wardrobe/)，角色模块只保留舞台造型来源与呈现事实。[design-session.ts](features/creation/wardrobe/design-session.ts) 按草稿持有制作、确认和未知状态，离页仍收敛原任务；完成不抢选其他草稿，按不可变路径核对结果后回收空闲会话。参考图在取得新设计 ID 时消费，迟到预览不能清理后续输入；切换运行模式时只交接制作对话与待核对状态，草稿图回到目标窗口后按服务端明细重新采用。
 
-窗口主体画面优先播放透明主体视频：[stage-plan.ts](features/creation/visuals/stage-plan.ts) 解析有效组合与当前造型可复用的待机成品；只有认领成功的临时指令覆盖基础主体，结束后恢复仍有效的循环。[visual-presentation.ts](app/workflows/visual-presentation.ts) 统一桌面目标，[window-presentation.ts](app/workflows/window-presentation.ts) 装配窗口目标并经 [window-media.ts](features/character/window-media.ts) 与 [window-stage.ts](shared/store/window-stage.ts) 交接窄端口，影像与环境层都不依赖角色内部实现，character 不依赖影像库。[CharacterStage](features/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
+窗口主体画面优先播放透明主体视频；临时点播和起身覆盖基础主体，结束后恢复最新计划。[visual-presentation.ts](app/workflows/visual-presentation.ts) 统一桌面目标，[window-presentation.ts](app/workflows/window-presentation.ts) 装配窗口目标并经 [window-media.ts](features/character/window-media.ts) 与 [window-stage.ts](shared/store/window-stage.ts) 交接窄端口，影像与环境层都不依赖角色内部实现，character 不依赖影像库。[CharacterStage](features/character/rendering/character-stage.tsx) 与桌面主体层共用 [stage-video-layer.ts](shared/lib/stage-video-layer.ts)：新首帧就绪前保留旧画面，失败恢复有效循环或静态造型，一次性动作按独立指令身份消费。命中读取当前帧 alpha，几何与头部、脚底锚点按实际画幅适配；环境与主体独立换图，完整影像不叠加第二份伙伴。
 
-[director.ts](features/creation/visuals/director.ts) 负责选择常驻、生活和互动媒体；[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 持有唯一宿主的临时任务、优先级、最多两项等待和冷却。[performance.ts](features/creation/visuals/performance.ts) 负责认领与串行回执，窗口和桌面只消费 `$performance.command`，普通生活区不认领正式指令。HTTP 受理进入等待，播放器事件驱动开播；有效播放指令优先于桌面默认壁纸，终态后刷新基础舞台并回到默认目标或普通基础画面。已开始的持续媒体结算本次切换，后续循环本地运行。窗口切换、账户变化、关闭动态与机械操作取消失效任务，迟到受理只结算原任务。恢复使用最新组合与生活修订，不保留旧视频 ID 作为无条件回退。
+[stage-plan.ts](features/creation/visuals/stage-plan.ts) 解析服务端的活动、环境、动作候选和时段，只在桌面使用完整影像及默认壁纸。环境素材按冻结引用显示，缺少匹配时段版本时可对基础环境着色。休息时可用通过检查的睡姿静帧，桌面采用与对应视频一致的主体几何。
 
-活动监测只报告可用性与情境信号，不按空闲或用户返回请求模型选择画面。导演不依赖 character；舞台资格、动态偏好与机械状态由 app 注入。精灵单击、进入对话及 `companion.reaction` 共用互动入口，非宿主通过带账户、舞台代次、事件身份和有效期的 storage 信号转发，宿主只消费实时事件。聊天反应使用网关流/序号去重；重新绑定不补播旧的一次性动作，恢复时先核对当前组合与生活意图，缺少匹配持续画面时允许按当前修订尝试一次选择，常驻轮换在正式演出期间暂停。生活整片成为持续画面后沿用同一套语义要求：意图变化时按组合 `selection_source` 核对——life 画面不再匹配即退出回基础舞台（同活动的新修订沿用现画面，不重复派发），user 画面不被普通生活更新打断。
+[director.ts](features/creation/visuals/director.ts) 负责在当前计划内轮换。从播放器报告实际开播起计算期限，普通刷新沿用已有期限；按开播记录避开近期片段。只有当前可见、已读到睡眠状态的宿主消费新的起身过渡。起身使用独立事件身份，在原休息环境完成，安全保留末帧直到最新的基础画面接手。时钟到期或收到实时通知时重新读取权威计划，恢复使用当前状态。默认壁纸及临时演出退出后也按当时的舞台计划恢复。
 
-[selection.ts](features/creation/visuals/selection.ts) 共用活动、场景、道具与强度筛选；初始选择、轮换和舞台基础媒体均须通过。后端目录只提供已确认可自动使用的版本，客户端仍复核强度与情境；实际媒体语义未知或条件冲突时不自动选用，轻量档同时核对动作定义和视频实际幅度，仅用户明确触发的反应可使用其他强度。目录中的待机作为无匹配时的回退，不能以失败为由重新纳入冲突资源。常驻轮换优先选择久未使用的循环（本地近期使用记录，容量有限），避免在少数片段间抖动；基础循环的新首帧就绪后，播放器等待当前循环边界再切换，正式互动立即执行。完整场景演出只交给能实际呈现它的桌面宿主，窗口以匹配的透明主体循环表达生活。
-
-环境层时间表现在 [day-phase.ts](shared/lib/day-phase.ts)：[stage-plan.ts](features/creation/visuals/stage-plan.ts) 用 `ambient_scene` 目录按冻结环境内容挑选与本地时段匹配的版本；共享时段时钟在跨档或页面恢复时重新解析舞台，没有匹配版本时保留当前画面，环境内容或正式引用变化后重新选择基础环境。窗口与桌面经 `phaseMedia` 标记保留时段媒体的光线，其他环境由 [scene-backdrop.tsx](features/creation/environment/scene-backdrop.tsx) 与桌面背景层施加轻量色调，覆盖图片、视频、封面与过渡帧；主体独立呈现，完整影像经 `backgroundKind` 区分后保留自身色彩。
+[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 继续持有唯一宿主的点播及互动任务，管理优先级、队列和冷却；[performance.ts](features/creation/visuals/performance.ts) 处理正式播放认领与串行回执。精灵单击、进入对话及身体反应可通过带账户、舞台代次、身份和有效期的信号转发。普通身体反应在安睡或起身期间暂停。切换账户、宿主与动态权限时释放待执行的本地动画。
 
 视频下载和磁盘缓存由主进程按账户共享；[stage-video-cache.ts](shared/lib/stage-video-cache.ts) 合并本窗口对象地址，每个可见舞台自行解码，引用释放与换号使迟到加载失效。窗口与桌面只在实际播放后回执，首帧预载或取得地址不算开播；短动作结束才完成，普通待机循环不逐圈记账。桌面按指令目标由一个图层回执，主体失败仍可显示冻结造型。锁屏、隐藏、减少动态和全屏时保留静帧并暂停解码推进。
 

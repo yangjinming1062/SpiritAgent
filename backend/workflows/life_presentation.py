@@ -16,16 +16,16 @@ from features.companion.proactive_runtime import get_presentation_snapshot, get_
 from features.life.queries import active_pursuit_title
 from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
+from features.scenes.queries import stage_scene_by_title
 from features.scenes.snapshots import list_scene_snapshots
 from features.visuals.queries import presentation_state
 from features.visuals.schemas import (
     ComboMaterialRef,
     SceneMediaRef,
-    StageIntent,
     StagePresentation,
     VisualPresentationView,
 )
-from features.visuals.service import clear_default_cinematic_wallpaper
+from features.visuals.stage_selection import project_stage_intent
 from features.visuals.static_presentation import present_static
 from features.visuals.static_presentation import record_stage_intent as persist_intent
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
@@ -33,23 +33,11 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from runtime.user_maintenance import user_request_scope
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _LOCKS: dict[int, asyncio.Lock] = {}
 _RETRY_AT: dict[int, datetime] = {}
 logger = get_logger(__name__)
-
-# 结构化活动类别到建议视觉标签的确定性映射。
-# intent 性质（仅计划）不驱动活动演出；resting 显式休息，其余按活动语义展开。
-_TYPE_TAGS: dict[str, list[str]] = {
-    "idle": ["idle"],
-    "reading": ["reading", "working"],
-    "working": ["working"],
-    "creating": ["creating", "working"],
-    "thinking": ["thinking"],
-    "resting": ["resting"],
-    "organizing": ["organizing", "working"],
-    "socializing": ["socializing", "interaction"],
-}
 
 
 def _hash(path: str) -> str:
@@ -57,6 +45,27 @@ def _hash(path: str) -> str:
     if resolved is None:
         raise ValueError("静态呈现素材尚未就绪")
     return compute_file_sha256(resolved[0])
+
+
+async def read_ready_stage_scene(db: AsyncSession, user_id: int, title: str) -> SceneMediaRef | None:
+    scene = await stage_scene_by_title(db, user_id, title)
+    if scene is None:
+        return None
+    resolved = resolve_asset_reference(scene.media_path)
+    if resolved is None:
+        return None
+    try:
+        content_hash = await asyncio.to_thread(compute_file_sha256, resolved[0])
+    except FileNotFoundError:
+        return None
+    return SceneMediaRef(
+        scene_id=scene.id,
+        title=scene.title,
+        path=scene.media_path,
+        content_hash=content_hash,
+        description=scene.description,
+        revision=scene.updated_at,
+    )
 
 
 async def _fresh_static_snapshot(
@@ -129,8 +138,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             record = get_user_proactive_record(user_id)
             if presence is None or not record.available:
                 return
-            # 需要 has_media 判断，保留目录装配。
-            projection = await presentation_state(user_id)
+            projection = await presentation_state(user_id, with_catalog=False)
             async with SESSION_LOCAL() as db:
                 pending = user_id in await pending_presentation_users(db, user_id=user_id)
                 motion = await get_motion_level(user_id, db=db)
@@ -154,7 +162,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             # 动态关闭、媒体缺失或环境被删除时，重新冻结静态目标；角色视频不能替代环境恢复。
             # 已有冻结素材直接沿用到新代次（换新请求身份），仅缺失时才重新冻结。
             composition_media = projection.composition.media if projection.composition is not None else None
-            has_media = bool(projection.ambient_catalog) or bool(
+            has_media = projection.ambient_actor is not None or bool(
                 composition_media
                 and (
                     composition_media.actor is not None
@@ -179,28 +187,13 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
 async def record_stage_intent(user_id: int, life: LifeStateView) -> None:
     """把有意义的生活变化投影为舞台意图；呈现系统只读取，不改生活事实。"""
 
-    scene_title = life.current_scene.get("title", "") if isinstance(life.current_scene, dict) else ""
-    # 计划性意图不能驱动“正在做”的演出；事实性质保留在 activity_kind 供消费方判断。
-    activity_type = life.activity_type if life.activity_kind != "intent" else "idle"
     async with SESSION_LOCAL() as db:
-        intent = StageIntent(
-            activity=life.current_activity or "",
-            scene_title=scene_title,
-            mood=life.mood or "",
-            focus=await active_pursuit_title(db, user_id, life.active_pursuit_id),
-            activity_kind=life.activity_kind or "",
-            activity_type=activity_type,
-            scene_tags=life.scene_tags,
-            visual_tags=_TYPE_TAGS.get(activity_type, []),
-            life_revision=life.presentation_revision,
-        )
+        intent = project_stage_intent(life, await active_pursuit_title(db, user_id, life.active_pursuit_id))
         await persist_intent(db, user_id, intent)
         await db.commit()
 
 
 async def life_presentation_requested(user_id: int, _payload: dict) -> None:
-    if _payload.get("force") is True:
-        await clear_default_cinematic_wallpaper(user_id)
     await evaluate_life_presentation(user_id, force=_payload.get("force") is True)
 
 

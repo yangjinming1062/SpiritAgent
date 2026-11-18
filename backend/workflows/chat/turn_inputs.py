@@ -6,6 +6,7 @@ from typing import Any, Literal, get_args
 
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import build_system_prompt_extras, load_persona_definition, render_extras
+from features.companion.rhythm import rhythm_prompt_context
 from features.companion.visual_state import persona_snapshot
 from features.configuration.desktop_config import DEFAULT_CONFIG
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -329,6 +330,17 @@ async def build_turn_inputs(
                 + life_label
                 + json.dumps(life_context.prompt_payload(), ensure_ascii=False)
             )
+            if conv.kind == "special":
+                rhythm = await rhythm_prompt_context(db, user_id)
+                rhythm_guidance = (
+                    "以下是此刻你自己的虚拟作息。recent_wake_at 若有值，表示刚才的真实交流让你醒来。"
+                    "可以随语境自然体现，但无需每轮提及，也不要据此推断用户的作息或正在播放的画面。"
+                    if session_lang == "zh"
+                    else "The following is your own current fictional routine. A recent_wake_at means that a real "
+                    "interaction woke you. Reflect it naturally where relevant, without assuming anything about "
+                    "the user's sleep or what is currently visible."
+                )
+                life_block += "\n" + rhythm_guidance + "\n" + rhythm.model_dump_json(exclude_none=True)
             companion_reflection_extras = "\n\n".join(
                 part for part in (companion_reflection_extras, life_block) if part
             )

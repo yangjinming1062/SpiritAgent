@@ -14,6 +14,8 @@ SemanticTag = Literal[
     "creating",
     "thinking",
     "resting",
+    "sleeping",
+    "waking",
     "organizing",
     "socializing",
     "stretching",

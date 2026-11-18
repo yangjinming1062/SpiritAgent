@@ -1,6 +1,6 @@
 """用户消息提交的持久幂等账本，连接恢复不重新执行已受理操作。"""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -12,6 +12,7 @@ from sqlalchemy.orm import defer
 from sqlalchemy.orm.attributes import set_committed_value
 
 from features.conversation.asset_bindings import commit_conversation, flush_conversation
+from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages
 from features.conversation.models import Message
 from features.conversation.request_contracts import ChatMessageRequest
@@ -21,6 +22,27 @@ from features.conversation.turn_store import build_persisted_content
 
 class SubmissionConflictError(ValueError):
     pass
+
+
+async def submission_user_messages(
+    db: AsyncSession, user_id: int, conversation_id: int, request_id: str
+) -> dict[int, str]:
+    """按受理顺序交付本轮原文，回复、其他会话和历史消息不能成为本轮指令来源。"""
+    rows = await db.scalars(
+        select(Message)
+        .join(SubmissionMessage, SubmissionMessage.message_id == Message.id)
+        .join(PromptSubmission, PromptSubmission.id == SubmissionMessage.submission_id)
+        .where(
+            PromptSubmission.user_id == user_id,
+            PromptSubmission.conversation_id == conversation_id,
+            PromptSubmission.request_id == request_id,
+            Message.user_id == user_id,
+            Message.conversation_id == conversation_id,
+            Message.role == "user",
+        )
+        .order_by(SubmissionMessage.position)
+    )
+    return {row.id: message_text(row) for row in rows}
 
 
 @dataclass(frozen=True)
@@ -186,6 +208,7 @@ async def persist_submission_inputs(
     *,
     persisted_message_id: int | None = None,
     call_record_id: int | None = None,
+    on_accept: Callable[[AsyncSession], Awaitable[None]] | None = None,
 ) -> list[int]:
     """整批输入及受理关联共用短事务；重复调用复用已受理的完整消息序列。"""
     if not messages or (persisted_message_id is not None and len(messages) != 1):
@@ -248,6 +271,8 @@ async def persist_submission_inputs(
         else:
             identifiers = [persisted_message_id]
         await replace_submission_messages(db, submission, identifiers)
+        if on_accept is not None:
+            await on_accept(db)
         await commit_conversation(db)
     return identifiers
 

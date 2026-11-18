@@ -89,7 +89,9 @@ export function CharacterStage({
             key: wanted.key,
             mediaKey: wanted.key.split(':').slice(0, 2).join(':'),
             loop: wanted.loop,
-            natural: wanted.loop && wanted.key.split(':').length === 2,
+            natural:
+              wanted.loop && (wanted.key.split(':').length === 2 || wanted.localPlayId?.startsWith('render:ambient:')),
+            holdLastFrame: wanted.localPlayId?.startsWith('render:wake:'),
             value: wanted,
             load: () => acquireStageVideo(wanted.url)
           }

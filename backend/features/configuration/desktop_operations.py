@@ -1,3 +1,5 @@
+from collections.abc import Awaitable, Callable
+
 from infrastructure.request_errors import RequestError
 from infrastructure.timezone import parse_timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +17,13 @@ async def get_config(user: AccountIdentity, db: AsyncSession) -> DesktopConfigRe
     return DesktopConfigResponse(config=settings_to_config(values))
 
 
-async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: AsyncSession) -> DesktopConfigResponse:
+async def put_config(
+    body: DesktopConfigPutRequest,
+    user: AccountIdentity,
+    db: AsyncSession,
+    *,
+    on_timezone_change: Callable[[AsyncSession, int], Awaitable[None]],
+) -> DesktopConfigResponse:
     await lock_account(db, user.id)
     values = await load_user_settings(db, user.id)
     updates = flatten_config(body.config)
@@ -31,5 +39,7 @@ async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: A
     except ValueError as exc:
         raise RequestError(status_code=422, message=str(exc)) from exc
     await put_user_settings(db, user.id, updates)
+    if "timezone" in updates and updates["timezone"] != values.get("timezone"):
+        await on_timezone_change(db, user.id)
     await db.commit()
     return DesktopConfigResponse(config=config)

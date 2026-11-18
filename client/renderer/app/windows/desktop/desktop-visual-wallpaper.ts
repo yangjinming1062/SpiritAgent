@@ -12,8 +12,12 @@ import {
   $visualsPresentationError,
   bindPresentationDirector,
   claimVisualPlay,
+  pendingStaticPresentation,
+  recordLocalStagePlayback,
+  recordStageMediaFailure,
   refreshVisualPresentation,
   refreshVisuals,
+  retryStageMedia,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
@@ -45,7 +49,8 @@ export function useDesktopWallpaperStatus(): { error: boolean; status: string | 
   const jobs = useStore($visualsJobs)
   const error = presentationError ?? libraryError
   const busy = jobs.filter(job => job.state === 'running' || job.state === 'queued' || job.state === 'paused')
-  const idle = presentation?.loop_visual ?? presentation?.current_visual
+  const stage = useStore($stagePlan)
+  const idle = stage.actor || stage.actorStillUrl || stage.scene || stage.cinematic || presentation?.current_visual
 
   const status = error
     ? error
@@ -73,7 +78,6 @@ export function useDesktopVisualWallpaper(): void {
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const [clientId] = useState(() => crypto.randomUUID())
   const [claimed, setClaimed] = useState<VisualPlayCommand | null>(null)
-  const [failedCinematic, setFailedCinematic] = useState<string | null>(null)
   const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const claimedPlays = useRef(new Map<string, Set<ReceiptStatus>>())
   const claimedKinds = useRef(new Map<string, VisualMediaKind>())
@@ -82,8 +86,56 @@ export function useDesktopVisualWallpaper(): void {
   const paused = locked || presentation.fullscreen || reduceMotion
 
   const pendingPlay = performance.command
-  const staticTarget = pendingPlay ? null : projection?.static_presentation
-  const staticReceipts = useRef(new Set<string>())
+  const staticTarget = pendingPlay || locked ? null : pendingStaticPresentation(projection)
+  const lastStaticReceipt = useRef<string | null>(null)
+
+  const settleStatic = useCallback(
+    async (
+      target: NonNullable<ReturnType<typeof pendingStaticPresentation>>,
+      status: 'started' | 'failed',
+      error?: string | null
+    ): Promise<void> => {
+      const scope = captureAuthScope()
+      const key = staticPresentationKey(target)
+      const current = $presentation.get()
+
+      if (
+        !scope ||
+        current.effectiveMode !== 'desktop' ||
+        current.status !== 'active' ||
+        $surfaceScreenLocked.get() ||
+        lastStaticReceipt.current === key
+      ) {
+        return
+      }
+
+      lastStaticReceipt.current = key
+
+      try {
+        await sendStaticReceipt({
+          request_id: target.request_id,
+          presentation_epoch: target.presentation_epoch,
+          state_revision: target.state_revision,
+          receipt_kind: 'desktop_static',
+          status,
+          error: error ?? null
+        })
+      } catch (failure) {
+        if (scope()) {
+          if (lastStaticReceipt.current === key) {
+            lastStaticReceipt.current = null
+          }
+
+          log.warn('desktop-visual', 'Static receipt failed', failure)
+        }
+      } finally {
+        if (scope()) {
+          void refreshVisualPresentation()
+        }
+      }
+    },
+    []
+  )
 
   const recordReceipt = useCallback((playId: string, status: ReceiptStatus, error?: string): void => {
     const scope = captureAuthScope()
@@ -143,9 +195,8 @@ export function useDesktopVisualWallpaper(): void {
     claimedPlays.current.clear()
     claimedKinds.current.clear()
     receiptQueues.current.clear()
-    staticReceipts.current.clear()
+    lastStaticReceipt.current = null
     setClaimed(null)
-    setFailedCinematic(null)
   }, [authSessionId])
 
   useEffect(() => {
@@ -272,52 +323,29 @@ export function useDesktopVisualWallpaper(): void {
         return
       }
 
+      if (receipt.playId.startsWith('render:ambient:') || receipt.playId.startsWith('render:wake:')) {
+        if (receipt.status !== 'first-frame') {
+          recordLocalStagePlayback(receipt.playId, receipt.status === 'completed' ? 'finished' : receipt.status)
+        }
+
+        return
+      }
+
       if (receipt.playId.startsWith('render:cinematic:')) {
         if (receipt.status === 'failed') {
-          setFailedCinematic(receipt.playId.slice('render:cinematic:'.length))
+          recordStageMediaFailure(receipt.playId.slice('render:cinematic:'.length))
         }
 
         return
       }
 
       if (receipt.status === 'failed' && claimed?.play_id === receipt.playId && claimed.asset_kind === 'cinematic') {
-        setFailedCinematic(`${claimed.visual_id}:${claimed.visual_version}`)
+        recordStageMediaFailure(`${claimed.visual_id}:${claimed.visual_version}`)
       }
 
-      if (staticTarget?.request_id === receipt.playId) {
-        const currentPresentation = $presentation.get()
-        const key = staticPresentationKey(staticTarget)
-
-        if (
-          currentPresentation.effectiveMode !== 'desktop' ||
-          currentPresentation.status !== 'active' ||
-          $surfaceScreenLocked.get() ||
-          (staticTarget.retry_at !== null && Date.parse(staticTarget.retry_at) > Date.now())
-        ) {
-          return
-        }
-
-        if ((receipt.status === 'started' || receipt.status === 'failed') && !staticReceipts.current.has(key)) {
-          staticReceipts.current.add(key)
-          void sendStaticReceipt({
-            request_id: receipt.playId,
-            presentation_epoch: staticTarget.presentation_epoch,
-            state_revision: staticTarget.state_revision,
-            receipt_kind: 'desktop_static',
-            status: receipt.status,
-            error: receipt.error ?? null
-          })
-            .catch(error => {
-              if (scope()) {
-                staticReceipts.current.delete(key)
-                log.warn('desktop-visual', 'Static receipt failed', error)
-              }
-            })
-            .finally(() => {
-              if (scope()) {
-                void refreshVisualPresentation()
-              }
-            })
+      if (staticTarget && receipt.playId === staticPresentationKey(staticTarget)) {
+        if (receipt.status === 'started' || receipt.status === 'failed') {
+          void settleStatic(staticTarget, receipt.status, receipt.error)
         }
 
         return
@@ -338,7 +366,7 @@ export function useDesktopVisualWallpaper(): void {
         recordReceipt(receipt.playId, status, receipt.error)
       }
     })
-  }, [authSessionId, recordReceipt, staticTarget, claimed])
+  }, [authSessionId, recordReceipt, settleStatic, staticTarget, claimed])
 
   const activeCommand =
     claimed &&
@@ -357,9 +385,9 @@ export function useDesktopVisualWallpaper(): void {
   // 播放，不能让后续手动或导演重试永久继承分层降级。
   useEffect(() => {
     if (activeCommand?.asset_kind === 'cinematic') {
-      setFailedCinematic(null)
+      retryStageMedia(`${activeCommand.visual_id}:${activeCommand.visual_version}`)
     }
-  }, [activeCommand?.asset_kind, activeCommand?.play_id])
+  }, [activeCommand?.asset_kind, activeCommand?.play_id, activeCommand?.visual_id, activeCommand?.visual_version])
 
   useEffect(() => {
     if (claimed && (!active || !authSessionId || !activeCommand)) {
@@ -378,7 +406,6 @@ export function useDesktopVisualWallpaper(): void {
             activeCommand,
             staticTarget,
             stagePlan,
-            failedCinematic,
             theme,
             subtle: motionLevel === 'subtle',
             motionEnabled: motionLevel !== 'off',
@@ -393,7 +420,6 @@ export function useDesktopVisualWallpaper(): void {
       projection,
       staticTarget,
       stagePlan,
-      failedCinematic,
       theme,
       motionLevel,
       reduceMotion,
@@ -409,10 +435,6 @@ export function useDesktopVisualWallpaper(): void {
 
     const scope = captureAuthScope()
     let disposed = false
-
-    if (staticTarget?.retry_at && Date.parse(staticTarget.retry_at) > Date.now()) {
-      return
-    }
 
     const key = JSON.stringify(request)
 
@@ -434,13 +456,21 @@ export function useDesktopVisualWallpaper(): void {
 
         if (activeCommand) {
           recordReceipt(activeCommand.play_id, 'failed', String(error))
+        } else if (staticTarget && request.playId === staticPresentationKey(staticTarget)) {
+          void settleStatic(staticTarget, 'failed', String(error))
+        } else if (request.playId?.startsWith('render:')) {
+          if (request.playId.startsWith('render:cinematic:')) {
+            recordStageMediaFailure(request.playId.slice('render:cinematic:'.length))
+          } else {
+            recordLocalStagePlayback(request.playId, 'failed')
+          }
         }
       })
 
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, request, staticTarget, activeCommand, recordReceipt])
+  }, [active, authSessionId, request, staticTarget, activeCommand, recordReceipt, settleStatic])
 
   useEffect(() => {
     const scope = captureAuthScope()

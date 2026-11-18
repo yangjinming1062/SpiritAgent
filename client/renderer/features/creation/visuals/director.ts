@@ -18,32 +18,69 @@ import {
   requestPerformance,
   syncPerformance
 } from './performance-scheduler'
-import { automaticLoops, contextAllowed, leastRecentlyUsed, lifeMatchScore, motionAllowed } from './selection'
+import { contextAllowed, leastRecentlyUsed } from './selection'
+import { ambientCandidates, type AmbientChoice, mediaKey, sceneForStage, type WakePerformance } from './stage-plan'
 import type { VisualsPresentation } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
 
 type InteractionKind = 'look' | 'smile' | 'stretch'
 
-/** 当前常驻循环选择（本地、只读目录内轮换）；null 表示沿用服务端 ambient/composition 投影。 */
-export const $ambientLoopChoice = atom<{ visualId: string; version: number } | null>(null)
+export const $ambientLoopChoice = atom<AmbientChoice | null>(null)
+export const $wakePerformance = atom<WakePerformance | null>(null)
 
 const AMBIENT_INTERVAL_MS = 90_000
-const AMBIENT_JITTER_MS = 45_000
 const SUBTLE_AMBIENT_FACTOR = 2
 const INTERACTION_COOLDOWN_MS: Record<InteractionKind, number> = { look: 20_000, smile: 45_000, stretch: 5 * 60_000 }
 const INTERACTION_TTL_MS = 8_000
-const LIFE_LIFETIME_MS = 30_000
+const CLOCK_RETRY_MS = 5_000
 
 let presentation: VisualsPresentation | null = null
 let ambientTimer: ReturnType<typeof setTimeout> | null = null
-let attemptedIntentRevision = -1
+let ambientDueAt: number | null = null
+let ambientStartedAt: number | null = null
+let clockTimer: ReturnType<typeof setTimeout> | null = null
+let clockDueAt: number | null = null
+let wakeTimer: ReturnType<typeof setTimeout> | null = null
+let stageVisibleSince: number | null = null
 let directorBound = false
 let mechanicallyBlocked: () => boolean = () => false
 let stopBinding: (() => void) | null = null
-// 装配方注入的舞台资格判断（登录态 + 动态表现偏好）；模块自身不依赖 character。
 let stageEligible: () => boolean = () => false
 let motionSubtle: () => boolean = () => false
+
+let refreshAtBoundary: () => Promise<void> = async () => {}
+export const $failedStageMedia = atom<ReadonlySet<string>>(new Set())
+
+/** 壁纸和自主动作共用版本失败记录，候选与轮换同时切换。 */
+export function recordStageMediaFailure(key: string): void {
+  const failedVersions = new Set($failedStageMedia.get())
+
+  if (failedVersions.has(key)) {
+    return
+  }
+
+  failedVersions.add(key)
+  const oldest = failedVersions.values().next().value
+
+  if (failedVersions.size > 64 && oldest) {
+    failedVersions.delete(oldest)
+  }
+
+  $failedStageMedia.set(failedVersions)
+  syncAmbientChoice()
+  scheduleAmbient()
+}
+
+export function retryStageMedia(key: string): void {
+  if ($failedStageMedia.get().has(key)) {
+    const remaining = new Set($failedStageMedia.get())
+    remaining.delete(key)
+    $failedStageMedia.set(remaining)
+    syncAmbientChoice()
+    scheduleAmbient()
+  }
+}
 
 // 信号只消费实时 storage 事件，账户、舞台代次与事件身份共同隔离迟到和重复投递。
 const INTERACTION_SIGNAL_KEY = registerCompanionStorageKey('da.visuals.interactionSignal')
@@ -93,79 +130,60 @@ function consumeSignal(value: unknown): void {
   performInteraction(value.kind, value.eventId, value.at)
 }
 
+function candidates(): CatalogEntry[] {
+  return presentation
+    ? ambientCandidates(
+        presentation,
+        $presentation.get().effectiveMode === 'desktop',
+        motionSubtle(),
+        $failedStageMedia.get()
+      )
+    : []
+}
+
+function selectAmbient(entry: CatalogEntry | null): void {
+  ambientStartedAt = null
+  $ambientLoopChoice.set(
+    entry ? { id: `render:ambient:${crypto.randomUUID()}`, visualId: entry.visual_id, version: entry.version } : null
+  )
+}
+
 function syncAmbientChoice(): void {
-  const loops = presentation ? automaticLoops(presentation, motionSubtle()) : []
-  const choice = $ambientLoopChoice.get()
-
-  if (loops.length === 0) {
-    $ambientLoopChoice.set(null)
-
+  if (!stageEligible() || mechanicallyBlocked()) {
     return
   }
 
-  if (!choice || !loops.some(entry => entry.visual_id === choice.visualId && entry.version === choice.version)) {
-    const idle = loops.find(entry => entry.preset_key === 'idle') ?? loops[0]
-    $ambientLoopChoice.set({ visualId: idle.visual_id, version: idle.version })
-    rememberLoop(idle)
+  const pool = candidates()
+  const choice = $ambientLoopChoice.get()
+
+  if (!resolveAmbientLoop(presentation)) {
+    if (pool.length > 0 || choice) {
+      selectAmbient(leastRecentlyUsed(pool, recentLoops))
+    }
   }
-}
-
-function onceEntries(catalog: CatalogEntry[]): CatalogEntry[] {
-  return catalog.filter(
-    entry => entry.asset_kind === 'actor' && entry.clip_kind === 'once' && entry.performance_role === 'reaction'
-  )
-}
-
-function pickAmbient(): CatalogEntry | null {
-  const candidatesPool = presentation ? automaticLoops(presentation, motionSubtle()) : []
-
-  if (candidatesPool.length <= 1) {
-    return candidatesPool[0] ?? null
-  }
-
-  const current = $ambientLoopChoice.get()
-  const candidates = candidatesPool.filter(entry => entry.visual_id !== current?.visualId)
-
-  return leastRecentlyUsed(candidates, recentLoops)
 }
 
 function pickReaction(catalog: CatalogEntry[], kind: InteractionKind): CatalogEntry | null {
-  const matches = onceEntries(catalog).filter(
-    entry => entry.preset_key === kind && contextAllowed(entry, presentation?.intent ?? null)
+  const matches = catalog.filter(
+    entry =>
+      entry.asset_kind === 'actor' &&
+      entry.clip_kind === 'once' &&
+      entry.performance_role === 'reaction' &&
+      entry.preset_key === kind &&
+      contextAllowed(entry, presentation?.intent ?? null)
   )
 
-  if (matches.length > 0) {
-    return matches[Math.floor(Math.random() * matches.length)]
-  }
-
-  return null
-}
-
-/** 当前持续整片仍与生活意图相符时，恢复只沿用已有组合。 */
-function lifeCompositionMatchesIntent(intent: NonNullable<VisualsPresentation['intent']>): boolean {
-  const composition = presentation?.composition
-
-  if (composition?.selection_source !== 'life' || !composition.cinematic) {
-    return false
-  }
-
-  const entry = presentation?.ambient_catalog.find(
-    item => item.visual_id === composition.cinematic?.visual_id && item.version === composition.cinematic.version
-  )
-
-  return Boolean(
-    entry &&
-    entry.asset_kind === 'cinematic' &&
-    (entry.media_kind === 'image' || entry.clip_kind === 'loop') &&
-    entry.performance_role === 'sustained' &&
-    entry.allowed_triggers.includes('periodic') &&
-    motionAllowed(entry, motionSubtle()) &&
-    lifeMatchScore(entry, intent) > 0
-  )
+  return matches.length > 0 ? matches[Math.floor(Math.random() * matches.length)] : null
 }
 
 function performInteraction(kind: InteractionKind, eventId: string, at: number): void {
-  if (!stageEligible() || mechanicallyBlocked() || !presentation) {
+  if (
+    !stageEligible() ||
+    mechanicallyBlocked() ||
+    !presentation ||
+    presentation.rhythm?.state === 'asleep' ||
+    $wakePerformance.get()
+  ) {
     return
   }
 
@@ -190,137 +208,171 @@ function performInteraction(kind: InteractionKind, eventId: string, at: number):
   })
 }
 
-/**
- * 生活演出：按结构化语义筛选持续媒体，而不是文本重叠打分。
- * 只有活动类别或语义标签实际匹配的资源才成为候选；没有匹配时保持当前画面。
- * 已在持续播放的生活整片若仍与新意图匹配则沿用，不重复派发同一段影像；
- * 用户手选的持续画面不受生活意图变化影响，由用户换选或素材失效取代。
- */
-function evaluateIntent(): void {
-  const intent = presentation?.intent
-
-  if (
-    !intent ||
-    intent.activity_kind === 'intent' ||
-    intent.activity_type === 'idle' ||
-    $presentation.get().effectiveMode !== 'desktop'
-  ) {
-    return
+function clearWake(): void {
+  if (wakeTimer !== null) {
+    clearTimeout(wakeTimer)
+    wakeTimer = null
   }
 
-  if (intent.life_revision === attemptedIntentRevision) {
-    return
-  }
-
-  // 用户/伙伴手选的持续画面（非生活驱动）不被普通生活更新打断。
-  if (presentation?.composition?.selection_source === 'user') {
-    attemptedIntentRevision = intent.life_revision
-
-    return
-  }
-
-  const catalog = presentation?.ambient_catalog ?? []
-
-  const candidates = catalog.filter(
-    entry =>
-      entry.asset_kind === 'cinematic' &&
-      (entry.media_kind === 'image' || entry.clip_kind === 'loop') &&
-      entry.performance_role === 'sustained' &&
-      entry.allowed_triggers.includes('periodic') &&
-      motionAllowed(entry, motionSubtle()) &&
-      lifeMatchScore(entry, intent) > 0
-  )
-
-  if (candidates.length === 0) {
-    return
-  }
-
-  // 仍在播或等待开播的生活整片与新意图同活动且仍匹配时沿用（不重复派发同一段影像）。
-  // 仅有冻结组合而没有实际播放状态时，恢复可能失败，不能把意图修订标记为已呈现。
-  const composition = presentation?.composition
-  const playing = $performance.get()
-
-  if (
-    composition?.selection_source === 'life' &&
-    composition.cinematic &&
-    composition.life_activity_type === intent.activity_type &&
-    (playing.state === 'dispatching' || playing.state === 'waiting' || playing.state === 'playing') &&
-    playing.current?.source === 'life' &&
-    candidates.some(
-      entry => entry.visual_id === composition.cinematic?.visual_id && entry.version === composition.cinematic.version
-    )
-  ) {
-    attemptedIntentRevision = intent.life_revision
-
-    return
-  }
-
-  const bestScore = Math.max(...candidates.map(entry => lifeMatchScore(entry, intent)))
-  const pool = candidates.filter(entry => lifeMatchScore(entry, intent) === bestScore)
-  const best = pool[Math.floor(Math.random() * pool.length)]
-
-  if (
-    requestPerformance({
-      performanceId: `life:${intent.life_revision}:${best.visual_id}:${best.version}`,
-      source: 'life',
-      visualId: best.visual_id,
-      visualVersion: best.version,
-      interruptible: best.interruptible,
-      intentRevision: intent.life_revision,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + LIFE_LIFETIME_MS,
-      durationMs: best.duration_ms
-    })
-  ) {
-    attemptedIntentRevision = intent.life_revision
-  }
+  $wakePerformance.set(null)
 }
 
-function scheduleAmbient(): void {
-  if (ambientTimer !== null) {
-    clearTimeout(ambientTimer)
-    ambientTimer = null
-  }
+function considerWake(previous: VisualsPresentation | null, next: VisualsPresentation | null): void {
+  const wake = next?.rhythm?.wake
+  const plan = next?.stage_plan
+  const clip = plan?.wake_actor
 
   if (
+    !wake ||
+    !plan ||
+    !clip ||
+    previous?.rhythm?.state !== 'asleep' ||
+    next.rhythm?.state !== 'awake' ||
+    stageVisibleSince === null ||
+    Date.parse(wake.occurred_at) < stageVisibleSince ||
+    Date.parse(wake.expires_at) <= Date.now() ||
     !stageEligible() ||
-    !directorBound ||
-    !presentation ||
     mechanicallyBlocked() ||
     $performance.get().state !== 'idle' ||
-    automaticLoops(presentation, motionSubtle()).length === 0
+    next.pending_play ||
+    (wake.reason === 'morning' && !next.autonomous_enabled)
   ) {
     return
   }
 
-  const current = resolveAmbientLoop(presentation)
-  const duration = current?.duration_ms ?? AMBIENT_INTERVAL_MS
-  // 轮换间隔与当前循环时长联动（一个循环的 1–3 倍，下限 90s），避免长视频播一半就被切换。
-  const subtleFactor = motionSubtle() ? SUBTLE_AMBIENT_FACTOR : 1
-  const interval = Math.max(AMBIENT_INTERVAL_MS, Math.min(3 * AMBIENT_INTERVAL_MS, duration)) * subtleFactor
-
-  ambientTimer = setTimeout(
-    () => {
-      ambientTimer = null
-      rotateAmbient()
-    },
-    interval + Math.random() * AMBIENT_JITTER_MS
-  )
+  clearWake()
+  $wakePerformance.set({
+    id: `render:wake:${wake.id}`,
+    expiresAt: wake.expires_at,
+    actor: clip,
+    scene: sceneForStage(plan.wake_scene_media, plan.wake_scene, plan.day_phase)
+  })
+  wakeTimer = setTimeout(clearWake, Math.max(0, Date.parse(wake.expires_at) - Date.now()))
 }
 
-function rotateAmbient(): void {
-  if (!stageEligible() || !presentation || mechanicallyBlocked() || $performance.get().state !== 'idle') {
+export function recordLocalStagePlayback(id: string, status: 'started' | 'finished' | 'failed' | 'interrupted'): void {
+  const wake = $wakePerformance.get()
+
+  if (wake?.id === id) {
+    if (status === 'started') {
+      if (wakeTimer !== null) {
+        clearTimeout(wakeTimer)
+      }
+
+      wakeTimer = setTimeout(clearWake, (wake.actor.duration_ms ?? 15_000) + 5_000)
+    } else {
+      clearWake()
+      scheduleAmbient()
+    }
+
     return
   }
 
-  const pick = pickAmbient()
+  const choice = $ambientLoopChoice.get()
 
-  if (pick) {
-    rememberLoop(pick)
-    $ambientLoopChoice.set({ visualId: pick.visual_id, version: pick.version })
+  if (choice?.id !== id) {
+    return
+  }
+
+  const entry = resolveAmbientLoop(presentation)
+
+  if (entry && status === 'started' && ambientStartedAt === null) {
+    ambientStartedAt = Date.now()
+    rememberLoop(entry, ambientStartedAt)
+  } else if (entry && status === 'failed') {
+    recordStageMediaFailure(mediaKey(entry))
+
+    return
   }
 
   scheduleAmbient()
+}
+
+function scheduleAmbient(): void {
+  const available = candidates()
+  const current = resolveAmbientLoop(presentation)
+  const started = ambientStartedAt
+
+  const due =
+    directorBound &&
+    stageEligible() &&
+    !mechanicallyBlocked() &&
+    !$wakePerformance.get() &&
+    $performance.get().state === 'idle' &&
+    available.length > 1 &&
+    current &&
+    started !== null
+      ? started + Math.max(AMBIENT_INTERVAL_MS, current.duration_ms ?? 0) * (motionSubtle() ? SUBTLE_AMBIENT_FACTOR : 1)
+      : null
+
+  if (due === ambientDueAt) {
+    return
+  }
+
+  if (ambientTimer !== null) {
+    clearTimeout(ambientTimer)
+  }
+
+  ambientDueAt = due
+  ambientTimer =
+    due === null
+      ? null
+      : setTimeout(
+          () => {
+            ambientTimer = null
+            ambientDueAt = null
+            selectAmbient(
+              leastRecentlyUsed(
+                candidates().filter(entry => mediaKey(entry) !== mediaKey(current!)),
+                recentLoops
+              )
+            )
+          },
+          Math.max(0, due - Date.now())
+        )
+}
+
+function scheduleClock(): void {
+  const dates = [presentation?.rhythm?.next_change_at, presentation?.stage_plan?.next_phase_at]
+  const retryAt = presentation?.static_presentation?.retry_at
+
+  if (retryAt && Date.parse(retryAt) > Date.now()) {
+    dates.push(retryAt)
+  }
+
+  const times = dates.flatMap(date => {
+    const instant = date ? Date.parse(date) : NaN
+
+    return Number.isFinite(instant) ? [instant] : []
+  })
+
+  const due = times.length > 0 ? Math.min(...times) : null
+
+  if (!directorBound || due === clockDueAt) {
+    return
+  }
+
+  if (clockTimer !== null) {
+    clearTimeout(clockTimer)
+  }
+
+  clockDueAt = due
+
+  if (due !== null) {
+    clockTimer = setTimeout(() => void runClock(due), Math.max(0, due - Date.now()))
+  } else {
+    clockTimer = null
+  }
+}
+
+async function runClock(due: number): Promise<void> {
+  clockTimer = null
+  const refresh = refreshAtBoundary
+  await refresh()
+
+  if (directorBound && refresh === refreshAtBoundary && due === clockDueAt && clockTimer === null) {
+    clockTimer = setTimeout(() => void runClock(due), CLOCK_RETRY_MS)
+  }
 }
 
 /** 单击、进入对话和聊天反应共用入口；网关反应用其事件身份跨窗口去重。 */
@@ -380,12 +432,10 @@ export function bindPresentationDirector(
 ): () => void {
   stopBinding?.()
   presentation = presentationFeed()
-  // 绑定只建立新的导演运行周期；当前修订是否已经呈现要由组合和实际回执核对，
-  // 不能把首次读取到的修订直接记为已尝试。
-  attemptedIntentRevision = -1
   stageEligible = eligibility.isEligible
   motionSubtle = eligibility.isSubtle
   mechanicallyBlocked = eligibility.isMechanical
+  refreshAtBoundary = ports.restore
   directorBound = true
 
   const stopScheduler = bindPerformanceScheduler({
@@ -393,22 +443,12 @@ export function bindPresentationDirector(
     valid: request =>
       request.source === 'manual' ||
       Boolean(
-        presentation &&
-        (request.intentRevision === null ||
-          request.intentRevision === presentation.intent?.life_revision ||
-          (request.source === 'life' &&
-            presentation.composition?.selection_source === 'life' &&
-            presentation.composition.cinematic?.visual_id === request.visualId &&
-            presentation.composition.cinematic.version === request.visualVersion &&
-            presentation.intent !== null &&
-            lifeCompositionMatchesIntent(presentation.intent))) &&
-        presentation.ambient_catalog.some(
+        presentation?.ambient_catalog.some(
           entry =>
             entry.visual_id === request.visualId &&
             entry.version === request.visualVersion &&
-            contextAllowed(entry, presentation?.intent ?? null) &&
-            (request.source === 'interaction' || motionAllowed(entry, motionSubtle())) &&
-            (request.source !== 'life' || lifeMatchScore(entry, presentation?.intent ?? null) > 0)
+            presentation?.rhythm?.state !== 'asleep' &&
+            contextAllowed(entry, presentation?.intent ?? null)
         )
       )
   })
@@ -416,20 +456,22 @@ export function bindPresentationDirector(
   const initialPendingId = presentation?.pending_play?.play_id
 
   const refresh = (): void => {
-    syncPerformance(stageEligible(), mechanicallyBlocked())
+    const eligible = stageEligible() && !mechanicallyBlocked()
+    stageVisibleSince = eligible ? (stageVisibleSince ?? Date.now()) : null
 
-    if (stageEligible()) {
-      if (presentation?.pending_play) {
-        receivePerformanceCommand(presentation.pending_play, presentation.pending_play.play_id === initialPendingId)
-      }
-
-      syncAmbientChoice()
-      evaluateIntent()
-    } else {
-      $ambientLoopChoice.set(null)
+    if (!eligible) {
+      clearWake()
     }
 
+    syncPerformance(stageEligible(), mechanicallyBlocked())
+
+    if (eligible && presentation?.pending_play) {
+      receivePerformanceCommand(presentation.pending_play, presentation.pending_play.play_id === initialPendingId)
+    }
+
+    syncAmbientChoice()
     scheduleAmbient()
+    scheduleClock()
   }
 
   const onStorage = (event: StorageEvent): void => {
@@ -448,9 +490,24 @@ export function bindPresentationDirector(
     consumeSignal(value)
   }
 
+  const onFocus = (): void => {
+    if (clockDueAt !== null && clockDueAt <= Date.now()) {
+      void refreshAtBoundary()
+    }
+  }
+
   window.addEventListener('storage', onStorage)
+  window.addEventListener('focus', onFocus)
   const stopEligibility = eligibility.onChanged(refresh)
-  const stopPerformance = $performance.listen(() => scheduleAmbient())
+
+  const stopPerformance = $performance.listen(performance => {
+    if (performance.state !== 'idle') {
+      clearWake()
+    }
+
+    scheduleAmbient()
+  })
+
   refresh()
   let stopped = false
 
@@ -463,6 +520,7 @@ export function bindPresentationDirector(
     stopEligibility()
     stopPerformance()
     window.removeEventListener('storage', onStorage)
+    window.removeEventListener('focus', onFocus)
     directorBound = false
     stopScheduler()
 
@@ -471,10 +529,21 @@ export function bindPresentationDirector(
     }
 
     ambientTimer = null
-    attemptedIntentRevision = -1
+    ambientDueAt = null
+    ambientStartedAt = null
+
+    if (clockTimer !== null) {
+      clearTimeout(clockTimer)
+    }
+
+    clockTimer = null
+    clockDueAt = null
+    clearWake()
+    stageVisibleSince = null
     presentation = null
     seenSignals.clear()
     recentLoops.clear()
+    $failedStageMedia.set(new Set())
     $ambientLoopChoice.set(null)
 
     if (stopBinding === stop) {
@@ -487,9 +556,9 @@ export function bindPresentationDirector(
   return stop
 }
 
-/** 呈现变化使旧生活任务失效；回执刷新不会再次提交同一修订。 */
+/** 网关和回源经过同一入口；一次性起身只消费可见期间发生的睡眠到清醒转换。 */
 export function feedDirectorPresentation(next: VisualsPresentation | null): void {
-  const hydrated = presentation !== null
+  const previous = presentation
   presentation = next
 
   if (!directorBound) {
@@ -499,33 +568,31 @@ export function feedDirectorPresentation(next: VisualsPresentation | null): void
   syncPerformance(stageEligible() && next !== null, mechanicallyBlocked())
 
   if (next?.pending_play) {
-    receivePerformanceCommand(next.pending_play, !hydrated)
+    receivePerformanceCommand(next.pending_play, previous === null)
   }
 
   if (!next) {
-    attemptedIntentRevision = -1
-    $ambientLoopChoice.set(null)
-  } else if (stageEligible()) {
+    selectAmbient(null)
+    clearWake()
+  } else {
+    if (next.rhythm?.state === 'asleep') {
+      clearWake()
+    }
+
+    considerWake(previous, next)
     syncAmbientChoice()
-    evaluateIntent()
   }
 
   scheduleAmbient()
+  scheduleClock()
 }
 
-/** 常驻循环的当前本地选择解析为目录条目；无选择或目录缺项时返回 null（沿用服务端投影）。 */
-export function resolveAmbientLoop(next: VisualsPresentation | null): CatalogEntry | null {
+function resolveAmbientLoop(next: VisualsPresentation | null): CatalogEntry | null {
   const choice = $ambientLoopChoice.get()
 
-  if (!choice || !next) {
-    return null
-  }
-
-  return (
-    automaticLoops(next, motionSubtle()).find(
-      entry => entry.visual_id === choice.visualId && entry.version === choice.version
-    ) ?? null
-  )
+  return choice && next
+    ? (candidates().find(entry => entry.visual_id === choice.visualId && entry.version === choice.version) ?? null)
+    : null
 }
 
 registerStorageClearHandler(() => {

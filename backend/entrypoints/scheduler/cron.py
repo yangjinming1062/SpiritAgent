@@ -10,6 +10,7 @@ from workflows import scheduling
 
 logger = get_logger(__name__)
 _SCHEDULER = BackgroundTask("scheduler.cron_loop")
+_RHYTHM_SCHEDULER = BackgroundTask("scheduler.rhythm_loop")
 
 
 async def scheduler_loop() -> None:
@@ -32,10 +33,21 @@ async def scheduler_loop() -> None:
         await asyncio.sleep(next_at - now)
 
 
+async def rhythm_scheduler_loop() -> None:
+    while True:
+        try:
+            await scheduling.run_rhythm_tick()
+        except Exception:
+            logger.exception("Rhythm scheduler tick failed")
+        await asyncio.sleep(5)
+
+
 def start_scheduler() -> None:
     _SCHEDULER.start(scheduler_loop())
+    _RHYTHM_SCHEDULER.start(rhythm_scheduler_loop())
 
 
 async def stop_scheduler() -> None:
     """取消 scheduler task 并等待其退出；await 防止晚到的 tick 在 dispatcher 已拆除后还触发自主 turn（那些 turn 会失去 emitter）。"""
     await _SCHEDULER.stop()
+    await _RHYTHM_SCHEDULER.stop()

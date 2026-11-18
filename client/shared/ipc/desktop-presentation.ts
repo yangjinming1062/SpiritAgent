@@ -79,6 +79,7 @@ export interface DesktopBackgroundRequest {
   video: DesktopMediaReference | null
   poster: DesktopMediaReference | null
   outfit: DesktopMediaReference | null
+  outfitPose: boolean
   /** 分层主体；video 此时仅用于独立环境，完整影像不叠加主体。 */
   actor: DesktopMediaReference | null
   actorBaseKey: string | null
@@ -106,6 +107,8 @@ export interface DesktopBackgroundRequest {
   backgroundKind: 'scene' | 'cinematic'
   /** 背景已是按本地时段挑选的媒体版本；true 时壁纸不再叠加时段色调滤镜。 */
   phaseMedia: boolean
+  dayPhase: 'night' | 'dawn' | 'day' | 'dusk' | null
+  sceneKey: string | null
   clear: boolean
 }
 

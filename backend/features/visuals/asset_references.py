@@ -10,6 +10,7 @@ from sqlalchemy.orm import aliased
 
 from features.assets.references import scanned_asset_paths
 from features.assets.service import asset_paths_for_ids
+from features.life.queries import referenced_visual_versions
 
 from .eligibility import automatic_media_ready
 from .models import (
@@ -151,6 +152,7 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
     unused = select(VisualVersion.id).where(
         VisualVersion.user_id == user_id,
         VisualVersion.created_at < cutoff,
+        VisualVersion.id.not_in(referenced_visual_versions(user_id)),
         ~select(VisualItem.id).where(VisualItem.current_version_id == VisualVersion.id).exists(),
         ~select(VisualPresentation.user_id)
         .where(
@@ -174,12 +176,16 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
     automatic = await _automatic_version_ids(db, user_id)
     if automatic:
         unused = unused.where(VisualVersion.id.not_in(automatic))
-    versions = list(await db.scalars(unused))
+    versions = list(await db.scalars(unused.with_for_update()))
     if not versions:
         return set()
     asset_ids = list(
         await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.version_id.in_(versions)))
     )
     paths = await asset_paths_for_ids(db, user_id, asset_ids)
-    await db.execute(delete(VisualVersion).where(VisualVersion.id.in_(versions)))
+    await db.execute(
+        delete(VisualVersion).where(
+            VisualVersion.id.in_(versions), VisualVersion.id.not_in(referenced_visual_versions(user_id))
+        )
+    )
     return paths

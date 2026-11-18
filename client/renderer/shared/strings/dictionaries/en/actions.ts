@@ -43,6 +43,8 @@ export const actions: Pick<Dictionary, 'actions' | 'visuals'> = {
       creating: 'Creating',
       thinking: 'Thinking',
       resting: 'Resting',
+      sleeping: 'Sleeping',
+      waking: 'Waking up',
       organizing: 'Organizing',
       socializing: 'Socializing',
       stretching: 'Stretching',

@@ -10,6 +10,7 @@ from .schemas import (
     StageComposition,
     StageCompositionMedia,
     StageLayerMedia,
+    StagePlaybackPlan,
     VisualPlayCommand,
 )
 
@@ -56,6 +57,24 @@ def client_catalog_entry(entry: AmbientCatalogEntry) -> AmbientCatalogEntry:
             "media_url": client_asset_url(entry.media_url),
             "poster_url": client_asset_url(entry.poster_url) if entry.poster_url else None,
             "body": client_body(entry.body),
+        }
+    )
+
+
+def client_stage_plan(plan: StagePlaybackPlan | None) -> StagePlaybackPlan | None:
+    if plan is None:
+        return None
+    return plan.model_copy(
+        update={
+            "scene": client_scene(plan.scene),
+            "scene_media": client_layer_media(plan.scene_media),
+            "actor_variants": [client_catalog_entry(entry) for entry in plan.actor_variants],
+            "fallback_actor_variants": [client_catalog_entry(entry) for entry in plan.fallback_actor_variants],
+            "cinematic_variants": [client_catalog_entry(entry) for entry in plan.cinematic_variants],
+            "actor_still_url": client_asset_url(plan.actor_still_url) if plan.actor_still_url else None,
+            "wake_actor": client_catalog_entry(plan.wake_actor) if plan.wake_actor else None,
+            "wake_scene": client_scene(plan.wake_scene),
+            "wake_scene_media": client_layer_media(plan.wake_scene_media),
         }
     )
 

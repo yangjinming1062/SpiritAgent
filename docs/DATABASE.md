@@ -21,6 +21,7 @@ flowchart LR
     user_model_configs --> users
     user_social_accounts --> users
     personas --> users
+    companion_rhythms --> users
     custom_voices --> assets
 ```
 
@@ -93,6 +94,8 @@ flowchart LR
 动作的可用性由评审状态决定，不另存入库布尔值。通用内置定义通过账户内唯一 `preset_key` 补齐，自创动作该值为空；名称不承担唯一身份。`source_key` 是动作素材的业务来源键：素材包导入按它去重，撤销导入按它校验归属。`request_key` 是用户确认提交的幂等键：同一次确认重试按它返回原动作，不重复登记与评审。
 
 聊天图片以 `image_gen_jobs` 继承共享任务，按槽位保存媒体与消息绑定；`appearance_image_jobs` 保存头像与全身公共图片链的接续点，业务采纳与任务完成共同提交。`media_manual_operations` 保存人工采用或重做的原输入、候选依据、请求身份及调度交接，`media_continuations` 保留业务依赖及原继续身份。业务所属任务通过 `owner_job_id` 关联，账户归属仍用 `user_id`。全身候选持有检查证据与人工依据，`fullbody_review_jobs` 只管理冻结参考及执行；手动和自主造型通过请求来源分离权限。待复核没有完成时间，任务资产引用持续生效。
+
+`companion_rhythms` 随账户级联删除，保存通常作息、人设依据、当日调整、最近交流与接续时间，以及舞台更新水位。到期检查按 `next_check_at` 发现候选；被叫醒或已显示的动作不需要写入生活轨迹。作息和恢复语义见 [伙伴作息](PROTOCOL.md#伙伴作息)。
 
 ## 影像与不可变版本
 
@@ -178,7 +181,7 @@ flowchart LR
 | 对象 | 保留理由与边界 | 权威入口 |
 |---|---|---|
 | 终态任务 | 明确终态且清理完成后，检查点/临时引用七天、诊断九十天；导入分析等长期资料使用保留角色，引用随业务精确替换或任务删除释放。保留请求身份、终态与必要结果以维持幂等，未知和未清理工作不按期限压缩 | [jobs/service.py](../backend/features/jobs/service.py) |
-| 影像版本与播放 | 当前、仍引用及每份冻结身份/造型/动作/画幅的最新合格自动演出版本持续保护；已结束播放七天后释放占用，再回收无引用且不承担自动回退的版本 | [visuals/asset_references.py](../backend/features/visuals/asset_references.py) |
+| 影像版本与播放 | 当前版本、呈现与任务引用、生活事件和步骤记录的成果版本，以及每份冻结身份/造型/动作/画幅的最新合格自动演出版本持续保护；已结束播放七天后释放占用，再回收无引用且不承担自动回退的版本 | [visuals/asset_references.py](../backend/features/visuals/asset_references.py) |
 | 记忆修订与指纹 | 修订保留最近二十次；明确遗忘清除正文、摘录和修订，指纹可失去原记录仍保留抑制作用 | [records.py](../backend/features/memory/records.py)、[memory_store.py](../backend/features/memory/memory_store.py) |
 
 ## 删除与恢复

@@ -107,6 +107,28 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
     return statement
 
 
+async def stage_scene_by_title(db: AsyncSession, user_id: int, title: str) -> SceneSnapshot | None:
+    """生活意图给出唯一存在的环境名称时，才选用对应素材。"""
+
+    rows = (
+        (
+            await db.execute(
+                _snapshot_statement(
+                    [
+                        CompanionScene.user_id == user_id,
+                        CompanionScene.status == SceneStatus.READY,
+                        func.lower(func.btrim(CompanionScene.title)) == title.strip().lower(),
+                        CompanionScene.media_path != "",
+                    ]
+                ).limit(2)
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return SceneSnapshot.model_validate(dict(rows[0])) if len(rows) == 1 else None
+
+
 async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
     policy = await scene_policy(db, user_id)
     rows = (

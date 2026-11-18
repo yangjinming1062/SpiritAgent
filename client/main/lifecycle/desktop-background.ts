@@ -105,8 +105,15 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     typeof value.theme !== 'string' ||
     typeof value.reduceMotion !== 'boolean' ||
     typeof value.paused !== 'boolean' ||
+    typeof value.outfitPose !== 'boolean' ||
     (value.backgroundKind !== 'scene' && value.backgroundKind !== 'cinematic') ||
     typeof value.phaseMedia !== 'boolean' ||
+    (value.dayPhase !== null &&
+      value.dayPhase !== 'night' &&
+      value.dayPhase !== 'dawn' &&
+      value.dayPhase !== 'day' &&
+      value.dayPhase !== 'dusk') ||
+    (value.sceneKey !== null && (typeof value.sceneKey !== 'string' || value.sceneKey.length > 8192)) ||
     typeof value.clear !== 'boolean'
   ) {
     throw new Error('无效桌面背景。')
@@ -117,6 +124,7 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     video: mediaReference(value.video),
     poster: mediaReference(value.poster),
     outfit: mediaReference(value.outfit),
+    outfitPose: value.outfitPose,
     actor: mediaReference(value.actor),
     actorBaseKey: value.actorBaseKey,
     layout,
@@ -139,6 +147,8 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     paused: value.paused,
     backgroundKind: value.backgroundKind,
     phaseMedia: value.phaseMedia,
+    dayPhase: value.dayPhase,
+    sceneKey: value.sceneKey,
     clear: value.clear
   }
 }
@@ -150,6 +160,7 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     video: null,
     poster: null,
     outfit: null,
+    outfitPose: false,
     actor: null,
     actorBaseKey: null,
     layout: DEFAULT_STAGE_LAYOUT,
@@ -172,6 +183,8 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     paused: true,
     backgroundKind: 'scene',
     phaseMedia: false,
+    dayPhase: null,
+    sceneKey: null,
     clear: true
   }
 }

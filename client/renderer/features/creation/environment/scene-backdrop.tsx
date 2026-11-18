@@ -6,7 +6,7 @@ import { $motionLevel } from '@/features/character'
 import { isCharacterMediaVisible, observeCharacterStageVisibility } from '@/features/character'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
+import { ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { log } from '@/shared/lib/log'
 import { acquireStageVideo } from '@/shared/lib/stage-video-cache'
 import { createStageVideoLayer } from '@/shared/lib/stage-video-layer'
@@ -28,7 +28,7 @@ export function SceneBackdrop(): React.JSX.Element {
   const auth = useStore($auth)
   const motionLevel = useStore($motionLevel)
   const owner = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
-  const scene = staticProjection || motionLevel === 'off' ? null : plan.scene
+  const scene = staticProjection ? null : plan.scene
   const path = (scene?.isVideo ? scene.posterUrl : scene?.url) ?? projectedScenePath
   const [image, setImage] = useState<{ owner: string; path: string; url: string; phaseMatched: boolean } | null>(null)
   const [video, setVideo] = useState<StageScenePlan | null>(null)
@@ -40,12 +40,11 @@ export function SceneBackdrop(): React.JSX.Element {
   const layer = useRef<ReturnType<typeof createStageVideoLayer<StageScenePlan>> | null>(null)
   const strings = useStrings()
   const shown = image?.owner === owner ? image : null
-  const phase = useStore($dayPhase)
 
   const phaseFilter = ambientPhaseFilter(
     motionLevel !== 'off',
     video?.phaseMatched ?? shown?.phaseMatched ?? false,
-    phase
+    plan.dayPhase
   )
 
   useEffect(() => {
@@ -81,7 +80,7 @@ export function SceneBackdrop(): React.JSX.Element {
 
   useEffect(() => {
     layer.current?.set(
-      owner && scene?.isVideo
+      owner && scene?.isVideo && motionLevel !== 'off'
         ? {
             key: `${owner}:${scene.visualId}:${scene.version}`,
             loop: true,
@@ -90,7 +89,7 @@ export function SceneBackdrop(): React.JSX.Element {
           }
         : null
     )
-  }, [owner, scene])
+  }, [owner, scene, motionLevel])
 
   useEffect(() => {
     const scope = captureAuthScope()

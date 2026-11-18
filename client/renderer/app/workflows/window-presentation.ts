@@ -13,14 +13,18 @@ import {
   setStageOutfitSource
 } from '@/features/character'
 import {
+  $ambientLoopChoice,
+  $failedStageMedia,
   $performance,
   $stagePlan,
   $visualsPresentation,
+  $wakePerformance,
   bindPresentationDirector,
   claimVisualPlay,
   deriveStagePlan,
+  pendingStaticPresentation,
+  recordLocalStagePlayback,
   refreshVisualPresentation,
-  resolveAmbientLoop,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
@@ -51,6 +55,13 @@ let projectionConsumers = 0
 function applySources(actual: VisualActualSnapshot | null): void {
   $windowScenePath.set(actual?.scene_path ?? null)
   setStageOutfitSource(actual?.outfit_path ? { path: actual.outfit_path, name: actual.outfit_description } : null)
+}
+
+function applyBaseSources(response: VisualsPresentation | null): void {
+  const actual = response?.actual
+  const still = $stagePlan.get().actorStillUrl
+
+  applySources(actual && still ? { ...actual, outfit_path: still } : (actual ?? null))
 }
 
 function releaseVisualProjection(): void {
@@ -322,7 +333,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
       await refreshVisualPresentation()
 
       if (scope() && !projectingPlay) {
-        applySources($visualsPresentation.get()?.actual ?? null)
+        applyBaseSources($visualsPresentation.get())
       }
     }
   }
@@ -351,11 +362,11 @@ function ensureVisualProjection(): void {
     assembleWindowMedia()
 
     if (!projectingPlay) {
-      applySources(response?.actual ?? null)
+      applyBaseSources(response)
     }
 
     if (response) {
-      if (response.static_presentation && !$performance.get().command) {
+      if (pendingStaticPresentation(response) && !$performance.get().command) {
         void settleStaticProjection(response)
       } else {
         void settlePendingPlay(response)
@@ -397,7 +408,22 @@ function ensureVisualProjection(): void {
   }
 
   const stopState = $visualsPresentation.listen(response => apply(response, true))
-  const stopPlan = $stagePlan.listen(assembleWindowMedia)
+
+  const stopPlan = $stagePlan.listen(() => {
+    assembleWindowMedia()
+
+    if (!projectingPlay) {
+      applyBaseSources($visualsPresentation.get())
+    }
+  })
+
+  const stopLocalPlayback = $windowActorPlayback.listen(playback => {
+    const media = $windowActorMedia.get()
+
+    if (media?.localPlayId && media.key === playback?.key) {
+      recordLocalStagePlayback(media.localPlayId, playback.status)
+    }
+  })
 
   const stopPerformance = $performance.listen(() => {
     if (windowCommand && $performance.get().command?.play_id !== windowCommand.play_id) {
@@ -418,6 +444,7 @@ function ensureVisualProjection(): void {
   stopProjection = () => {
     stopState()
     stopPlan()
+    stopLocalPlayback()
     stopPerformance()
     stopMotion()
     stopMovement()
@@ -431,7 +458,7 @@ function ensureVisualProjection(): void {
 }
 
 async function settleStaticProjection(response: VisualsPresentation): Promise<void> {
-  const target = response.static_presentation
+  const target = pendingStaticPresentation(response)
   const scope = captureAuthScope()
   const key = target ? staticPresentationKey(target) : ''
 
@@ -440,7 +467,6 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
     !scope ||
     projectingPlay ||
     settledPlays.has(key) ||
-    (target.retry_at !== null && Date.parse(target.retry_at) > Date.now()) ||
     !isCharacterMediaVisible() ||
     $presentation.get().effectiveMode !== 'window'
   ) {
@@ -450,24 +476,27 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
   projectingPlay = key
 
   const current = (): boolean => {
-    const latest = $visualsPresentation.get()
+    const latest = pendingStaticPresentation($visualsPresentation.get())
 
     return (
       scope() &&
       isCharacterMediaVisible() &&
       $presentation.get().effectiveMode === 'window' &&
-      !latest?.pending_play &&
-      Boolean(latest?.static_presentation && staticPresentationKey(latest.static_presentation) === key)
+      !$performance.get().command &&
+      Boolean(latest && staticPresentationKey(latest) === key)
     )
   }
+
+  let refresh = true
 
   try {
     let renderError: string | null = null
 
     try {
+      $windowStaticProjection.set(true)
+      assembleWindowMedia()
+
       if (target.outfit && target.scene) {
-        $windowStaticProjection.set(true)
-        assembleWindowMedia()
         applySources({
           ...response.actual,
           visual_id: null,
@@ -499,8 +528,7 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
       return
     }
 
-    settledPlays.add(key)
-    await sendStaticReceipt({
+    const accepted = await sendStaticReceipt({
       request_id: target.request_id,
       presentation_epoch: target.presentation_epoch,
       state_revision: target.state_revision,
@@ -508,17 +536,25 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
       status: renderError ? 'failed' : 'started',
       error: renderError
     })
+
+    if (accepted) {
+      settledPlays.add(key)
+    }
   } catch (error) {
+    refresh = false
+
     if (scope()) {
       log.warn('visual-presentation', 'Static receipt failed', error)
     }
   } finally {
     if (projectingPlay === key) {
       projectingPlay = null
+      $windowStaticProjection.set(false)
+      applyBaseSources($visualsPresentation.get())
       assembleWindowMedia()
     }
 
-    if (scope()) {
+    if (scope() && refresh) {
       await refreshVisualPresentation()
     }
   }
@@ -554,23 +590,22 @@ function assembleWindowMedia(): void {
   const auth = $auth.get()
   const presentation = $visualsPresentation.get()
 
-  const plan = deriveStagePlan(
-    presentation,
-    windowCommand,
-    resolveAmbientLoop(presentation),
-    $motionLevel.get() === 'subtle',
-    $stagePlan.get().scene
-  )
+  const motion = $motionLevel.get()
 
-  const actor =
-    $motionLevel.get() === 'off' ||
-    plan.mode === 'static' ||
-    $spatialLocomotion.get() !== 'still' ||
-    $spritePointerHeld.get()
-      ? null
-      : plan.actor
+  const plan = deriveStagePlan(presentation, windowCommand, {
+    ambient: $ambientLoopChoice.get(),
+    wake: $wakePerformance.get(),
+    failedMedia: $failedStageMedia.get(),
+    subtle: motion === 'subtle',
+    motionEnabled: motion !== 'off'
+  })
 
-  const base = $stagePlan.get().actor
+  const actor = $spatialLocomotion.get() !== 'still' || $spritePointerHeld.get() ? null : plan.actor
+
+  const base = deriveStagePlan(presentation, null, {
+    ambient: $ambientLoopChoice.get(),
+    subtle: motion === 'subtle'
+  }).actor
 
   if (
     $windowStaticProjection.get() ||
@@ -585,7 +620,8 @@ function assembleWindowMedia(): void {
 
   const baseKey = base ? `${base.visualId}:${base.version}` : null
   $windowActorMedia.set({
-    key: `${actor.visualId}:${actor.version}${windowCommand ? `:${windowCommand.play_id}` : ''}`,
+    key: `${actor.visualId}:${actor.version}${windowCommand ? `:${windowCommand.play_id}` : plan.localPlay ? `:${plan.localPlay.id}` : ''}`,
+    localPlayId: plan.localPlay?.id ?? null,
     owner: auth.snapshot.sessionId,
     url: actor.url,
     width: actor.width,

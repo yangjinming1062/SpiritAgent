@@ -29,6 +29,7 @@ from features.companion.proactive_runtime import (
     get_user_proactive_record,
     note_outreach_throttle,
 )
+from features.companion.rhythm import read_rhythm
 from features.conversation.evidence import latest_user_message_id
 from features.conversation.proactive_messages import append_companion_message
 from features.conversation.replies import CompanionReply
@@ -59,7 +60,11 @@ def companion_turn_plan(user_id: int, intent_id: int, expires_at: datetime) -> I
 
 
 async def _proactive_turn_allowed(db: AsyncSession, user_id: int) -> bool:
-    return can_start_companion_turn(user_id) and await get_disturbance_tier(user_id, db=db) != "still"
+    return (
+        can_start_companion_turn(user_id)
+        and await get_disturbance_tier(user_id, db=db) != "still"
+        and (await read_rhythm(db, user_id)).state == "awake"
+    )
 
 
 async def enqueue_companion_intent(
@@ -418,6 +423,7 @@ async def finish_companion_intent(
             or await latest_user_message_id(db, user_id) != user_message_id
             or not can_start_companion_turn(user_id)
             or tier == "still"
+            or (await read_rhythm(db, user_id, now=now)).state == "asleep"
             or reply is not None
             and tier != "autonomous"
             and any(bubble.type == "voice" for bubble in reply.bubbles)

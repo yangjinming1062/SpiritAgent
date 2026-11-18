@@ -9,6 +9,7 @@ from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.companion.narrative_quality import review_narrative
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
+from features.companion.rhythm import BedtimeChange, read_rhythm, rhythm_prompt_context, set_bedtime_change
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
 from features.life.queries import pursuit_evidence
 from features.life.schemas import (
@@ -45,6 +46,7 @@ class LifeDecision(BaseModel):
     choice: Literal["keep", "private_episode", PursuitOperation]
     episode: PrivateLifeEpisode | None = None
     pursuit: PursuitDecisionFields | None = None
+    bedtime_change: BedtimeChange | None = None
 
     @model_validator(mode="after")
     def check_choice(self) -> "LifeDecision":
@@ -61,8 +63,11 @@ life_context.recent_events 按时间提供经过记录的经历，topic_heads �
 {life_facts}
 {life_narrative}
 
+rhythm 是你自己的作息。只有今天的生活有具体缘由时才填写 bedtime_change，描述缘由并给出相对平时入睡时间的偏移分钟（负数提前，正数推迟，最多两小时）；否则留空。作息调整本身无需写成已发生的经历。
+
 choice=keep 只表示继续原有生活，episode 与 pursuit 均留空。例行等待、无新发现、时间变化、检查到相同结果都适合 keep。
 choice=private_episode 仅在 private_episode_allowed 时选择，填写 episode。写伙伴独自在已有虚拟情境内的观察、选择、习惯或感受。它只有伙伴自己这一位参与者，不能编排与用户见面、替用户准备物品、观察用户行为或等用户回应；只可将已有证据的真实阅读或作品作为动机，本段新发生的变化仍是独处虚拟日常。继续主题时用 topic_heads 的最近片段 id，另一个真正的兴趣才开启新主题。title 是这次片段的短标题，narrative 用一到三句第一人称说清具体变化和它的缘由，activity_type 描述此刻的虚拟活动。情境或可用物品有变化时，用 current_scene 和 scene_tags 给出有依据的当前环境和完整条件。
+选择在 execution.scenes 已有的地点活动时，用该条目的准确名称填写 current_scene.title；描述当前地点和已知条件，保留其他仍成立的环境信息。
 处理真实事项时，用 choice 指定具体操作，pursuit 填写该操作的内容。考虑多个已有主题；一件事在等结果时可选择独立的主题，不因阻碍重复登记原任务。start_pursuit 需要具体动机、可核验目标和确有用途的 next_action，title 用短标题表达。可以用 episode_origin_id 将真实行动接到 topic_heads 提供的一个个人主题。用户相关事项只可承接已有真实约定，不能由人设、偏好、虚拟情境或沉默补出约定。advance_pursuit 用于添加有意义的下一步或根据新结果改变方向，complete_pursuit 需要确凿成果且无未解决步骤。暂停、恢复、放下和转向要有实际理由；用户暂停须由用户要求恢复，resume_after 未到继续等待。转向时保留旧结果归属。
 pursuit_evidence.steps 提供真实步骤及其阶段。原步骤 planned、running（含 waiting）或 unknown 时，沿原请求等待核对。能力和技术状态只用来判断可行性；面向用户的 narrative.pursuit、event 和 action 用自然话写动机、真实变化或打算，省去重复等待和技术过程。登记行动要提供 narrative.action 或 next_action.narrative。当前场景和活动不通过 pursuit 修改。
 execution 是真实能力和素材目录。visual.generate、scene.create、outfit.create 和 action.design 各自会制作真实素材；只在需要该成果时使用。content.read 只读已存资讯、公开资料或一次搜索得到的最多三份来源。next_action 是计划。改变 progress 或完成事项须引用提供的 evidence_event_ids，引用与目标有关的已确认成果。pursuit_evidence.events 中未绑定事项的发布记录，只有内容确实支持此目标时才能引用。已保存的一件作品不一定足以完成整个目标。只用中文输出符合 schema 的 JSON。""",
@@ -71,8 +76,11 @@ life_context.recent_events gives recorded experiences in time order. topic_heads
 {life_facts}
 {life_narrative}
 
+rhythm describes your own routine. Only for a concrete reason in today's life, give bedtime_change with the reason and the offset in minutes from the usual bedtime (negative for earlier, positive for later, up to two hours); otherwise leave it null. The change in schedule itself does not establish a past experience.
+
 choice=keep means carry on with no record. Leave episode and pursuit null. Use it for routine waiting, no discovery, time passing or the same status.
 choice=private_episode is available only when private_episode_allowed. Fill episode for a new observation, choice, habit or feeling within the companion's established virtual setting, alone. Do not stage a meeting with the user, prepare something for them, observe their actions or wait for them. You may refer to existing evidence of actual reading or works as motivation. The new development described here remains solo and virtual. For an existing thread use its latest id from topic_heads; start a new thread only for a distinct interest. title is a short label, narrative one to three first-person sentences with the concrete change and why it matters, and activity_type the present activity within the virtual setting. When the setting or available objects change, use current_scene and scene_tags for the supported setting and its full current conditions.
+When the activity takes place in an existing location from execution.scenes, use that entry's exact title in current_scene.title. Describe the present setting and known conditions, retaining relevant details that still apply.
 For a real pursuit, set choice to the specific operation and put its details in pursuit. Consider multiple threads. Pending work leaves room for other interests but must not be resubmitted. start_pursuit needs a specific motivation, a verifiable goal, and a useful next_action, with a short pursuit_title. episode_origin_id may connect the action to a personal thread from topic_heads. Continue a user-related matter only from an actual recorded agreement. Persona, preferences, virtual scenes and silence cannot supply an agreement. Use advance_pursuit for a meaningful next action or change based on a new result, and complete_pursuit only with sufficient evidence and no unresolved steps. Give a real reason for pausing, resuming, setting aside or redirecting. A user pause requires the user's request to resume, and respect resume_after. Keep old results on the original pursuit.
 pursuit_evidence.steps describes actual attempts. When a step is planned, running (including waiting) or unknown, retain the original request and wait for resolution. Capabilities and technical status establish feasibility. In narrative.pursuit, event and action describe motivation, real changes or intention naturally. Provide narrative.action or next_action.narrative for a new action. Do not use pursuit to change the current scene or activity.
 execution lists available capabilities and real materials. visual.generate, scene.create, outfit.create and action.design produce real assets; use them when their deliverable is useful. content.read reads saved items, public sources, or up to three sources from one search. next_action is a plan. Changing progress or completing requires evidence_event_ids for relevant confirmed results. An unassigned publication in pursuit_evidence.events may be cited only when its content supports this goal. One saved artifact does not necessarily fulfill the goal. Output schema JSON in English only.""",
@@ -164,10 +172,14 @@ async def consider_life(user_id: int) -> dict[str, object]:
 
 
 async def _consider_life(user_id: int) -> dict[str, object]:
+    proposed_at = utc_now()
     async with SESSION_LOCAL() as db:
         if not await user_is_active(db, user_id) or user_id not in await onboarded_user_ids(db, (user_id,)):
             return {"status": "not_ready"}
-        due, slot = await reserve_review_in_session(db, user_id, utc_now())
+        rhythm = await rhythm_prompt_context(db, user_id)
+        if rhythm.state == "asleep":
+            return {"status": "resting"}
+        due, slot = await reserve_review_in_session(db, user_id, proposed_at)
         await db.commit()
         if not due:
             return {"status": "waiting"}
@@ -202,6 +214,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         {
             **personal,
             "current_time": context.current_time,
+            "rhythm": rhythm.model_dump(mode="json", exclude_none=True),
             "private_episode_allowed": slot is not None,
             "pursuit_evidence": evidence_payload,
             "execution": execution,
@@ -213,6 +226,10 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         preserve_choices=("choice",),
     )
     if decision.choice == "keep":
+        if decision.bedtime_change is not None and slot is not None:
+            async with SESSION_LOCAL() as db:
+                await set_bedtime_change(db, user_id, decision.bedtime_change, proposed_at=proposed_at)
+                await db.commit()
         return {"status": "kept"}
     episode = decision.episode
     pursuit = None
@@ -261,11 +278,22 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             return {"status": "not_ready"}
         try:
             if episode is not None and slot is not None:
+                current_rhythm = await read_rhythm(db, user_id, lock=True)
+                if current_rhythm.state == "asleep" or not current_rhythm.timezone or not current_rhythm.next_change_at:
+                    return {"status": "unavailable_episode"}
                 await commit_private_episode_in_session(
-                    db, user_id, episode, slot=slot, expected_revision=life.state.revision
+                    db,
+                    user_id,
+                    episode,
+                    slot=slot,
+                    expected_revision=life.state.revision,
+                    timezone=current_rhythm.timezone,
+                    awake_until=current_rhythm.next_change_at,
                 )
             elif pursuit is not None:
                 await commit_decision_in_session(db, user_id, pursuit)
+            if decision.bedtime_change is not None and slot is not None:
+                await set_bedtime_change(db, user_id, decision.bedtime_change, proposed_at=proposed_at)
         except LifeStateConflictError:
             return {"status": "state_changed"}
         await db.commit()

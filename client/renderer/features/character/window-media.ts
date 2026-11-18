@@ -9,6 +9,7 @@ type StageLayout = ApiSchemas['StageCompositionLayout']
 /** app 将统一舞台计划投影到此端口；character 不依赖成品库。 */
 export interface WindowActorMedia {
   key: string
+  localPlayId?: string | null
   owner: string
   url: string
   width: number

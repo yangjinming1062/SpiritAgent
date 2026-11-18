@@ -36,3 +36,13 @@ def actor_reference_frame(data: bytes, target_width: int, target_height: int) ->
             )
             canvas.convert("RGB").save(output, format="PNG")
             return output.getvalue()
+
+
+def actor_continuation_frame(data: bytes) -> bytes:
+    """将实际透明帧放回视频幕布，保持原画布、位置和比例。"""
+    normalized, _mime = validate_image_bytes(data)
+    with Image.open(BytesIO(normalized)) as source, BytesIO() as output:
+        with Image.new("RGBA", source.size, (128, 128, 128, 255)) as canvas:
+            canvas.alpha_composite(source.convert("RGBA"))
+            canvas.convert("RGB").save(output, format="PNG")
+        return output.getvalue()

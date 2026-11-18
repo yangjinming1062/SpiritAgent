@@ -32,6 +32,7 @@ from runtime.desktop.connection import MANAGER
 from runtime.presets import COMPANION_PRESET_ID
 from runtime.turn_ownership import conversation_lock, release_call, reserve_call
 from runtime.user_maintenance import is_user_in_maintenance
+from workflows.companion_rhythm import close_rhythm_contact, open_rhythm_call
 from workflows.realtime_voice import CallInputOverflowError, RealtimeVoicePipeline
 
 from entrypoints.http.routing import get_router
@@ -99,6 +100,7 @@ async def realtime_voice_websocket(
     monitor: asyncio.Task[None] | None = None
     owner = asyncio.current_task()
     record_id: int | None = None
+    contact_id: str | None = None
     started = 0.0
     last_seen = 0.0
     activity = contextlib.ExitStack()
@@ -135,6 +137,8 @@ async def realtime_voice_websocket(
                     await finalize_record(record_id)
             finally:
                 activity.close()
+                if contact_id is not None:
+                    await close_rhythm_contact(identity.user_id, contact_id)
                 release_account_runtime(identity.user_id, session.call_id)
 
     try:
@@ -184,6 +188,9 @@ async def realtime_voice_websocket(
                     raise asyncio.CancelledError
                 pipeline = RealtimeVoicePipeline(session, actor, record_id)
                 activity.enter_context(user_turn_activity(identity.user_id, enabled=True))
+                if conv.kind == "special":
+                    contact_id = f"call:{record_id}"
+                    await open_rhythm_call(identity.user_id, contact_id)
                 session.state = "listening"
                 await session.emit("session.connected")
                 credit, last_frame = SAMPLE_RATE * 4, time.monotonic()

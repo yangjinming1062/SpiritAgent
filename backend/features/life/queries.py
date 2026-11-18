@@ -5,7 +5,7 @@ from datetime import datetime
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import utc_now
-from sqlalchemy import case, func, or_, select, tuple_
+from sqlalchemy import CompoundSelect, case, func, or_, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .actions import ReadingResult
@@ -23,6 +23,18 @@ from .schemas import (
     LifeStateView,
     LifeStepView,
 )
+
+
+def referenced_visual_versions(user_id: int) -> CompoundSelect[tuple[int | None]]:
+    """生活成果引用的是发布当时的版本，回收条件在同一数据库语句中检查。"""
+    return union_all(
+        select(LifeEvent.result_visual_version_id).where(
+            LifeEvent.user_id == user_id, LifeEvent.result_visual_version_id.is_not(None)
+        ),
+        select(LifeStep.result_visual_version_id).where(
+            LifeStep.user_id == user_id, LifeStep.result_visual_version_id.is_not(None)
+        ),
+    )
 
 
 def state_view(row: LifeState) -> LifeStateView:

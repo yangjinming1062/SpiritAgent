@@ -1142,20 +1142,3 @@ async def update_presentation_preferences(
             await touch_presentation(db, user_id)
         await db.commit()
     return await presentation_state(user_id)
-
-
-async def clear_default_cinematic_wallpaper(user_id: int) -> None:
-    """外观或环境发生确定性变更时清除不再匹配的完整场景默认壁纸。"""
-
-    async with _lock(user_id), SESSION_LOCAL() as db:
-        state = await require_presentation_row(db, user_id, lock=True)
-        if state.default_visual_id is None:
-            return
-        item = await db.scalar(
-            select(VisualItem).where(VisualItem.id == state.default_visual_id, VisualItem.user_id == user_id)
-        )
-        if item is not None and item.asset_kind != "cinematic":
-            return
-        state.default_visual_id = None
-        await touch_presentation(db, user_id)
-        await db.commit()

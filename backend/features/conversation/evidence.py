@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .context_window import context_visible_subtype
 from .formatting import message_contains_text, message_text
 from .memory_scope import user_authored_conversation
-from .models import Conversation, Message
+from .models import CALL_RECORD_SUBTYPE, Conversation, Message
+from .submission_models import PromptSubmission
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,29 @@ class OriginalMessageSnapshot:
     role: str
     content: str
     created_at: datetime
+
+
+async def call_last_seen_at(db: AsyncSession, user_id: int, record_id: int) -> datetime | None:
+    return await db.scalar(
+        select(Message.call_last_seen_at).where(
+            Message.id == record_id, Message.user_id == user_id, Message.subtype == CALL_RECORD_SUBTYPE
+        )
+    )
+
+
+async def submission_last_active_at(db: AsyncSession, user_id: int, request_id: str) -> datetime | None:
+    # 重启也会写入 interrupted 或从已存回复恢复 completed，恢复时间不能作为交流发生时间。
+    return await db.scalar(
+        select(
+            case(
+                (Message.id.is_not(None), Message.created_at),
+                (PromptSubmission.status != "interrupted", PromptSubmission.updated_at),
+            )
+        )
+        .select_from(PromptSubmission)
+        .outerjoin(Message, Message.id == PromptSubmission.result_message_id)
+        .where(PromptSubmission.user_id == user_id, PromptSubmission.request_id == request_id)
+    )
 
 
 def _reviewable_message() -> ColumnElement[bool]:

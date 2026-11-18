@@ -3,10 +3,12 @@ import contextlib
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any, Protocol
 from uuid import UUID
 
 from features.companion.proactive_runtime import user_turn_activity
+from features.companion.rhythm import begin_contact, track_contact
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
 from features.conversation.http_contracts import PromptSubmitRequest
@@ -45,6 +47,7 @@ from workflows.chat.orchestrator import run_chat_turn
 from workflows.chat.persistence import _persist_assistant_no_tool_turn
 from workflows.chat.streaming import _LLMTurnResult
 from workflows.chat.types import TerminalReplyDelivery
+from workflows.companion_rhythm import close_rhythm_contact
 
 
 class PublishHistoryChange(Protocol):
@@ -74,6 +77,7 @@ def create_submission_handler(
         runtime: RuntimeSession,
         admission: contextlib.ExitStack,
         fingerprint: str,
+        contact_id: str | None,
     ) -> dict:
         response_preference = body.response_preference
 
@@ -144,6 +148,8 @@ def create_submission_handler(
                 )
             except EditNotAllowedError as exc:
                 raise RequestError(422, str(exc)) from exc
+        if contact_id is not None:
+            track_contact(user_id, contact_id)
         input_ids = await persist_submission_inputs(
             user_id,
             runtime.conversation_id,
@@ -151,6 +157,9 @@ def create_submission_handler(
             [*precursor_messages, req.message],
             persisted_message_id=persisted_message_id,
             call_record_id=call_record_id,
+            on_accept=partial(begin_contact, user_id=user_id, contact_id=contact_id, kind="message")
+            if contact_id is not None
+            else None,
         )
         persisted_message_id = input_ids[-1]
         if edited_messages is not None:
@@ -202,6 +211,8 @@ def create_submission_handler(
                 finally:
                     if runtime.active_turn is snapshot:
                         runtime.active_turn = None
+                    if contact_id is not None:
+                        await close_rhythm_contact(user_id, contact_id)
 
         async def persist_partial_reply() -> None:
             if reply_delivery is None:
@@ -353,7 +364,7 @@ def create_submission_handler(
                 async with conversation_history_lock(runtime.session_id, call_owner=call_owner):
                     if runtime.busy:
                         raise RequestError(409, "当前会话有正在生成的回复，请稍后再试", code="turn_busy")
-                    await _require_owned_conv(user_id, runtime.session_id)
+                    conv = await _require_owned_conv(user_id, runtime.session_id)
                     replace_reply_message_id = body.replace_reply_message_id
                     receipt, created = await reserve_submission(
                         user_id,
@@ -367,11 +378,22 @@ def create_submission_handler(
                     )
                     if not created:
                         return receipt.to_result()
+                    contact_id = (
+                        f"message:{request_id}"
+                        if conv.kind == "special"
+                        and call_record_id is None
+                        and body.retry_message_id is None
+                        and body.edit_message_id is None
+                        and replace_reply_message_id is None
+                        else None
+                    )
                     try:
-                        return await _submit_prompt(params, body, runtime, admission, fingerprint)
+                        return await _submit_prompt(params, body, runtime, admission, fingerprint, contact_id)
                     except BaseException:
                         if not runtime.busy:
                             runtime.active_turn = None
+                        if contact_id is not None:
+                            await close_rhythm_contact(user_id, contact_id)
                         await record_submission_state(
                             user_id, request_id, "failed", error="消息未被受理，请修改后重新发送。"
                         )

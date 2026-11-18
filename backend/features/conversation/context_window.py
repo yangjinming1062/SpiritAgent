@@ -108,3 +108,24 @@ async def load_companion_dialogue(db: AsyncSession, user_id: int, *, now: dateti
 
 async def load_recent_context_window(db: AsyncSession, user_id: int) -> str:
     return (await load_companion_dialogue(db, user_id)).content
+
+
+async def load_recent_main_exchange(db: AsyncSession, user_id: int) -> str:
+    """读取本次判断可用的近期主陪伴文本及通话发言。"""
+    now = utc_now()
+    rows = await db.scalars(
+        select(Message)
+        .join(Conversation)
+        .where(
+            Conversation.user_id == user_id,
+            Conversation.kind == "special",
+            Message.id > Conversation.context_after_message_id,
+            Message.role.in_(("user", "assistant")),
+            context_visible_subtype(),
+            Message.tool_calls.is_(None),
+            Message.created_at.between(now - timedelta(minutes=30), now),
+        )
+        .order_by(Message.id.desc())
+        .limit(16)
+    )
+    return format_messages_compact(list(reversed(rows.all())), user_local_tz=await resolve_user_timezone(db, user_id))

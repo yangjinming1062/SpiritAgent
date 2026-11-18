@@ -217,6 +217,10 @@ class VisualUpdatedEvent(BaseModel):
     version: int
 
 
+class RhythmUpdatedEvent(BaseModel):
+    revision: int
+
+
 class LifeUpdatedEvent(BaseModel):
     revision: int | None = None
     pursuit_id: ResourceId | None = None
@@ -311,6 +315,7 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "companion.visual_identity.updated": EventContract(VisualIdentityEvent, "all", "resource"),
     "companion.appearance_preparation.updated": EventContract(AppearancePreparationEvent, "all", "resource"),
     "companion.visual.updated": EventContract(VisualUpdatedEvent, "all", "resource"),
+    "companion.rhythm.updated": EventContract(RhythmUpdatedEvent, "desktop", "resource"),
     "companion.life.updated": EventContract(LifeUpdatedEvent, "all", "resource"),
     "companion.action.updated": EventContract(EmptyResult, "all", "resource"),
     "companion.visual.initial_requested": EventContract(EmptyResult, "all", "resource"),

@@ -104,7 +104,13 @@ from .creation import (
     read_visual_reference,
     review_existing_opening,
 )
-from .geometry import actor_reference_frame, probe_visual_image, visual_aspect_matches, visual_aspect_ratio
+from .geometry import (
+    actor_continuation_frame,
+    actor_reference_frame,
+    probe_visual_image,
+    visual_aspect_matches,
+    visual_aspect_ratio,
+)
 from .life import RECOVERY_WAITING, RESUME_WAITING, restart_visual_steps, settle_visual_steps
 from .models import VisualJob
 from .naming import schedule_visual_title
@@ -740,6 +746,27 @@ async def _prepare_pose(
     if progress.pose_path:
         return
 
+    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+        opening = snapshot.opening_frame
+        resolved = resolve_asset_reference(opening.path)
+        if resolved is None:
+            raise VisualCreationError("安睡首帧无法读取，候选已保留", "evidence_invalid")
+        data = await asyncio.to_thread(resolved[0].read_bytes)
+        if hashlib.sha256(data).hexdigest() != opening.content_hash:
+            raise VisualCreationError("安睡首帧与所选版本不符，候选已保留", "evidence_invalid")
+        frame = await asyncio.to_thread(actor_continuation_frame, data)
+        progress.pose_path = await save_image_chain_input_asset_async(
+            frame,
+            user_id=user_id,
+            generation_id=progress.generation_id,
+            label="wake_opening",
+            ext="png",
+            directory=directory,
+        )
+        await _prepare_geometry(progress, frame)
+        await _save_progress(user_id, job.id, progress, stage="image")
+        return
+
     async def before_submit() -> None:
         await _require_active_job(user_id, job.id, progress.generation_id)
 
@@ -772,6 +799,7 @@ async def _prepare_pose(
             and not progress.image_chain_json
             and not progress.repair_reason
             and not progress.regenerate_image
+            and "sleeping" not in snapshot.action.semantic_tags
         ):
             resolved = resolve_asset_reference(outfit)
             if resolved is None:
@@ -969,6 +997,8 @@ async def _prepare_opening(
             "画面检查暂未完成，可以稍后继续" if review.status == "unavailable" else "画面检查未完成，可以重新准备画面",
             "review_pending",
         )
+    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+        raise VisualCreationError(review.reason or "安睡首帧无法与起身动作接续", "activity_unsupported")
     begin_opening_repair(
         job,
         progress,
@@ -1244,6 +1274,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "feedback": job.feedback,
                 "customization_priority": progress.customization_priority,
                 "action_conditions": {"use_when": source.action.use_when, "avoid_when": source.action.avoid_when},
+                "paired_actor": source.kind == "actor" and source.opening_frame is not None,
             }
             if progress.video_evidence is None:
                 progress.video_evidence = await freeze_review_evidence(
@@ -2117,7 +2148,11 @@ async def _prepare_video_motion(
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, job_id, progress, stage="video")
                 continue
-            if exc.script.failure_kind == "unsupported" or snapshot.source.kind == "scene":
+            if (
+                exc.script.failure_kind == "unsupported"
+                or snapshot.source.kind == "scene"
+                or (snapshot.source.kind == "actor" and snapshot.source.opening_frame is not None)
+            ):
                 raise
             begin_opening_repair(job, progress, reason=str(exc), reference_path=progress.pose_path)
             await _save_progress(user_id, job_id, progress, stage="repairing", repair_count=job.repair_count)

@@ -13,6 +13,7 @@ from .client_assets import (
     client_material,
     client_play_command,
     client_scene,
+    client_stage_plan,
 )
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
@@ -39,9 +40,13 @@ def _http_error(exc: VisualError) -> RequestError:
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
     actual = await queries.actual_presentation_snapshot(user_id)
-    presentation = presentation.model_copy(update={"ambient_actor": client_layer_media(presentation.ambient_actor)})
     presentation = presentation.model_copy(
-        update={"ambient_catalog": [client_catalog_entry(entry) for entry in presentation.ambient_catalog]}
+        update={
+            "ambient_actor": client_layer_media(presentation.ambient_actor),
+            "ambient_catalog": [client_catalog_entry(entry) for entry in presentation.ambient_catalog],
+            "ambient_scene": [client_layer_media(scene) for scene in presentation.ambient_scene],
+            "stage_plan": client_stage_plan(presentation.stage_plan),
+        }
     )
     if presentation.pending_play is not None:
         presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})

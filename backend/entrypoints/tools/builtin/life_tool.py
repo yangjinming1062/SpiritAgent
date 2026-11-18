@@ -67,7 +67,7 @@ class LifeAdjustment(BaseModel):
 
 _EXCHANGE_REVIEW = {
     "zh": (
-        "source.user_message 是本轮已保存的用户发言，source.quote 是其中的原文片段。"
+        "source.user_messages 按顺序提供本轮已保存的用户发言，source.quoted_message 是包含 source.quote 的那一条。结合整批发言核对意图，以用户后续修正为准。"
         "note_exchange 只记录这次真实谈到的内容与有据可查的感受，不能说双方在现实或虚拟场景中实际完成了谈及的事。"
         "start_pursuit 必须有指向草稿中这件具体事项的明确请求或约定。提及、反问、否定、假设、引语、偏好和含糊的同意不足以形成约定。"
         "调整已有事项时，以已有事项为依据。如果 quote 非空，核对本轮用户发言确实请求这项调整。"
@@ -75,7 +75,8 @@ _EXCHANGE_REVIEW = {
         "缺少依据时报 unsupported_claim。"
     ),
     "en": (
-        "source.user_message is the saved user turn and source.quote is a verbatim passage in it. "
+        "source.user_messages contains the saved user messages in order. source.quoted_message contains source.quote. "
+        "Read the full batch and respect any later correction. "
         "note_exchange may describe what was actually discussed and supported reactions. It may not turn that subject into "
         "something the parties did together in reality or in a virtual scene. start_pursuit requires an explicit request "
         "or agreement for this exact matter. Mentions, questions, negation, hypotheticals, quotations, preferences and "
@@ -112,8 +113,7 @@ async def life_adjust(
     parent_session_id: str,
     memory_scope: MemoryScope | None = None,
     proactive_turn: bool = False,
-    user_message: str = "",
-    user_message_id: int | None = None,
+    user_messages: dict[int, str] | None = None,
     llm_config: UserLlmConfig | None = None,
     user_settings: dict[str, Any] | None = None,
     **arguments: Any,
@@ -124,13 +124,16 @@ async def life_adjust(
         body = LifeAdjustment.model_validate(
             {key: value for key, value in arguments.items() if key in LifeAdjustment.model_fields}
         )
-        if body.user_instruction is not None and (
-            proactive_turn or not body.user_instruction.strip() or body.user_instruction not in user_message
-        ):
+        messages = {} if proactive_turn else (user_messages or {})
+        quote = body.user_instruction
+        user_message_id = next(
+            (key for key in reversed(messages) if quote and quote.strip() and quote in messages[key]), None
+        )
+        if quote is not None and user_message_id is None:
             raise ValueError("user_instruction 无法匹配本轮非主动用户消息，请核对指令来源与原文")
-        recorded_source = body.user_instruction is not None
+        recorded_source = user_message_id is not None
         new_entry = body.operation in {"start_pursuit", "note_exchange"}
-        if new_entry and (not recorded_source or user_message_id is None or body.pursuit_id is not None):
+        if new_entry and (not recorded_source or body.pursuit_id is not None):
             raise ValueError("登记约定或交流需要本轮用户实际发言")
         if not new_entry and body.pursuit_id is None:
             raise ValueError("请先用 life_inspect 确认要调整的事项")
@@ -153,8 +156,9 @@ async def life_adjust(
             llm_config,
             {
                 "operation": body.operation,
-                "user_message": user_message,
-                "quote": body.user_instruction,
+                "user_messages": list(messages.values()),
+                "quoted_message": messages[user_message_id] if user_message_id is not None else None,
+                "quote": quote,
                 "pursuit": {"title": pursuit.title, "status": pursuit.status, "reason": pursuit.reason}
                 if pursuit
                 else None,
@@ -184,7 +188,7 @@ async def life_adjust(
             LifeDecisionRequest(
                 **body.model_dump(exclude={"user_instruction"}),
                 source="user" if recorded_source else "companion",
-                source_message_id=user_message_id if recorded_source else None,
+                source_message_id=user_message_id,
                 request_id=request_id,
                 next_review_at=utc_now() if recorded_source and body.operation != "note_exchange" else None,
             ),

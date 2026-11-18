@@ -29,6 +29,10 @@ import { createTransitionLayer } from './transition'
 
 const FALLBACK_BACKGROUND = 'radial-gradient(circle at center, var(--ui-fill-hover), var(--ui-app-bg) 72%)'
 
+function isStaticTarget(media: DesktopBackground): boolean {
+  return media.playId?.startsWith('static:') === true
+}
+
 export interface DesktopPlayerElements {
   first: HTMLVideoElement
   second: HTMLVideoElement
@@ -87,7 +91,11 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
   const receipts = createReceiptLog(bridge, () => disposed)
 
   const filterFor = (media: DesktopBackground | null): string =>
-    ambientPhaseFilter(Boolean(media && !media.reduceMotion), media?.backgroundKind !== 'scene' || media.phaseMedia)
+    ambientPhaseFilter(
+      Boolean(media && !media.reduceMotion),
+      media?.backgroundKind !== 'scene' || media.phaseMedia,
+      media?.dayPhase ?? undefined
+    )
 
   const transition = createTransitionLayer(transitionCanvas, filterFor)
 
@@ -159,6 +167,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
   ): void {
     if (
       status === 'started' &&
+      !isStaticTarget(media) &&
       (media.actor || (media.backgroundKind === 'scene' && media.outfit)) &&
       !actor.isVisible() &&
       !actor.hasPoster()
@@ -184,6 +193,23 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
 
     waitingImage = null
     acknowledgeImage(media, 'started')
+  }
+
+  async function confirmStaticFrame(media: DesktopBackground): Promise<void> {
+    const isCurrent = (): boolean => !disposed && active === null && staticMedia?.playId === media.playId
+
+    try {
+      await still.decode()
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+
+      if (isCurrent()) {
+        acknowledgeImage(media, 'started')
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        acknowledgeImage(media, 'failed', String(error))
+      }
+    }
   }
 
   function discardWaitingImage(): void {
@@ -276,7 +302,13 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
     }
 
     active = index
-    actor.allow(slot.media?.backgroundKind === 'scene' && Boolean(slot.media.actor || slot.media.outfit))
+
+    if (slot.media?.backgroundKind === 'cinematic') {
+      actor.reset()
+    } else {
+      actor.allow(Boolean(slot.media?.actor || slot.media?.outfit))
+    }
+
     slot.element.style.opacity = '1'
     slot.element.style.zIndex = layerZ(slot.media?.backgroundKind ?? 'scene')
     still.style.opacity = '0'
@@ -445,7 +477,10 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
     updateVideoLayout(slot, actorLayout)
     acknowledgeSlot(slot, 'first-frame', undefined, receipts)
 
-    if (slot.media.kind === 'once' && active !== null && sharesBase(slots[active].media, slot.media)) {
+    const previous = active === null ? null : slots[active].media
+    const rotate = previous?.playId?.startsWith('render:ambient:') && slot.media.playId?.startsWith('render:ambient:')
+
+    if (active !== null && ((slot.media.kind === 'once' && sharesBase(previous, slot.media)) || rotate)) {
       pending = index
       // 保底循环继续到自然结束，已解码的短动作从共同基础画面开始。
       slots[active].element.loop = false
@@ -576,8 +611,13 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       return
     }
 
-    // 主体层与背景层独立接收：环境层换图不打断主体，主体缺失只清自身。
-    actor.receive(request)
+    // 环境层换图不打断主体；整片等首帧显示时再释放分层主体。
+    // 正式静态回执只在冻结的背景和造型一起解码、合成并显示后发出。
+    const layered = request.backgroundKind === 'scene' && !isStaticTarget(request)
+
+    if (layered) {
+      actor.receive(request)
+    }
 
     for (const slot of slots) {
       if (slot.media?.playId === media.playId && (media.playId !== null || slot.media.revision === media.revision)) {
@@ -590,6 +630,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
         }
         slot.media.backgroundKind = media.backgroundKind
         slot.media.phaseMedia = media.phaseMedia
+        slot.media.dayPhase = media.dayPhase
         slot.element.style.zIndex = layerZ(slot.media.backgroundKind)
         updateVideoLayout(slot, actorLayout)
       }
@@ -668,12 +709,19 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
 
     if (!media.video) {
       if (!media.poster) {
-        if (media.actor) {
+        if (media.actor || (media.backgroundKind === 'scene' && media.outfit)) {
           for (const slot of slots) {
             reset(slot)
           }
 
           active = retainedLoop = pending = null
+          staticMedia = null
+
+          if (fallbackPoster) {
+            URL.revokeObjectURL(fallbackPoster)
+            fallbackPoster = null
+          }
+
           still.style.opacity = '0'
           setFill(null)
           actor.allow(true)
@@ -685,13 +733,18 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       if (
         staticMedia?.playId === media.playId &&
         staticMedia?.visualId === media.visualId &&
-        staticMedia?.visualVersion === media.visualVersion
+        staticMedia?.visualVersion === media.visualVersion &&
+        staticMedia?.sceneKey === media.sceneKey
       ) {
+        staticMedia = media
+        actor.allow(layered && Boolean(media.actor || media.outfit))
+        syncPhaseFilter()
+
         return
       }
 
       let preparedPoster: string | null = null
-      void prepareStaticPoster(media.poster, media.backgroundKind === 'scene' ? null : media.outfit)
+      void prepareStaticPoster(media.poster, layered ? null : media.outfit)
         .then(nextPoster => {
           preparedPoster = nextPoster
 
@@ -726,11 +779,22 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
           const previousPoster = fallbackPoster
           fallbackPoster = nextPoster
           staticMedia = media
-          actor.allow(media.backgroundKind === 'scene' && Boolean(media.actor || media.outfit))
+
+          if (!layered) {
+            actor.reset()
+          } else {
+            actor.allow(Boolean(media.actor || media.outfit))
+          }
+
           showPoster(nextPoster)
           transition.fade()
+
+          if (isStaticTarget(media)) {
+            void confirmStaticFrame(media)
+          }
+
           requestAnimationFrame(() => {
-            if (!disposed && nextImageGeneration === imageGeneration) {
+            if (!isStaticTarget(media) && !disposed && nextImageGeneration === imageGeneration) {
               acknowledgeImage(media, 'started')
             }
 

@@ -7,6 +7,7 @@ export interface StageVideoSource<T> {
   mediaKey?: string
   loop: boolean
   natural?: boolean
+  holdLastFrame?: boolean
   value: T
   load: () => Promise<StageVideoLease>
 }
@@ -268,7 +269,11 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       const source = slot.source
       settle(source.key)
       slot.terminal = true
-      restore(slot)
+
+      if (!source.holdLastFrame) {
+        restore(slot)
+      }
+
       events.ended(source)
     }
 

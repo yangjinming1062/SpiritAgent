@@ -8,11 +8,11 @@ from features.action_library.queries import action_by_preset_key
 from features.appearance.identity import visual_identity_is_current
 from features.appearance.queries import initial_outfit_snapshot, ready_outfit_snapshot
 from features.media.continuations import MediaWait, wait_for_media
-from features.media.identity_contracts import VisualIdentitySnapshot
+from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.visuals.generation import wait_visual_job
 from features.visuals.queries import creation_request, current_outfit_reference, job_review_reason, reusable_actor_clip
 from features.visuals.reviews import visual_review_view
-from features.visuals.schemas import ActorClipSource, VisualSnapshot
+from features.visuals.schemas import ActorClipSource, ActorOpeningFrame, VisualSnapshot
 from features.visuals.service import create_visual_job, resume_job
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
@@ -26,19 +26,27 @@ from workflows.visuals_companion import load_visual_snapshot
 
 logger = get_logger(__name__)
 
-# 待机循环是首次可用的最小集合；成功后按渐进集合补充互动反应与常用循环，
-# 顺序为先补齐互动反应，再补持续循环，最后才是大幅度的自发动作。
+# 待机先提供首次可用画面；安睡的实际首帧为起身短动作提供起点。
 _CORE_PRESETS = ("idle",)
-_PROGRESSIVE_PRESETS = ("look", "smile", "focus", "relax", "stretch")
+_PROGRESSIVE_PRESETS = ("sleep", "wake_up", "look", "smile", "focus", "relax", "stretch")
+_ACTOR_SIZE = (1024, 1024)
+_BASE_REQUIREMENTS = "按参考中的实际身体结构表现动作，让动作所需的身体部位和物品在相应时刻可见。"
+_SLEEP_REQUIREMENTS = (
+    "使用可以独立合成的主体画面。选取与实际身体和造型相容的睡姿，让角色直接由地面支撑，"
+    "接触与承重自然，角色全身与附肢入画。构图给醒来后的自然姿态留出空间，保持镜头、大小和位置稳定。"
+)
 _TASKS = TaskScope("visuals.preparation")
 _STOPPING = False
+
+_PreparationTarget = tuple[str, str, str, CharacterReferenceRole]
 
 
 class _Prepared(NamedTuple):
     """单个动作在本造型下的准备结果；`state` 说明能否自动使用或需要重新排期。"""
 
-    target: tuple[str, str]
+    target: _PreparationTarget
     state: Literal["prepared", "manual_only", "switched"]
+    opening_frame: ActorOpeningFrame | None = None
 
 
 def _request_id(snapshot: VisualSnapshot, source: ActorClipSource) -> str:
@@ -51,10 +59,34 @@ def _request_id(snapshot: VisualSnapshot, source: ActorClipSource) -> str:
         "action": source.action.media_basis(),
         "target": (snapshot.target_width, snapshot.target_height),
     }
+    if source.opening_frame is not None:
+        basis["opening_frame"] = source.opening_frame.content_hash
     return "base-motion:" + hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
 
 
-async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None) -> _Prepared | None:
+async def _prepared_actor(
+    user_id: int, key: str, source: ActorClipSource, selected: _PreparationTarget
+) -> _Prepared | None:
+    clip = await reusable_actor_clip(user_id, source, opening_aspect=_ACTOR_SIZE if key == "sleep" else None)
+    if clip is None:
+        return None
+    if key != "sleep":
+        return _Prepared(selected, "prepared")
+    visual_id, number, body = clip
+    if not body.first_frame_path or not body.continuity_key:
+        return None
+    return _Prepared(
+        selected,
+        "prepared",
+        ActorOpeningFrame(
+            visual_id=visual_id, version=number, path=body.first_frame_path, content_hash=body.continuity_key
+        ),
+    )
+
+
+async def _prepare_action(
+    user_id: int, key: str, target: _PreparationTarget | None, opening_frame: ActorOpeningFrame | None
+) -> _Prepared | None:
     """准备单个内置动作；返回本造型应继续绑定的身份、造型与准备结果。
 
     返回 None 表示素材或任务当前不可用（失败、暂停、未知或资料变化），本轮到此
@@ -81,20 +113,28 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
                 outfit_id=outfit.id,
                 scene_id=None,
                 action_id=action.id,
-                target_width=1024,
-                target_height=1024,
-                requirements="按参考中的实际身体结构表现动作，让动作所需的身体部位和物品在相应时刻可见。",
+                target_width=_ACTOR_SIZE[0],
+                target_height=_ACTOR_SIZE[1],
+                requirements=_SLEEP_REQUIREMENTS if key == "sleep" else _BASE_REQUIREMENTS,
             )
         source = snapshot.source
         if not isinstance(source, ActorClipSource):
             return None
         if current is not None and current.content_hash != source.outfit.content_hash:
             return None
-        selected = (source.identity_hash, source.outfit.content_hash)
+        selected = (
+            source.identity_hash,
+            source.outfit.content_hash,
+            source.portrait_hash,
+            source.identity_reference_role,
+        )
         if target is not None and selected != target:
             return _Prepared(selected, "switched")
-        if await reusable_actor_clip(user_id, source):
-            return _Prepared(selected, "prepared")
+        if opening_frame is not None:
+            source = source.model_copy(update={"opening_frame": opening_frame})
+            snapshot = snapshot.model_copy(update={"source": source})
+        if prepared := await _prepared_actor(user_id, key, source, selected):
+            return prepared
         request_id = _request_id(snapshot, source)
         original = await creation_request(user_id, request_id)
         if original is not None:
@@ -123,8 +163,8 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
     if await wait_visual_job(user_id, job.id) != "succeeded":
         return None
     # 制作完成不等于可自动演出：成品照常保留在影像库，只有实际语义确认合格才计入准备。
-    if await reusable_actor_clip(user_id, source):
-        return _Prepared(selected, "prepared")
+    if prepared := await _prepared_actor(user_id, key, source, selected):
+        return prepared
     logger.info(
         "Base motion kept but not automatically usable",
         extra={
@@ -138,18 +178,23 @@ async def _prepare_action(user_id: int, key: str, target: tuple[str, str] | None
 
 
 async def _prepare(user_id: int) -> None:
-    target: tuple[str, str] | None = None
+    target: _PreparationTarget | None = None
+    sleep_frame = None
     for key in (*_CORE_PRESETS, *_PROGRESSIVE_PRESETS):
+        if key == "wake_up" and sleep_frame is None:
+            continue
         require_new_generation_call(user_id)
         # 默认循环成功后才继续渐进集合；任一项失败、暂停和未知都终止本轮，
         # 留给原任务的恢复入口，不逐项消耗预算。
-        result = await _prepare_action(user_id, key, target)
+        result = await _prepare_action(user_id, key, target, sleep_frame if key == "wake_up" else None)
         if result is None:
             return
         if result.state == "switched":
             schedule_base_motion_preparation(user_id)
             return
         target = result.target
+        if key == "sleep":
+            sleep_frame = result.opening_frame
         if result.state == "prepared":
             continue
         # 已产出成品但不可自动使用：待机循环未达成核心目标时结束本轮；渐进动作继续

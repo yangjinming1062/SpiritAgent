@@ -1,6 +1,16 @@
 export type { VisualReceiptBody, VisualsListQuery } from './api'
 export { actionsApi, visualsApi } from './api'
-export { bindPresentationDirector, enqueueInteraction, enqueueInteractionForward, resolveAmbientLoop } from './director'
+export {
+  $ambientLoopChoice,
+  $failedStageMedia,
+  $wakePerformance,
+  bindPresentationDirector,
+  enqueueInteraction,
+  enqueueInteractionForward,
+  recordLocalStagePlayback,
+  recordStageMediaFailure,
+  retryStageMedia
+} from './director'
 export {
   clearVisualDetail,
   commandVisualJob,
@@ -20,7 +30,13 @@ export {
   visualPerformancePorts
 } from './performance'
 export { $performance } from './performance-scheduler'
-export { $stagePlan, deriveStagePlan, type StagePlan, type StageScenePlan } from './stage-plan'
+export {
+  $stagePlan,
+  deriveStagePlan,
+  pendingStaticPresentation,
+  type StagePlan,
+  type StageScenePlan
+} from './stage-plan'
 
 export {
   $visualPlayback,

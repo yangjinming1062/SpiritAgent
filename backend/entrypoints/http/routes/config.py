@@ -1,4 +1,5 @@
 import features.configuration.desktop_operations as desktop_configuration
+from features.companion.rhythm import reschedule_timezone_change
 from features.configuration.schemas import DesktopConfigPutRequest, DesktopConfigResponse
 from infrastructure.database import DbSession
 
@@ -15,4 +16,6 @@ async def get_config(user: CurrentUser, db: DbSession) -> DesktopConfigResponse:
 
 @router.put("", response_model=DesktopConfigResponse)
 async def put_config(body: DesktopConfigPutRequest, user: CurrentUser, db: DbSession) -> DesktopConfigResponse:
-    return await desktop_configuration.put_config(body=body, user=user, db=db)
+    return await desktop_configuration.put_config(
+        body=body, user=user, db=db, on_timezone_change=reschedule_timezone_change
+    )

@@ -31,6 +31,7 @@ from features.companion.proactive_runtime import (
 )
 from features.companion.prompts import CHECK_IN_INTENT_TEXTS
 from features.companion.queries import complete_user_ids
+from features.companion.rhythm import due_rhythm_users
 from features.configuration.settings.queries import timezone_settings
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import companion_conversation_users
@@ -58,6 +59,7 @@ from runtime.presets import COMPANION_PRESET_ID
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
 from workflows.automation.standard_turns import execute_standard_turn
+from workflows.companion_rhythm import ensure_personal_routine, update_account_rhythm
 from workflows.life_decisions import consider_life
 from workflows.life_execution import run_life_execution
 from workflows.life_presentation import evaluate_life_presentation
@@ -171,6 +173,7 @@ class ScanScheduler:
 
 # 扫描只发现并提交工作；同名发现与同一工作键各自单飞。
 _SCANS = ScanScheduler("scheduler.cron")
+_RHYTHM_SCANS = ScanScheduler("scheduler.rhythm")
 
 
 def _log_task_error(name: str, task: asyncio.Task) -> None:
@@ -185,6 +188,7 @@ def _log_task_error(name: str, task: asyncio.Task) -> None:
 async def drain() -> None:
     """取消并 await 所有后台 task；由 bootstrap/lifecycle.py 的停机 drain 调用，避免 SIGTERM 在 db.commit() 中途被 engine 释放。"""
     await _SCANS.drain()
+    await _RHYTHM_SCANS.drain()
 
 
 async def _select_due_jobs() -> list[DueJob]:
@@ -398,7 +402,27 @@ async def _discover_life_work() -> list[ScheduledWork]:
         for user_id in sorted((presentation_users | set(MANAGER.local_user_ids())) & set(completed))
         if not is_user_in_maintenance(user_id)
     )
+    work.extend(
+        ScheduledWork("routine", partial(ensure_personal_routine, user_id), user_id)
+        for user_id in sorted(onboarded)
+        if not is_user_in_maintenance(user_id)
+    )
     return work
+
+
+async def _discover_rhythm_work() -> list[ScheduledWork]:
+    async with session_scope() as db:
+        candidates = await due_rhythm_users(db, utc_now(), MANAGER.local_user_ids())
+    return [
+        ScheduledWork("rhythm", partial(update_account_rhythm, user_id), user_id)
+        for user_id in sorted(candidates)
+        if not is_user_in_maintenance(user_id)
+    ]
+
+
+async def run_rhythm_tick() -> None:
+    _RHYTHM_SCANS.every("companion_rhythm", interval=5, discover=_discover_rhythm_work)
+    await _RHYTHM_SCANS.tick()
 
 
 async def _run_memory_review(scope: MemoryScope) -> None:

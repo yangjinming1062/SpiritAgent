@@ -4,14 +4,13 @@ import { currentDayPhase, type DayPhase } from '@/shared/lib/day-phase'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 
-import { automaticLoops, contextAllowed, lifeMatchScore, motionAllowed } from './selection'
+import { type CatalogEntry, motionAllowed } from './selection'
+import type { VisualPlayCommand, VisualsPresentation } from './types'
 
 type LayerMedia = ApiSchemas['StageLayerMedia']
-type ActorBody = ApiSchemas['ActorClipBody']
 type StageLayout = ApiSchemas['StageCompositionLayout']
 type SceneReference = ApiSchemas['SceneMediaRef']
 
-/** 窗口/桌面共用的主体层计划：透明视频成品 + 主体元数据。 */
 interface StageActorPlan {
   visualId: string
   version: number
@@ -20,31 +19,56 @@ interface StageActorPlan {
   width: number
   height: number
   loop: boolean
-  body: ActorBody | null
+  body: ApiSchemas['ActorClipBody'] | null
 }
 
-/** 环境层计划：静态图或循环视频；与主体层独立更换。 */
 export interface StageScenePlan {
   visualId: string | null
   version: number | null
   url: string
   posterUrl: string | null
-  width: number
-  height: number
   isVideo: boolean
-  /** 冻结环境及正式基础引用；只在同一基础环境内延续时段画面。 */
-  environmentKey: string
-  /** 已使用时段版本，保留媒体自身光线。 */
   phaseMatched: boolean
 }
 
-/** 从同一份呈现状态解析出的统一舞台计划；窗口取主体层，桌面取完整或分层组合。 */
+interface LocalStagePlay {
+  id: string
+  visualId: string
+  version: number
+  target: 'actor' | 'background'
+  expiresAt: string | null
+}
+
 export interface StagePlan {
-  mode: 'layered' | 'cinematic' | 'static' | 'empty'
   actor: StageActorPlan | null
+  actorStillUrl: string | null
   scene: StageScenePlan | null
   cinematic: LayerMedia | null
   layout: StageLayout
+  dayPhase: DayPhase
+  localPlay: LocalStagePlay | null
+}
+
+export interface AmbientChoice {
+  id: string
+  visualId: string
+  version: number
+}
+
+export interface WakePerformance {
+  id: string
+  expiresAt: string
+  actor: CatalogEntry
+  scene: StageScenePlan | null
+}
+
+interface StageOptions {
+  desktop?: boolean
+  subtle?: boolean
+  motionEnabled?: boolean
+  ambient?: AmbientChoice | null
+  wake?: WakePerformance | null
+  failedMedia?: ReadonlySet<string>
 }
 
 const DEFAULT_LAYOUT: StageLayout = {
@@ -54,240 +78,95 @@ const DEFAULT_LAYOUT: StageLayout = {
   safe_area: [0, 0, 1, 1]
 }
 
-const EMPTY_PLAN: StagePlan = { mode: 'empty', actor: null, scene: null, cinematic: null, layout: DEFAULT_LAYOUT }
+export const $stagePlan = atom<StagePlan>(deriveStagePlan(null, null))
 
-function stageLayout(
-  presentation: ApiSchemas['VisualPresentationResponse'] | null,
-  play: ApiSchemas['VisualPlayCommand'] | null
-): StageLayout {
-  return presentation?.composition?.layout ?? play?.composition?.layout ?? DEFAULT_LAYOUT
+export function mediaKey(entry: Pick<CatalogEntry, 'visual_id' | 'version'>): string {
+  return `${entry.visual_id}:${entry.version}`
 }
 
-function sceneFromLayer(layer: LayerMedia | null | undefined, phaseMatched = false): StageScenePlan | null {
-  if (!layer || layer.asset_kind !== 'scene') {
-    return null
-  }
+export function pendingStaticPresentation(presentation: VisualsPresentation | null) {
+  const target = presentation?.static_presentation
 
-  return {
-    visualId: layer.visual_id,
-    version: layer.version,
-    url: layer.media_url,
-    posterUrl: layer.poster_url ?? null,
-    width: layer.width,
-    height: layer.height,
-    isVideo: layer.media_kind === 'video',
-    environmentKey: '',
-    phaseMatched
-  }
+  return target &&
+    !presentation?.pending_play &&
+    target.receipt_kind === null &&
+    (!target.retry_at || Date.parse(target.retry_at) <= Date.now())
+    ? target
+    : null
 }
 
-/**
- * 环境层时段选择：当前环境存在与本地时段匹配的版本时优先使用，没有则保持
- * 组合里的现有环境（不限时段版本也视为可用）。纯视觉表现，不改变生活事实，
- * 也不因时段变化生成新媒体。
- */
-function sceneForPhase(
-  catalog: readonly LayerMedia[],
-  current: LayerMedia | null | undefined,
-  phase: DayPhase,
-  material?: SceneReference | null,
-  previous?: StageScenePlan | null
+export function ambientCandidates(
+  presentation: VisualsPresentation,
+  desktop: boolean,
+  subtle: boolean,
+  failed?: ReadonlySet<string>
+): CatalogEntry[] {
+  const plan = presentation.stage_plan
+
+  if (!plan || !presentation.autonomous_enabled) {
+    return []
+  }
+
+  const usable = (entry: CatalogEntry): boolean => !failed?.has(mediaKey(entry)) && motionAllowed(entry, subtle)
+  const actors = plan.actor_variants.filter(usable)
+  const cinematic = desktop ? plan.cinematic_variants.filter(usable) : []
+  const wallpaper = presentation.default_wallpaper?.composition.media?.cinematic
+
+  const useFavorite =
+    desktop &&
+    wallpaper &&
+    !failed?.has(mediaKey(wallpaper)) &&
+    phaseAllowed(wallpaper, plan.day_phase) &&
+    !needsCharacter(presentation)
+
+  if (useFavorite && plan.activity_type === 'idle' && cinematic.length === 0) {
+    return []
+  }
+
+  const matched = [...actors, ...cinematic]
+
+  if (matched.length > 0) {
+    return matched
+  }
+
+  if (useFavorite) {
+    return []
+  }
+
+  return plan.fallback_actor_variants.filter(usable)
+}
+
+function phaseAllowed(media: LayerMedia, phase: DayPhase): boolean {
+  return media.day_phase === null || media.day_phase === phase
+}
+
+function needsCharacter(presentation: VisualsPresentation | null): boolean {
+  return presentation?.rhythm?.state === 'asleep' || presentation?.rhythm?.interacting === true
+}
+
+export function sceneForStage(
+  media: LayerMedia | null | undefined,
+  material: SceneReference | null | undefined,
+  phase: DayPhase
 ): StageScenePlan | null {
-  const hash = material?.content_hash ?? current?.scene_content_hash
-  const base = material && current?.scene_content_hash !== hash ? null : current
-  const environmentKey = `${hash ?? ''}:${base?.visual_id ?? 'static'}:${base?.version ?? ''}`
-  const matched = hash ? catalog.find(entry => entry.scene_content_hash === hash && entry.day_phase === phase) : null
+  if (media?.asset_kind === 'scene' && phaseAllowed(media, phase)) {
+    return {
+      visualId: media.visual_id,
+      version: media.version,
+      url: media.media_url,
+      posterUrl: media.poster_url ?? material?.path ?? null,
+      isVideo: media.media_kind === 'video',
+      phaseMatched: media.day_phase === phase
+    }
+  }
 
-  const selected =
-    sceneFromLayer(matched, true) ??
-    (previous?.environmentKey === environmentKey ? previous : null) ??
-    sceneFromLayer(base, Boolean(base?.day_phase)) ??
-    (material
-      ? {
-          visualId: null,
-          version: null,
-          url: material.path,
-          posterUrl: null,
-          width: 0,
-          height: 0,
-          isVideo: false,
-          environmentKey,
-          phaseMatched: false
-        }
-      : null)
-
-  return selected ? { ...selected, environmentKey } : null
+  return material
+    ? { visualId: null, version: null, url: material.path, posterUrl: null, isVideo: false, phaseMatched: false }
+    : null
 }
 
-/** 静态投影（无媒体）与空呈现都归入 static/empty；窗口据此退回冻结造型。 */
-export function deriveStagePlan(
-  presentation: ApiSchemas['VisualPresentationResponse'] | null,
-  play: ApiSchemas['VisualPlayCommand'] | null,
-  directedAmbient: CatalogEntry | null = null,
-  subtle = false,
-  previousScene: StageScenePlan | null = null,
-  useDefaultWallpaper = false
-): StagePlan {
-  if (!presentation && !play) {
-    return EMPTY_PLAN
-  }
-
-  const baseMedia = presentation?.composition?.media
-  const ambient = ambientActor(presentation, directedAmbient, subtle)
-  const layout = stageLayout(presentation, play)
-
-  const phaseScene = () =>
-    sceneForPhase(
-      presentation?.ambient_scene ?? [],
-      baseMedia?.scene,
-      currentDayPhase(),
-      presentation?.static_presentation?.scene ?? presentation?.composition?.scene_material,
-      previousScene
-    )
-
-  if (play?.asset_kind === 'cinematic') {
-    return {
-      mode: 'cinematic',
-      actor: ambient,
-      scene: null,
-      cinematic: {
-        visual_id: play.visual_id,
-        version: play.visual_version,
-        asset_kind: 'cinematic',
-        media_kind: play.media_kind,
-        media_url: play.media_path,
-        poster_url: play.poster_path,
-        clip_kind: play.clip_kind,
-        width: 0,
-        height: 0,
-        duration_ms: null,
-        body: null,
-        description: '',
-        day_phase: null,
-        scene_content_hash: null
-      },
-      layout
-    }
-  }
-
-  if (play?.asset_kind === 'scene') {
-    return {
-      mode: 'layered',
-      actor: ambient,
-      scene: {
-        visualId: play.visual_id,
-        version: play.visual_version,
-        url: play.media_path,
-        posterUrl: play.poster_path ?? null,
-        width: 0,
-        height: 0,
-        isVideo: play.media_kind === 'video',
-        environmentKey: `command:${play.visual_id}:${play.visual_version}`,
-        phaseMatched: Boolean(play.day_phase)
-      },
-      cinematic: null,
-      layout
-    }
-  }
-
-  if (play && play.asset_kind === 'actor' && play.media_kind === 'video') {
-    const actor: StageActorPlan = {
-      visualId: play.visual_id,
-      version: play.visual_version,
-      url: play.media_path,
-      posterUrl: play.poster_path ?? null,
-      width: 0,
-      height: 0,
-      loop: play.loop,
-      body: play.body ?? null
-    }
-
-    const scene = phaseScene()
-
-    return { mode: 'layered', actor, scene, cinematic: null, layout }
-  }
-
-  if (!presentation) {
-    return EMPTY_PLAN
-  }
-
-  // 默认壁纸是桌面专用的用户偏好；窗口模式继续消费当前主体组合。
-  // 选定的场景不再按本地时段替换，完整场景也不要求进入自动演出目录。
-  if (useDefaultWallpaper) {
-    const defaultWallpaper = presentation.default_wallpaper
-    const defaultComposition = defaultWallpaper?.composition
-    const defaultMedia = defaultComposition?.media
-
-    if (defaultComposition?.mode === 'cinematic' && defaultMedia?.cinematic) {
-      return {
-        mode: 'cinematic',
-        actor: null,
-        scene: null,
-        cinematic: defaultMedia.cinematic,
-        layout: defaultComposition.layout
-      }
-    }
-
-    if (defaultComposition?.mode === 'layered' && defaultMedia?.scene) {
-      return {
-        mode: 'layered',
-        actor: ambient,
-        scene: sceneFromLayer(defaultMedia.scene),
-        cinematic: null,
-        layout: defaultComposition.layout
-      }
-    }
-  }
-
-  const media = presentation.composition?.media ?? null
-
-  // 动态素材可用时，旧静态目标只作为回退；重新开启动态无需等待下一次生活变化。
-  if (presentation.static_presentation) {
-    return { mode: ambient ? 'layered' : 'static', actor: ambient, scene: phaseScene(), cinematic: null, layout }
-  }
-
-  const cinematicEntry = presentation.ambient_catalog.find(
-    entry => entry.visual_id === media?.cinematic?.visual_id && entry.version === media?.cinematic?.version
-  )
-
-  // 持续整片按选择来源核对：life 沿用自动选择的同一套生活匹配（活动类别或语义
-  // 不符即退出回基础舞台，同活动的新修订继续沿用）；user 不受生活变化影响；
-  // base 维持上下文条件。目录缺项（如换造型）对所有来源都视为不可用。
-  const compositionSource = presentation.composition?.selection_source
-
-  if (
-    media?.mode === 'cinematic' &&
-    media.cinematic &&
-    cinematicEntry &&
-    media.cinematic.clip_kind !== 'once' &&
-    motionAllowed(cinematicEntry, subtle) &&
-    (compositionSource === 'user' ||
-      (compositionSource === 'life'
-        ? lifeMatchScore(cinematicEntry, presentation.intent) > 0
-        : contextAllowed(cinematicEntry, presentation.intent)))
-  ) {
-    return { mode: 'cinematic', actor: ambient, scene: null, cinematic: media.cinematic, layout }
-  }
-
-  if (media?.mode === 'layered') {
-    const actor = ambient
-    const scene = phaseScene()
-
-    if (actor || scene) {
-      return { mode: 'layered', actor, scene, cinematic: null, layout }
-    }
-  }
-
-  return ambient ? { mode: 'layered', actor: ambient, scene: null, cinematic: null, layout } : EMPTY_PLAN
-}
-
-/** 解析后的统一舞台计划；窗口与桌面消费者共享同一份。 */
-export const $stagePlan = atom<StagePlan>(EMPTY_PLAN)
-
-type CatalogEntry = NonNullable<ApiSchemas['VisualPresentationResponse']['ambient_catalog']>[number]
-
-function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPlan | null {
-  if (!entry || entry.asset_kind !== 'actor' || entry.media_kind !== 'video' || entry.clip_kind === 'once') {
+function actorFromEntry(entry: LayerMedia | null | undefined): StageActorPlan | null {
+  if (!entry || entry.asset_kind !== 'actor' || entry.media_kind !== 'video') {
     return null
   }
 
@@ -295,43 +174,148 @@ function actorFromCatalog(entry: CatalogEntry | null | undefined): StageActorPla
     visualId: entry.visual_id,
     version: entry.version,
     url: entry.media_url,
-    posterUrl: entry.poster_url ?? null,
+    posterUrl: entry.body?.first_frame_path ?? entry.poster_url ?? null,
     width: entry.width,
     height: entry.height,
-    loop: true,
+    loop: entry.clip_kind !== 'once',
     body: entry.body ?? null
   }
 }
 
-/**
- * 导演选择的常驻循环优先于服务端 ambient 投影：同为已冻结身份/造型下的只读轮换，
- * 不建立播放账本；目录缺项（如换装后旧选择失效）自动回落 ambient。
- */
-function ambientActor(
-  presentation: ApiSchemas['VisualPresentationResponse'] | null,
-  directed: CatalogEntry | null,
-  subtle: boolean
-): StageActorPlan | null {
-  if (!presentation) {
-    return null
+/** 以服务端候选为基准，正在播放的点播和新鲜起身事件才临时覆盖。 */
+export function deriveStagePlan(
+  presentation: VisualsPresentation | null,
+  command: VisualPlayCommand | null,
+  { desktop = false, subtle = false, motionEnabled = true, ambient = null, wake = null, failedMedia }: StageOptions = {}
+): StagePlan {
+  const target = presentation?.stage_plan
+  const dayPhase = target?.day_phase ?? currentDayPhase()
+  const composition = presentation?.composition
+  const media = composition?.media
+  const staticTarget = presentation?.static_presentation
+  const fallbackMaterial = staticTarget?.scene ?? composition?.scene_material
+  const wallpaper = desktop ? presentation?.default_wallpaper?.composition : null
+  const favorite = wallpaper?.media
+  const enabled = presentation?.autonomous_enabled === true
+  const showCharacter = enabled && needsCharacter(presentation)
+
+  const favoriteCinematic =
+    favorite?.cinematic && (!enabled || phaseAllowed(favorite.cinematic, dayPhase)) ? favorite.cinematic : null
+
+  const candidates = presentation ? ambientCandidates(presentation, desktop, subtle, failedMedia) : []
+  const selected = candidates.find(entry => ambient && mediaKey(entry) === `${ambient.visualId}:${ambient.version}`)
+  const choice = selected ?? candidates[0]
+
+  const regularActor = motionEnabled
+    ? actorFromEntry(choice?.asset_kind === 'actor' ? choice : enabled ? null : media?.actor)
+    : null
+
+  const scene = sceneForStage(target?.scene_media, target?.scene ?? fallbackMaterial, dayPhase)
+  const sceneFallback = sceneForStage(favorite?.scene, wallpaper?.scene_material, dayPhase)
+  const committedScene = sceneForStage(media?.scene, fallbackMaterial, dayPhase)
+  const matchesActivity = Boolean(choice && target?.actor_variants.includes(choice))
+
+  const regularScene =
+    enabled && (matchesActivity || showCharacter)
+      ? (scene ?? sceneFallback)
+      : (sceneFallback ?? (enabled ? scene : committedScene))
+
+  // 整片自带环境和角色，只有该版本实际可用时才接管背景。
+  const desiredCinematic = desktop
+    ? choice?.asset_kind === 'cinematic'
+      ? choice
+      : !(showCharacter || choice)
+        ? enabled
+          ? favoriteCinematic
+          : (media?.cinematic ?? favoriteCinematic)
+        : null
+    : null
+
+  const cinematic = desiredCinematic && !failedMedia?.has(mediaKey(desiredCinematic)) ? desiredCinematic : null
+
+  const layout = cinematic
+    ? ((cinematic === favorite?.cinematic
+        ? wallpaper?.layout
+        : composition?.mode === 'cinematic'
+          ? composition.layout
+          : null) ?? DEFAULT_LAYOUT)
+    : ((composition?.mode === 'layered' ? composition.layout : null) ?? DEFAULT_LAYOUT)
+
+  const actorStillUrl = enabled ? (actorFromEntry(choice)?.posterUrl ?? target?.actor_still_url ?? null) : null
+
+  const base: StagePlan = {
+    actor: regularActor,
+    actorStillUrl,
+    scene: regularScene,
+    cinematic,
+    layout,
+    dayPhase,
+    localPlay: null
   }
 
-  const candidates = automaticLoops(presentation, subtle)
+  if (command?.asset_kind === 'actor' && command.media_kind === 'video') {
+    return {
+      ...base,
+      actor: {
+        visualId: command.visual_id,
+        version: command.visual_version,
+        url: command.media_path,
+        posterUrl: command.body?.first_frame_path ?? command.poster_path ?? null,
+        width: 0,
+        height: 0,
+        loop: command.loop,
+        body: command.body ?? null
+      },
+      cinematic: null,
+      scene: regularScene ?? committedScene
+    }
+  }
 
-  const selected = candidates.find(
-    entry => entry.visual_id === directed?.visual_id && entry.version === directed.version
-  )
+  if (command?.asset_kind === 'scene') {
+    return {
+      ...base,
+      cinematic: null,
+      scene: {
+        visualId: command.visual_id,
+        version: command.visual_version,
+        url: command.media_path,
+        posterUrl: command.poster_path ?? null,
+        isVideo: command.media_kind === 'video',
+        phaseMatched: command.day_phase === dayPhase
+      }
+    }
+  }
 
-  const base = candidates.find(
-    entry =>
-      entry.visual_id === presentation.composition?.media?.actor?.visual_id &&
-      entry.version === presentation.composition?.media?.actor?.version
-  )
+  if (command?.asset_kind === 'cinematic') {
+    return { ...base, actor: null }
+  }
 
-  const idle = candidates.find(
-    entry =>
-      entry.visual_id === presentation.ambient_actor?.visual_id && entry.version === presentation.ambient_actor.version
-  )
+  if (wake && motionEnabled) {
+    return {
+      ...base,
+      actor: actorFromEntry(wake.actor),
+      actorStillUrl: actorStillUrl ?? wake.actor.body?.last_frame_path ?? wake.actor.body?.first_frame_path ?? null,
+      scene: wake.scene ?? scene,
+      cinematic: null,
+      localPlay: {
+        id: wake.id,
+        visualId: wake.actor.visual_id,
+        version: wake.actor.version,
+        target: 'actor',
+        expiresAt: wake.expiresAt
+      }
+    }
+  }
 
-  return actorFromCatalog(selected ?? base ?? idle ?? candidates[0])
+  if (selected && choice && ambient && motionEnabled && (cinematic || regularActor)) {
+    base.localPlay = {
+      id: ambient.id,
+      visualId: choice.visual_id,
+      version: choice.version,
+      target: cinematic ? 'background' : 'actor',
+      expiresAt: null
+    }
+  }
+
+  return base
 }

@@ -4,12 +4,13 @@ import { captureAuthScope } from '@/shared/lib/authed-api'
 import { $dayPhase } from '@/shared/lib/day-phase'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { $presentation } from '@/shared/store/presentation'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 
 import type { VisualsListQuery } from './api'
 import { visualsApi } from './api'
-import { $ambientLoopChoice, feedDirectorPresentation, resolveAmbientLoop } from './director'
+import { $ambientLoopChoice, $failedStageMedia, $wakePerformance, feedDirectorPresentation } from './director'
 import { performanceSettled, receivePerformanceCommand } from './performance-scheduler'
 import { $stagePlan, deriveStagePlan } from './stage-plan'
 import {
@@ -196,6 +197,10 @@ function publishPresentation(response: VisualsPresentation): void {
     response = { ...response, intent: previous.intent }
   }
 
+  if (previous?.rhythm && (response.rhythm?.revision ?? -1) < previous.rhythm.revision) {
+    return
+  }
+
   $visualsPresentation.set(response)
   $visualsPresentationError.set(null)
 
@@ -222,11 +227,21 @@ function refreshStagePlan(): void {
 
 function updateStagePlan(): void {
   const presentation = $visualsPresentation.get()
-  $stagePlan.set(deriveStagePlan(presentation, null, resolveAmbientLoop(presentation), false, $stagePlan.get().scene))
+  $stagePlan.set(
+    deriveStagePlan(presentation, null, {
+      desktop: $presentation.get().effectiveMode === 'desktop',
+      ambient: $ambientLoopChoice.get(),
+      wake: $wakePerformance.get(),
+      failedMedia: $failedStageMedia.get()
+    })
+  )
 }
 
 $visualsPresentation.listen(refreshStagePlan)
 $ambientLoopChoice.listen(updateStagePlan)
+$failedStageMedia.listen(updateStagePlan)
+$wakePerformance.listen(updateStagePlan)
+$presentation.listen(updateStagePlan)
 onMount($stagePlan, () => $dayPhase.listen(updateStagePlan))
 
 export async function regenerateVisual(
@@ -385,7 +400,7 @@ function resetVisualsForAccount(): void {
   $visualsPresentationError.set(null)
   $visualPlayback.set(null)
   feedDirectorPresentation(null)
-  $stagePlan.set(deriveStagePlan(null, null, null))
+  $stagePlan.set(deriveStagePlan(null, null))
 }
 
 registerStorageClearHandler(resetVisualsForAccount)

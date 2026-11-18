@@ -108,6 +108,15 @@ async def ensure_creation_plan(
     *,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
+    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+        progress.creation_plan = VisualCreationPlan(
+            activity=snapshot.action.motion_description,
+            opening_description="沿用透明参考帧中实际可见的睡姿、画幅、位置和身体支撑关系。",
+            required_props=[],
+            motion_requirements="从确认的睡姿开始，在原画面位置恢复清醒并自然安定。",
+        )
+        progress.motion_prompt = ""
+        return
     base_plan = _base_idle_plan(snapshot, progress)
     if base_plan is not None:
         progress.creation_plan = base_plan
@@ -229,6 +238,8 @@ def opening_reference_hash(snapshot: ActorClipSource | CinematicSource) -> str:
         "outfit": snapshot.outfit.content_hash,
         "scene": snapshot.scene.content_hash if snapshot.kind == "cinematic" else None,
     }
+    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+        references["opening_frame"] = snapshot.opening_frame.content_hash
     return hashlib.sha256(json.dumps(references, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

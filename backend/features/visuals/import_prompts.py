@@ -28,6 +28,8 @@ no action_design and no time range. Do not infer turning pages, sitting down, wa
 
 For a cinematic image, media_semantics is required. Describe the visible sustained state, its intensity and supported
 applicability conditions. A static state can be suitable for automatic display without establishing movement.
+Use sleeping with activity_type=resting only when the visible resting pose supports actual sleep. Fill day_phase
+only when natural light or outdoor details support that time of day; use null when it is ambiguous.
 Use auto_selectable=true when those conditions are clear and false when a necessary condition is unresolved.
 presentation_verdict is pass when identity, content, framing and visible conditions support display; otherwise use
 review for uncertainty or fail for a visible conflict. Reasons must explain the evidence for the decision.
@@ -62,6 +64,9 @@ movement. Separate shots or unrelated activities are not one continuous action. 
 invent durations or mark a motion definition extractable.
 
 Provide media_semantics for the actual clip: visible activity, intensity, applicability and conditions to avoid.
+Use sleeping with activity_type=resting for sustained sleep supported by the frames; use waking only for a visible
+transition from sleep to alertness. For a cinematic clip fill day_phase only when natural light or outdoor details
+support the time of day. Use null for an isolated subject or when the light is ambiguous.
 Objects carried by the character are part of the clip, not requirements for an external background. Unresolved
 applicability makes auto_selectable=false. Use presentation_verdict=pass when identity, framing, whole-clip meaning
 and applicability are sufficiently clear; use review for uncertainty and fail for a visible conflict. Do not describe

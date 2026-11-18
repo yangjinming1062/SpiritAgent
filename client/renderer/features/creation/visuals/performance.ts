@@ -163,55 +163,68 @@ export async function sendVisualReceipt(playId: string, body: Omit<VisualReceipt
 export function staticPresentationKey(
   target: Pick<ApiSchemas['StageReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
 ): string {
-  return `${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
+  return `static:${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
 }
 
 /** 旧回执被拒绝后由调用方回源；传输失败保留错误，不转报成图片加载失败。 */
 export async function sendStaticReceipt(body: ApiSchemas['StageReceipt']): Promise<boolean> {
   const scope = captureAuthScope()
-  const presentation = $visualsPresentation.get()
-  const target = presentation?.static_presentation
 
-  if (
-    !scope ||
-    !target ||
-    presentation?.pending_play ||
-    $visualPlayback.get() ||
-    staticPresentationKey(target) !== staticPresentationKey(body)
-  ) {
-    return false
-  }
+  for (let attempt = 0; scope?.(); attempt += 1) {
+    const presentation = $visualsPresentation.get()
+    const target = presentation?.static_presentation
 
-  try {
-    await visualsApi.receiptStatic(body)
-
-    return true
-  } catch (error) {
-    if (!scope()) {
+    if (
+      !target ||
+      target.receipt_kind !== null ||
+      presentation?.pending_play ||
+      $visualPlayback.get() ||
+      staticPresentationKey(target) !== staticPresentationKey(body)
+    ) {
       return false
     }
 
-    if (ipcErrorStatus(error) !== 409) {
-      throw error
+    try {
+      await visualsApi.receiptStatic(body)
+
+      return true
+    } catch (error) {
+      if (!scope()) {
+        return false
+      }
+
+      const status = ipcErrorStatus(error)
+
+      if (status !== 409) {
+        if (attempt >= 2 || (status !== null && status < 500)) {
+          throw error
+        }
+
+        await new Promise<void>(resolve => window.setTimeout(resolve, 1000 * (attempt + 1)))
+
+        continue
+      }
+
+      log.info(
+        'visuals',
+        'Static receipt superseded',
+        staticPresentationKey(body),
+        error instanceof ApiError ? error.business.details : null
+      )
+
+      // 在线代次未变时，普通档位也须收敛已被生活或偏好更新作废的静态目标。
+      if (
+        error instanceof ApiError &&
+        error.code === 'static_presentation_expired' &&
+        isRecord(error.business.details) &&
+        ['life_changed', 'state_changed'].includes(String(error.business.details.reason))
+      ) {
+        await visualsApi.restorePresentation()
+      }
+
+      return false
     }
-
-    log.info(
-      'visuals',
-      'Static receipt superseded',
-      staticPresentationKey(body),
-      error instanceof ApiError ? error.business.details : null
-    )
-
-    // 在线代次未变时，普通档位也须收敛已被生活或偏好更新作废的静态目标。
-    if (
-      error instanceof ApiError &&
-      error.code === 'static_presentation_expired' &&
-      isRecord(error.business.details) &&
-      ['life_changed', 'state_changed'].includes(String(error.business.details.reason))
-    ) {
-      await visualsApi.restorePresentation()
-    }
-
-    return false
   }
+
+  return false
 }

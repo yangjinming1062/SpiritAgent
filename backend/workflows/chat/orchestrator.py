@@ -11,6 +11,7 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, load_user_settings
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.attachments import inline_video_parts
+from features.conversation.formatting import message_text
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.replies import CompanionReply, MediaBubble
@@ -18,6 +19,7 @@ from features.conversation.reply_media import load_media_turn, refresh_video_med
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
 from features.conversation.store_contracts import CompressionInfo
+from features.conversation.submissions import submission_user_messages
 from features.conversation.turn_access import context_messages, turn_conversation, turn_message
 from features.conversation.turn_store import persist_compression_checkpoint, persist_user_message
 from features.media.turn_state import MediaTurnState
@@ -473,6 +475,13 @@ async def _prepare_turn(
                 media_turn.required_goals.add(bubble.goal_id)
                 media_turn.current_versions[bubble.goal_id] = bubble.media_id
         source = await turn_message(db, setup.user_message_id) if setup.user_message_id is not None else None
+        user_messages: dict[int, str] = {}
+        if source is not None and not ephemeral and companion_reply:
+            user_messages = (
+                await submission_user_messages(db, user_id, setup.conv.id, submission_request_id)
+                if submission_request_id is not None
+                else {source.id: message_text(source)}
+            )
         media_turn.asset_directory = dated_asset_directory(
             source.created_at if source is not None else utc_now(),
             await resolve_user_timezone(db, user_id) or "UTC",
@@ -498,8 +507,7 @@ async def _prepare_turn(
         excluded_tool_names=inputs.excluded_tool_names,
         scene_turn=SceneTurnState(),
         proactive_turn=ephemeral,
-        user_message=setup.memory_query if not ephemeral else "",
-        user_message_id=setup.user_message_id if not ephemeral else None,
+        user_messages=user_messages,
         media_turn=media_turn,
     )
 

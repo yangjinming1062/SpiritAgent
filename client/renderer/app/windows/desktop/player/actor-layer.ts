@@ -48,6 +48,7 @@ export function createActorLayer({
   let posterUrl: string | null = null
   let posterKey: string | null = null
   let posterGeneration = 0
+  let posterUsesActorLayout = false
   let element: HTMLVideoElement | null = null
   let layout: DesktopStageLayout = DEFAULT_STAGE_LAYOUT
 
@@ -59,10 +60,8 @@ export function createActorLayer({
     receipts.send(media, status, error ? error.slice(0, 2000) : undefined, 'Actor acknowledgment failed')
   }
 
-  const layoutElement = (): void => {
-    const target = element
-
-    if (!target || !target.videoWidth || !target.videoHeight) {
+  const place = (target: HTMLElement, width: number, height: number): void => {
+    if (!width || !height) {
       return
     }
 
@@ -72,17 +71,27 @@ export function createActorLayer({
 
     const scale =
       layout.fit === 'cover'
-        ? Math.max(areaWidth / target.videoWidth, areaHeight / target.videoHeight)
-        : Math.min(areaWidth / target.videoWidth, areaHeight / target.videoHeight)
+        ? Math.max(areaWidth / width, areaHeight / height)
+        : Math.min(areaWidth / width, areaHeight / height)
 
     const [positionX, positionY] = layout.actorPosition
 
     Object.assign(target.style, {
-      left: `${window.innerWidth * safeLeft + areaWidth * positionX - target.videoWidth * scale * positionX}px`,
-      top: `${window.innerHeight * safeTop + areaHeight * positionY - target.videoHeight * scale * positionY}px`,
-      width: `${target.videoWidth * scale}px`,
-      height: `${target.videoHeight * scale}px`
+      left: `${window.innerWidth * safeLeft + areaWidth * positionX - width * scale * positionX}px`,
+      top: `${window.innerHeight * safeTop + areaHeight * positionY - height * scale * positionY}px`,
+      width: `${width * scale}px`,
+      height: `${height * scale}px`
     })
+  }
+
+  const layoutElement = (): void => {
+    if (element) {
+      place(element, element.videoWidth, element.videoHeight)
+    }
+
+    if (posterUsesActorLayout) {
+      place(poster, poster.naturalWidth, poster.naturalHeight)
+    }
   }
 
   const layer = createStageVideoLayer<DesktopBackground>([first, second], {
@@ -120,6 +129,7 @@ export function createActorLayer({
 
     posterUrl = null
     posterKey = null
+    posterUsesActorLayout = false
     layout = DEFAULT_STAGE_LAYOUT
     applyLayerOrder(layout)
     poster.removeAttribute('src')
@@ -146,7 +156,9 @@ export function createActorLayer({
             key,
             mediaKey,
             loop: media.actorKind === 'loop',
-            natural: media.playTarget !== 'actor' || media.playId === null,
+            natural:
+              media.playTarget !== 'actor' || media.playId === null || media.playId.startsWith('render:ambient:'),
+            holdLastFrame: media.playId?.startsWith('render:wake:'),
             value: media,
             load: async () => {
               const url = createMediaObjectUrl(actorBytes)
@@ -180,6 +192,14 @@ export function createActorLayer({
 
           posterUrl = url
           poster.src = url
+          posterUsesActorLayout = media.outfitPose
+
+          if (posterUsesActorLayout) {
+            place(poster, image.naturalWidth, image.naturalHeight)
+          } else {
+            Object.assign(poster.style, { height: '90%', width: '50%', left: '25%', top: '10%' })
+          }
+
           poster.style.opacity = visible ? '0' : '1'
           onPosterReady()
         })

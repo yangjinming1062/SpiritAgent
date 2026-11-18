@@ -53,8 +53,7 @@ class _ToolDispatchContext:
     excluded_tool_names: frozenset[str]
     scene_turn: SceneTurnState
     proactive_turn: bool
-    user_message: str
-    user_message_id: int | None = None
+    user_messages: dict[int, str]
     unavailable_tool_names: frozenset[str] = frozenset()
 
 
@@ -253,8 +252,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     memory_scope=ctx.memory_scope,
                     tool_call_id=tc["call_id"],
                     proactive_turn=ctx.proactive_turn,
-                    user_message=ctx.user_message,
-                    user_message_id=ctx.user_message_id,
+                    user_messages=ctx.user_messages,
                 )
                 result_str = await ctx.delegate_executor(result) if isinstance(result, DelegateAction) else result
             case "memory":

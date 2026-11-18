@@ -131,6 +131,8 @@ def visual_reference_basis(source: dict) -> str:
         "action": action,
         "requirements": source.get("requirements", ""),
     }
+    if opening_frame := source.get("opening_frame"):
+        value["opening_frame"] = opening_frame["content_hash"]
     return hashlib.sha256(review_context(value).encode()).hexdigest()
 
 

@@ -48,7 +48,12 @@ def video_generation_prompt(
     if source.kind == "actor" and required_props == []:
         props = "角色使用自身动作完成活动，首帧中空着的手保持空着，原有穿戴和随身物品随角色自然运动。"
     if source.kind == "actor":
-        framing = ACTOR_VIDEO_LOOP_FRAMING if clip_kind == "loop" else ACTOR_VIDEO_REACTION_FRAMING
+        if source.opening_frame is not None or "sleeping" in source.action.semantic_tags:
+            framing = (
+                "保持首帧的固定全身景别、镜头位置和主体比例，连续保留身体支撑，醒来或安睡期间自然停留在原活动区域。"
+            )
+        else:
+            framing = ACTOR_VIDEO_LOOP_FRAMING if clip_kind == "loop" else ACTOR_VIDEO_REACTION_FRAMING
     else:
         framing = CINEMATIC_VIDEO_FRAMING
     # 旧检查点也可能保存逐部位脚本；角色视频始终从冻结目标装配，不转发该脚本。

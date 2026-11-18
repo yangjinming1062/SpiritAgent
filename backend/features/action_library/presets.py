@@ -48,6 +48,38 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
         allowed_triggers=["periodic", "manual"],
     ),
     ActionPreset(
+        key="sleep",
+        name="安睡",
+        motion_description=(
+            "呈现已经睡着并安稳休息的状态。沿用起始画面中自然、可靠的身体支撑关系，"
+            "以符合角色身体和气质的轻微动态维持同一睡姿，使首尾平稳衔接。"
+        ),
+        clip_kind="loop",
+        duration_seconds=6,
+        semantic_tags=["resting", "sleeping"],
+        performance_role="sustained",
+        motion_intensity="subtle",
+        use_when=["已经入睡，需要持续的睡眠画面"],
+        avoid_when=["清醒时的小憩"],
+        allowed_triggers=["manual"],
+    ),
+    ActionPreset(
+        key="wake_up",
+        name="醒来起身",
+        motion_description=(
+            "从实际睡姿自然醒来，缓慢过渡到清醒、能够回应交流的姿态，在同一位置安定下来。"
+            "保持身体支撑与运动连续，起身幅度由实际身体结构和开始姿态决定。"
+        ),
+        clip_kind="once",
+        duration_seconds=6,
+        semantic_tags=["waking"],
+        performance_role="reaction",
+        motion_intensity="subtle",
+        use_when=["刚被唤醒或到了自然醒的时刻"],
+        avoid_when=["已处于清醒状态"],
+        allowed_triggers=["manual"],
+    ),
+    ActionPreset(
         key="look",
         interruptible=False,
         name="注意到你",

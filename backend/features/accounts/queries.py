@@ -4,18 +4,19 @@ from collections.abc import Collection
 from dataclasses import dataclass
 
 from infrastructure.request_errors import RequestError
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User
 from .snapshots import AccountIdentity
 
 
+def active_account_ids() -> Select[tuple[int]]:
+    return select(User.id).where(User.is_active.is_(True))
+
+
 async def list_user_ids(db: AsyncSession, *, active_only: bool = False) -> list[int]:
-    query = select(User.id)
-    if active_only:
-        query = query.where(User.is_active.is_(True))
-    return list(await db.scalars(query))
+    return list(await db.scalars(active_account_ids() if active_only else select(User.id)))
 
 
 async def user_is_active(db: AsyncSession, user_id: int) -> bool:

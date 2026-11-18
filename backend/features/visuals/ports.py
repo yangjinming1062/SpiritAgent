@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .schemas import ActorClipSource, CinematicSource
+from .schemas import ActorClipSource, CinematicSource, SceneMediaRef
 
 
 class VisualPlanningContext(BaseModel):
@@ -21,11 +21,13 @@ class VisualPlanningContext(BaseModel):
 PlanningReader = Callable[[int, ActorClipSource | CinematicSource], Awaitable[VisualPlanningContext]]
 ReadyHandler = Callable[[int], None]
 SceneExistenceReader = Callable[[AsyncSession, int, int], Awaitable[bool]]
+StageSceneReader = Callable[[AsyncSession, int, str], Awaitable[SceneMediaRef | None]]
 _planning_reader: PlanningReader | None = None
 _ready_handler: ReadyHandler | None = None
 _preparation_handler: ReadyHandler | None = None
 _recovery_handler: ReadyHandler | None = None
 _scene_exists: SceneExistenceReader | None = None
+_stage_scene_reader: StageSceneReader | None = None
 
 
 def configure_visual_hooks(
@@ -35,13 +37,15 @@ def configure_visual_hooks(
     preparation_handler: ReadyHandler,
     recovery_handler: ReadyHandler,
     scene_exists: SceneExistenceReader,
+    stage_scene_reader: StageSceneReader,
 ) -> None:
-    global _planning_reader, _ready_handler, _preparation_handler, _recovery_handler, _scene_exists
+    global _planning_reader, _ready_handler, _preparation_handler, _recovery_handler, _scene_exists, _stage_scene_reader
     _planning_reader = planning_reader
     _ready_handler = ready_handler
     _preparation_handler = preparation_handler
     _recovery_handler = recovery_handler
     _scene_exists = scene_exists
+    _stage_scene_reader = stage_scene_reader
 
 
 async def read_planning_context(user_id: int, snapshot: ActorClipSource | CinematicSource) -> VisualPlanningContext:
@@ -73,3 +77,9 @@ async def scene_reference_exists(db: AsyncSession, user_id: int, scene_id: int) 
     if _scene_exists is None:
         return True
     return await _scene_exists(db, user_id, scene_id)
+
+
+async def read_stage_scene(db: AsyncSession, user_id: int, title: str) -> SceneMediaRef | None:
+    if not title.strip() or _stage_scene_reader is None:
+        return None
+    return await _stage_scene_reader(db, user_id, title)

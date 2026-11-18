@@ -273,6 +273,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
+    case 'companion.rhythm.updated':
+      void refreshVisualPresentation()
+
+      break
+
     case 'companion.visual.updated':
 
     case 'companion.visual.initial_requested':

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,3 +39,20 @@ class Persona(ModelBase, TimestampMixin):
         String(16), default=OUTFIT_POLICY_DEFAULT, server_default=text(f"'{OUTFIT_POLICY_DEFAULT}'")
     )
     user: Mapped["User"] = relationship(back_populates="persona")
+
+
+class CompanionRhythm(ModelBase):
+    """伙伴的本地作息、当晚决定与真实交流的接续位置。"""
+
+    __tablename__ = "companion_rhythms"
+    id = None
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    schedule_json: Mapped[dict | None] = mapped_column(JSONB)
+    schedule_basis: Mapped[str | None] = mapped_column(String(64))
+    retry_schedule_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    adjustment_json: Mapped[dict | None] = mapped_column(JSONB)
+    contact_json: Mapped[dict | None] = mapped_column(JSONB)
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    projection_key: Mapped[str | None] = mapped_column(String(240))
+    revision: Mapped[int] = mapped_column(Integer, server_default=text("0"))

@@ -13,6 +13,7 @@ from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.action_library.schemas import ActionAssetDesign
+from features.companion.rhythm import RhythmView
 from features.life.schemas import FactType
 from features.media.described import DescribedDetail
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
@@ -114,6 +115,7 @@ class MediaSemantics(BaseModel):
     activity_type: ActivityType
     semantic_tags: SemanticTags = Field(default_factory=list)
     motion_intensity: ActionMotionIntensity
+    day_phase: DayPhase | None = None
     auto_selectable: bool = Field(
         description="实际表现与适用条件是否足以支持按当前活动和环境自动选择；未表达的必要条件仍待确认时为 false"
     )
@@ -143,6 +145,17 @@ class VisualSourceMetadata(BaseModel):
     identity_reason: str = ""
 
 
+class ActorOpeningFrame(BaseModel):
+    """从已检查主体循环取得的实际首帧，作为接续动作的冻结参考。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visual_id: ResourceId
+    version: int = Field(ge=1)
+    path: str = Field(min_length=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ActorClipSource(VisualSourceMetadata):
     """透明主体动画的冻结输入：身份、造型与动作；不固定背景。"""
 
@@ -155,6 +168,7 @@ class ActorClipSource(VisualSourceMetadata):
     identity_reference_role: CharacterReferenceRole = "portrait"
     outfit: ComboMaterialRef
     action: ActionMaterialRef
+    opening_frame: ActorOpeningFrame | None = None
     media_semantics: MediaSemantics | None = None
     plan: VisualCreationPlan | None = None
     requirements: str = ""
@@ -868,6 +882,26 @@ class AmbientCatalogEntry(StageLayerMedia):
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
 
 
+class StagePlaybackPlan(BaseModel):
+    """同一情境下可接续的背景、角色动作与一次性过渡。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    activity_type: ActivityType
+    life_revision: int
+    day_phase: DayPhase
+    next_phase_at: datetime | None = None
+    scene: SceneMediaRef | None = None
+    scene_media: StageLayerMedia | None = None
+    actor_variants: list[AmbientCatalogEntry] = Field(default_factory=list)
+    fallback_actor_variants: list[AmbientCatalogEntry] = Field(default_factory=list)
+    cinematic_variants: list[AmbientCatalogEntry] = Field(default_factory=list)
+    actor_still_url: str | None = None
+    wake_actor: AmbientCatalogEntry | None = None
+    wake_scene: SceneMediaRef | None = None
+    wake_scene_media: StageLayerMedia | None = None
+
+
 class VisualPresentationView(BaseModel):
     """呈现状态与偏好：舞台意图、有效组合、待执行指令和自主开关。"""
 
@@ -876,9 +910,10 @@ class VisualPresentationView(BaseModel):
     composition: StageComposition | None = None
     ambient_actor: StageLayerMedia | None = None
     ambient_catalog: list[AmbientCatalogEntry] = Field(default_factory=list)
-    # 环境层目录与主体目录分开，避免完整场景成品挤占基础动作的可用数量。
     ambient_scene: list[StageLayerMedia] = Field(default_factory=list)
     intent: StageIntent | None = None
+    rhythm: RhythmView | None = None
+    stage_plan: StagePlaybackPlan | None = None
     current_visual: VisualItemView | None = None
     loop_visual: VisualItemView | None = None
     default_wallpaper: DefaultWallpaperView | None = None

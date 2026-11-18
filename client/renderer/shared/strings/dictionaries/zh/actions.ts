@@ -42,6 +42,8 @@ export const actions = {
       creating: '创作',
       thinking: '思考',
       resting: '休息',
+      sleeping: '安睡',
+      waking: '醒来',
       organizing: '整理',
       socializing: '社交',
       stretching: '舒展',

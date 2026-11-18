@@ -104,7 +104,7 @@ from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.life_events import record_post_published
-from workflows.life_presentation import life_presentation_requested
+from workflows.life_presentation import life_presentation_requested, read_ready_stage_scene
 from workflows.visual_events import initialize_visuals, schedule_presentation_refresh
 from workflows.visual_imports import run_manual_import_job
 from workflows.visual_planning import visual_planning_context
@@ -229,6 +229,7 @@ def register_all() -> None:
         preparation_handler=schedule_base_motion_preparation,
         recovery_handler=schedule_presentation_refresh,
         scene_exists=scene_exists,
+        stage_scene_reader=read_ready_stage_scene,
     )
     set_appearance_readiness_reader(appearance_readiness)
     set_initial_scene_ensurer(schedule_initial_scene)

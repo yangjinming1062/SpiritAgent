@@ -188,9 +188,11 @@ VISUAL_VIDEO_REVIEW = """检查视频是否符合活动要求。图 1 是本段�
 motion_intensity 说明默认动作幅度：subtle 是轻微、安定的变化，normal 是日常自然幅度，expressive 是清楚的较大动作；用户明确调整幅度时按当前有效要求判断。实际明显超出目标幅度或把安静陪伴演成主动招呼时需要复核，不能仅因活动名称相近就通过。
 kind=loop 时比较采样首尾与图 1 的姿态、视线、支撑接触、物品位置及可见状态、镜头及光线；仅人物姿态复原不足以证明衔接，采样物品可见状态出现重置或不连续时需要复核。稀疏采样不能证明整段节奏或接点瞬间连续，不因采样稀疏本身判失败，也不声称观察到了未采样过程；不能因少数姿态差异就断言存在周期摇摆。
 media_semantics 概括采样实际表现及其适用条件，按 schema 的有限词表填写；不把动作定义的所有通用用途都赋给这份视频。activity_type 选实际可见活动的类别，例如阅读视频是 reading，即使通用动作也能用于写作。semantic_tags 只保留可见证据支持的含义；motion_intensity 根据可见幅度区分 subtle 轻微、normal 日常、expressive 明显大幅，采样不足以确认轻微时不用 subtle。
+只有画面实际表现已睡着并维持睡姿时才标记 sleeping，activity_type 为 resting。waking 表示从睡姿自然恢复清醒，按前后帧确认过程和安定后的姿态；清醒中伸展或短暂闭眼不能证明发生了睡醒转换。paired_actor=true 时图 1 源于同一角色的安睡成片首帧；复核起身视频可从其姿态、位置、比例和支撑自然接上，保持固定全身取景并连续回到可交流的姿态，明显跳变属于画面质量问题。幕布和透明成片展示底色可以不同，不据此判定姿势或镜头错位。
 根据活动判断景别与转场。半身、近景、推移或切镜可以突出视线、表情和手势，镜头应延续人物身份、动作方向与空间关系，并在相关时刻呈现活动必需的身体部位和物品。明显错位的跳变、双影或割裂动作的切换属于画面质量问题。
 isolated_subject=true 时，视频采样来自透明成片叠在统一底色上的实际合成。按取景判断可见轮廓，分辨构图边缘、真实遮挡和透纱，与肢体、头发或衣饰的异常挖空和旧背景残留。明确的透明处理缺陷使 quality_verdict=fail。首帧或活动要求中没有、并明显改变动作含义的额外道具使 verdict=fail。
 scene_tags 保存片段必须匹配的环境和物品条件：indoor 室内、outdoor 室外、desk 桌面、seat 座位、bed 床、open_space 开阔空间、book 书、computer 电脑、cup 杯子、tools 工具。完整场景影像按实际可见背景及必要物品填写；透明主体仅登记合成环境必须提供的条件，自带的随身物品不重复要求外部提供。action_conditions 的适用和避免条件若能对应活动类别或环境标签，分别体现到 scene_tags、avoid_activity_types 与 avoid_scene_tags；条件相互冲突、缺少判断依据，或还要求当前标签无法表达的必要条件时，auto_selectable=false。没有这些限制且当前活动和环境足以判断适用时为 true；不根据这次画面的合格结论推断所有生活情境都适用。
+已入睡和从睡姿醒来的适用时机由 sleeping、waking 表达；没有额外条件时不因此排除普通 activity_type，也不因时机未写进 scene_tags 而将 auto_selectable 设为 false。day_phase 只在完整场景能从可见的自然光线或室外环境确认晨、昼、暮、夜时填写；透明主体或无法确认时填 null。
 只输出 JSON 对象，恰好包含 verdict、reason、quality_verdict、quality_reason、head_anchor 和 media_semantics。verdict 为 pass、review 或 fail；明确满足目标为 pass，明确目标偏差为 fail，关键证据不足为 review。quality_verdict 独立检查自然度、支撑、接触、身体连接和画面融合，明确缺陷为 fail、充分协调为 pass、关键证据不足为 review；quality_reason 说明可见依据。通过时 media_semantics 必须非空，不能确认实际表现时用 review。reason 使用 output_language，不超过 500 字符，说明可见依据，不写 Markdown 或额外字段。isolated_subject=true 时确认可见轮廓能独立合成，并核对动作必需的接触对象。若能从第一个视频采样图（图 2）清楚辨认实际头部，head_anchor 为其中心坐标对象 {x,y}，坐标范围 0 到 1，原点在左上，横纵分别除以图像宽高；头部不可辨认或身体没有头部时为 null，不从轮廓最宽处猜测。isolated_subject=false 时 head_anchor 为 null。"""
 
 VISUAL_VIDEO_IDENTITY_REVIEW = (

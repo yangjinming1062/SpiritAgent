@@ -1,6 +1,6 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
@@ -12,11 +12,14 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from features.action_library.queries import action_by_preset_key, action_preset_keys
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.companion.rhythm import RhythmView, read_rhythm
 from features.jobs.service import requested_job_id
+from features.life.queries import active_pursuit_title, get_life_state_view
 from features.media.chain import MediaChainState
 from features.media.review_contracts import VisualReview
 from features.media.video_queue.contracts import VideoQueueInfo
 from features.media.video_queue.service import video_attempt_queue_info
+from features.media.visual_semantics import DayPhase
 
 from .client_assets import client_body
 from .eligibility import actor_body_ready, automatic_media_blocks, automatic_media_ready, existing_asset
@@ -24,7 +27,7 @@ from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .import_operations import import_analysis_state
 from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
-from .ports import request_stage_recovery, scene_reference_exists
+from .ports import read_stage_scene, request_stage_recovery, scene_reference_exists
 from .quality import quality_failure_message
 from .repository import (
     VisualNotFoundError,
@@ -58,6 +61,7 @@ from .schemas import (
     StageCompositionMedia,
     StageIntent,
     StageLayerMedia,
+    StagePlaybackPlan,
     StagePresentation,
     VisualAutoPlayBlock,
     VisualDetailView,
@@ -75,6 +79,16 @@ from .schemas import (
     carries_character,
     carries_scene,
     parse_job_progress,
+)
+from .stage_selection import (
+    StageMediaCandidate,
+    actor_options,
+    cinematic_options,
+    paired_wake,
+    project_stage_intent,
+    scene_matches,
+    stage_activity,
+    stage_day_phase,
 )
 
 
@@ -214,15 +228,23 @@ async def current_outfit_reference(user_id: int) -> ComboMaterialRef | None:
         return source.outfit if isinstance(source, ActorClipSource) else None
 
 
-async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
+async def reusable_actor_clip(
+    user_id: int, source: ActorClipSource, *, opening_aspect: tuple[int, int] | None = None
+) -> tuple[int, int, ActorClipBody] | None:
     """基础准备只复用身份、造型、动作版本相符且已确认可自动使用的透明成品。
 
     准备判断与目录使用相同资格，检查所有已发布版本。
     """
 
+    rhythm_tags = {"sleeping", "waking"}.intersection(source.action.semantic_tags)
+    opening_hash = source.opening_frame.content_hash if source.opening_frame is not None else None
     async with SESSION_LOCAL() as db:
         rows = await db.execute(
             select(
+                VisualVersion.visual_id,
+                VisualVersion.number,
+                VisualVersion.width,
+                VisualVersion.height,
                 VisualVersion.media_path,
                 VisualVersion.snapshot_json,
                 VisualVersion.body_json,
@@ -237,8 +259,11 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                 VisualItem.outfit_id == source.outfit.material_id,
                 VisualItem.action_id == source.action.action_id,
             )
+            .order_by(VisualVersion.id.desc())
         )
-        for path, snapshot_json, body, content_hash in rows:
+        for visual_id, number, width, height, path, snapshot_json, body, content_hash in rows:
+            if opening_aspect is not None and not visual_aspect_matches(width, height, *opening_aspect):
+                continue
             snapshot = VisualSnapshot.model_validate(snapshot_json)
             frozen = snapshot.source
             if (
@@ -249,6 +274,20 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
             ):
                 continue
             if frozen.kind == "analysis" and (frozen.asset_kind != "actor" or not frozen.presentation_approved):
+                continue
+            semantics = frozen.media_semantics
+            if rhythm_tags and (
+                semantics is None
+                or semantics.scene_tags
+                or semantics.motion_intensity != "subtle"
+                or not rhythm_tags.issubset(semantics.semantic_tags)
+            ):
+                continue
+            if opening_hash is not None and (
+                frozen.kind != "actor"
+                or frozen.opening_frame is None
+                or frozen.opening_frame.content_hash != opening_hash
+            ):
                 continue
             if (
                 frozen.identity_hash == source.identity_hash
@@ -270,8 +309,8 @@ async def reusable_actor_clip(user_id: int, source: ActorClipSource) -> bool:
                     action_clip_kind=frozen.action.clip_kind,
                 )
             ):
-                return True
-    return False
+                return visual_id, number, ActorClipBody.model_validate(body)
+    return None
 
 
 def version_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:
@@ -887,8 +926,10 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
 
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
+        now = utc_now()
+        rhythm = await read_rhythm(db, user_id, now=now) if with_catalog else None
         if row is None:
-            return VisualPresentationView()
+            return VisualPresentationView(rhythm=rhythm)
         current = presented_item(row)
         loop = presented_item(row, loop=True)
         pending = _pending_command(row)
@@ -910,13 +951,41 @@ async def presentation_state(user_id: int, *, with_catalog: bool = True) -> Visu
         )
         if needs_recovery:
             request_stage_recovery(user_id)
-        scene = static.scene if static else composition.scene_material if composition else None
+        scene = (static.scene if static else None) or (composition.scene_material if composition else None)
+        intent = StageIntent.model_validate(row.intent_json) if row.intent_json else None
+        if with_catalog:
+            life = await get_life_state_view(db, user_id)
+            if life is not None and (intent is None or life.presentation_revision > intent.life_revision):
+                intent = project_stage_intent(life, await active_pursuit_title(db, user_id, life.active_pursuit_id))
+        catalog = await ambient_catalog(db, row, intent=intent) if with_catalog else []
+        scenes = await ambient_scene_catalog(db, user_id, scene) if with_catalog else []
+        stage_plan = (
+            await _stage_playback_plan(db, user_id, catalog, scene, scenes, intent, rhythm, now)
+            if rhythm is not None
+            else None
+        )
+        ambient_actor = (
+            next(
+                (
+                    item.entry
+                    for item in catalog
+                    if item.entry.asset_kind == "actor"
+                    and item.entry.preset_key == "idle"
+                    and item.entry.clip_kind == "loop"
+                ),
+                None,
+            )
+            if with_catalog
+            else await _ambient_actor(db, row)
+        )
         return VisualPresentationView(
             composition=await composition_with_media(db, user_id, composition),
-            ambient_actor=await _ambient_actor(db, row),
-            ambient_catalog=await ambient_catalog(db, row) if with_catalog else [],
-            ambient_scene=await ambient_scene_catalog(db, user_id, scene) if with_catalog else [],
-            intent=StageIntent.model_validate(row.intent_json) if row.intent_json else None,
+            ambient_actor=ambient_actor,
+            ambient_catalog=[candidate.entry for candidate in catalog],
+            ambient_scene=scenes,
+            intent=intent,
+            rhythm=rhythm,
+            stage_plan=stage_plan,
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
             default_wallpaper=default_wallpaper,
@@ -965,7 +1034,7 @@ async def _layer_media(
         duration_ms=version_row.duration_ms,
         description=version_row.description,
         body=ActorClipBody.model_validate(version_row.body_json) if version_row.body_json else None,
-        day_phase=source.get("day_phase") if source.get("kind") == "scene" else None,
+        day_phase=(source.get("day_phase") or (source.get("media_semantics") or {}).get("day_phase")),
         scene_content_hash=scene.get("content_hash"),
     )
 
@@ -988,22 +1057,27 @@ def frozen_stage_reference(state: VisualPresentation) -> tuple[ComboMaterialRef 
     return outfit, composition.identity_hash if composition else None
 
 
-async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit: int = 24) -> list[AmbientCatalogEntry]:
-    """常驻、互动、生活影像分别限额；内置动作取最新可自动使用的版本。
+def _stage_catalog_priority(candidate: StageMediaCandidate, intent: StageIntent | None) -> int:
+    entry = candidate.entry
+    actual = entry.media_semantics
+    if actual is not None and {"sleeping", "waking"}.intersection(actual.semantic_tags):
+        return 0
+    if entry.preset_key in {"idle", "look", "smile", "stretch", "relax"}:
+        return 1
+    if intent is not None and actual is not None and actual.activity_type == intent.activity_type:
+        return 2
+    return 3
 
-    不合格的新版本仍保留在影像库；同一动作缺少合格版本时不出现在目录里。
-    """
+
+async def ambient_catalog(
+    db: AsyncSession, state: VisualPresentation, *, intent: StageIntent | None, limit: int = 24
+) -> list[StageMediaCandidate]:
+    """常驻、互动与整景分别限额，保留同一动作的不同合格成品。"""
 
     outfit, identity_hash = frozen_stage_reference(state)
     if outfit is None or identity_hash is None:
         return []
     preset_keys = await action_preset_keys(db, state.user_id)
-    preset_order = {
-        action_id: index
-        for index, action_id in enumerate(
-            sorted(preset_keys, key=lambda action_id: (preset_keys[action_id] != "idle", action_id))
-        )
-    }
     asset_kind = _frozen_asset_kind()
     clip_kind = _frozen_clip_kind()
     query = (
@@ -1037,27 +1111,38 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
             VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
         )
     )
-    buckets: dict[tuple[str, str | None], list[AmbientCatalogEntry]] = {
+    buckets: dict[tuple[str, str | None], list[StageMediaCandidate]] = {
         ("actor", "loop"): [],
         ("actor", "once"): [],
         ("cinematic", None): [],
+        ("actor", "sleeping"): [],
+        ("actor", "waking"): [],
+        ("cinematic", "sleeping"): [],
     }
     selected_items: set[int] = set()
-    selected_presets: set[tuple[str, str | None, str]] = set()
+    selected_content: set[str] = set()
+    preset_variants: dict[tuple[tuple[str, str | None], str], int] = {}
     rows = await db.stream(query.order_by(VisualVersion.id.desc()), execution_options={"yield_per": 32})
     try:
         async for row in rows:
-            bucket_key = (row.asset_kind, row.clip_kind if row.asset_kind == "actor" else None)
+            source = row.source or {}
+            semantics = source.get("media_semantics") or {}
+            tags = semantics.get("semantic_tags") or []
+            category = row.clip_kind if row.asset_kind == "actor" else None
+            if "sleeping" in tags and row.clip_kind != "once":
+                category = "sleeping"
+            elif row.asset_kind == "actor" and row.clip_kind == "once" and "waking" in tags:
+                category = "waking"
+            bucket_key = (row.asset_kind, category)
             bucket = buckets.get(bucket_key)
             preset = preset_keys.get(row.action_id)
-            if bucket is None or row.id in selected_items:
+            if bucket is None or row.id in selected_items or row.media_content_hash in selected_content:
                 continue
-            source = row.source or {}
             if not automatic_media_ready(
                 media_kind=row.media_kind,
                 asset_kind=row.asset_kind,
                 media_path=row.media_path,
-                auto_selectable=(source.get("media_semantics") or {}).get("auto_selectable"),
+                auto_selectable=semantics.get("auto_selectable"),
                 clip_kind=row.clip_kind,
                 body=row.body_json,
                 presentation_approved=source.get("presentation_approved"),
@@ -1077,50 +1162,57 @@ async def ambient_catalog(db: AsyncSession, state: VisualPresentation, *, limit:
             ):
                 continue
             action = ActionMaterialRef.model_validate(source["action"]) if source.get("action") else None
-            semantics = source.get("media_semantics") or {}
             if action is None and (row.media_kind != "image" or not semantics):
                 continue
             selected_items.add(row.id)
-            if preset and row.asset_kind == "actor" and (*bucket_key, preset) in selected_presets:
+            if preset and preset_variants.get((bucket_key, preset), 0) >= 6:
                 continue
-            bucket.append(
-                AmbientCatalogEntry(
-                    visual_id=row.id,
-                    version=row.number,
-                    media_kind=row.media_kind,
-                    asset_kind=row.asset_kind,
-                    clip_kind=row.clip_kind,
-                    media_url=client_asset_url(row.media_path),
-                    poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
-                    width=row.width,
-                    height=row.height,
-                    duration_ms=row.duration_ms,
-                    description=row.description,
-                    body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
-                    action_id=row.action_id,
-                    action_name=action.name if action else "",
-                    preset_key=preset,
-                    semantic_tags=action.semantic_tags if action else semantics.get("semantic_tags", []),
-                    performance_role=action.performance_role if action and row.media_kind == "video" else "sustained",
-                    motion_intensity=action.motion_intensity if action else semantics.get("motion_intensity", "subtle"),
-                    interruptible=action.interruptible if action else True,
-                    media_semantics=source.get("media_semantics"),
-                    allowed_triggers=action.allowed_triggers
-                    if action and row.media_kind == "video"
-                    else ["manual", "periodic"],
-                    use_when=action.use_when if action else [],
-                    avoid_when=action.avoid_when if action else [],
-                )
+            selected_content.add(row.media_content_hash)
+            scene_raw = source.get("scene")
+            scene = SceneMediaRef.model_validate(scene_raw) if scene_raw else None
+            entry = AmbientCatalogEntry(
+                visual_id=row.id,
+                version=row.number,
+                media_kind=row.media_kind,
+                asset_kind=row.asset_kind,
+                clip_kind=row.clip_kind,
+                media_url=client_asset_url(row.media_path),
+                poster_url=client_asset_url(row.poster_path) if row.poster_path else None,
+                width=row.width,
+                height=row.height,
+                duration_ms=row.duration_ms,
+                description=row.description,
+                body=ActorClipBody.model_validate(row.body_json) if row.body_json else None,
+                day_phase=semantics.get("day_phase"),
+                scene_content_hash=scene.content_hash if scene else None,
+                action_id=row.action_id,
+                action_name=action.name if action else "",
+                preset_key=preset,
+                semantic_tags=action.semantic_tags if action else semantics.get("semantic_tags", []),
+                performance_role=action.performance_role if action and row.media_kind == "video" else "sustained",
+                motion_intensity=action.motion_intensity if action else semantics.get("motion_intensity", "subtle"),
+                interruptible=action.interruptible if action else True,
+                media_semantics=source.get("media_semantics"),
+                allowed_triggers=action.allowed_triggers
+                if action and row.media_kind == "video"
+                else ["manual", "periodic"],
+                use_when=action.use_when if action else [],
+                avoid_when=action.avoid_when if action else [],
             )
+            bucket.append(StageMediaCandidate(entry, scene, (source.get("opening_frame") or {}).get("content_hash")))
             if preset:
-                selected_presets.add((*bucket_key, preset))
-            if row.asset_kind == "actor":
-                bucket.sort(key=lambda entry: preset_order.get(entry.action_id, len(preset_order)))
+                key = (bucket_key, preset)
+                preset_variants[key] = preset_variants.get(key, 0) + 1
             if len(bucket) > limit:
+                bucket.sort(key=lambda candidate: _stage_catalog_priority(candidate, intent))
                 bucket.pop()
     finally:
         await rows.close()
-    return [entry for entries in buckets.values() for entry in entries]
+    return [
+        candidate
+        for entries in buckets.values()
+        for candidate in sorted(entries, key=lambda candidate: _stage_catalog_priority(candidate, intent))
+    ]
 
 
 async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
@@ -1192,6 +1284,9 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
             VisualVersion.duration_ms,
             VisualVersion.description,
             VisualVersion.snapshot_json["source"]["day_phase"].astext.label("day_phase"),
+            VisualVersion.snapshot_json["source"].label("source"),
+            VisualVersion.snapshot_json["review_result"].label("review_result"),
+            VisualVersion.content_hash.label("media_content_hash"),
         )
         .select_from(VisualItem)
         .join(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
@@ -1202,13 +1297,7 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
             VisualItem.asset_kind == "scene",
             _frozen_clip_kind() == "loop",
             VisualVersion.snapshot_json["source"]["scene"]["content_hash"].astext == scene.content_hash,
-            or_(
-                VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(True),
-                (
-                    VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(None)
-                    & (VisualVersion.snapshot_json["source"]["kind"].astext == "scene")
-                ),
-            ),
+            VisualVersion.snapshot_json["source"]["presentation_approved"].as_boolean().is_(True),
         )
         .order_by(VisualVersion.id.desc()),
         execution_options={"yield_per": 32},
@@ -1217,7 +1306,19 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
     phases: set[str | None] = set()
     try:
         async for row in rows:
-            if row.day_phase in phases or existing_asset(row.media_path) is None:
+            if row.day_phase in phases or not automatic_media_ready(
+                media_kind="video",
+                asset_kind="scene",
+                media_path=row.media_path,
+                auto_selectable=None,
+                clip_kind="loop",
+                body=None,
+                presentation_approved=(row.source or {}).get("presentation_approved"),
+                review_result=row.review_result,
+                reference_source=row.source,
+                media_content_hash=row.media_content_hash,
+                scene_reference=True,
+            ):
                 continue
             entries.append(
                 StageLayerMedia(
@@ -1242,6 +1343,111 @@ async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMedi
     finally:
         await rows.close()
     return entries
+
+
+async def _usable_cinematics(
+    db: AsyncSession, user_id: int, candidates: list[StageMediaCandidate]
+) -> list[StageMediaCandidate]:
+    approved: list[StageMediaCandidate] = []
+    known: dict[tuple[int | None, str], bool] = {}
+    for candidate in candidates:
+        scene = candidate.scene
+        if scene is None:
+            continue
+        key = (scene.scene_id, scene.path)
+        if key not in known:
+            known[key] = await _scene_reference_usable(db, user_id, scene)
+        if known[key]:
+            approved.append(candidate)
+        if len(approved) == 6:
+            break
+    return approved
+
+
+def _media_at_phase(catalog: list[StageLayerMedia], phase: DayPhase) -> StageLayerMedia | None:
+    return next((entry for entry in catalog if entry.day_phase == phase), None) or next(
+        (entry for entry in catalog if entry.day_phase is None), None
+    )
+
+
+async def _stage_playback_plan(
+    db: AsyncSession,
+    user_id: int,
+    catalog: list[StageMediaCandidate],
+    base: SceneMediaRef | None,
+    base_scenes: list[StageLayerMedia],
+    intent: StageIntent | None,
+    rhythm: RhythmView,
+    now: datetime,
+) -> StagePlaybackPlan:
+    phase, next_phase = stage_day_phase(now, rhythm.timezone)
+    activity = stage_activity(intent, rhythm)
+    asleep = rhythm.state == "asleep"
+    wake = rhythm.wake if rhythm.wake is not None and rhythm.wake.expires_at > now else None
+    scene_title = intent.scene_title.strip().casefold() if intent is not None else ""
+    resting_scene = None
+    resting_cinematics: list[StageMediaCandidate] = []
+    if asleep or wake is not None:
+        # 过渡继续使用安睡时的环境选择；配对动作的首帧来自真实睡眠循环。
+        rest_phase = (
+            stage_day_phase(wake.occurred_at - timedelta(microseconds=1), rhythm.timezone)[0]
+            if wake is not None
+            else phase
+        )
+        resting_cinematics = await _usable_cinematics(
+            db, user_id, cinematic_options(catalog, "resting", rest_phase, None, asleep=True)
+        )
+        resting_scene = (resting_cinematics[0].scene if resting_cinematics else None) or base
+
+    if asleep:
+        scene = resting_scene
+        cinematics = resting_cinematics
+    else:
+        cinematics = await _usable_cinematics(
+            db, user_id, cinematic_options(catalog, activity, phase, intent, asleep=False)
+        )
+        named = base if scene_matches(base, scene_title) else await read_stage_scene(db, user_id, scene_title)
+        scene = named or (cinematics[0].scene if cinematics else None) or base
+    tags = set(intent.scene_tags) if intent is not None and scene_matches(scene, scene_title) else set()
+    if asleep and resting_cinematics and resting_cinematics[0].entry.media_semantics is not None:
+        tags = set(resting_cinematics[0].entry.media_semantics.scene_tags)
+
+    actors, fallback = actor_options(catalog, activity, tags, intent, asleep=asleep)
+    wake_actor = None
+    if asleep or wake is not None:
+        sleep_tags = (
+            set(intent.scene_tags) if intent is not None and scene_matches(resting_scene, scene_title) else set()
+        )
+        if resting_cinematics and resting_cinematics[0].entry.media_semantics is not None:
+            sleep_tags = set(resting_cinematics[0].entry.media_semantics.scene_tags)
+        sleep_actors = actors if asleep else actor_options(catalog, "resting", sleep_tags, None, asleep=True)[0]
+        pair = paired_wake(catalog, sleep_actors, sleep_tags)
+        if pair is not None:
+            sleep, wake_actor = pair
+            if asleep:
+                actors = [sleep]
+                cinematics = []
+
+    scene_catalog = base_scenes if scene == base else await ambient_scene_catalog(db, user_id, scene)
+    wake_catalog = scene_catalog
+    if wake is not None and resting_scene != scene:
+        wake_catalog = base_scenes if resting_scene == base else await ambient_scene_catalog(db, user_id, resting_scene)
+    pose = next((entry.body.first_frame_path for entry in (actors or fallback) if entry.body is not None), None)
+    return StagePlaybackPlan(
+        activity_type=activity,
+        life_revision=intent.life_revision if intent is not None else 0,
+        day_phase=phase,
+        next_phase_at=next_phase,
+        scene=scene,
+        scene_media=_media_at_phase(scene_catalog, phase),
+        actor_variants=actors,
+        fallback_actor_variants=fallback,
+        cinematic_variants=[candidate.entry for candidate in cinematics],
+        actor_still_url=pose,
+        wake_actor=wake_actor if wake is not None else None,
+        wake_scene=resting_scene if wake is not None else None,
+        wake_scene_media=_media_at_phase(wake_catalog, phase) if wake is not None else None,
+    )
 
 
 async def composition_with_media(

@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import ensure_utc
+from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,6 +124,13 @@ _REVIEW_HOURS = (9, 14, 19)
 _REVIEW_END_HOUR = 22
 
 
+def _review_slot(local: datetime) -> str | None:
+    if local.hour < _REVIEW_HOURS[0] or local.hour >= _REVIEW_END_HOUR:
+        return None
+    hour = max(hour for hour in _REVIEW_HOURS if hour <= local.hour)
+    return f"{local.date().isoformat()}T{hour:02d}"
+
+
 async def reserve_review_in_session(db: AsyncSession, user_id: int, now: datetime) -> tuple[bool, str | None]:
     """先占用本地时段，成果或明确调整可唤醒判断，但不再消耗一次日常机会。"""
     state = await get_or_create_state(db, user_id, lock=True)
@@ -140,10 +147,9 @@ async def reserve_review_in_session(db: AsyncSession, user_id: int, now: datetim
     state.next_review_at = datetime.combine(
         day if next_hour is not None else day + timedelta(days=1), time(next_hour or _REVIEW_HOURS[0]), zone
     )
-    if local.hour < _REVIEW_HOURS[0] or local.hour >= _REVIEW_END_HOUR:
+    slot = _review_slot(local)
+    if slot is None:
         return False, None
-    hour = max(hour for hour in _REVIEW_HOURS if hour <= local.hour)
-    slot = f"{day.isoformat()}T{hour:02d}"
     if state.review_slot is not None and state.review_slot >= slot:
         return True, None
     state.review_slot = slot
@@ -250,11 +256,21 @@ def _validate_decision(decision: LifeDecisionRequest, previous: LifeStateView) -
 
 
 async def commit_private_episode_in_session(
-    db: AsyncSession, user_id: int, episode: PrivateLifeEpisode, *, slot: str, expected_revision: int
+    db: AsyncSession,
+    user_id: int,
+    episode: PrivateLifeEpisode,
+    *,
+    slot: str,
+    expected_revision: int,
+    timezone: str,
+    awake_until: datetime,
 ) -> None:
     row = await get_or_create_state(db, user_id, lock=True)
     if row.revision != expected_revision or row.review_slot != slot:
         raise LifeStateConflictError("生活状态或日常时段已经变化")
+    now = utc_now()
+    if now >= awake_until or _review_slot(now.astimezone(ZoneInfo(timezone))) != slot:
+        raise LifeStateConflictError("伙伴已休息或认领的日常时段已结束")
     previous_presentation = row.presentation_revision
     if row.activity_step_id is None:
         apply_decision(
@@ -275,6 +291,7 @@ async def commit_private_episode_in_session(
         user_id,
         LifeEventInput(
             event_key=f"life-episode:{slot}",
+            occurred_at=now,
             kind="life.episode.recorded",
             source="life_decision",
             fact_type="virtual_activity",
