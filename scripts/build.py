@@ -86,6 +86,8 @@ def main() -> int:
     # Windows 控制台默认非 UTF-8，print 非 ASCII 会崩；统一 UTF-8 并降级替换。
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # runner 的 cua-driver wheel 约 38 MB，CI 与弱网下会超过 uv 默认 30s 读超时；显式设置的环境变量优先。
+    os.environ.setdefault("UV_HTTP_TIMEOUT", "300")
 
     parser = argparse.ArgumentParser(description="Build SpiritAgent client installer")
     parser.add_argument("--version", required=True, help="Release version (e.g. 0.16.0)")
