@@ -1,12 +1,4 @@
 .desktop {
-  --desktop-icon-size: 48px;
-  --desktop-item-gap: 8px;
-  --desktop-bar-padding: 12px;
-  --desktop-rail-center-width: calc(
-    var(--desktop-avatar-size) + var(--desktop-icon-size) + var(--desktop-item-gap) + 2 * var(--desktop-bar-padding)
-  );
-  --desktop-rail-control-size: var(--desktop-control-size);
-  --desktop-rail-control-edge: var(--desktop-control-edge);
   --desktop-unread-color: #168ee8;
   --desktop-unread-halo: rgb(24 156 239 / 0.5);
   color: var(--ui-text-strong);
@@ -35,50 +27,63 @@
   opacity: 0.45;
 }
 .bottomBar {
+  --desktop-right-rail-width: calc(
+    var(--desktop-icon-size) + var(--desktop-item-gap) + var(--desktop-navigation-width)
+  );
+  --desktop-wing-width: max(var(--desktop-dock-width), var(--desktop-right-rail-width));
   --desktop-bar-width: min(
-    calc(2 * var(--desktop-wing-width, 216px) + var(--desktop-rail-center-width) + 2 * var(--desktop-bar-padding)),
+    calc(2 * var(--desktop-wing-width) + var(--desktop-avatar-size) + 4 * var(--desktop-bar-padding)),
     var(--desktop-bar-available-width)
   );
+  --desktop-dock-glass: color-mix(in srgb, var(--ui-app-bg) 79%, transparent);
+  --desktop-dock-rim: color-mix(in srgb, var(--ui-app-bg) 72%, var(--ui-text-strong));
+  --desktop-dock-height: 30px;
   position: absolute;
   bottom: var(--desktop-bar-bottom);
   left: calc(50% - var(--desktop-bar-width) / 2);
   z-index: 50;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--desktop-rail-center-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--desktop-avatar-size) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
+  column-gap: var(--desktop-bar-padding);
   align-items: center;
   width: var(--desktop-bar-width);
   height: var(--desktop-bar-height);
-  padding: 8px var(--desktop-bar-padding);
+  padding-inline: var(--desktop-bar-padding);
   pointer-events: none;
 }
 .bottomBarBackdrop {
   position: absolute;
-  inset: 0;
+  inset: auto
+    max(
+      0px,
+      calc(50% - var(--desktop-avatar-size) / 2 - 2 * var(--desktop-bar-padding) - var(--desktop-right-rail-width))
+    )
+    0 max(0px, calc(50% - var(--desktop-avatar-size) / 2 - 2 * var(--desktop-bar-padding) - var(--desktop-dock-width)));
   z-index: -1;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--ui-app-bg) 76%, transparent);
-  backdrop-filter: blur(30px) saturate(150%);
-  box-shadow:
-    0 8px 28px rgb(0 0 0 / 0.16),
-    inset 0 1px 0 rgb(255 255 255 / 0.12);
+  height: var(--desktop-dock-height);
+  border-block: 1px solid var(--ui-line-standard);
+  background: linear-gradient(to bottom, var(--desktop-dock-glass) 0 calc(100% - 4px), var(--desktop-dock-rim) 100%);
+  backdrop-filter: blur(22px) saturate(145%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2);
+  pointer-events: none;
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    100% calc(100% - 2px),
+    calc(100% - 2px) 100%,
+    2px 100%,
+    0 calc(100% - 2px)
+  );
 }
-.centerRail {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--desktop-item-gap);
-  height: 100%;
-  min-width: 0;
-  pointer-events: auto;
+.bottomBar[data-system-tray='true'] .bottomBarBackdrop {
+  right: 0;
 }
 .avatarSlot {
   display: flex;
   align-self: end;
   justify-content: center;
   height: var(--desktop-avatar-size);
-  margin-bottom: -8px;
 }
 .avatarMenu {
   position: relative;
@@ -366,8 +371,10 @@
 .dock {
   display: flex;
   align-items: center;
-  min-width: 0;
-  height: var(--desktop-icon-size);
+  justify-self: end;
+  width: max-content;
+  max-width: 100%;
+  height: var(--desktop-bar-height);
   gap: var(--desktop-item-gap);
   pointer-events: auto;
 }
@@ -383,66 +390,75 @@
 .internalDockItem,
 .allAppsButton {
   width: var(--desktop-icon-size);
-  height: var(--desktop-icon-size);
+  height: var(--desktop-bar-height);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 5px;
-  border: 1px solid var(--ui-line-hairline);
-  border-radius: 12px;
-  background: var(--ui-fill-faint);
-  transition:
-    transform 150ms,
-    background 150ms;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  color: var(--ui-text-strong);
+  background: transparent;
   position: relative;
+  pointer-events: auto;
 }
-.appIcon {
+.dockGlyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--desktop-icon-size) - 12px);
+  aspect-ratio: 1;
+  border-radius: 9px;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.2));
+  pointer-events: none;
+  transform: translateY(calc(var(--desktop-magnification, 0) * -8px)) scale(var(--desktop-magnification-scale, 1));
+  transition:
+    transform 140ms cubic-bezier(0.2, 0.75, 0.25, 1),
+    opacity 120ms ease;
+}
+.dockGlyph img {
   width: 100%;
-}
-.appIcon:hover,
-.internalDockItem:hover,
-.allAppsButton:hover {
-  transform: translateY(-3px) scale(1.04);
-  background: var(--ui-fill-hover);
-}
-.appIcon img,
-.internalDockItem img {
-  width: 100%;
-  height: 100%;
+  height: calc(var(--desktop-icon-size) - 12px);
   object-fit: contain;
 }
-.appIcon[data-unavailable='true'] {
+.appIcon[data-unavailable='true'] .dockGlyph {
   filter: grayscale(1);
   opacity: 0.55;
 }
-.internalDockItem {
-  color: var(--ui-text-muted);
-  background: transparent;
-  flex-shrink: 0;
+.appIcon:active .dockGlyph,
+.internalDockItem:active .dockGlyph,
+.allAppsButton:active .dockGlyph {
+  opacity: 0.72;
 }
-.internalDockItem[data-current='true'] {
-  color: var(--ui-accent);
-  border-color: var(--ui-accent-soft);
-  background: var(--ui-accent-soft);
-}
-.productWing {
+.rightRail {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 4px;
-  pointer-events: auto;
+  gap: var(--desktop-item-gap);
+}
+.chatSlot {
+  flex: 0 0 auto;
+}
+.productWing {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  gap: var(--desktop-wing-scroll-gap);
 }
 .wingScroll {
   display: grid;
-  flex: 0 0 20px;
+  flex: 0 0 var(--desktop-wing-scroll-size);
   place-items: center;
-  width: 20px;
+  width: var(--desktop-wing-scroll-size);
   height: 32px;
   padding: 0;
   color: var(--ui-text-strong);
   border: 1px solid var(--ui-line-standard);
   border-radius: 7px;
-  background: var(--ui-fill-hover);
+  background: var(--ui-app-bg);
+  pointer-events: auto;
 }
 .wingScroll[hidden] {
   display: none;
@@ -453,31 +469,42 @@
 }
 .productViewport {
   flex: 1;
+  pointer-events: auto;
+}
+.dockViewport,
+.productViewport {
   min-width: 0;
+  height: calc(var(--desktop-bar-height) + var(--desktop-wing-scrollbar-gutter));
+  margin-bottom: calc(-1 * var(--desktop-wing-scrollbar-gutter));
   overflow-x: auto;
-  padding: 8px 2px;
-  margin: -8px -2px;
+  overflow-y: hidden;
   scrollbar-width: thin;
   overscroll-behavior-x: contain;
-  pointer-events: auto;
+}
+.productViewport:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
 }
 .productItems {
   display: flex;
   align-items: center;
-  gap: var(--desktop-item-gap);
   width: max-content;
+  height: var(--desktop-bar-height);
+  padding-inline-end: var(--desktop-bar-padding);
+  pointer-events: none;
+}
+.bottomBar[data-system-tray='true'] .productItems {
+  column-gap: calc(8 * var(--desktop-item-gap));
   min-width: 100%;
+  padding-inline-end: 0;
 }
 .productGroup {
-  display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: var(--desktop-item-gap);
 }
 .systemTraySlot {
   flex: 0 0 auto;
-  margin-left: auto;
-  pointer-events: none;
+  align-self: end;
+  margin-inline-start: auto;
 }
 .productNav {
   display: flex;
@@ -501,21 +528,22 @@
 }
 .productUnread {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ui-app-bg);
   border-radius: 50%;
   background: var(--ui-accent);
 }
 .runningDot {
   position: absolute;
   z-index: 3;
-  bottom: -6px;
+  bottom: 8px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--ui-text-muted);
+  background: var(--ui-text-strong);
   left: 50%;
   transform: translateX(-50%);
 }
@@ -529,22 +557,24 @@
 }
 .allAppsButton {
   color: var(--ui-accent);
-  flex-shrink: 0;
 }
-.allAppsButton[aria-expanded='true'] {
+.allAppsButton[aria-expanded='true'] .dockGlyph,
+.internalDockItem[data-current='true'] .dockGlyph {
   background: var(--ui-accent-soft);
-  border-color: var(--ui-accent);
 }
 .appIcon:focus-visible,
 .internalDockItem:focus-visible,
+.allAppsButton:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -3px;
+}
 .dockMenu button:focus-visible,
-.allAppsButton:focus-visible,
 .dockPicker button:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 2px;
 }
 .dockDivider {
-  height: 34px;
+  height: 20px;
   width: 1px;
   margin: 5px 3px;
   background: var(--ui-line-standard);
@@ -604,6 +634,7 @@
 .productMenu {
   width: 200px;
   transform: none;
+  pointer-events: auto;
 }
 .waiting {
   width: 100vw;
@@ -620,20 +651,6 @@
   border: 1px solid var(--ui-line-standard);
   border-radius: 8px;
 }
-@media (max-width: 760px) {
-  .desktop {
-    --desktop-icon-size: 40px;
-    --desktop-item-gap: 4px;
-    --desktop-bar-padding: 8px;
-  }
-}
-@media (max-width: 480px) {
-  .desktop {
-    --desktop-rail-control-size: 40px;
-    --desktop-rail-control-edge: 4px;
-    --desktop-bar-padding: 4px;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .desktop *,
   .desktop *::before,
@@ -641,11 +658,17 @@
     transition: none !important;
     animation: none !important;
   }
+  .dockGlyph {
+    transform: none;
+  }
+  button[data-dock-motion]:enabled:hover .dockGlyph {
+    background: var(--ui-accent-soft);
+  }
 }
 
 :global(html.no-blur) .bottomBarBackdrop {
+  --desktop-dock-glass: var(--ui-app-bg);
   backdrop-filter: none;
-  background: var(--ui-app-bg);
 }
 
 :global(html.no-blur) .companionBubble {
@@ -653,16 +676,10 @@
   background: var(--ui-app-bg);
 }
 
-.dockViewport {
-  min-width: 0;
-  overflow-x: auto;
-  padding: 8px 2px;
-  margin: -8px -2px;
-  scrollbar-width: thin;
-}
 .dockItems {
   display: flex;
   width: max-content;
+  height: var(--desktop-bar-height);
   gap: var(--desktop-item-gap);
   align-items: center;
 }

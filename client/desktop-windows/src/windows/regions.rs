@@ -178,21 +178,20 @@ impl SavedRegion {
         set(self.identity.window(), Some(region))
     }
 
-    pub(super) fn clip(&self, screen: Option<Bounds>) -> Result<()> {
+    pub(super) fn clip(&self, screen: &[Bounds]) -> Result<()> {
         if !self.identity.valid() {
             return Err("window identity changed before clipping".into());
         }
         let bounds = rectangle(self.identity.window())?;
         let region = self.original(bounds)?;
-        let mask = match screen {
-            Some(screen) => Region::rectangle(Bounds {
-                x: screen.x - bounds.x,
-                y: screen.y - bounds.y,
-                width: screen.width,
-                height: screen.height,
-            })?,
-            None => Region::empty()?,
-        };
+        let mask = Region::empty()?;
+        for rect in screen {
+            mask.combine(&Region::rectangle(Bounds {
+                x: rect.x - bounds.x,
+                y: rect.y - bounds.y,
+                ..*rect
+            })?, RGN_OR)?;
+        }
         region.combine(&mask, RGN_AND)?;
         set(self.identity.window(), Some(region))
     }

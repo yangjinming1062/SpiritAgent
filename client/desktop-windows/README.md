@@ -45,7 +45,7 @@ Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢�
 
 ## 原生系统托盘
 
-[tray.rs](src/windows/tray.rs) 探测刷新，[tray_placement.rs](src/windows/tray_placement.rs) 恢复位置，[regions.rs](src/windows/regions.rs) 保存区域。接管只平移交互屏原任务栏到 Dock 槽位，保留原尺寸、父子关系及托盘子树，裁剪为托盘与滚动视口交集。优先用 `TrayNotifyWnd`，缺失时只读 UI Automation 并复核 Explorer、任务栏、屏幕与坐标。探测独立限时，不能阻塞心跳与恢复；不能可靠定位或应用区域时结束接管。
+[tray.rs](src/windows/tray.rs) 探测刷新，[tray_placement.rs](src/windows/tray_placement.rs) 恢复位置，[regions.rs](src/windows/regions.rs) 保存区域。接管平移交互屏原任务栏到 Dock 槽位，保留原尺寸、父子关系及托盘子树。UI Automation 提供重排后的实际按钮区域，并复核 Explorer、任务栏、屏幕与坐标。定位使用按钮的外接矩形，命中使用各按钮区域和滚动视口的交集，让两行之间的空白穿透。独立限时探测不可用时可退回已核验的 `TrayNotifyWnd` 区域。不能可靠定位或应用区域时结束接管。
 
 固有尺寸与平移／滚动位置分开，WinEvent 和巡检刷新 DPI、显隐、图标及 Explorer 重建；不跨屏复制托盘，不纳入第三方任务栏面板，也不用固定宽度。槽位变化先发布会话物理目标，再改原生位置和裁剪。Explorer 继续处理图标、菜单及系统面板，弹窗不参加任务栏裁剪或工作区校正。
 
@@ -59,7 +59,7 @@ XAML 修改只作用登记任务栏：清背景与边线，按应用主题调整
 
 DLL 以内容 hash 命名，启用前复制并逐字节核对到当前用户 `LocalAppData/SpiritAgent/native/tray-style/`，不让 Explorer 映射安装／开发目录阻塞更新。已缓存或已载入 DLL 不覆盖、不删除，下次按 manifest 选当前模块。
 
-Electron 保留 Dock 玻璃绘制，原生行在上方接受输入。缺布局、布局清空或界面隐藏时收起托盘；主进程只将固有尺寸和实际可见性投影给 renderer。
+识别到日期时间的 XAML 容器且任务栏高度足够时，样式在原窗口内将原生按钮排成上下两行。时钟沿用 Explorer 的内容、显示设置和输入，退出时随样式恢复布局属性及绑定。无法分行时保留系统布局。Electron 绘制共用托板。缺布局、布局清空或界面隐藏时收起托盘；主进程只将固有尺寸和实际可见性投影给 renderer。
 
 ## 工作区与层级
 

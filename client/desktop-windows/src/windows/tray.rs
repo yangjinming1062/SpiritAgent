@@ -61,6 +61,28 @@ pub(super) struct SystemTray {
     pub visible: bool,
 }
 
+struct TrayGeometry {
+    bounds: Bounds,
+    items: Vec<Bounds>,
+}
+
+impl TrayGeometry {
+    fn areas(&self) -> &[Bounds] {
+        if self.items.is_empty() {
+            std::slice::from_ref(&self.bounds)
+        } else {
+            &self.items
+        }
+    }
+
+    fn translate(&mut self, from: Bounds, to: Bounds) {
+        for rect in std::iter::once(&mut self.bounds).chain(&mut self.items) {
+            rect.x += to.x - from.x;
+            rect.y += to.y - from.y;
+        }
+    }
+}
+
 struct Probe {
     child: Child,
     receiver: Receiver<Result<ProbeResult>>,
@@ -73,6 +95,7 @@ struct ProbeResult {
     identity: Identity,
     taskbar: Bounds,
     bounds: Option<Bounds>,
+    items: Vec<Bounds>,
     stable: bool,
 }
 
@@ -151,8 +174,9 @@ impl Drop for Probe {
 
 pub(super) struct Tray {
     owner: Option<Identity>,
-    raw: Option<Bounds>,
+    raw: Option<TrayGeometry>,
     probe: Option<Probe>,
+    probe_degraded: bool,
     last_probe: Instant,
     last_taskbar: Option<Bounds>,
     layout: Option<TrayLayout>,
@@ -168,6 +192,7 @@ impl Tray {
             owner: None,
             raw: None,
             probe: None,
+            probe_degraded: false,
             last_probe: Instant::now() - PROBE_TIMEOUT,
             last_taskbar: None,
             layout: None,
@@ -178,8 +203,8 @@ impl Tray {
         };
         let started = Instant::now();
         tray.refresh(journal)?;
-        // 初始化尚未进入命令循环；仅在 UIA 子进程内等待供应方，等待总量有界。
-        while tray.probe.is_some() {
+        // 有可用的原生窗口时，按钮几何在接管后异步更新。
+        while tray.probe.is_some() && tray.raw.is_none() {
             if started.elapsed() >= PROBE_TIMEOUT {
                 return Err("system tray geometry did not settle".into());
             }
@@ -218,6 +243,7 @@ impl Tray {
             self.owner = Some(identity.clone());
             self.raw = None;
             self.probe = None;
+            self.probe_degraded = false;
             self.last_taskbar = None;
             self.last_position = None;
             self.corrections.clear();
@@ -226,11 +252,9 @@ impl Tray {
         let taskbar = rectangle(identity.window())?;
         if let Some(previous) = self.last_taskbar {
             if previous.width == taskbar.width && previous.height == taskbar.height {
-                self.raw = self.raw.map(|bounds| Bounds {
-                    x: bounds.x + taskbar.x - previous.x,
-                    y: bounds.y + taskbar.y - previous.y,
-                    ..bounds
-                });
+                if let Some(geometry) = &mut self.raw {
+                    geometry.translate(previous, taskbar);
+                }
             } else if previous != taskbar {
                 self.raw = None;
                 self.probe = None;
@@ -239,14 +263,17 @@ impl Tray {
         }
         self.last_taskbar = Some(taskbar);
         let native = child(identity.window(), "TrayNotifyWnd");
-        if !native.is_null() {
+        let fallback = if native.is_null() {
+            None
+        } else {
             if window_pid(native) != identity.pid || unsafe { IsChild(identity.window(), native) } == 0 {
                 return Err("native system tray does not belong to taskbar".into());
             }
-            self.raw = Some(validate(rectangle(native)?, taskbar)?);
-            self.probe = None;
-        } else if let Some(probe) = &mut self.probe {
-            if let Some(result) = probe.poll()? {
+            Some(validate(rectangle(native)?, taskbar)?)
+        };
+        // Windows 11 仍可能保留 TrayNotifyWnd。UIA 按钮几何反映重排后的实际范围。
+        match self.probe.as_mut().map(Probe::poll) {
+            Some(Ok(Some(result))) => {
                 self.probe = None;
                 if !result.identity.same_window(identity) {
                     return Err("system tray query identity changed".into());
@@ -255,27 +282,43 @@ impl Tray {
                     && result.taskbar.width == taskbar.width
                     && result.taskbar.height == taskbar.height
                 {
-                    self.raw = result.bounds.map(|bounds| {
-                        validate(Bounds {
-                            x: bounds.x + taskbar.x - result.taskbar.x,
-                            y: bounds.y + taskbar.y - result.taskbar.y,
-                            ..bounds
-                        }, taskbar)
+                    self.raw = result.bounds.map(|bounds| -> Result<TrayGeometry> {
+                        let mut geometry = TrayGeometry { bounds, items: result.items };
+                        geometry.translate(result.taskbar, taskbar);
+                        validate(geometry.bounds, taskbar)?;
+                        Ok(geometry)
                     }).transpose()?;
+                    self.probe_degraded = false;
                     self.last_probe = Instant::now();
                 } else {
                     self.probe = Some(Probe::start(identity)?);
                 }
             }
-        } else if self.last_probe.elapsed() >= PROBE_TIMEOUT {
-            self.probe = Some(Probe::start(identity)?);
+            Some(Err(error)) if fallback.is_some() => {
+                self.probe = None;
+                self.last_probe = Instant::now();
+                self.raw = None;
+                if !self.probe_degraded {
+                    emit(json!({ "event": "warning", "notify": false, "reason": format!("System tray button geometry unavailable: {error}") }));
+                    self.probe_degraded = true;
+                }
+            }
+            Some(Err(error)) => return Err(error),
+            None if self.last_probe.elapsed() >= PROBE_TIMEOUT => {
+                self.probe = Some(Probe::start(identity)?);
+            }
+            _ => {}
         }
-        if self.raw.is_some_and(|bounds| {
-            bounds.width > display.width || bounds.height > display.height
+        if self.raw.as_ref().is_none_or(|geometry| geometry.items.is_empty()) {
+            self.raw = fallback.map(|bounds| TrayGeometry { bounds, items: Vec::new() });
+        }
+        if self.raw.as_ref().is_some_and(|geometry| {
+            geometry.bounds.width > display.width || geometry.bounds.height > display.height
         }) {
             return Err("system tray is larger than the interaction display".into());
         }
-        self.state = self.raw.map(|bounds| {
+        self.state = self.raw.as_ref().map(|geometry| {
+            let bounds = geometry.bounds;
             // 布局消费者只需要固有尺寸；不要把滚动后的原生窗口位置反馈成新的槽位。
             let normalized = Bounds {
                 x: (original.bounds.x + bounds.x - taskbar.x)
@@ -287,7 +330,7 @@ impl Tray {
             SystemTray {
                 bounds: normalized,
                 visible: self.layout.is_some_and(|layout| {
-                    tray_placement::intersection(bounds, layout.clip).is_some()
+                    geometry.areas().iter().any(|item| tray_placement::intersection(*item, layout.clip).is_some())
                 }) && unsafe { IsWindowVisible(identity.window()) } != 0,
             }
         });
@@ -314,7 +357,7 @@ impl Tray {
     }
 
     pub(super) fn apply(&mut self, journal: &Journal, style: Option<&TrayStyle>) -> Result<()> {
-        let mut visible = None;
+        let mut visible = Vec::new();
         if let Some(original) = journal.tray_placements.first() {
             if !original.identity.valid() || !is_explorer(original.identity.pid) {
                 return Err("system tray placement owner changed".into());
@@ -327,10 +370,10 @@ impl Tray {
             }
             // Explorer 重建时等待异步 guard 就绪，不能先露出尚未保护的位置。
             let layout = layout.filter(|_| style.is_some_and(TrayStyle::placement_ready));
-            if let (Some(layout), Some(native)) = (layout, self.raw) {
+            if let (Some(layout), Some(native)) = (layout, &mut self.raw) {
                 let target = Bounds {
-                    x: layout.bounds.x - (native.x - before.x),
-                    y: layout.bounds.y + (layout.bounds.height - native.height) / 2 - (native.y - before.y),
+                    x: layout.bounds.x - (native.bounds.x - before.x),
+                    y: layout.bounds.y + (layout.bounds.height - native.bounds.height) / 2 - (native.bounds.y - before.y),
                     width: before.width,
                     height: before.height,
                 };
@@ -360,14 +403,9 @@ impl Tray {
                 }
                 self.last_position = Some(target);
                 let after = rectangle(window)?;
-                let translated = Bounds {
-                    x: native.x + after.x - before.x,
-                    y: native.y + after.y - before.y,
-                    ..native
-                };
-                self.raw = Some(translated);
+                native.translate(before, after);
                 self.last_taskbar = Some(after);
-                visible = tray_placement::intersection(translated, layout.clip);
+                visible.extend(native.areas().iter().filter_map(|item| tray_placement::intersection(*item, layout.clip)));
                 if unsafe { IsWindowVisible(window) } == 0 {
                     visibility(&original.identity, true)?;
                 }
@@ -377,15 +415,13 @@ impl Tray {
                 }
                 // 先收起区域，再恢复 Shell 几何，避免切换时短暂露出完整任务栏。
                 if let Some(saved) = journal.regions.iter().find(|saved| saved.identity.same_window(&original.identity)) {
-                    saved.clip(None)?;
+                    saved.clip(&[])?;
                 }
                 original.restore()?;
                 let after = rectangle(window)?;
-                self.raw = self.raw.map(|bounds| Bounds {
-                    x: bounds.x + after.x - before.x,
-                    y: bounds.y + after.y - before.y,
-                    ..bounds
-                });
+                if let Some(geometry) = &mut self.raw {
+                    geometry.translate(before, after);
+                }
                 self.last_taskbar = Some(after);
                 self.last_position = None;
                 self.corrections.clear();
@@ -393,11 +429,11 @@ impl Tray {
         }
         for saved in &journal.regions {
             if journal.shell.iter().any(|identity| identity.same_window(&saved.identity)) {
-                saved.clip(visible)?;
+                saved.clip(&visible)?;
             }
         }
         if let Some(state) = &mut self.state {
-            state.visible = visible.is_some();
+            state.visible = !visible.is_empty();
         }
         Ok(())
     }
@@ -451,6 +487,7 @@ pub(super) fn probe(handle: u64) -> Result<()> {
         return Err("system tray query exceeded element budget".into());
     }
     let mut bounds: Option<Bounds> = None;
+    let mut items = Vec::new();
     let mut recognized = false;
     for index in 0..length {
         let element = unsafe { elements.GetElement(index) }.map_err(|error| error.to_string())?;
@@ -483,6 +520,7 @@ pub(super) fn probe(handle: u64) -> Result<()> {
         if !item.valid() {
             continue;
         }
+        items.push(item);
         bounds = Some(match bounds {
             None => item,
             Some(old) => {
@@ -514,6 +552,7 @@ pub(super) fn probe(handle: u64) -> Result<()> {
         "identity": identity,
         "taskbar": taskbar,
         "bounds": bounds,
+        "items": items,
         "stable": stable,
     }));
     Ok(())

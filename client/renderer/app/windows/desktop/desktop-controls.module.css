@@ -1,6 +1,6 @@
 .root {
-  --control-size: var(--desktop-rail-control-size, var(--desktop-control-size, 44px));
-  --control-edge: var(--desktop-rail-control-edge, var(--desktop-control-edge, 16px));
+  --control-size: var(--desktop-control-size, 44px);
+  --control-edge: var(--desktop-control-edge, 16px);
   --control-bottom: calc(var(--desktop-bar-bottom, 12px) + (var(--desktop-bar-height, 64px) - var(--control-size)) / 2);
   --panel-gap: 12px;
   --panel-width: min(

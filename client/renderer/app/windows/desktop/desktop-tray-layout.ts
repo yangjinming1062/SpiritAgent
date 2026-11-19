@@ -6,7 +6,7 @@ import type { DesktopTrayLayout } from '@ipc/contracts'
 
 const layoutOwners = new Map<number, symbol>()
 
-/** 原生窗口盖在共同玻璃底板上；只上报尺寸和裁剪，不绘制或代理原生图标。 */
+/** 原生托盘底边对齐 Dock 托板，滚动视口决定可见区域。 */
 export function useDesktopTrayLayout({
   available,
   barRef,
@@ -36,8 +36,7 @@ export function useDesktopTrayLayout({
     let disposed = false
     let frame = 0
     let lastSignature: string | undefined
-    let queued: DesktopTrayLayout['layout'] | undefined
-    let measuredViewport: DesktopTrayLayout['viewport'] = null
+    let queued: DesktopTrayLayout | undefined
     let inFlight: Promise<void> | undefined
 
     const flush = (): void => {
@@ -45,11 +44,10 @@ export function useDesktopTrayLayout({
         return
       }
 
-      const layout = queued
-      const measured = measuredViewport
+      const next = queued
       queued = undefined
       inFlight = shellApi()
-        .presentation.setTrayLayout({ epoch, layout, viewport: measured })
+        .presentation.setTrayLayout(next)
         .catch(error => {
           lastSignature = undefined
           console.warn('[desktop] native tray layout failed', error)
@@ -69,26 +67,28 @@ export function useDesktopTrayLayout({
 
       const rect = tray.getBoundingClientRect()
       const visible = viewport.getBoundingClientRect()
-      const left = Math.max(0, visible.left)
-      const top = Math.max(0, visible.top)
-      const right = Math.min(window.innerWidth, visible.right)
-      const bottom = Math.min(window.innerHeight, visible.bottom)
+      const viewportLeft = visible.left + viewport.clientLeft
+      const viewportTop = visible.top + viewport.clientTop
+      const left = Math.max(0, viewportLeft, rect.left)
+      const top = Math.max(0, viewportTop, rect.top)
+      const right = Math.min(window.innerWidth, viewportLeft + viewport.clientWidth, rect.right)
+      const bottom = Math.min(window.innerHeight, viewportTop + viewport.clientHeight, rect.bottom)
 
       const layout =
-        rect.width > 0 && rect.height > 0 && right > left && bottom > top
+        right > left && bottom > top
           ? {
               bounds: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
               clip: { x: left, y: top, width: right - left, height: bottom - top }
             }
           : null
 
-      const signature = JSON.stringify(layout)
+      const next = { epoch, layout, viewport: { width: window.innerWidth, height: window.innerHeight } }
+      const signature = JSON.stringify(next)
 
       if (signature !== lastSignature) {
         lastSignature = signature
         // 视口尺寸随窗口变化上报，主进程据此丢弃压缩期间的旧测量。
-        queued = layout
-        measuredViewport = { width: window.innerWidth, height: window.innerHeight }
+        queued = next
         flush()
       }
     }

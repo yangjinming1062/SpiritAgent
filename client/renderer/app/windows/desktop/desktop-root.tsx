@@ -395,10 +395,16 @@ export function DesktopRoot(): React.JSX.Element {
           '--desktop-work-area-height': workArea
             ? `${workArea.height}px`
             : `calc(100vh - ${DESKTOP_LAYOUT.bottomInset}px)`,
-          '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
-          '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`,
+          '--desktop-control-size': `${rail.controlSize}px`,
+          '--desktop-control-edge': `${rail.controlRight}px`,
           '--desktop-control-right': `${safeRight + rail.controlRight}px`,
+          '--desktop-icon-size': `${rail.iconSize}px`,
+          '--desktop-item-gap': `${rail.itemGap}px`,
+          '--desktop-bar-padding': `${rail.barPadding}px`,
           '--desktop-bar-available-width': `${rail.width}px`,
+          '--desktop-wing-scroll-size': `${DESKTOP_LAYOUT.wingScrollSize}px`,
+          '--desktop-wing-scroll-gap': `${DESKTOP_LAYOUT.wingScrollGap}px`,
+          '--desktop-wing-scrollbar-gutter': `${DESKTOP_LAYOUT.wingScrollbarGutter}px`,
           '--desktop-popup-bottom': `${popupBottom}px`
         } as React.CSSProperties
       }
@@ -448,14 +454,17 @@ export function DesktopRoot(): React.JSX.Element {
             aria-label={chatLabel}
             className={styles.internalDockItem}
             data-current={activeWindow === 'chat'}
+            data-dock-motion
             data-minimized={chatWindow?.minimized ?? false}
             onClick={openCompanionChat}
             title={chatLabel}
             type="button"
           >
-            <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/chat.svg`} />
+            <span aria-hidden="true" className={styles.dockGlyph} data-dock-glyph>
+              <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/chat.svg`} />
+              {companionUnread && <span className={styles.productUnread} />}
+            </span>
             {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
-            {companionUnread && <span aria-hidden="true" className={styles.productUnread} />}
           </button>
         }
         dockOverlayActive={overlay === 'dock'}
@@ -475,6 +484,8 @@ export function DesktopRoot(): React.JSX.Element {
         }
         onDockOpen={() => setOverlay('dock')}
         onDockOpenChange={dockOpenChange}
+        overlayActive={overlay !== null}
+        railIconSize={rail.iconSize}
         stageEpoch={presentation.stageEpoch}
         systemTray={presentation.systemTray}
       />

@@ -4,9 +4,11 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { useStrings } from '@/shared/strings'
+import { DESKTOP_LAYOUT } from '@client-shared/desktop-layout'
 import type { PresentationState } from '@ipc/contracts'
 
 import { DesktopDock } from './desktop-dock'
+import { useDockMagnification } from './desktop-dock-magnification'
 import { useDesktopTrayLayout } from './desktop-tray-layout'
 import styles from './desktop.module.css'
 
@@ -18,6 +20,8 @@ export function DesktopBottomBar({
   dockOverlayActive,
   onDockOpen,
   onDockOpenChange,
+  overlayActive,
+  railIconSize,
   stageEpoch,
   systemTray
 }: {
@@ -28,13 +32,15 @@ export function DesktopBottomBar({
   dockOverlayActive: boolean
   onDockOpen: () => void
   onDockOpenChange: (open: boolean) => void
+  overlayActive: boolean
+  railIconSize: number
   stageEpoch: number
   systemTray: PresentationState['systemTray']
 }): React.JSX.Element {
   const t = useStrings().desktopShell
   const [dockWidth, setDockWidth] = useState(0)
   const [navigationWidth, setNavigationWidth] = useState(0)
-  const [scroll, setScroll] = useState({ left: false, right: false })
+  const [scroll, setScroll] = useState({ left: false, right: false, arrows: false })
   const trayAvailable = systemTray !== null
   const barRef = useRef<HTMLElement>(null)
   const itemsRef = useRef<HTMLDivElement>(null)
@@ -42,7 +48,34 @@ export function DesktopBottomBar({
   const wingRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const trayRef = useRef<HTMLDivElement>(null)
-  useInteractiveRegion('desktop-bottom-bar', barRef)
+  useInteractiveRegion(
+    'desktop-bottom-bar',
+    barRef,
+    element => {
+      const { x, y, width, height } = element.getBoundingClientRect()
+
+      return new DOMRect(x, y, width, height + DESKTOP_LAYOUT.wingScrollbarGutter)
+    },
+    (x, y) => {
+      const target = document.elementFromPoint(x, y)
+      const viewport = viewportRef.current
+
+      if (viewport && target === viewport) {
+        // 滚动条接收鼠标，滚动视口中的空白交给桌面。
+        const rect = viewport.getBoundingClientRect()
+
+        const scrollbarTop = Math.min(
+          rect.top + viewport.clientHeight,
+          rect.bottom - DESKTOP_LAYOUT.wingScrollbarGutter
+        )
+
+        return viewport.scrollWidth > viewport.clientWidth && y >= scrollbarTop
+      }
+
+      return Boolean(target && barRef.current?.contains(target))
+    }
+  )
+  useDockMagnification(barRef, menuEnabled && !overlayActive)
   useDesktopTrayLayout({
     available: trayAvailable,
     barRef,
@@ -53,39 +86,49 @@ export function DesktopBottomBar({
   })
 
   useLayoutEffect(() => {
-    const nav = navigationRef.current
     const wing = wingRef.current
     const viewport = viewportRef.current
     const items = itemsRef.current
+    const nav = navigationRef.current
+    const tray = trayRef.current
 
-    if (!nav || !wing || !viewport || !items) {
+    if (!wing || !viewport || !items || !nav) {
       return
     }
 
     const update = (): void => {
-      // 托盘贴住翼的右端，行会被拉伸成整翼；翼宽只能按导航与托盘的固有宽度累加。
-      const tray = trayRef.current
-      const gap = tray ? Number.parseFloat(getComputedStyle(items).getPropertyValue('--desktop-item-gap')) || 0 : 0
-      const contentWidth = nav.getBoundingClientRect().width + (tray ? tray.getBoundingClientRect().width + gap : 0)
+      // 右翼展开后的弹性间距不计入固有宽度，避免托盘右对齐时推动整条底栏继续变宽。
+      const style = getComputedStyle(items)
+      const trayWidth = tray ? tray.getBoundingClientRect().width + Number.parseFloat(style.columnGap) : 0
+
+      const contentWidth = Math.ceil(
+        nav.getBoundingClientRect().width + trayWidth + Number.parseFloat(style.paddingInlineEnd)
+      )
+
+      const available = wing.clientWidth
+      const left = viewport.scrollLeft > 1
+      const right = viewport.scrollWidth - viewport.clientWidth - viewport.scrollLeft > 1
+
+      const arrows =
+        contentWidth > available + 1 &&
+        available >= railIconSize + 2 * (DESKTOP_LAYOUT.wingScrollSize + DESKTOP_LAYOUT.wingScrollGap)
+
       setNavigationWidth(contentWidth)
-
-      const overflow = contentWidth > wing.clientWidth + 1
-
-      const next = {
-        left: overflow && viewport.scrollLeft > 1,
-        right: overflow && viewport.scrollWidth - viewport.clientWidth - viewport.scrollLeft > 1
-      }
-
-      setScroll(previous => (previous.left === next.left && previous.right === next.right ? previous : next))
+      setScroll(previous =>
+        previous.left === left && previous.right === right && previous.arrows === arrows
+          ? previous
+          : { left, right, arrows }
+      )
     }
 
     const observer = new ResizeObserver(update)
+    observer.observe(items)
     observer.observe(nav)
     observer.observe(wing)
     observer.observe(viewport)
 
-    if (trayAvailable && trayRef.current) {
-      observer.observe(trayRef.current)
+    if (tray) {
+      observer.observe(tray)
     }
 
     viewport.addEventListener('scroll', update)
@@ -95,7 +138,7 @@ export function DesktopBottomBar({
       observer.disconnect()
       viewport.removeEventListener('scroll', update)
     }
-  }, [trayAvailable])
+  }, [railIconSize, trayAvailable])
 
   const overflow = scroll.left || scroll.right
 
@@ -110,8 +153,14 @@ export function DesktopBottomBar({
   return (
     <footer
       className={styles.bottomBar}
+      data-system-tray={trayAvailable}
       ref={barRef}
-      style={{ '--desktop-wing-width': `${Math.ceil(Math.max(dockWidth, navigationWidth))}px` } as React.CSSProperties}
+      style={
+        {
+          '--desktop-dock-width': `${Math.ceil(dockWidth)}px`,
+          '--desktop-navigation-width': `${navigationWidth}px`
+        } as React.CSSProperties
+      }
     >
       <div aria-hidden="true" className={styles.bottomBarBackdrop} />
       <DesktopDock
@@ -121,62 +170,62 @@ export function DesktopBottomBar({
         onMenuOpenChange={onDockOpenChange}
         overlayActive={dockOverlayActive}
       />
-      <div className={styles.centerRail}>
-        <div className={styles.avatarSlot}>{avatar}</div>
-        {chat}
-      </div>
-      <div className={styles.productWing} ref={wingRef}>
-        <button
-          aria-label={t.moveLeft}
-          className={styles.wingScroll}
-          disabled={!scroll.left}
-          hidden={!overflow}
-          onClick={() => scrollWing(-1)}
-          title={t.moveLeft}
-          type="button"
-        >
-          <ArrowLeft size={14} />
-        </button>
-        <div
-          className={styles.productViewport}
-          onWheel={event => {
-            const viewport = viewportRef.current
+      <div className={styles.avatarSlot}>{avatar}</div>
+      <div className={styles.rightRail} data-dock-motion-group>
+        <div className={styles.chatSlot}>{chat}</div>
+        <div className={styles.productWing} ref={wingRef}>
+          <button
+            aria-label={t.moveLeft}
+            className={styles.wingScroll}
+            disabled={!scroll.left}
+            hidden={!scroll.arrows}
+            onClick={() => scrollWing(-1)}
+            title={t.moveLeft}
+            type="button"
+          >
+            <ArrowLeft size={14} />
+          </button>
+          <div
+            aria-label={t.title}
+            className={styles.productViewport}
+            data-dock-viewport
+            onWheel={event => {
+              const viewport = event.currentTarget
 
-            if (
-              viewport &&
-              viewport.scrollWidth > viewport.clientWidth &&
-              Math.abs(event.deltaY) > Math.abs(event.deltaX)
-            ) {
-              viewport.scrollLeft += event.deltaY
-            }
-          }}
-          ref={viewportRef}
-        >
-          <div className={styles.productItems} ref={itemsRef}>
-            <div className={styles.productGroup} ref={navigationRef}>
-              {navigation}
+              if (viewport.scrollWidth > viewport.clientWidth && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                viewport.scrollLeft += event.deltaY
+              }
+            }}
+            ref={viewportRef}
+            role="group"
+            tabIndex={overflow && !scroll.arrows ? 0 : undefined}
+          >
+            <div className={styles.productItems} ref={itemsRef}>
+              <div className={styles.productGroup} ref={navigationRef}>
+                {navigation}
+              </div>
+              {systemTray && (
+                <div
+                  aria-hidden="true"
+                  className={styles.systemTraySlot}
+                  ref={trayRef}
+                  style={{ width: systemTray.width, height: systemTray.height }}
+                />
+              )}
             </div>
-            {systemTray && (
-              <div
-                aria-hidden="true"
-                className={styles.systemTraySlot}
-                ref={trayRef}
-                style={{ width: systemTray.width, height: systemTray.height }}
-              />
-            )}
           </div>
+          <button
+            aria-label={t.moveRight}
+            className={styles.wingScroll}
+            disabled={!scroll.right}
+            hidden={!scroll.arrows}
+            onClick={() => scrollWing(1)}
+            title={t.moveRight}
+            type="button"
+          >
+            <ArrowRight size={14} />
+          </button>
         </div>
-        <button
-          aria-label={t.moveRight}
-          className={styles.wingScroll}
-          disabled={!scroll.right}
-          hidden={!overflow}
-          onClick={() => scrollWing(1)}
-          title={t.moveRight}
-          type="button"
-        >
-          <ArrowRight size={14} />
-        </button>
       </div>
     </footer>
   )

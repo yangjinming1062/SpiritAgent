@@ -6,8 +6,10 @@ export const DESKTOP_LAYOUT = {
   avatarSize: 76,
   controlSize: 44,
   controlEdge: 16,
+  minRailDisplayWidth: 412,
   wingScrollSize: 20,
-  wingScrollGap: 4
+  wingScrollGap: 4,
+  wingScrollbarGutter: 12
 } as const
 
 /** 与桌面底栏的响应式尺寸保持一致；每翼至少容纳一个可操作图标。 */
@@ -20,15 +22,17 @@ export function getDesktopRailLayout(viewportWidth: number) {
   const barPadding = compact ? 4 : narrow ? 8 : 12
   const iconSize = narrow ? 40 : 48
   const itemGap = narrow ? 4 : 8
-  const centerWidth = DESKTOP_LAYOUT.avatarSize + iconSize + itemGap + 2 * barPadding
-
-  const minimumWingWidth = Math.max(
-    iconSize + 2 * itemGap + 8,
-    iconSize + 2 * (DESKTOP_LAYOUT.wingScrollSize + DESKTOP_LAYOUT.wingScrollGap)
-  )
-
-  const minimumWidth = centerWidth + 2 * (barPadding + minimumWingWidth)
+  // 头像两侧等宽，每侧至少放下两个按钮。右翼的第一个按钮留给聊天。
+  const minimumWidth = DESKTOP_LAYOUT.avatarSize + 4 * barPadding + 2 * (2 * iconSize + itemGap)
   const width = Math.max(0, viewportWidth - 2 * (controlEdge + controlSize + controlGap))
 
-  return { width, controlRight: controlEdge, fits: width >= minimumWidth }
+  return {
+    width,
+    barPadding,
+    controlRight: controlEdge,
+    controlSize,
+    iconSize,
+    itemGap,
+    fits: viewportWidth >= DESKTOP_LAYOUT.minRailDisplayWidth && width >= minimumWidth
+  }
 }

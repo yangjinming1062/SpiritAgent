@@ -399,6 +399,7 @@ export function DesktopDock({
         <button
           aria-label={label}
           className={styles.appIcon}
+          data-dock-motion
           data-unavailable={entry.status !== 'ready' && !entry.running}
           disabled={busy}
           draggable={pinned || (presentation.accessibility.granted && entry.canPin)}
@@ -432,7 +433,9 @@ export function DesktopDock({
           }
           type="button"
         >
-          {entry.icon ? <img alt="" draggable={false} src={entry.icon} /> : <Monitor size={26} />}
+          <span aria-hidden="true" className={styles.dockGlyph} data-dock-glyph>
+            {entry.icon ? <img alt="" draggable={false} src={entry.icon} /> : <Monitor size={26} />}
+          </span>
           {entry.running && <i aria-hidden="true" className={styles.runningDot} />}
         </button>
       </div>
@@ -444,6 +447,7 @@ export function DesktopDock({
       <nav
         aria-label={t.dock}
         className={styles.dock}
+        data-dock-motion-group
         data-drop={draggingOver}
         onDragLeave={event => {
           if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
@@ -472,6 +476,7 @@ export function DesktopDock({
           aria-haspopup="dialog"
           aria-label={t.allApps}
           className={styles.allAppsButton}
+          data-dock-motion
           disabled={!menuEnabled}
           onClick={event => {
             if (picker?.kind === 'browse') {
@@ -485,9 +490,11 @@ export function DesktopDock({
           title={t.allApps}
           type="button"
         >
-          <LayoutGrid size={25} />
+          <span aria-hidden="true" className={styles.dockGlyph} data-dock-glyph>
+            <LayoutGrid size={25} />
+          </span>
         </button>
-        <div className={styles.dockViewport} onScroll={() => setMenu(null)}>
+        <div className={styles.dockViewport} data-dock-viewport onScroll={() => setMenu(null)}>
           <div className={styles.dockItems} ref={contentRef}>
             <div
               aria-label={t.pinnedApps}

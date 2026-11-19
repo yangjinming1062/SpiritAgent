@@ -136,6 +136,7 @@ export function DesktopProductNav({
               aria-label={label}
               className={styles.internalDockItem}
               data-current={activeWindow === id}
+              data-dock-motion
               data-minimized={item?.minimized ?? false}
               key={id}
               onBlur={() => setHint(null)}
@@ -158,9 +159,11 @@ export function DesktopProductNav({
               onPointerLeave={() => setHint(null)}
               type="button"
             >
-              <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/${id}.svg`} />
+              <span aria-hidden="true" className={styles.dockGlyph} data-dock-glyph>
+                <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/${id}.svg`} />
+                {unread && <span className={styles.productUnread} />}
+              </span>
               {item && <i aria-hidden="true" className={styles.runningDot} />}
-              {unread && <span aria-hidden="true" className={styles.productUnread} />}
             </button>
           )
         })}
