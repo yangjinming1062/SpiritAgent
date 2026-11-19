@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import ensure_utc, format_local_iso
+from infrastructure.text import ensure_utc, format_local_iso, utc_now
 
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_companion_dialogue
@@ -28,7 +28,7 @@ async def load_post_prompt_context(user_id: int, *, publication: bool = False) -
     companion = await load_companion_prompt_context(user_id)
     if companion is None:
         raise PostError("伙伴资料尚未就绪")
-    now = datetime.fromisoformat(companion.current_time)
+    now = utc_now()
     async with SESSION_LOCAL() as db:
         dialogue = await load_companion_dialogue(db, user_id, now=now)
         excerpts = (

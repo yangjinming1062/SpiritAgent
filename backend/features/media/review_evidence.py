@@ -16,9 +16,30 @@ from infrastructure.assets.asset_store import (
 from .review_contracts import ReviewEvidence, ReviewImage, review_context
 
 
+def review_image_labels(
+    reference_count: int, candidate_count: int, times: tuple[float, ...] = (), detail_times: tuple[float, ...] = ()
+) -> tuple[str, ...]:
+    if reference_count < 0 or candidate_count < 1 or (times and len(times) != candidate_count):
+        raise ValueError("检查图片数量与时间轴不一致")
+    return (
+        *(f"参考图 {index + 1}（创作依据，不属于候选画面或视频时间轴）" for index in range(reference_count)),
+        *(f"候选视频全帧，时间 {time:g} 秒" for time in times),
+        *(f"候选画面 {index + 1}" for index in range(candidate_count) if not times),
+        *(f"候选视频面部局部，取自 {time:g} 秒全帧（同一时刻，不是新镜头）" for time in detail_times),
+    )
+
+
 async def freeze_review_evidence(
-    user_id: int, images: tuple[str, ...], *, prompt: str, context: object, media_path: str | None = None
+    user_id: int,
+    images: tuple[str, ...],
+    *,
+    prompt: str,
+    context: object,
+    media_path: str | None = None,
+    labels: tuple[str, ...] = (),
 ) -> ReviewEvidence:
+    if labels and len(labels) != len(images):
+        raise ValueError("检查证据与图片标签数量不一致")
     entries: list[ReviewImage] = []
     for index, uri in enumerate(images):
         data, _ = await resolve_reference_bytes(uri)
@@ -31,7 +52,7 @@ async def freeze_review_evidence(
             ext=sniff_media_ext(data),
             directory="reviews",
         )
-        entries.append(ReviewImage(path=path, sha256=digest, role=f"image_{index + 1}"))
+        entries.append(ReviewImage(path=path, sha256=digest, role=labels[index] if labels else f"image_{index + 1}"))
     resolved = resolve_asset_reference(media_path) if media_path else None
     if resolved is not None:
         media_hash = await asyncio.to_thread(lambda: hashlib.sha256(resolved[0].read_bytes()).hexdigest())

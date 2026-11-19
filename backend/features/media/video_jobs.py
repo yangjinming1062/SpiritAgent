@@ -26,6 +26,7 @@ from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
 from infrastructure.video_processing.desktop import sample_desktop_video_frames
+from infrastructure.video_processing.face_detail import review_face_details
 from infrastructure.video_processing.ffmpeg import probe_video
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.background import TaskScope
@@ -56,7 +57,7 @@ from features.media.identity_review import review_character_frames_with_referenc
 from features.media.image_jobs import cleanup_user_image_jobs
 from features.media.manual_reviews import ManualAction, approve_candidate, manual_candidate_id, manual_candidate_views
 from features.media.models import VideoGenJob
-from features.media.prompts import CHARACTER_MEDIA_SELF_VIDEO_REVIEW, CHARACTER_MEDIA_VIDEO_REVIEW
+from features.media.prompts import CHARACTER_MEDIA_VIDEO_REVIEW, REFERENCED_VIDEO_MOTION, character_reference_roles
 from features.media.queries import video_job_snapshot_async
 from features.media.reference_reader import visual_identity_is_current
 from features.media.review_contracts import (
@@ -103,12 +104,24 @@ class _VideoJobParams(BaseModel):
     duration: int
     resolution: str
     reference_images: tuple[str, ...] = ()
+    reference_guidance: str = ""
     aspect_ratio: str | None
     identity_reference_path: str | None
     identity_snapshot: VisualIdentitySnapshot | None
     identity_reference_role: CharacterReferenceRole = "portrait"
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     asset_directory: str
+
+    def generation_request(self, prompt: str) -> VideoGenRequest:
+        motion = REFERENCED_VIDEO_MOTION.format(prompt=prompt) if self.reference_guidance else None
+        return VideoGenRequest(
+            prompt=f"{self.reference_guidance}\n\n{motion}" if motion else prompt,
+            first_frame_motion=motion,
+            duration=self.duration,
+            resolution=self.resolution,
+            reference_images=self.reference_images,
+            aspect_ratio=self.aspect_ratio,
+        )
 
 
 def _abandoned(job: VideoGenJob) -> bool:
@@ -321,6 +334,7 @@ async def prepare_video_job(
     resolution: str,
     aspect_ratio: str | None,
     reference_images: tuple[str, ...] = (),
+    reference_guidance: str = "",
     identity_reference_path: str | None = None,
     identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
@@ -356,6 +370,7 @@ async def prepare_video_job(
         asset_directory=asset_directory,
         resolution=resolution,
         reference_images=tuple(frozen_references.values()),
+        reference_guidance=reference_guidance,
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,
@@ -424,6 +439,7 @@ async def enqueue_video_job(
     resolution: str,
     aspect_ratio: str | None,
     reference_images: tuple[str, ...] = (),
+    reference_guidance: str = "",
     identity_reference_path: str | None = None,
     identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
@@ -442,6 +458,7 @@ async def enqueue_video_job(
         resolution=resolution,
         aspect_ratio=aspect_ratio,
         reference_images=reference_images,
+        reference_guidance=reference_guidance,
         identity_reference_path=identity_reference_path,
         identity=identity,
         identity_reference_role=identity_reference_role,
@@ -585,7 +602,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
         if not path:
             return "invalid"
         params = _VideoJobParams.model_validate(row.params_json)
-        user_id, prompt = row.user_id, row.prompt
+        user_id, prompt = row.user_id, params.generation_request(row.prompt).prompt
         state = MediaChainState.model_validate(row.checkpoint or {})
         entry = next((c for c in state.candidates if c.path == path), None)
         if entry is None:
@@ -598,7 +615,13 @@ async def _evaluate_stored_video(job_id: int) -> str:
         return "invalid"
     try:
         await asyncio.to_thread(probe_video, local)
-        samples = await asyncio.to_thread(sample_desktop_video_frames, local, sample_count=9)
+        samples = await asyncio.to_thread(
+            sample_desktop_video_frames,
+            local,
+            sample_count=9,
+            include_opening_transition=True,
+            include_scene_changes=True,
+        )
     except Exception:
         return "invalid"
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
@@ -619,6 +642,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
         await save_candidate()
 
     async def save_quality(evidence: ReviewEvidence) -> None:
+        entry.result_json = evidence.model_dump_json()
         if entry.review is None:
             entry.review = VisualReview(required=("goal", "quality"), evidence=evidence, status="unavailable")
         else:
@@ -631,39 +655,50 @@ async def _evaluate_stored_video(job_id: int) -> str:
         require_new_generation_call(user_id)
 
     needs_identity = params.identity_snapshot is not None or params.identity_reference_path is not None
-    reference_count = len(params.reference_images) or int(needs_identity)
+    reference_paths = params.reference_images or (
+        (params.identity_reference_path,) if params.identity_reference_path else ()
+    )
     frozen_references: tuple[str, ...] = ()
     if needs_identity and entry.evidence:
         identity_images = await read_review_evidence(entry.evidence)
-        frozen_references, uris = identity_images[:reference_count], identity_images[reference_count:]
-    identity_decision = entry.review.identity if entry.review else None
-    if needs_identity and (identity_decision is None or identity_decision.verdict not in {"pass", "fail"}):
+        frozen_references = identity_images[: len(reference_paths)]
+    elif reference_paths:
         references = await materialize_image_references(
-            {
-                "identity": params.reference_images[0] if params.reference_images else params.identity_reference_path,
-                "outfit": params.reference_images[1] if len(params.reference_images) > 1 else None,
-            },
-            user_id=user_id,
+            {str(index): value for index, value in enumerate(reference_paths)}, user_id=user_id
         )
-        frozen_references = frozen_references or tuple(references.values())
+        frozen_references = tuple(references.values())
+    identity_decision = entry.review.identity if entry.review else None
+    identity_available = True
+    if needs_identity and (identity_decision is None or identity_decision.verdict not in {"pass", "fail"}):
+        roles = character_reference_roles(
+            params.identity_reference_role if params.reference_images else "fullbody", len(frozen_references) > 1
+        )
+        details = (
+            ()
+            if entry.evidence
+            else await asyncio.to_thread(review_face_details, samples.frames, samples.times_seconds)
+        )
         identity = await review_character_frames_with_references(
             user_id,
             frozen_references,
             uris,
-            CHARACTER_MEDIA_SELF_VIDEO_REVIEW if len(references) > 1 else CHARACTER_MEDIA_VIDEO_REVIEW,
+            CHARACTER_MEDIA_VIDEO_REVIEW.format(roles=roles),
             task=params.task,
             before_submit=before_submit,
             evidence=entry.evidence,
             save_evidence=save_identity,
             media_path=path,
             frame_times_seconds=samples.times_seconds,
+            face_details=tuple((time, build_data_uri(detail, "image/webp")) for time, detail in details),
         )
         entry.evidence = identity.evidence
         if entry.review is None:
             entry.review = VisualReview(required=("identity", "goal", "quality"), status="unavailable")
         entry.review.identity = ReviewDecision(verdict=identity.verdict, reason=identity.reason)
+        identity_available = identity.status == "complete"
+        entry.review.status = "unavailable" if identity_available else identity.status
         await save_candidate()
-    if needs_review(entry.review):
+    if identity_available and needs_review(entry.review):
         old = entry.review
         quality = await review_media_quality(
             user_id,
@@ -673,11 +708,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
             media_path=path,
             frame_times_seconds=samples.times_seconds,
             task=params.task,
-            evidence=ReviewEvidence.model_validate_json(entry.result_json)
-            if entry.result_json
-            else old.evidence
-            if old
-            else None,
+            evidence=ReviewEvidence.model_validate_json(entry.result_json) if entry.result_json else None,
             previous=old,
             save_evidence=save_quality,
             before_submit=before_submit,
@@ -714,7 +745,16 @@ async def _evaluate_stored_video(job_id: int) -> str:
         if current is None or _abandoned(current):
             return "invalid"
         state = MediaChainState.model_validate(current.checkpoint or {})
-        if entry.review.status != "complete" or entry.review.verdict == "review":
+        repair_planned = (
+            state.plan_local_correction(entry.review.correction_notes())
+            if entry.attempt == state.active_index
+            else False
+        )
+        if not repair_planned and (
+            entry.review.status != "complete"
+            or entry.review.verdict == "review"
+            or (not entry.accepted and state.correction_left_uncertain())
+        ):
             state.stop_reason = "review_pending"
             current.state, current.stage = "paused", "review_pending"
             current.error = "视频已保留，可以查看候选后采用或重新生成"
@@ -819,7 +859,7 @@ async def manually_review_video(
         previous = MediaChainState.model_validate(row.checkpoint or {})
         if not previous.providers:
             raise RequestError(status_code=409, message="原任务缺少制作输入，无法重新生成")
-        fresh = MediaChainState(providers=previous.providers, generation_id=uuid4().hex)
+        fresh = MediaChainState(providers=previous.configured_providers(), generation_id=uuid4().hex)
         params.asset_generation_id = fresh.generation_id
         row.params_json = params.model_dump(mode="json")
         row.checkpoint = fresh.model_dump(mode="json")
@@ -919,13 +959,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
                 owner,
                 frozen,
                 index,
-                VideoGenRequest(
-                    prompt=prompt,
-                    duration=params.duration,
-                    resolution=params.resolution,
-                    reference_images=params.reference_images,
-                    aspect_ratio=params.aspect_ratio,
-                ),
+                params.generation_request(state.generation_prompt(index, prompt)),
             )
         async with SESSION_LOCAL() as db:
             current = await db.get(VideoGenJob, job_id, with_for_update=True)
@@ -1371,7 +1405,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
             state.result_url = result_url
             state.stop_reason = ""
             # 用户核对只消费这次已付费结果，检查失败不得启动下一供应商。
-            state.next_index = len(state.providers)
+            state.resume_download()
             current.state, current.stage = (
                 "paused",
                 "confirmation"

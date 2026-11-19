@@ -24,6 +24,7 @@ from infrastructure.ai.providers.base import (
     VideoJobStatus,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
+from infrastructure.ai.providers.local.image import qwen_image_weights, qwen_opening_nodes
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 
@@ -37,6 +38,8 @@ _H3_WIDESCREEN_SIZES = {"512P": (896, 512), "768P": (1344, 768)}
 _UPSCALE_MODEL = "RealESRGAN_x2plus.pth"
 _DELIVERY_MAX_EDGE = 2048
 _UNET_PREFIXES = ("minimax_h3_fl2va_pruned_int8_convrot", "minimax_h3_fl2va")
+_REFERENCE_UNETS = ("minimax_h3_ref2va_pruned_int8_convrot", "minimax_h3_ref2va")
+_REFERENCE_LORAS = (("minimax_h3_ref2v_turbo_4step", 4), ("minimax_h3_ref2v_turbo_8step", 8))
 _CLIP_PREFIXES = ("qwen3vl_32b_minimax_h3_int8_convrot", "MiniMax-H3-TextEncoder")
 _VIDEO_VAE_PREFIXES = ("minimax_h3_video_vae",)
 _AUDIO_VAE_PREFIXES = ("minimax_h3_audio_vae",)
@@ -154,7 +157,6 @@ class LocalVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
-        self._model_files: tuple[str, str, str, str, str, int] | None = None
 
     async def _loader_options(self, node_name: str, field: str) -> list[str]:
         response = await self._client.get(f"/object_info/{node_name}")
@@ -171,37 +173,36 @@ class LocalVideoGenProvider(VideoGenProvider):
             options = []
         return [name for name in options if isinstance(name, str)]
 
-    async def _resolve_model_files(self) -> tuple[str, str, str, str, str, int]:
-        if self._model_files is not None:
-            return self._model_files
-        values = (
-            _pick(await self._loader_options("UNETLoader", "unet_name"), _UNET_PREFIXES),
-            _pick(await self._loader_options("CLIPLoader", "clip_name"), _CLIP_PREFIXES),
-            _pick(await self._loader_options("VAELoader", "vae_name"), _VIDEO_VAE_PREFIXES),
-            _pick(await self._loader_options("VAELoader", "vae_name"), _AUDIO_VAE_PREFIXES),
+    async def _resolve_model_files(
+        self, req: VideoGenRequest
+    ) -> tuple[tuple[str, str, str, str, str, int], tuple[str, str, str] | None]:
+        unets = await self._loader_options("UNETLoader", "unet_name")
+        clips = await self._loader_options("CLIPLoader", "clip_name")
+        vaes = await self._loader_options("VAELoader", "vae_name")
+        loras = await self._loader_options("LoraLoaderModelOnly", "lora_name")
+        references = bool(req.reference_images or req.reference_videos)
+        native = (
+            references
+            and any(name.startswith(_REFERENCE_UNETS) for name in unets)
+            and any(name.startswith(prefix) for prefix, _ in _REFERENCE_LORAS for name in loras)
         )
-        lora_options = await self._loader_options("LoraLoaderModelOnly", "lora_name")
-        lora_name = ""
-        steps = 4
-        for prefixes, candidate_steps in _LORA_PREFIXES:
-            lora_name = next((name for name in lora_options if name.startswith(prefixes)), "")
-            if lora_name:
-                steps = candidate_steps
-                break
-        if not lora_name:
-            raise ProviderError("local video_gen found no MiniMax H3 turbo LoRA", status_code=422)
-        self._model_files = (*values, lora_name, steps)
+        if req.reference_videos and not native:
+            raise ProviderError("参考视频需要 MiniMax H3 Ref2VA 和匹配的 Ref2V Turbo 权重", status_code=422)
+        opening = qwen_image_weights(unets, clips, vaes) if references and not native else None
+        unet = _pick(unets, _REFERENCE_UNETS if native else _UNET_PREFIXES)
+        clip, vae, audio_vae = (
+            _pick(clips, _CLIP_PREFIXES),
+            _pick(vaes, _VIDEO_VAE_PREFIXES),
+            _pick(vaes, _AUDIO_VAE_PREFIXES),
+        )
+        variants = _REFERENCE_LORAS if native else _LORA_PREFIXES
+        lora = _pick(loras, tuple(prefix for prefix, _ in variants))
+        steps = next(count for prefix, count in variants if lora.startswith(prefix))
         logger.info(
             "local video_gen resolved model files",
-            extra={
-                "unet": values[0],
-                "clip": values[1],
-                "video_vae": values[2],
-                "audio_vae": values[3],
-                "lora": lora_name,
-            },
+            extra={"unet": unet, "clip": clip, "video_vae": vae, "audio_vae": audio_vae, "lora": lora},
         )
-        return self._model_files
+        return (unet, clip, vae, audio_vae, lora, steps), opening
 
     def available_resolutions(
         self,
@@ -296,6 +297,7 @@ class LocalVideoGenProvider(VideoGenProvider):
         last_frame_name: str | None = None,
         reference_image_names: tuple[str, ...] = (),
         reference_video_names: tuple[str, ...] = (),
+        opening_files: tuple[str, str, str] | None = None,
         upscale: bool = False,
     ) -> dict[str, dict[str, Any]]:
         unet, clip, video_vae, audio_vae, lora, steps = files
@@ -342,7 +344,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                 },
             },
         }
-        if reference_image_names or reference_video_names:
+        if opening_files is None and (reference_image_names or reference_video_names):
             nodes["6"] = {
                 "class_type": "MiniMaxH3ReferenceToVideo",
                 "inputs": {
@@ -350,8 +352,8 @@ class LocalVideoGenProvider(VideoGenProvider):
                     "vae": ["4", 0],
                     "audio_vae": ["5", 0],
                     "prompt": " ".join(
-                        [f"<Picture {index}>" for index in range(1, len(reference_image_names) + 1)]
-                        + [f"<Video {index}>" for index in range(1, len(reference_video_names) + 1)]
+                        [f"图 {index}：<Picture {index}>。" for index in range(1, len(reference_image_names) + 1)]
+                        + [f"视频 {index}：<Video {index}>。" for index in range(1, len(reference_video_names) + 1)]
                     )
                     + "\n"
                     + req.prompt,
@@ -361,17 +363,17 @@ class LocalVideoGenProvider(VideoGenProvider):
                     "ref_image_size": "match",
                 },
             }
-            for index, name in enumerate(reference_image_names, start=1):
-                node_id = str(16 + index - 1)
+            for index, name in enumerate(reference_image_names):
+                node_id = str(16 + index)
                 nodes[node_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
-                nodes["6"]["inputs"].setdefault("ref_images", {})[f"ref_image_{index}"] = [node_id, 0]
-            for index, name in enumerate(reference_video_names, start=1):
-                load_id = str(40 + (index - 1) * 2)
-                component_id = str(41 + (index - 1) * 2)
+                nodes["6"]["inputs"][f"ref_images.ref_image_{index}"] = [node_id, 0]
+            for index, name in enumerate(reference_video_names):
+                load_id = str(40 + index * 2)
+                component_id = str(41 + index * 2)
                 nodes[load_id] = {"class_type": "LoadVideo", "inputs": {"file": name}}
                 nodes[component_id] = {"class_type": "GetVideoComponents", "inputs": {"video": [load_id, 0]}}
-                nodes["6"]["inputs"].setdefault("ref_videos", {})[f"ref_video_{index}"] = [component_id, 0]
-                nodes["6"]["inputs"].setdefault("ref_video_audios", {})[f"ref_video_audio_{index}"] = [component_id, 1]
+                nodes["6"]["inputs"][f"ref_videos.ref_video_{index}"] = [component_id, 0]
+                nodes["6"]["inputs"][f"ref_video_audios.ref_video_audio_{index}"] = [component_id, 1]
         else:
             nodes["6"]["inputs"].update(
                 {
@@ -382,6 +384,16 @@ class LocalVideoGenProvider(VideoGenProvider):
                     "height": height,
                     "length": length,
                 }
+            )
+        if opening_files is not None:
+            opening_nodes, output = qwen_opening_nodes(
+                req.prompt, opening_files, reference_image_names, width, height, seed
+            )
+            nodes.update(opening_nodes)
+            nodes["6"]["inputs"]["first_frame"] = output
+            nodes["6"]["inputs"]["prompt"] = (
+                "从首帧中的姿态开始，沿用其人物、造型、画风与环境，连续完成以下动作和镜头要求。\n"
+                + (req.first_frame_motion or req.prompt)
             )
         if first_frame_name:
             nodes["16"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
@@ -396,7 +408,7 @@ class LocalVideoGenProvider(VideoGenProvider):
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         req = await _adaptive_request(req)
         self.validate_request(req)
-        files = await self._resolve_model_files()
+        files, opening = await self._resolve_model_files(req)
         upscale = _UPSCALE_MODEL in await self._loader_options("UpscaleModelLoader", "model_name")
         uploaded: dict[str, str] = {}
         for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images):
@@ -420,6 +432,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                         last_frame_name=last_frame_name,
                         reference_image_names=reference_image_names,
                         reference_video_names=tuple(reference_video_names),
+                        opening_files=opening,
                         upscale=upscale,
                     ),
                     "prompt_id": prompt_id,

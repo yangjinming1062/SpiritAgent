@@ -1,6 +1,6 @@
 """聊天链系统提示词文本；装配在 workflows.chat，索引见 backend/README.md。"""
 
-from infrastructure.ai.media_guidance import VIDEO_GOAL_GUIDANCE
+from infrastructure.ai.media_guidance import IMAGE_GOAL_GUIDANCE, MEDIA_CHOICE_GUIDANCE, VIDEO_GOAL_GUIDANCE
 
 REPLACE_REPLY_GUIDANCES: dict[str, str] = {
     "zh": (
@@ -902,12 +902,12 @@ MEDIA_GUIDANCES: dict[str, str] = {
 MEDIA_IMAGE_GUIDANCES: dict[str, str] = {
     "zh": (
         "一次 image_generate 调用对应一幅画面：要几幅不同的画面，就在同一步里分别调用，n 只用于同一描述的多张变体；"
-        "每回合只提交一次图片请求，用户只要一张时只生成一张。生成成功即可交付，一般不必验图。"
+        f"每回合只提交一次图片请求，用户只要一张时只生成一张。{IMAGE_GOAL_GUIDANCE['zh']}只把工具已交付的成品当作完成，待核查不是成品。"
     ),
     "en": (
         "One image_generate call makes one picture: for different pictures, call it once per picture in the same step, "
         "and use n only for variations of the same description. Submit picture requests once per turn; a single "
-        "requested picture is a single image. A successful result can be delivered as is, without inspection."
+        f"requested picture is a single image. {IMAGE_GOAL_GUIDANCE['en']}Only deliver confirmed output, not a pending candidate."
     ),
 }
 
@@ -928,8 +928,7 @@ MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
-        "当画面、表情或动作比文字更能传达本轮意思时，也可以主动用图片或视频表达，与台词自然搭配：静态情景用图片，"
-        "连续动作或变化用视频，不为每句闲聊都生成媒体。\n"
+        MEDIA_CHOICE_GUIDANCE["zh"] + "主动的影像表达与本轮交流自然搭配。\n"
         "用户追问尚未收到的媒体时，先核对本会话已有的产物与任务：有对应产物就交付，已受理的任务只查询进度，"
         "确实没有生成过且工具可用才开始生成。\n"
         "画面里是你本人时传 subject='self'：系统自动带上你的形象与当前着装，提示词只写场景、姿态、表情和动作，"
@@ -937,9 +936,7 @@ COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
         "先调用工具，再按真实返回的产物和状态交付；台词里不用括号描述画面，也不用文字代替媒体。"
     ),
     "en": (
-        "When a scene, expression, or action conveys this turn's meaning better than words, you may also use an "
-        "image or video on your own alongside natural dialogue: images suit a still scene, video suits continuous "
-        "movement or change, and not every chat sentence needs media.\n"
+        MEDIA_CHOICE_GUIDANCE["en"] + "Make proactive visual expression fit the conversation.\n"
         "When asked about missing media, check this conversation's existing outputs and tasks first: deliver a matching "
         "output, only query an accepted task, and generate only if nothing was generated yet and the tool is available.\n"
         "Pass subject='self' when you yourself are in the picture: your appearance and current outfit are applied "

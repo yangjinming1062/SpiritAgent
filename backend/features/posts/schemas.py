@@ -64,7 +64,7 @@ class PostPlan(BaseModel):
     prompt: str = Field(default="", max_length=4000)
     text: str = Field(default="", max_length=800)
     narration: str = Field(default="", max_length=800)
-    depicts_self: bool = False
+    depicts_self: bool = Field(default=False, strict=True)
     size: Literal["1024x1024", "1024x1792", "1792x1024", "1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"] = (
         "1024x1024"
     )
@@ -75,8 +75,11 @@ class PostPlan(BaseModel):
     def require_content(self) -> "PostPlan":
         if self.content_type == PostContentType.TEXT and not self.body:
             raise ValueError("文字动态需要正文")
-        if self.content_type in (PostContentType.IMAGE, PostContentType.VIDEO) and not self.prompt:
-            raise ValueError("图片和视频动态需要制作说明")
+        if self.content_type in (PostContentType.IMAGE, PostContentType.VIDEO):
+            if not self.prompt:
+                raise ValueError("图片和视频动态需要制作说明")
+            if "depicts_self" not in self.model_fields_set:
+                raise ValueError("图片和视频动态必须明确伙伴是否实际出镜")
         if self.content_type == PostContentType.AUDIO and not self.text:
             raise ValueError("语音动态需要语音文稿")
         return self

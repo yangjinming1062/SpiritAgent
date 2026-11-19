@@ -1,6 +1,7 @@
 """媒体共用的视觉风格、身份参考、检查与供应商改写要求。"""
 
-# 写实质感的共用定义：画面统一为真实拍摄的质感，只写可见特征，不堆叠画质标签，也不提供画风选择。
+from features.media.identity_contracts import CharacterReferenceRole
+
 REAL_PHOTO_LOOK = (
     "整体是真实相机拍下的照片（photorealistic，未经修图），而不是插画、3D 渲染或 CG 合成：光线来自真实可信的光源，"
     "明暗过渡自然，色彩与对比克制，不加夸张的光晕、柔焦或调色；"
@@ -19,71 +20,64 @@ REAL_VIDEO_LOOK = (
     + NATURAL_VIDEO_MOTION
 )
 
-# 参考只锚定角色身份，渲染质感由本次的真实拍摄要求决定；光照随本次画面安排，不锁定参考图的棚拍光。
 _CHARACTER_PROPORTIONS = (
     "本次未明确允许修改的身体维度，按身体参考保持头身、肩腰胯、躯干与肢体的相对比例和自然连接；"
     "姿态和透视可以改变可见投影，不为取景、显瘦或修长效果拉伸身体、缩小头部或收窄躯干。"
 )
-_CHARACTER_REFERENCE_ROLE = (
-    "本次提供的角色参考只用来确定角色是谁：面容轮廓、五官、体型、物种、年龄感、固有材质与标志性结构按参考保留，"
-    "不按概括文字重新美化或重塑；角色参考自身的渲染质感、光影与色调不沿用，本次任务明确允许修改的部分按要求调整。"
+REFERENCE_LIKENESS = (
+    "沿用身份参考的面部轮廓、五官间距、标志性结构与原有画风；保留线条、表面材质和细节的表现方式。"
+    "随新姿态和光源自然改变透视与明暗，不重新设计这张脸。"
 )
 _SAME_LIGHT_AND_LENS = "角色与环境处在同一光线与同一镜头下，质感一致。"
-# 带角色参考的图像任务共用。
-CHARACTER_VISUAL_STYLE = _CHARACTER_REFERENCE_ROLE + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
-# 以首帧驱动的视频沿用首帧质感。
-FIRST_FRAME_VIDEO_STYLE = "全程沿用首帧的画面质感，主体外观与材质跨帧连续稳定。" + NATURAL_VIDEO_MOTION
+CHARACTER_VISUAL_STYLE = REFERENCE_LIKENESS + _CHARACTER_PROPORTIONS + _SAME_LIGHT_AND_LENS
+FIRST_FRAME_VIDEO_STYLE = "全程沿用首帧的画面质感，主体外观与材质跨帧连续稳定。"
 # 编辑与姿态调整以所提供的图片为底图：质感沿用该图，新绘制或修改的部分与之一致。
-EDIT_VISUAL_STYLE = "画面质感沿用所提供的图片；新绘制或修改的部分与其他区域质感一致，具有真实的纹理、褶皱与自然光影。"
+EDIT_VISUAL_STYLE = "画面质感沿用底图；修改区域的线条、纹理、边缘与受光融入未改动区域。"
 
 # 没有角色参考的普通图片与视频，同样统一按真实拍摄呈现。
 PLAIN_IMAGE_TEMPLATE = "{prompt}\n\n" + REAL_PHOTO_LOOK + REAL_PHOTO_FRAMING
 PLAIN_VIDEO_TEMPLATE = "{prompt}\n\n" + REAL_VIDEO_LOOK
 
-SELF_REFERENCE_ROLE = "本次实际提供的角色参考按上述职责确定同一角色；不沿用参考的背景、姿态、取景或渲染质感。"
-SELF_REFERENCE_IMAGE_STYLE = SELF_REFERENCE_ROLE + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
-SELF_IMAGE_PORTRAIT_REFERENCES = (
-    "图 1 头像只提供面容、五官、脸型、物种和头部标志特征，不据此推断身材或服装。"
-    "有图 2 时，图 2 当前着装全身图提供完整身体比例、身体结构、固有材质和当前造型；图 2 的面部细节不覆盖图 1。"
-    "本次画面要求不能改写对应图像的固定身份。"
-)
 SELF_IMAGE_REFERENCE_TEMPLATE = (
     (
-        "为{reference}中的同一角色拍摄一张新的真实照片（photorealistic，未经修图），场景如下。"
+        "为图 1 中的角色创作一张新画面。"
         "{reference_roles}"
-        "这是同一角色的新画面，按场景要求重新安排镜头、身体朝向与姿态；身份参考图的背景、取景和待机姿态不需要沿用。"
+        "按场景要求重新安排镜头、身体朝向与姿态；身份参考图的背景与待机姿态不限制新构图。"
         "表现活动中一个明确瞬间，涉及持物或倚靠时，让接触部位、物体位置、承重与遮挡关系符合实际动作；"
         "身体姿态改变时，衣物褶皱与受光随之协调变化，保留选定造型的设计。"
         "场景要求只安排环境、姿势、动作与构图，不覆盖固定身份和本次造型。{outfit}\n\n场景要求：{prompt}"
     )
     + "\n\n"
-    + SELF_REFERENCE_IMAGE_STYLE
+    + CHARACTER_VISUAL_STYLE
     + REAL_PHOTO_FRAMING
 )
 SELF_IMAGE_OUTFIT_DESCRIPTION = "本次造型：{outfit}。服装、配色、发型发色、妆容、鞋履与配饰以此为准。"
 SELF_IMAGE_CURRENT_OUTFIT = "本次造型沿用身份参考图中可见的服装、配色、发型发色、妆容、鞋履与配饰。"
-SELF_IMAGE_OUTFIT_REFERENCE = (
-    "图 2 是当前着装全身图，本次身体比例、身体结构、固有材质以及服装轮廓、配色、发型发色、妆容、鞋履和配饰均以图 2 为准；造型文字仅补充相容信息，不替换图像细节。"
-    "图 2 的面部细节不覆盖图 1 的面容、五官和脸型，也不带入其背景、姿态或取景。造型补充资料：{outfit}"
+SELF_VIDEO_REFERENCE_GUIDANCE = (
+    "为参考图中的同一角色制作视频。{reference_roles}{outfit}"
+    "全程保持对应的身份与本次造型，环境、开场姿态和取景按视频要求安排。" + REFERENCE_LIKENESS
 )
-SELF_IMAGE_STYLING_REFERENCE = "图 2 的造型细节以图像为准，文字仅补充相容信息，不替换图像细节。造型补充资料：{outfit}"
-SELF_VIDEO_REFERENCE_TEMPLATE = (
-    "为参考图中的同一角色制作视频。{reference}{outfit}"
-    "全程保持对应的身份与本次造型，环境、开场姿态和取景按视频要求安排。\n\n"
-    "视频要求：{prompt}\n\n" + REAL_VIDEO_LOOK
-)
-SELF_VIDEO_PORTRAIT_REFERENCE = "头像参考图提供面容、五官、脸型、物种、面部固有材质和头部标志结构。"
-SELF_VIDEO_OUTFIT_REFERENCE = "图 2 当前着装全身图提供身体比例、肢体结构、固有材质及服装、发型发色、妆容和配饰。"
+SELF_VIDEO_PORTRAIT_REFERENCE = "图 1 头像决定面容、五官关系、物种和头部特征，不决定身材或服装。"
+SELF_VIDEO_OUTFIT_REFERENCE = "图 2 全身图提供身体比例、肢体结构、固有材质与本次穿戴，不覆盖图 1 的面容。"
 SELF_VIDEO_FULLBODY_REFERENCE = (
     "图 1 是完整身份参考，面容、头部特征、物种、身体结构、比例、肢体、附肢和固有材质均以它为准。"
 )
 SELF_VIDEO_STYLING_REFERENCE = (
     "图 2 只提供服装、发型发色、妆容、配饰与携带或手持物品等造型，其面容、身体结构和比例不作为角色依据。"
 )
-VIDEO_REFERENCE_TEMPLATE = (
+
+
+def character_reference_roles(role: CharacterReferenceRole, has_secondary: bool) -> str:
+    if role == "fullbody":
+        return SELF_VIDEO_FULLBODY_REFERENCE + (SELF_VIDEO_STYLING_REFERENCE if has_secondary else "")
+    return SELF_VIDEO_PORTRAIT_REFERENCE + (SELF_VIDEO_OUTFIT_REFERENCE if has_secondary else "")
+
+
+VIDEO_REFERENCE_GUIDANCE = (
     "按视频要求生成一段连续画面，参考图提供主体身份与造型，本次明确的修改按要求调整。"
-    "场景、开场姿态与镜头按视频要求安排。\n\n视频要求：{prompt}\n\n" + REAL_VIDEO_LOOK
+    "沿用参考图的画风与材质，场景、开场姿态与镜头按视频要求安排。"
 )
+REFERENCED_VIDEO_MOTION = "视频要求：{prompt}\n\n同一镜头内外观连续，动作前后均能辨认。" + NATURAL_VIDEO_MOTION
 
 # 动作视频以首帧为身份与造型的唯一依据（优先级写在 VIDEO_PROMPT_SKELETON），动作要求只调整本次表演，不带参考图优先的通用身份条款。
 
@@ -112,7 +106,7 @@ CHARACTER_IMAGE_GOAL_REVIEW = (
     "独立检查最后一张候选的身份、制作目标及自然度。此前图片的职责：{reference_roles}\n"
     + _CHARACTER_MEDIA_IDENTITY_RULES
     + "goal_verdict 核对 generation_prompt 的明确画面要求，包括本次造型、动作、构图及环境。可见符合为 pass，明确偏差为 fail，关键条件无法核对为 review。未要求展示的部位在画外不单独构成问题。"
-    "quality_verdict 核对身体连接、支撑接触、重心、遮挡、人物与环境尺度、光影及材质协调。明显融合、拉伸、错误接触或不协调为 fail，充分自然为 pass，关键证据不足为 review。按参考身体和任务允许的风格判断，不按个人审美追加要求。"
+    "quality_verdict 核对脸部结构、身体连接、支撑接触、重心、遮挡、尺度与画风连续性。五官局部熔合、漂移、肢体拉伸或无要求地更换渲染风格都为 fail，即使仍认得是谁。充分自然为 pass，只在影响本任务判断的可见依据不足时给 review。"
     "三个维度独立，身份一致不能抵消目标或质量缺陷。saved_decisions 中的 pass/fail 是同一依据下的有效结论，原样保留，并使用 saved_reasons 中已有依据；对其余维度重新读取图片给出判断。"
     "只返回 identity_verdict、identity_reason、goal_verdict、goal_reason、quality_verdict、quality_reason 六个字段；verdict 均为 pass、review 或 fail，三个 reason 分别用不超过 400 字符的非空中文说明依据。"
 )
@@ -121,14 +115,9 @@ FULLBODY_CANDIDATE_IDENTITY_REVIEW = (
     "图 1 是已确认头像，图 2 是待采纳全身图。只核对面容、五官相对关系、头部固有特征和物种；本次允许调整身体结构、比例和造型，不依据旧身体拒绝。"
     + CHARACTER_MEDIA_REVIEW_RULES
 )
-CHARACTER_MEDIA_SELF_REFERENCE = "图 1 是头像，只提供面容和头部身份；图 2 提供身体比例、结构和固有材质，面部不覆盖图 1，不根据衣物轮廓推断遮挡的身体。"
 CHARACTER_MEDIA_VIDEO_REVIEW = (
-    "图 1 是完整身份参考，其余图片是按时间排序的视频采样。逐帧判断，任一可辨识帧的明确身份冲突令整段 fail，其他帧相似不能抵消；有充分可辨识帧且均一致可 pass，整体证据不足为 review。稀疏采样不能证明未采样瞬间稳定。"
-    + CHARACTER_MEDIA_REVIEW_RULES
-)
-CHARACTER_MEDIA_SELF_VIDEO_REVIEW = (
-    CHARACTER_MEDIA_SELF_REFERENCE
-    + "后续是按时间排序的视频采样，任一可辨识帧的明确身份冲突令整段 fail，整体证据不足为 review。"
+    "{roles}后续是按时间排序的视频采样。任一帧出现清晰的身份冲突，整段为 fail，其他相似帧不能抵消；"
+    "可辨认的固定特征充分且一致为 pass，关键特征始终看不清为 review。发饰或服装相同不能代替脸部依据。稀疏采样不能证明未采样瞬间稳定。"
     + CHARACTER_MEDIA_REVIEW_RULES
 )
 
@@ -164,8 +153,3 @@ CHARACTER_APPEARANCE_FULLBODY_REFERENCE_ALIGN = """保持图 1 的面容与身�
 角色单独位于简单均匀的中性纯色背景，保持连贯构图，不添加其他角色、场景、文字或水印。
 本次造型：{outfit}
 """
-
-CHARACTER_APPEARANCE_VISUAL_STYLE = (
-    "按本次指定的参考职责保持同一角色的身份、身体和造型。"
-    "不要混合两图的背景、姿态、取景或渲染质感。" + _CHARACTER_PROPORTIONS + REAL_PHOTO_LOOK + _SAME_LIGHT_AND_LENS
-)

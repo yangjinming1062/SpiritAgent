@@ -19,20 +19,14 @@ from features.media.prompts import (
     CHARACTER_APPEARANCE_FULLBODY_REFERENCE_ALIGN,
     CHARACTER_APPEARANCE_FULLBODY_REFERENCES,
     CHARACTER_APPEARANCE_REFERENCE_ALIGN,
-    CHARACTER_APPEARANCE_VISUAL_STYLE,
+    CHARACTER_VISUAL_STYLE,
     PLAIN_IMAGE_TEMPLATE,
     PLAIN_VIDEO_TEMPLATE,
     SELF_IMAGE_CURRENT_OUTFIT,
     SELF_IMAGE_OUTFIT_DESCRIPTION,
-    SELF_IMAGE_OUTFIT_REFERENCE,
-    SELF_IMAGE_PORTRAIT_REFERENCES,
     SELF_IMAGE_REFERENCE_TEMPLATE,
-    SELF_IMAGE_STYLING_REFERENCE,
-    SELF_VIDEO_FULLBODY_REFERENCE,
-    SELF_VIDEO_OUTFIT_REFERENCE,
-    SELF_VIDEO_PORTRAIT_REFERENCE,
-    SELF_VIDEO_REFERENCE_TEMPLATE,
-    SELF_VIDEO_STYLING_REFERENCE,
+    SELF_VIDEO_REFERENCE_GUIDANCE,
+    character_reference_roles,
 )
 from features.visuals.schemas import ActualPresentationSnapshot
 
@@ -63,7 +57,7 @@ def _identity_reference_mode(role: CharacterReferenceRole) -> Literal["primary",
 async def load_self_visual_context(
     user_id: int, presentation: ActualPresentationSnapshot, *, outfit_override: str | None = None
 ) -> SelfVisualPlan:
-    """按调用方传入的实际呈现快照装配出镜造型：窗口造型取静态造型素材（outfit_path/outfit_description），实际呈现已有成品画面时以 visual_description 为准。override 非空即关造型参考，只作用于本次产物。素材缺失时明确失败。"""
+    """角色成品可提供造型，单独的环境不能。无呈现时以确认种子创作，不将其写回呈现状态。"""
     override = (outfit_override or "").strip()
     async with SESSION_LOCAL() as db:
         identity = await require_visual_identity(db, user_id)
@@ -71,16 +65,24 @@ async def load_self_visual_context(
         if avatar is None:
             raise AvatarSourceUnreadableError("角色形象缺失")
         seed_path = avatar.seed_fullbody_url
+        character_frame = presentation.visual_path if presentation.asset_kind in {"actor", "cinematic"} else None
         role: CharacterReferenceRole = (
-            "fullbody" if override or presentation.visual_path else presentation.identity_reference_role
+            "fullbody" if override or character_frame else presentation.identity_reference_role
         )
-        identity_path = seed_path if role == "fullbody" else avatar.asset_url
         outfit_path, outfit_description = "", ""
         if not override:
-            outfit_path = presentation.visual_path or presentation.outfit_path or ""
-            if not outfit_path:
-                raise AvatarSourceUnreadableError("当前呈现形象缺失，请先完成素材准备")
+            outfit_path = character_frame or presentation.outfit_path or ""
             outfit_description = presentation.outfit_description
+            if not outfit_path:
+                if (
+                    presentation.asset_kind in {"actor", "cinematic"}
+                    or presentation.outfit_hash
+                    or outfit_description
+                    or (presentation.asset_kind != "scene" and presentation.identity_path)
+                ):
+                    raise AvatarSourceUnreadableError("当前呈现形象缺失，请先完成素材准备")
+                role, outfit_path = "portrait", seed_path
+        identity_path = seed_path if role == "fullbody" else avatar.asset_url
     try:
         identity_path = await require_owned_image_path(identity_path, user_id=user_id)
     except (OSError, ValueError) as exc:
@@ -103,27 +105,19 @@ async def load_self_visual_context(
     )
 
 
-def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
-    outfit = plan.override_outfit_description or plan.context.outfit_description
-    fullbody = plan.context.identity_reference_role == "fullbody"
-    parts = [
-        SELF_IMAGE_REFERENCE_TEMPLATE.format(
-            reference="图 1 全身身份图" if fullbody else "图 1 头像" if has_outfit_reference else "头像参考图",
-            reference_roles=(
-                CHARACTER_APPEARANCE_FULLBODY_REFERENCES if has_outfit_reference else SELF_VIDEO_FULLBODY_REFERENCE
-            )
-            if fullbody
-            else SELF_IMAGE_PORTRAIT_REFERENCES,
-            outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
-            if outfit and not has_outfit_reference
-            else ("" if has_outfit_reference else SELF_IMAGE_CURRENT_OUTFIT),
-            prompt=prompt,
-        )
-    ]
+def _outfit_instructions(plan: SelfVisualPlan, has_outfit_reference: bool) -> str:
     if has_outfit_reference:
-        template = SELF_IMAGE_STYLING_REFERENCE if fullbody else SELF_IMAGE_OUTFIT_REFERENCE
-        parts.append(template.format(outfit=outfit or "未提供"))
-    return "\n".join(parts)
+        return ""
+    outfit = plan.override_outfit_description or plan.context.outfit_description
+    return SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit) if outfit else SELF_IMAGE_CURRENT_OUTFIT
+
+
+def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
+    return SELF_IMAGE_REFERENCE_TEMPLATE.format(
+        reference_roles=character_reference_roles(plan.context.identity_reference_role, has_outfit_reference),
+        prompt=prompt,
+        outfit=_outfit_instructions(plan, has_outfit_reference),
+    )
 
 
 def build_plain_image_prompt(prompt: str) -> str:
@@ -191,7 +185,7 @@ async def align_character_reference(
         + "\n"
         + alignment.format(outfit=outfit_description or "沿用图 2 可见造型")
         + "\n"
-        + CHARACTER_APPEARANCE_VISUAL_STYLE,
+        + CHARACTER_VISUAL_STYLE,
         user_id=user_id,
         task=task,
         storage_directory=storage_directory,
@@ -212,16 +206,14 @@ async def align_character_reference(
 
 @dataclass(frozen=True)
 class SelfVideoInputs:
-    """一次出镜视频的冻结提示词与参考参数，调用方原样传给生成入口。"""
+    """只交给能看到原图的模型的参考职责，与创作要求分别冻结。"""
 
-    prompt: str
+    reference_guidance: str
     references: tuple[str, ...]
     identity_reference_role: CharacterReferenceRole
 
 
-async def build_self_video_inputs(
-    plan: SelfVisualPlan, prompt: str, reference_image: str | None = None
-) -> SelfVideoInputs:
+async def build_self_video_inputs(plan: SelfVisualPlan, reference_image: str | None = None) -> SelfVideoInputs:
     """冻结视频提示词、参考图与身份职责；has_outfit_reference 与 role 随参考分支一次确定。"""
     identity_reference_role: CharacterReferenceRole = plan.context.identity_reference_role
     references: tuple[str, ...]
@@ -240,20 +232,11 @@ async def build_self_video_inputs(
             (plan.context.identity_path, outfit_reference) if outfit_reference else (plan.context.identity_path,)
         )
     has_outfit_reference = len(references) > 1
-    outfit = plan.override_outfit_description or plan.context.outfit_description
-    if has_outfit_reference:
-        outfit_instructions = (
-            SELF_VIDEO_STYLING_REFERENCE if identity_reference_role == "fullbody" else SELF_VIDEO_OUTFIT_REFERENCE
-        )
-    elif outfit:
-        outfit_instructions = SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
-    else:
-        outfit_instructions = SELF_IMAGE_CURRENT_OUTFIT
-    reference = (
-        SELF_VIDEO_FULLBODY_REFERENCE if identity_reference_role == "fullbody" else SELF_VIDEO_PORTRAIT_REFERENCE
-    )
     return SelfVideoInputs(
-        prompt=SELF_VIDEO_REFERENCE_TEMPLATE.format(reference=reference, outfit=outfit_instructions, prompt=prompt),
+        reference_guidance=SELF_VIDEO_REFERENCE_GUIDANCE.format(
+            reference_roles=character_reference_roles(identity_reference_role, has_outfit_reference),
+            outfit=_outfit_instructions(plan, has_outfit_reference),
+        ),
         references=references,
         identity_reference_role=identity_reference_role,
     )

@@ -163,7 +163,8 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 - LLM 卡片填写真实部署模型及实际上下文/输出窗口。[chat.py](infrastructure/ai/providers/local/chat.py) 按 `/props` 缓存识别 llama.cpp/Strata，选择对应无工具结构输出与推理参数；未识别服务依提示词和应用校验。温度按 1:1 下发。
 - embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回。Qwen3-Embedding 按模型名在查询侧补官方检索指令，入库向量不加。
 - ComfyUI 端保留 MIOpen（`COMFYUI_ENABLE_MIOPEN=1`）：ComfyUI 在 RDNA3 及更新架构上默认关闭它，关闭态的 torch conv3d 在 Qwen3-VL 视觉塔上堆损坏崩服；`MIOPEN_FIND_MODE=FAST` 省掉新分辨率的算法搜索等待，否则首次请求会多花数分钟。
-- 视频能力由 [video.py](infrastructure/ai/providers/local/video.py) 固定装配 MiniMax H3 工作流，经 ComfyUI 的 `/prompt` → `/history/{prompt_id}` → `/view` 完成提交、轮询和 MP4 接收。支持 4–15 秒、`512P`/`768P` 原生档、首帧/首尾帧、最多 9 张参考图和最多 3 段参考视频。参考媒体通过 `MiniMaxH3ReferenceToVideo` 节点接入，输入类型需包含文字、图片和视频。`UpscaleModelLoader` 注册 `RealESRGAN_x2plus.pth` 时，在同一作业中对解码帧做超分并输出最长边不超过 2048 的 H.264 MP4。未部署该权重时交付原生尺寸。尺寸、时长与显存和内存开销相关，部署时用实际工作负载验证。
+- [本地视频](infrastructure/ai/providers/local/video.py) 经 ComfyUI 的 `/prompt` → `/history/{prompt_id}` → `/view` 提交、轮询和接收 MP4。支持 4–15 秒、`512P`/`768P` 原生档。`FL2VA` 配套 `FL2V Turbo` 用于文本、首帧和首尾帧。若安装 `Ref2VA` 和匹配的 `Ref2V Turbo`，最多 9 张参考图和 3 段参考视频直接进入参考模型：动态输入是从零起的扁平图边（如 `ref_images.ref_image_0`），提示词中的 `<Picture 1>` 指向第一张图。不能将首尾帧权重接到参考节点冒充参考模型。只有图片参考、没有配套参考权重时，在同一作业内用本地 Qwen 及全部原图制作符合场景的开场画面，再交给 `FL2VA` 演出；缺少所需权重时不提交，不丢弃参照视频。
+- 本地视频检测到 `RealESRGAN_x2plus.pth` 时在同一作业内超分并输出最长边不超过 2048 的 H.264 MP4，否则交付原生尺寸。部署时按实际参考数量、尺寸与时长验证显存和内存占用。
 
 ### 运营参数
 

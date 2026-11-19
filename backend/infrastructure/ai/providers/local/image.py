@@ -90,6 +90,14 @@ def _pick_weights(options: list[str], prefixes: tuple[str, ...]) -> str:
     raise ProviderError(f"local image_gen found no model for {prefixes}")
 
 
+def qwen_image_weights(unets: list[str], clips: list[str], vaes: list[str]) -> tuple[str, str, str]:
+    return (
+        _pick_weights(unets, _UNET_PREFIXES),
+        _pick_weights(clips, _CLIP_PREFIXES),
+        _pick_weights(vaes, _VAE_PREFIXES),
+    )
+
+
 def _graph(
     *,
     prompt: str,
@@ -143,6 +151,30 @@ def _graph(
     return nodes
 
 
+def qwen_opening_nodes(
+    prompt: str, files: tuple[str, str, str], image_names: tuple[str, ...], width: int, height: int, seed: int
+) -> tuple[dict[str, Any], list[Any]]:
+    """嵌入同一次视频作业，只把生成的 RGB 画面交给首帧节点，不发布中间图片。"""
+    nodes = _graph(
+        prompt="绘制下面这段作品的开场静帧。按资料分工使用全部参考，以目标场景、取景和动作开始前的姿态构成一张完整画面，只表现这一个瞬间。\n"
+        + prompt,
+        seed=seed,
+        width=width,
+        height=height,
+        image_names=list(image_names),
+        image_edit=False,
+        unet_name=files[0],
+        clip_name=files[1],
+        vae_name=files[2],
+    )
+    output, port = nodes.pop("12")["inputs"]["images"]
+    for node in nodes.values():
+        for value in node["inputs"].values():
+            if isinstance(value, list):
+                value[0] = "opening_" + value[0]
+    return {"opening_" + key: value for key, value in nodes.items()}, ["opening_" + output, port]
+
+
 class LocalImageGenProvider(ImageGenProvider):
     """ComfyUI 生图；返回可解码图片供消费方校验和处理。"""
 
@@ -176,10 +208,10 @@ class LocalImageGenProvider(ImageGenProvider):
         if self._model_files is not None:
             return self._model_files
         # 保留原始传输和 HTTP 异常，供上层判定供应商回退
-        files = (
-            _pick_weights(await self._loader_options("UNETLoader", "unet_name"), _UNET_PREFIXES),
-            _pick_weights(await self._loader_options("CLIPLoader", "clip_name"), _CLIP_PREFIXES),
-            _pick_weights(await self._loader_options("VAELoader", "vae_name"), _VAE_PREFIXES),
+        files = qwen_image_weights(
+            await self._loader_options("UNETLoader", "unet_name"),
+            await self._loader_options("CLIPLoader", "clip_name"),
+            await self._loader_options("VAELoader", "vae_name"),
         )
         self._model_files = files
         logger.info("local image_gen resolved model files", extra={"unet": files[0], "clip": files[1], "vae": files[2]})

@@ -96,6 +96,21 @@ class ActionMaterialRef(BaseModel):
         return self.model_dump(mode="json", exclude={"name", "revision", "action_id"})
 
 
+class OutfitCrop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    left: float = Field(ge=0, lt=1)
+    top: float = Field(ge=0, lt=1)
+    right: float = Field(gt=0, le=1)
+    bottom: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def valid_area(self) -> "OutfitCrop":
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("造型取景框须有正面积")
+        return self
+
+
 class VisualCreationPlan(BaseModel):
     """具体活动计划：活动、起始画面、必要道具与运动要求。"""
 
@@ -590,6 +605,7 @@ class VisualJobProgress(BaseModel):
     outfit_description: str | None = Field(default=None, max_length=1200)
     action_description: str = ""
     creation_plan: VisualCreationPlan | None = None
+    outfit_crop: OutfitCrop | None = None
     opening_review: OpeningReview | None = None
     repair_reason: str = ""
     repair_description: str = ""
@@ -612,7 +628,6 @@ class VisualJobProgress(BaseModel):
     failure_reason: str = ""
     source_path: str | None = None
     rejected_video_sources: list[RejectedVisualVideo] = Field(default_factory=list)
-    local_video_quality_retried: bool = False
 
 
 def visual_snapshot_hash(snapshot: VisualSnapshot) -> str:

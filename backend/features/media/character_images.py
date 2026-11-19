@@ -127,8 +127,7 @@ class ImageChainState(MediaChainState):
     size_rejected: int = 0
 
     def resume_download(self) -> None:
-        """仅接收已返回的图片并完成检查，不再生成候选。"""
-        self.next_index = len(self.providers)
+        super().resume_download()
         self.remaining_slots = []
 
     def _goal_enabled(self) -> bool:
@@ -147,6 +146,7 @@ class ImageChainState(MediaChainState):
     def can_retry_goal_review(self) -> bool:
         return (
             self.phase in {"evaluating", "complete"}
+            and not (self.is_correction_attempt(self.next_index) and not self.stop_reason and not self.receive_only)
             and bool(self.candidates)
             and any(self._needs_goal_review(c) and not self._passes_review(self.best(c.slot)) for c in self.candidates)
             and self.stop_reason != "goal_review_blocked"
@@ -874,8 +874,6 @@ async def _run_image_chain(
                         )
                         candidate.evidence = None
                         candidate.evaluated = True
-                        if candidate.review.status != "complete" or candidate.review.verdict == "review":
-                            state.stop_reason = "review_pending"
                     elif inputs.purpose == "plain":
 
                         async def save_plain_evidence(evidence: ReviewEvidence) -> None:
@@ -894,8 +892,6 @@ async def _run_image_chain(
                         )
                         candidate.evidence = None
                         candidate.evaluated = True
-                        if candidate.review.status != "complete" or candidate.review.verdict == "review":
-                            state.stop_reason = "review_pending"
                     else:
 
                         async def save_evidence(evidence: ReviewEvidence) -> None:
@@ -956,11 +952,22 @@ async def _run_image_chain(
                             status=review.failure.status if review.failure else "complete",
                         )
                         candidate.evaluated = True
-                        if candidate.review.status != "complete" or candidate.review.verdict == "review":
-                            state.stop_reason = (
-                                "goal_review_blocked" if candidate.review.status == "blocked" else "review_pending"
-                            )
-
+                    repair_planned = (
+                        inputs.n == 1
+                        and not review_only
+                        and candidate.attempt == state.active_index
+                        and state.plan_local_correction(candidate.review.correction_notes())
+                    )
+                    if repair_planned:
+                        configs.clear()
+                    elif (
+                        candidate.review.status != "complete"
+                        or candidate.review.verdict == "review"
+                        or (not candidate.accepted and state.correction_left_uncertain())
+                    ):
+                        state.stop_reason = (
+                            "goal_review_blocked" if candidate.review.status == "blocked" else "review_pending"
+                        )
                     await _save_progress(state, save_progress)
                 state.phase = "ready"
                 await _save_progress(state, save_progress)
@@ -997,7 +1004,7 @@ async def _run_image_chain(
                 provider = state.providers[index]
                 background = provider.background
                 result = await generate_images(
-                    inputs.prompt,
+                    state.generation_prompt(index, inputs.prompt),
                     size=provider.image_size or inputs.size,
                     n=len(slots),
                     user_id=user_id,

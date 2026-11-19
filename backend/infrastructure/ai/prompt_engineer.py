@@ -231,6 +231,7 @@ async def call_llm_json[T](
     parse_output: Callable[[Any], T],
     repair_prompt: str,
     reference_images: tuple[str, ...] = (),
+    image_labels: tuple[str, ...] = (),
     preserve_choices: tuple[str, ...] = (),
     max_output_tokens: int | None = None,
     reasoning_effort: str | None = None,
@@ -244,6 +245,8 @@ async def call_llm_json[T](
     explicit_choices = validate_preserved_choices(schema, preserve_choices, schema_name=schema_name)
     if any(not isinstance(uri, str) or not uri for uri in reference_images):
         raise ValueError("Visual structured output requires readable reference images")
+    if image_labels and len(image_labels) != len(reference_images):
+        raise ValueError("Every labelled image must have exactly one label")
     preserved_fields: dict[str, Any] = {}
     repair_used = False
     provider_index = -1
@@ -274,7 +277,12 @@ async def call_llm_json[T](
                 }
             instructions = _JSON_REPAIR_GUIDANCE + repair_prompt if repair else system_prompt
             # 格式编辑依据原结果与文字契约，不再识图或重新作出视觉判断。
-            content = [] if repair else [{"type": "input_image", "image_url": uri} for uri in reference_images]
+            content = []
+            if not repair:
+                for index, uri in enumerate(reference_images):
+                    if image_labels:
+                        content.append({"type": "input_text", "text": image_labels[index]})
+                    content.append({"type": "input_image", "image_url": uri})
             content.append({"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)})
             input_items = [{"role": "user", "content": content}]
             budget = max_output_tokens
@@ -458,6 +466,7 @@ async def vision_chat_json[T: BaseModel](
     schema_name: str,
     task: AiTaskKey,
     reference_images: tuple[str, ...],
+    image_labels: tuple[str, ...] = (),
     preserve_choices: tuple[str, ...] = (),
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> T:
@@ -476,6 +485,7 @@ async def vision_chat_json[T: BaseModel](
             parse_output=response_model.model_validate,
             repair_prompt="",
             reference_images=reference_images,
+            image_labels=image_labels,
             preserve_choices=preserve_choices,
             before_call=before_submit,
             diagnostics=diagnostics,

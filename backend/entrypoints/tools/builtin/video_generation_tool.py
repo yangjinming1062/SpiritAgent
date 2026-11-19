@@ -11,7 +11,7 @@ from features.appearance.visual_identity import (
 from features.conversation.reply_media import apply_video_status, require_video_source
 from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterReferenceRole
-from features.media.prompts import VIDEO_REFERENCE_TEMPLATE
+from features.media.prompts import VIDEO_REFERENCE_GUIDANCE
 from features.media.queries import get_job
 from features.media.turn_state import MediaArtifact, MediaTurnState
 from features.media.video_jobs import enqueue_video_job, ensure_video_capability
@@ -90,17 +90,18 @@ async def _submit_video(
     visual_plan = None
     identity_reference_role: CharacterReferenceRole = "portrait"
     references = (reference_image,) if reference_image else ()
+    reference_guidance = ""
     if subject == "self":
         try:
             presentation = await prompt_presentation_snapshot(user_id)
             visual_plan = await load_self_visual_context(user_id, presentation, outfit_override=outfit_override)
-            inputs = await build_self_video_inputs(visual_plan, prompt, reference_image)
-            prompt, references = inputs.prompt, inputs.references
+            inputs = await build_self_video_inputs(visual_plan, reference_image)
+            reference_guidance, references = inputs.reference_guidance, inputs.references
             identity_reference_role = inputs.identity_reference_role
         except (AvatarGenerationError, VisualReasoningError) as e:
             return {"success": False, "error": str(e)}, None
     elif references:
-        prompt = VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
+        reference_guidance = VIDEO_REFERENCE_GUIDANCE
     else:
         prompt = build_plain_video_prompt(prompt)
 
@@ -118,6 +119,7 @@ async def _submit_video(
                 duration=duration,
                 resolution=resolution,
                 reference_images=references,
+                reference_guidance=reference_guidance,
                 aspect_ratio=aspect_ratio,
                 identity_reference_path=visual_plan.context.fullbody_path if visual_plan is not None else None,
                 identity=visual_plan.context.identity if visual_plan is not None else None,

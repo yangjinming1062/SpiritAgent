@@ -1,12 +1,17 @@
 """独立动态的发布决策与评论回复。"""
 
-from infrastructure.ai.media_guidance import VIDEO_GOAL_GUIDANCE
+from infrastructure.ai.media_guidance import IMAGE_GOAL_GUIDANCE, MEDIA_CHOICE_GUIDANCE, VIDEO_GOAL_GUIDANCE
 
 from features.life.prompts import LIFE_FACT_GUIDANCE
 
 POST_DECISION_REPAIR_TEXTS: dict[str, str] = {
-    "zh": "\n保留原有是否发布的决定；决定发布时只修复计划中缺少或不合规的内容，并确保选择的内容类型属于本轮允许的类型。只修复问题，不另写动态或切换发布决定。",
-    "en": "\nKeep the original decision about whether to publish. When publishing, repair only missing or invalid plan content and ensure the chosen content type is one of the types allowed in this turn. Do not write a new post or change the publication decision.",
+    "zh": "\n保持原发布决定、有效的媒介和画面主体，只修复缺失或不合规字段。图片和视频依据画面是否出现伙伴明确填写布尔值 depicts_self。",
+    "en": "\nKeep the original decision, valid medium and intended subject. Repair only missing or invalid fields. For images and videos, set the boolean depicts_self according to who is visibly depicted.",
+}
+
+POST_MEDIA_NARRATIVE_REVIEW = {
+    "zh": "planned_artwork 是将制作的作品构思。配文可以表达作品的主题、想象和创作动机；不把构思当成已看到成片、已经完成制作或真实发生的外部经历。",
+    "en": "planned_artwork is a creative brief. A caption can express its theme, imagination or motivation; the brief is not evidence of having seen the finished work, completed production or lived the depicted event.",
 }
 
 POST_BACKGROUND_GUIDANCE: dict[str, str] = {
@@ -101,14 +106,14 @@ POST_PUBLISH_INSTRUCTIONS = {
         "没有自身活动依据时围绕交流或作品构思表达，不用假想用户的动作与现场补足叙事。"
         "正文、语音和旁白须表达完整意思，引文完整或保留原意地转述，资料少就写短，不用凑满建议篇幅。"
         "计划、愿望和虚构保持原性质，创作画面作为作品构思表达，不因用户未回复而索要回应。\n\n"
-        "从 available_types 自主选择 content_type。"
+        f"从 available_types 自主选择 content_type。{MEDIA_CHOICE_GUIDANCE['zh']}"
         "publication_intent、title、body、text 和 narration 使用 output_language，人设或原资料的语言不覆盖它。"
         "title 是动态标题，body 是展示在动态中的文字：文字动态必须有正文，媒体动态可配简短文案。"
+        "规划时还没有成品。publication_intent 只写为什么想分享。配文可以只写作品题意或留空；将要画出的细节放进 prompt，不写已经画好、看过成片或制作完成后的感受。"
         "文字正文通常40–160字，资料少时可以更短。语音的 text 只写要朗读的内容，不混入制作要求。"
-        "图片的 prompt 描述一个画面中的主体、环境、构图与姿态；"
+        f"图片的 prompt：{IMAGE_GOAL_GUIDANCE['zh']}"
         f"视频的 prompt {VIDEO_GOAL_GUIDANCE['zh']}"
-        "画面按生活中真实拍摄的质感描述，选择与主题有关的环境、光线、取景和日常细节。"
-        "depicts_self 表示画面中是否出现你：出现时为true，否则为false。"
+        "depicts_self 必须按实际画面填写：你本人、可辨认的倒影或画中肖像入镜都是 true；第一人称写配文或拍摄空景不等于出镜。"
         "为true时，已有参考提供你的固定外貌与当前造型，prompt 聚焦本次目标、性格气质与必要的环境和镜头条件。"
         "只有 available_types 包含 audio 时才可提供 narration；它是可选的独立旁白，不要求画面人物与其对口型。\n\n"
         '决定不发时只输出 {"post":false}。发布时输出 '
@@ -146,13 +151,12 @@ POST_PUBLISH_INSTRUCTIONS = {
         "scene as a creative concept. Do not demand a response to silence.\n\n"
         "Choose content_type yourself from available_types. Use output_language for publication_intent, title, body, text and narration regardless of the "
         "character's or source language. title is the post's heading and body is its displayed text: required "
-        "for a text post, optional as a caption for media. A text body is usually one to three sentences, "
+        "for a text post, optional as a caption for media. When planning, no finished work exists yet. In publication_intent give only the motivation to share. State the creative idea or omit the caption. Put intended visual details in prompt rather than claiming to have made or seen the result. A text body is usually one to three sentences, "
         "shorter when material is sparse. Audio text contains only words to be spoken, without production "
-        "instructions. An image prompt describes the subjects, setting, composition and poses in one frame; "
+        f"instructions. {MEDIA_CHOICE_GUIDANCE['en']}For an image prompt: {IMAGE_GOAL_GUIDANCE['en']}"
         f"For a video prompt: {VIDEO_GOAL_GUIDANCE['en']}"
-        "Describe images and videos as real photographs or footage from everyday life, "
-        "choosing setting, lighting, framing and ordinary details relevant to the subject. depicts_self indicates "
-        "whether you appear in the image or video: true when you appear, false otherwise. When true, existing "
+        "depicts_self indicates "
+        "whether you are actually depicted, including an identifiable reflection or portrait. A first-person caption or your view of an empty scene alone is false. When true, existing "
         "references provide your fixed appearance and current outfit; prompt focuses on the present scene's "
         "goal, temperament and necessary setting and camera conditions. "
         "Supply optional narration only when available_types includes audio; "

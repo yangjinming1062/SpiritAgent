@@ -111,6 +111,13 @@ class MediaCandidate(BaseModel):
         return self.review is None or self.review.verdict == "pass"
 
 
+class LocalQualityCorrection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt: int = Field(ge=1)
+    reason: str = Field(min_length=1)
+
+
 class MediaChainState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -126,11 +133,63 @@ class MediaChainState(BaseModel):
     result_url: str | None = None
     source_path: str | None = None
     queue_request_id: str | None = None
+    receive_only: bool = False
+    local_correction: LocalQualityCorrection | None = None
+
+    def resume_download(self) -> None:
+        """只接收原尝试的成品，检查结果不能触发补做或供应商回退。"""
+        self.receive_only = True
+        self.next_index = len(self.providers)
 
     def current_attempt_index(self) -> int:
         return (
             self.active_index if self.active_index is not None else max((c.attempt for c in self.candidates), default=0)
         )
+
+    def configured_providers(self) -> list[FrozenMediaProvider]:
+        return [p for i, p in enumerate(self.providers) if not self.is_correction_attempt(i)]
+
+    def is_correction_attempt(self, index: int | None) -> bool:
+        return self.local_correction is not None and self.local_correction.attempt == index
+
+    def generation_prompt(self, index: int, original: str) -> str:
+        correction = self.local_correction
+        if correction is None or correction.attempt != index:
+            return original
+        return (
+            f"{original}\n保持原参考、身份和创作目标。以下是上一候选的可见问题，"
+            f"请在这一版中修正对应部位或让关键动作清楚可见：{correction.reason}"
+        )
+
+    def correction_left_uncertain(self) -> bool:
+        index = self.active_index
+        return (
+            index is not None
+            and self.is_correction_attempt(index)
+            and any(
+                candidate.review and candidate.review.verdict == "review"
+                for candidate in self.candidates
+                if candidate.attempt < index
+            )
+        )
+
+    def plan_local_correction(self, reason: str) -> bool:
+        index = self.active_index
+        if (
+            not reason
+            or self.receive_only
+            or self.stop_reason
+            or self.unknown_submission()
+            or index is None
+            or not 0 <= index < len(self.providers)
+            or self.next_index != index + 1
+            or self.providers[index].provider != "local"
+            or self.local_correction is not None
+        ):
+            return False
+        self.local_correction = LocalQualityCorrection(attempt=self.next_index, reason=reason)
+        self.providers.insert(self.next_index, self.providers[index].model_copy())
+        return True
 
     def unknown_submission(self) -> bool:
         """远端提交可能已被受理但结果未确认；此状态下禁止自动重发。"""
@@ -162,7 +221,12 @@ class MediaChainState(BaseModel):
         )
 
     def needs_next(self, slot: int = 0) -> bool:
-        return not self.stop_reason and self.next_index < len(self.providers) and self.best_qualified(slot) is None
+        return (
+            not self.receive_only
+            and not self.stop_reason
+            and self.next_index < len(self.providers)
+            and self.best_qualified(slot) is None
+        )
 
     def finish(self, slots: int = 1) -> None:
         if not self.stop_reason:

@@ -21,9 +21,16 @@ from features.media.review_contracts import ReviewDecision, ReviewEvidence, Visu
 
 from .models import VisualJob
 from .ports import read_planning_context
-from .prompts import VISUAL_CREATION_PLAN, VISUAL_OPENING_REPAIR, visual_source_reference_prompt
+from .prompts import (
+    ACTOR_FRAMING_REQUIREMENT,
+    ACTOR_OPENING_REQUIREMENTS,
+    ACTOR_SCREEN_REQUIREMENT,
+    VISUAL_CREATION_PLAN,
+    VISUAL_OPENING_REPAIR,
+    visual_source_reference_prompt,
+)
 from .repository import VisualStateError, visual_snapshot
-from .schemas import ActorClipSource, CinematicSource, OpeningReview, VisualCreationPlan, VisualJobProgress
+from .schemas import ActorClipSource, CinematicSource, OpeningReview, OutfitCrop, VisualCreationPlan, VisualJobProgress
 
 
 class VisualCreationError(VisualStateError):
@@ -39,6 +46,10 @@ class _CreationDecision(BaseModel):
     supported: bool = Field(strict=True)
     reason: str = Field(max_length=200)
     plan: VisualCreationPlan | None
+    outfit_crop: OutfitCrop | None = Field(
+        default=None,
+        description="只有 actor 且 reference_mode=sources 时可选。局部景别须给图 2 造型原图的取景框（左上为 0,0，右下为 1,1），包含头部、动作所需部位及余量；原景别合适则留空。",
+    )
 
     @model_validator(mode="after")
     def valid_plan(self) -> "_CreationDecision":
@@ -109,6 +120,7 @@ async def ensure_creation_plan(
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
     if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+        progress.outfit_crop = None
         progress.creation_plan = VisualCreationPlan(
             activity=snapshot.action.motion_description,
             opening_description="沿用透明参考帧中实际可见的睡姿、画幅、位置和身体支撑关系。",
@@ -119,6 +131,7 @@ async def ensure_creation_plan(
         return
     base_plan = _base_idle_plan(snapshot, progress)
     if base_plan is not None:
+        progress.outfit_crop = None
         progress.creation_plan = base_plan
         progress.motion_prompt = ""
         return
@@ -128,11 +141,12 @@ async def ensure_creation_plan(
     images, reference_roles = await _planning_references(snapshot, opening)
     decision = await vision_chat_json(
         user_id,
-        VISUAL_CREATION_PLAN,
+        VISUAL_CREATION_PLAN + ("\n" + ACTOR_OPENING_REQUIREMENTS if snapshot.kind == "actor" else ""),
         {
             "reference_mode": "opening" if opening else "sources",
             "reference_roles": reference_roles,
             "asset_kind": snapshot.kind,
+            "target_dimensions": [progress.target_width, progress.target_height],
             "personality": snapshot.persona.get("personality", ""),
             "character_context": {}
             if progress.source == "base_preparation"
@@ -155,6 +169,7 @@ async def ensure_creation_plan(
     if not decision.supported:
         raise VisualCreationError(decision.reason or "当前角色或环境不适合这个活动，请更换动作", "activity_unsupported")
     progress.creation_plan = decision.plan
+    progress.outfit_crop = decision.outfit_crop if snapshot.kind == "actor" and not opening else None
     progress.motion_prompt = ""
 
 
@@ -175,7 +190,7 @@ async def ensure_opening_repair(
     images, reference_roles = await _planning_references(snapshot, progress.previous_pose_path)
     repair = await vision_chat_json(
         user_id,
-        VISUAL_OPENING_REPAIR,
+        VISUAL_OPENING_REPAIR + ("\n" + ACTOR_OPENING_REQUIREMENTS if snapshot.kind == "actor" else ""),
         {
             "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
             "requirements": snapshot.requirements,
@@ -205,7 +220,17 @@ def opening_requirements(job: VisualJob, progress: VisualJobProgress) -> str:
     return json.dumps(
         {
             "activity": progress.action_description,
-            "opening_description": progress.repair_description or plan.opening_description,
+            "proposed_opening": progress.repair_description or plan.opening_description,
+            **(
+                {
+                    "screen_scope": ACTOR_SCREEN_REQUIREMENT
+                    + "策划或修复描述自行选择的幕布色值不能成为拒收条件；有用户明确要求时按该要求判断。",
+                    "framing_scope": ACTOR_FRAMING_REQUIREMENT
+                    + "proposed_opening 是实现建议，不能把自选裁切误作用户要求。",
+                }
+                if source.kind == "actor"
+                else {}
+            ),
             "pose_scope": "上述姿态是实现活动的设计方案；未被用户明确指定、也非动作必需的脚距、视线角度和重心细节可自然调整，以身体有可靠支撑且能开始目标动作的单一状态为准",
             "required_props": plan.required_props,
             "motion_scope": "静态图只需具备后续运动的起始条件，不要求同时呈现运动过程、结束状态或多个阶段",
@@ -243,7 +268,7 @@ def opening_reference_hash(snapshot: ActorClipSource | CinematicSource) -> str:
     return hashlib.sha256(json.dumps(references, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def read_visual_reference(path: str | None, expected_hash: str | None) -> str:
+def read_visual_reference_bytes(path: str | None, expected_hash: str | None) -> tuple[bytes, str]:
     resolved = resolve_asset_reference(path)
     if resolved is None:
         raise VisualStateError("画面检查的参考图片无法读取，请重新准备素材")
@@ -251,10 +276,13 @@ def read_visual_reference(path: str | None, expected_hash: str | None) -> str:
         data = resolved[0].read_bytes()
         if expected_hash is not None and hashlib.sha256(data).hexdigest() != expected_hash:
             raise VisualStateError("画面检查的参考图片已变化，请重新准备制作")
-        data, mime = validate_image_bytes(data)
+        return validate_image_bytes(data)
     except (OSError, ValueError) as exc:
         raise VisualStateError("画面检查的参考图片无法读取，请重新准备素材") from exc
-    return build_data_uri(data, mime)
+
+
+def read_visual_reference(path: str | None, expected_hash: str | None) -> str:
+    return build_data_uri(*read_visual_reference_bytes(path, expected_hash))
 
 
 async def review_existing_opening(
@@ -385,12 +413,16 @@ def opening_passed(review: OpeningReview) -> bool:
     return opening_visual_review(review).verdict == "pass"
 
 
-def identity_review_passed(review: OpeningReview | None) -> bool:
-    """身份明确一致即可把候选作为修复底图，不要求画面要求与自然度同时通过。"""
+def can_edit_opening(review: VisualReview | None) -> bool:
+    """底图会延续外观与画风，只有这两项均已核实时才沿用它调整活动条件。"""
     return (
         review is not None
-        and (review.identity_verdict == "pass" or opening_passed(review))
+        and review.status == "complete"
         and review.evidence is not None
+        and review.identity is not None
+        and review.identity.verdict == "pass"
+        and review.quality is not None
+        and review.quality.verdict == "pass"
     )
 
 

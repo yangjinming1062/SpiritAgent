@@ -18,7 +18,7 @@ from features.jobs.service import bind_job_assets, bind_job_request, requested_j
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
 
-from .creation import begin_opening_repair, identity_review_passed
+from .creation import begin_opening_repair, can_edit_opening, opening_visual_review
 from .eligibility import automatic_media_ready, existing_asset
 from .generation import (
     cancel_visual_job,
@@ -1076,7 +1076,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
                 progress.aligned_outfit_path = None
                 progress.aligned_outfit_hash = None
             review = progress.opening_review
-            reference = progress.pose_path if identity_review_passed(review) else None
+            reference = progress.pose_path if review and can_edit_opening(opening_visual_review(review)) else None
             begin_opening_repair(
                 job,
                 progress,

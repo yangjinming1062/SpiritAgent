@@ -1,4 +1,4 @@
-"""按冻结素材装配视频请求；角色表演由视频模型根据目标自行决定。"""
+"""将已核对首帧的运动、资产类型及有效制作要求装配成视频请求。"""
 
 from .prompts import (
     ACTOR_VIDEO_BACKGROUND,
@@ -56,20 +56,25 @@ def video_generation_prompt(
             framing = ACTOR_VIDEO_LOOP_FRAMING if clip_kind == "loop" else ACTOR_VIDEO_REACTION_FRAMING
     else:
         framing = CINEMATIC_VIDEO_FRAMING
-    # 旧检查点也可能保存逐部位脚本；角色视频始终从冻结目标装配，不转发该脚本。
+    constraints = []
+    if required_props:
+        constraints.append("动作所需物品：" + "、".join(required_props))
+    if source.requirements.strip():
+        constraints.append("制作要求：" + source.requirements.strip())
+    adjustments = [("整体调整", feedback.strip()), ("视频调整", video_feedback.strip())]
+    if progress.customization_priority == "general":
+        adjustments.reverse()
+    constraints.extend(f"{label}：{value}" for label, value in adjustments if value)
+    if all(value for _, value in adjustments):
+        constraints.append("两项调整仅在冲突处以后列要求为准。")
     return VISUAL_VIDEO_MOTION_TEMPLATE.format(
+        motion=progress.motion_prompt.strip() or source.action.motion_description,
         background=ACTOR_VIDEO_BACKGROUND if source.kind == "actor" else "环境与光线沿用首帧。",
         framing=framing,
         props=props,
         action=source.action.name,
-        effect=source.action.motion_description,
         performance_role=_PERFORMANCE_EFFECTS[source.action.performance_role],
         motion_intensity=_MOTION_EFFECTS[source.action.motion_intensity],
-        personality=source.persona.get("personality", "").strip() or "按参考角色自身的气质自然表现",
-        requirements=source.requirements.strip() or "无",
-        required_props=("、".join(required_props) or "无额外物品要求")
-        if required_props is not None
-        else "以活动目标与起始图为准",
-        newer_requirements="视频调整要求" if progress.customization_priority == "video" else "整体调整要求",
+        constraints="".join("\n" + line for line in constraints),
         **common,
     )

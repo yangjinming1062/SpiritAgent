@@ -254,6 +254,7 @@ class VideoGenRequest:
     reference_images: tuple[str, ...] = ()
     reference_videos: tuple[str, ...] = ()
     aspect_ratio: str | None = None
+    first_frame_motion: str | None = None  # 多参考先合成首帧时，视频节点仅消费运动要求
 
 
 @dataclass(frozen=True)

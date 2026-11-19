@@ -34,7 +34,9 @@ class ActionAssetDesign(BaseModel):
     duration_seconds: int = Field(default=4, ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS, strict=True)
     semantic_tags: SemanticTags = Field(default_factory=list)
     # 表现角色默认按播放方式派生：loop 是可持续状态，once 是一次反应；显式提交优先。
-    performance_role: ActionPerformanceRole | None = None
+    performance_role: ActionPerformanceRole | None = Field(
+        default=None, description="通常省略，由 clip_kind 派生。once 只对应 reaction；loop 对应 idle 或 sustained。"
+    )
     motion_intensity: ActionMotionIntensity = "normal"
     interruptible: bool = True
     reason: str = Field(default="", max_length=400)

@@ -78,7 +78,7 @@ from features.media.review_contracts import (
     merge_review_evidence,
     visual_reference_basis,
 )
-from features.media.review_evidence import freeze_review_evidence, read_review_evidence
+from features.media.review_evidence import freeze_review_evidence, read_review_evidence, review_image_labels
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
     cancel_video_attempt,
@@ -92,9 +92,9 @@ from features.media.video_results import download_and_store_video, receive_video
 from .creation import (
     VisualCreationError,
     begin_opening_repair,
+    can_edit_opening,
     ensure_creation_plan,
     ensure_opening_repair,
-    identity_review_passed,
     opening_image_hash,
     opening_passed,
     opening_reference_hash,
@@ -102,11 +102,13 @@ from .creation import (
     opening_requirements_hash,
     opening_visual_review,
     read_visual_reference,
+    read_visual_reference_bytes,
     review_existing_opening,
 )
 from .geometry import (
     actor_continuation_frame,
     actor_reference_frame,
+    cropped_outfit_frame,
     probe_visual_image,
     visual_aspect_matches,
     visual_aspect_ratio,
@@ -366,7 +368,6 @@ async def restart_video_generation(user_id: int, clip_kind: str, progress: Visua
     progress.duration_seconds = seconds
     progress.source_path = None
     progress.rejected_video_sources = []
-    progress.local_video_quality_retried = False
     progress.candidate = None
     progress.identity_evidence = None
     progress.video_evidence = None
@@ -381,7 +382,7 @@ def resume_known_result(progress: VisualJobProgress) -> None:
     if progress.video_chain_json:
         chain = MediaChainState.model_validate_json(progress.video_chain_json)
         if chain.result_url:
-            chain.next_index = len(chain.providers)
+            chain.resume_download()
             progress.video_chain_json = chain.model_dump_json()
     for field in ("image_chain_json", "reference_alignment_chain_json"):
         if saved := getattr(progress, field):
@@ -794,28 +795,55 @@ async def _prepare_pose(
             outfit = await _aligned_outfit_reference(
                 user_id, job.id, snapshot, progress, directory, identity, identity_outfit
             )
+        framed = None
+        if (
+            snapshot.kind == "actor"
+            and progress.outfit_crop is not None
+            and outfit == identity_outfit
+            and not progress.aligned_outfit_path
+        ):
+            original, _mime = await asyncio.to_thread(
+                read_visual_reference_bytes, identity_outfit, snapshot.outfit.content_hash
+            )
+            framed = await asyncio.to_thread(
+                cropped_outfit_frame, original, progress.target_width, progress.target_height, progress.outfit_crop
+            )
+            if framed is not None:
+                outfit = await save_image_chain_input_asset_async(
+                    framed,
+                    user_id=user_id,
+                    generation_id=progress.generation_id,
+                    label="outfit_framing",
+                    ext="png",
+                    directory=directory,
+                )
         if (
             snapshot.kind == "actor"
             and not progress.image_chain_json
             and not progress.repair_reason
             and not progress.regenerate_image
+            and (progress.outfit_crop is None or framed is not None)
             and "sleeping" not in snapshot.action.semantic_tags
         ):
-            resolved = resolve_asset_reference(outfit)
-            if resolved is None:
-                raise VisualStateError("角色造型参考无法读取")
-            original = await asyncio.to_thread(resolved[0].read_bytes)
-            frame = await asyncio.to_thread(
-                actor_reference_frame, original, progress.target_width, progress.target_height
-            )
-            progress.pose_path = await save_image_chain_input_asset_async(
-                frame,
-                user_id=user_id,
-                generation_id=progress.generation_id,
-                label="outfit_opening",
-                ext="png",
-                directory=directory,
-            )
+            if framed is None:
+                resolved = resolve_asset_reference(outfit)
+                if resolved is None:
+                    raise VisualStateError("角色造型参考无法读取")
+                original_bytes = await asyncio.to_thread(resolved[0].read_bytes)
+                frame = await asyncio.to_thread(
+                    actor_reference_frame, original_bytes, progress.target_width, progress.target_height
+                )
+                progress.pose_path = await save_image_chain_input_asset_async(
+                    frame,
+                    user_id=user_id,
+                    generation_id=progress.generation_id,
+                    label="outfit_opening",
+                    ext="png",
+                    directory=directory,
+                )
+            else:
+                frame = framed
+                progress.pose_path = outfit
             await _prepare_geometry(progress, frame)
             await _save_progress(user_id, job.id, progress, stage="image")
             return
@@ -901,13 +929,13 @@ async def _prepare_pose(
         ]
         if not reviewed:
             raise
-        identity_safe = next((candidate for candidate in reviewed if candidate.review.identity.verdict == "pass"), None)
-        goal = identity_safe.review.goal if identity_safe and identity_safe.review else None
+        editable = next((candidate for candidate in reviewed if can_edit_opening(candidate.review)), None)
+        failed = (editable or reviewed[-1]).review
         begin_opening_repair(
             job,
             progress,
-            reason=goal.reason if goal else "候选画面未通过身份或活动要求检查",
-            reference_path=identity_safe.path if identity_safe else None,
+            reason=quality_failure_message(failed) or "候选画面未通过身份、画质或活动要求检查",
+            reference_path=editable.path if editable else None,
         )
         await _save_progress(user_id, job.id, progress, stage="repairing", repair_count=job.repair_count)
         await _prepare_opening(user_id, job, snapshot, progress, directory)
@@ -999,11 +1027,12 @@ async def _prepare_opening(
         )
     if snapshot.kind == "actor" and snapshot.opening_frame is not None:
         raise VisualCreationError(review.reason or "安睡首帧无法与起身动作接续", "activity_unsupported")
+    failed = opening_visual_review(review)
     begin_opening_repair(
         job,
         progress,
-        reason=review.reason,
-        reference_path=progress.pose_path if identity_review_passed(review) else None,
+        reason=quality_failure_message(failed) or review.reason,
+        reference_path=progress.pose_path if can_edit_opening(failed) else None,
     )
     await _save_progress(user_id, job.id, progress, stage="repairing", repair_count=job.repair_count)
     await _prepare_opening(user_id, job, snapshot, progress, directory)
@@ -1211,6 +1240,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         max_edge=1536,
         background=(172, 195, 213) if source.kind == "actor" else None,
         include_opening_transition=True,
+        include_scene_changes=True,
     )
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     references = (reference,)
@@ -1281,6 +1311,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                     user_id,
                     (*references, *uris),
                     prompt=VISUAL_VIDEO_REVIEW,
+                    labels=review_image_labels(len(references), len(uris), samples.times_seconds),
                     context=review_payload,
                     media_path=candidate.media_path,
                 )
@@ -1304,6 +1335,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 schema_name="visual_video_review",
                 preserve_choices=("verdict", "quality_verdict"),
                 reference_images=await read_review_evidence(progress.video_evidence),
+                image_labels=progress.video_evidence.image_labels,
                 before_submit=before_submit,
                 task=AiTaskKey.visuals,
             )
@@ -1334,8 +1366,6 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
     ):
         progress.identity_evidence = progress.video_evidence = None
     await _save_progress(user_id, job.id, progress, stage="review")
-    if progress.review_result.verdict == "review":
-        raise VisualCreationError("视频已保留，可以查看候选后采用或重新生成", "review_pending")
 
 
 async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress) -> None:
@@ -1743,6 +1773,7 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
                     user_id,
                     (reference, *((source_reference,) if source_reference else ()), *uris),
                     prompt=SCENE_VIDEO_REVIEW,
+                    labels=review_image_labels(1 + bool(source_reference), len(uris), samples.times_seconds),
                     context=payload,
                     media_path=candidate.media_path,
                 )
@@ -1766,6 +1797,7 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
                 schema_name="scene_video_review",
                 preserve_choices=("verdict", "quality_verdict"),
                 reference_images=await read_review_evidence(progress.video_evidence),
+                image_labels=progress.video_evidence.image_labels,
                 before_submit=before_submit,
                 task=AiTaskKey.visuals,
             )
@@ -1788,8 +1820,6 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
     ):
         progress.video_evidence = None
     await _save_progress(user_id, job.id, progress, stage="review")
-    if progress.review_result.verdict == "review":
-        raise VisualCreationError("环境视频已保留，可以查看候选后采用或重新生成", "review_pending")
 
 
 async def _ensure_video_chain(
@@ -1813,16 +1843,6 @@ async def _ensure_video_chain(
 
 
 def _continue_after_video_rejection(progress: VisualJobProgress, chain: MediaChainState) -> bool:
-    index = chain.active_index
-    if (
-        not chain.stop_reason
-        and not progress.local_video_quality_retried
-        and index is not None
-        and index + 1 == chain.next_index
-        and chain.providers[index].provider == "local"
-    ):
-        chain.providers.insert(chain.next_index, chain.providers[index])
-        progress.local_video_quality_retried = True
     if not chain.needs_next():
         return False
     chain.result_url = None
@@ -1852,8 +1872,18 @@ async def _review_video_candidate(
     else:
         await _evaluate_candidate(user_id, job, progress)
     candidate = current_visual_candidate(progress, chain)
-    if candidate.review is None or candidate.review.verdict == "review":
-        chain.stop_reason = "review_pending"
+    repair_planned = bool(
+        candidate.review
+        and not progress.review_only
+        and chain.plan_local_correction(candidate.review.correction_notes())
+    )
+    if not repair_planned and (
+        candidate.review is None
+        or candidate.review.status != "complete"
+        or candidate.review.verdict == "review"
+        or (not candidate.accepted and chain.correction_left_uncertain())
+    ):
+        raise VisualCreationError("视频已保留，可以查看候选后采用或重新生成", "review_pending")
     if candidate.accepted or not _continue_after_video_rejection(progress, chain):
         chain.stop_reason = "accepted" if candidate.accepted else chain.stop_reason or "exhausted"
         progress.video_chain_json = chain.model_dump_json()
@@ -1903,6 +1933,7 @@ async def _download_video_result(
         ) from exc
     progress.source_path = stored
     chain.result_url = None
+    progress.video_chain_json = chain.model_dump_json()
     await _save_progress(user_id, job_id, progress, stage="process")
 
 
@@ -1957,16 +1988,20 @@ async def _build_video_request(
             directory=directory,
         )
     )
+    resolution = chain.providers[index].video_resolution
     return VideoGenRequest(
-        prompt=video_generation_prompt(
-            snapshot.source,
-            progress,
-            aspect_ratio=desired_ratio,
-            feedback=job.feedback,
-            video_feedback=job.video_feedback,
+        prompt=chain.generation_prompt(
+            index,
+            video_generation_prompt(
+                snapshot.source,
+                progress,
+                aspect_ratio=desired_ratio,
+                feedback=job.feedback,
+                video_feedback=job.video_feedback,
+            ),
         ),
         duration=progress.duration_seconds,
-        resolution=chain.providers[index].video_resolution,
+        resolution=resolution,
         first_frame_image=pose,
         last_frame_image=pose if clip_kind == "loop" else None,
         aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
@@ -2190,7 +2225,10 @@ async def _produce_visual_video(
             try:
                 progress.candidate = await _process_candidate(user_id, job, progress, directory)
             except ActionMaterialRejectedError as exc:
-                if not allow_model_steps or not _continue_after_video_rejection(progress, chain):
+                if not allow_model_steps or progress.review_only or chain.correction_left_uncertain():
+                    raise
+                chain.plan_local_correction(str(exc)[:240])
+                if not _continue_after_video_rejection(progress, chain):
                     raise
                 progress.rejected_video_sources.append(RejectedVisualVideo(path=source_path, reason=str(exc)))
                 progress.video_chain_json = chain.model_dump_json()
@@ -2335,9 +2373,13 @@ async def _run_visual_job(user_id: int, job_id: int, *, allow_model_steps: bool 
                     or saved.failure_reason
                     in {"review_pending", "review_unavailable", "review_invalid", "review_blocked", "evidence_invalid"}
                     or not saved.submission_unknown
+                    and saved.failure_reason != "result_download_failed"
                     and (
                         saved.candidate is not None
+                        or saved.video_chain_json is not None
+                        and bool(MediaChainState.model_validate_json(saved.video_chain_json).candidates)
                         or saved.image_chain_json is not None
+                        and (row.target_kind == "image" or not saved.image_confirmed)
                         and bool(ImageChainState.model_validate_json(saved.image_chain_json).candidates)
                     )
                 )

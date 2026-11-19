@@ -549,7 +549,27 @@ async def _confirm_cancelled(request_id: str, task_id: str) -> None:
         await db.commit()
 
 
+async def _record_accepted_handle(request_id: str, task_id: str) -> bool:
+    async with SESSION_LOCAL() as db:
+        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id).with_for_update())
+        if row is None or not task_id.strip():
+            return False
+        if row.provider_task_id is not None:
+            return row.provider_task_id == task_id and row.state == "processing"
+        if row.state != "submitting" and not (row.state == "blocked" and row.error_reason == "result_unknown"):
+            return False
+        row.state, row.provider_task_id, row.request_json = "processing", task_id, None
+        row.error_message = row.error_reason = row.error_status_code = None
+        row.revision += 1
+        row.updated_at = utc_now()
+        await db.commit()
+        return True
+
+
 async def _poll(row: ProviderAttempt, config: ProviderConfig) -> None:
+    task_id = row.provider_task_id
+    if not task_id:
+        return
     provider = build_provider(config, VideoGenProvider)
 
     async def before_poll() -> None:
@@ -571,7 +591,7 @@ async def _poll(row: ProviderAttempt, config: ProviderConfig) -> None:
                     raise _RemoteCancelled
 
     try:
-        status = await poll_video_task(provider, row.provider_task_id or "", before_poll=before_poll)
+        status = await poll_video_task(provider, task_id, before_poll=before_poll)
     except _RemoteCancelled:
         return
     except Exception as exc:
@@ -717,20 +737,15 @@ async def _run_lane(lane_id: int) -> None:
             return
         while True:
             try:
-                await _change(
-                    row.token,
-                    expected=("submitting",),
-                    state="processing",
-                    provider_task_id=status.task_id,
-                    request_json=None,
-                    error_message=None,
-                )
+                if not await _record_accepted_handle(row.token, status.task_id):
+                    return
                 break
             except SQLAlchemyError:
                 logger.warning("video queue accepted handle awaits storage", extra={"queue_request_id": row.token})
                 await asyncio.sleep(1)
         current, _lane = await _read(row.token)
-        await _poll(current, config)
+        if current.state == "processing" and current.provider_task_id == status.task_id:
+            await _poll(current, config)
     except GenerationWorkPaused:
         await _change(row.token, expected=_PENDING + ("claimed",), state="paused")
     except SQLAlchemyError:

@@ -38,6 +38,10 @@ class ReviewEvidence(BaseModel):
     context_json: str = Field(min_length=2)
     images: tuple[ReviewImage, ...] = Field(min_length=1)
 
+    @property
+    def image_labels(self) -> tuple[str, ...]:
+        return tuple(image.role for image in self.images)
+
     @field_validator("context_json")
     @classmethod
     def valid_context(cls, value: str) -> str:
@@ -99,6 +103,18 @@ class VisualReview(BaseModel):
         if self.status != "complete" or self.evidence is None or not self.required:
             return "review"
         return "pass" if all(item is not None and item.verdict == "pass" for item in decisions) else "review"
+
+    def correction_notes(self) -> str:
+        if self.status != "complete" or not self.evidence or self.human_approval or not self.required:
+            return ""
+        notes: dict[str, str] = {}
+        for name in self.required:
+            decision = getattr(self, name)
+            if decision is None:
+                return ""
+            if decision.verdict != "pass":
+                notes[name] = decision.reason[:240]
+        return review_context(notes) if notes else ""
 
 
 def review_context(value: object) -> str:

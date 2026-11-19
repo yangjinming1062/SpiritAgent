@@ -41,15 +41,17 @@ from .generation import (
 )
 from .life import RECOVERY_WAITING, RESUME_WAITING, settle_visual_steps
 from .repository import notify_visuals_updated, visual_job_row, visual_progress, visual_snapshot
-from .schemas import OpeningReview, VisualAsset, VisualJobProgress
+from .schemas import OpeningReview, VisualAsset, VisualJobProgress, VisualMediaKind
 
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
-def _manual_candidates(progress: VisualJobProgress) -> list[MediaCandidate]:
+def _manual_candidates(progress: VisualJobProgress) -> tuple[VisualMediaKind, list[MediaCandidate]]:
+    chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
     if progress.candidate is not None:
-        chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-        return [*chain.candidates, current_visual_candidate(progress, chain)]
+        return progress.candidate.media_kind, [*chain.candidates, current_visual_candidate(progress, chain)]
+    if chain.candidates:
+        return "video", chain.candidates
     entries = ImageChainState.model_validate_json(progress.image_chain_json or "{}").candidates
     if progress.pose_path and not any(entry.path == progress.pose_path for entry in entries):
         entries = [
@@ -60,7 +62,7 @@ def _manual_candidates(progress: VisualJobProgress) -> list[MediaCandidate]:
             ),
             *entries,
         ]
-    return entries
+    return "image", entries
 
 
 async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
@@ -72,7 +74,11 @@ async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
         review = progress.review_result
         candidate_path = progress.candidate.media_path if progress.candidate else progress.pose_path
         evidence = progress.video_evidence or progress.identity_evidence
-        if progress.image_chain_json and progress.candidate is None:
+        media_type, candidates = _manual_candidates(progress)
+        if media_type == "video" and progress.candidate is None:
+            candidate = candidates[-1]
+            review, evidence, candidate_path = candidate.review, candidate.evidence, candidate.path
+        elif progress.image_chain_json and progress.candidate is None:
             chain = ImageChainState.model_validate_json(progress.image_chain_json)
             candidate = chain.best() or next(iter(chain.candidates), None)
             if candidate:
@@ -87,10 +93,7 @@ async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
             candidate_key=candidate_key,
             preview_url=client_asset_url(candidate_path) if candidate_path else None,
             can_review=row.stage == "review_pending" and basis is not None and needs_review(review),
-            candidates=await manual_candidate_views(
-                _manual_candidates(progress),
-                media_type="video" if progress.candidate and progress.candidate.media_kind == "video" else "image",
-            ),
+            candidates=await manual_candidate_views(candidates, media_type=media_type),
             error=row.error,
             can_regenerate=row.state in {"paused", "failed"},
         )
@@ -106,8 +109,9 @@ async def manually_review_visual(
         raise RequestError(status_code=409, message="原制作进度已失效")
     if source.kind in {"actor", "cinematic"} and not await visual_identity_is_current(db, user_id, source.identity):
         raise RequestError(status_code=409, message="原任务身份已失效，不能按当前身份采纳")
+    media_type, candidates = _manual_candidates(progress)
     if request.action == "regenerate":
-        if progress.candidate and progress.candidate.media_kind == "video":
+        if media_type == "video":
             await restart_video_generation(
                 user_id, "loop" if source.kind == "scene" else source.action.clip_kind, progress
             )
@@ -120,7 +124,7 @@ async def manually_review_visual(
             if progress.video_chain_json:
                 chain = MediaChainState.model_validate_json(progress.video_chain_json)
                 progress.video_chain_json = MediaChainState(
-                    providers=chain.providers, generation_id=progress.generation_id
+                    providers=chain.configured_providers(), generation_id=progress.generation_id
                 ).model_dump_json()
             progress.pose_path, progress.opening_review, progress.candidate = "", None, None
             progress.image_confirmed = False
@@ -129,7 +133,7 @@ async def manually_review_visual(
         progress.review_only = False
     else:
         selected = next(
-            (entry for entry in _manual_candidates(progress) if manual_candidate_id(entry) == request.candidate_id),
+            (entry for entry in candidates if manual_candidate_id(entry) == request.candidate_id),
             None,
         )
         if selected is None:
@@ -142,24 +146,26 @@ async def manually_review_visual(
             db=db,
         )
         selected.review.reference_basis = visual_reference_basis(source.model_dump(mode="json"))
-        chain_field = (
-            "video_chain_json"
-            if progress.candidate is not None and progress.candidate.media_kind == "video"
-            else "image_chain_json"
-        )
+        chain_field = "video_chain_json" if media_type == "video" else "image_chain_json"
         saved_chain = getattr(progress, chain_field)
         if saved_chain:
             chain_type = MediaChainState if chain_field == "video_chain_json" else ImageChainState
             chain = chain_type.model_validate_json(saved_chain)
             if chain_field == "video_chain_json":
-                if progress.candidate is not None and progress.candidate.media_path != selected.path:
-                    chain.candidates.append(current_visual_candidate(progress, chain))
+                if progress.candidate is None or progress.candidate.media_path != selected.path:
+                    if progress.candidate is not None:
+                        chain.candidates.append(current_visual_candidate(progress, chain))
+                    progress.source_path = None
                 chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path]
                 chain.active_index = selected.attempt
+                chain.phase, chain.stop_reason = "complete", "accepted"
+                chain.queue_request_id = chain.result_url = None
             else:
                 chain.candidates = [entry for entry in chain.candidates if entry.path != selected.path] + [selected]
             setattr(progress, chain_field, chain.model_dump_json())
-        if progress.candidate is not None:
+        if media_type == "video" or progress.candidate is not None:
+            if media_type == "video" and not selected.result_json:
+                raise RequestError(status_code=409, message="所选视频缺少已处理的成品，请重新生成")
             if selected.result_json:
                 progress.candidate = VisualCandidateResult.model_validate_json(selected.result_json).asset
             progress.review_result = selected.review

@@ -11,6 +11,7 @@ from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.companion.rhythm import BedtimeChange, read_rhythm, rhythm_prompt_context, set_bedtime_change
 from features.conversation.context_window import load_recent_companion_exchange
+from features.life.actions import LIFE_ACTION, NextAction
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
 from features.life.queries import pursuit_evidence
 from features.life.schemas import (
@@ -40,11 +41,27 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 
 from workflows.life_capabilities import life_capability_context
 from workflows.life_execution import run_life_execution
+
+
+class PursuitChangeNarrative(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pursuit: str = Field(min_length=1, max_length=2000, description="以第一人称写此事的现状与下一步")
+    event: str = Field(min_length=1, max_length=2000, description="以第一人称写本轮实际作出的决定或有依据的结果")
+
+
+class PursuitNextAction(NextAction):
+    narrative: str = Field(min_length=1, max_length=1000, description="我准备怎样做，为什么；这是行动的唯一叙事")
+
+
+class PursuitChange(PursuitDecisionFields):
+    narrative: PursuitChangeNarrative
+    next_action: PursuitNextAction | None = None
 
 
 class LifeDecision(BaseModel):
@@ -52,9 +69,9 @@ class LifeDecision(BaseModel):
 
     choice: Literal["keep", "private_episode", PursuitOperation]
     episode: PrivateLifeEpisode | None = None
-    pursuit: PursuitDecisionFields | None = None
+    pursuit: PursuitChange | None = None
     bedtime_change: BedtimeChange | None = None
-    review_after_minutes: int | None = Field(default=None, ge=20, le=720)
+    review_after_minutes: int | None = Field(default=None, ge=20, le=720, description="本次决定的顶层复查间隔（分钟）")
     growth: PersonalGrowthChange | None = None
     share: LifeShare | None = None
 
@@ -64,6 +81,10 @@ class LifeDecision(BaseModel):
             (self.pursuit is not None) != (self.choice not in {"keep", "private_episode"})
         ):
             raise ValueError("只填写对应选择的内容")
+        if self.pursuit is not None and (self.choice == "start_pursuit") != (self.pursuit.pursuit_id is None):
+            raise ValueError("新建事项不带 id；调整已有事项必须使用本次快照中的 pursuit_id")
+        if self.choice == "start_pursuit" and self.pursuit is not None and self.pursuit.next_action is None:
+            raise ValueError("开始真实事项需要具体可执行的下一步")
         if self.share is not None and self.share.event_id is None and self.episode is None:
             raise ValueError("分享已有经历时必须指定来源")
         if (
@@ -75,11 +96,61 @@ class LifeDecision(BaseModel):
         return self
 
 
+def _restore_next_action(original: object, revision: object) -> object:
+    if not isinstance(original, dict) or not isinstance(revision, dict):
+        return original
+    try:
+        PursuitNextAction.model_validate(original)
+    except ValidationError as exc:
+        errors = exc.errors()
+    else:
+        return original
+
+    restored = original.copy()
+    if any(issue["loc"] == ("narrative",) for issue in errors):
+        restored["narrative"] = revision.get("narrative")
+    if not any(issue["loc"][:1] == ("action",) for issue in errors):
+        return restored
+    action, revised_action = original.get("action"), revision.get("action")
+    if (
+        not isinstance(action, dict)
+        or not isinstance(revised_action, dict)
+        or action.get("capability") != revised_action.get("capability")
+        or original.get("add_to_user_library", False) is not revision.get("add_to_user_library", False)
+        or original.get("not_before") != revision.get("not_before")
+    ):
+        return restored
+    if action.get("capability") == "action.design" and any(
+        issue["loc"] == ("action", "action.design") and issue["type"] == "value_error" for issue in errors
+    ):
+        action = {**action, "performance_role": revised_action.get("performance_role")}
+    restored["action"] = LIFE_ACTION.validate_python(action, extra="ignore")
+    return restored
+
+
+def _keep_original_action(original: dict[str, Any] | None, repaired: dict[str, Any]) -> dict[str, Any]:
+    proposal = repaired.get("pursuit")
+    if not isinstance(proposal, dict):
+        return repaired
+    prior = original.get("pursuit") if original and original.get("choice") == repaired.get("choice") else None
+    prior = prior if isinstance(prior, dict) else {}
+    return {
+        **repaired,
+        "pursuit": {
+            **proposal,
+            "pursuit_id": prior.get("pursuit_id"),
+            "next_action": _restore_next_action(prior.get("next_action"), proposal.get("next_action")),
+        },
+    }
+
+
 _INSTRUCTIONS = {
     "zh": """你的任务是选择怎么继续自己的生活。结合 persona、人设所处情境和已有经历，找出一件此刻有具体缘由的事。可以留意自己喜欢的东西、积累一个小习惯、换一种做法、调整真实事项，也可以安静地继续过日子。
 life_context.recent_events 从新到旧提供经过记录的经历，topic_heads 给出每个主题的最近片段。沿兴趣、问题和实际结果接续，留意事情如何影响下一次选择。不要把当前时间或重复观察原状态当作新的变化。
 {life_facts}
 {life_narrative}
+调整事项时，pursuit.narrative.pursuit 用我的口吻写这件事的现状与下一步，pursuit.narrative.event 写本轮实际作出的决定；计划制作不等于已经交付。
+决定开始一项尚未登记且可执行的制作时，用 pursuit.next_action 登记具体行动及其目的；next_step 只描述想法，不会启动制作。已有同一任务则等待其结果。
 
 rhythm 是你自己的作息。只有今天的生活有具体缘由时才填写 bedtime_change，描述缘由并给出相对平时入睡时间的偏移分钟（负数提前，正数推迟，最多两小时）；否则留空。作息调整本身无需写成已发生的经历。
 memory 是关于对方的资料。优先尊重 recent_exchange 中用户最近明确的更正、请求或约定，人设、推测和偏好本身不给出授权。选择 review_after_minutes 时根据你下一步的活动和预计等待时间，明确需要多久后再考虑。新结果会提前唤醒判断。
@@ -90,12 +161,14 @@ choice=keep 只表示继续原有生活，episode 与 pursuit 均留空。例行
 choice=private_episode 仅在 private_episode_allowed 时选择，填写 episode。写伙伴独自在已有虚拟情境内的观察、选择、习惯或感受。它只有伙伴自己这一位参与者，不能编排与用户见面、替用户准备物品、观察用户行为或等用户回应；只可将已有证据的真实阅读或作品作为动机，本段新发生的变化仍是独处虚拟日常。继续主题时用 topic_heads 的最近片段 id，另一个真正的兴趣才开启新主题。title 是这次片段的短标题，narrative 用一到三句第一人称说清具体变化和它的缘由，activity_type 描述此刻的虚拟活动。情境或可用物品有变化时，用 current_scene 和 scene_tags 给出有依据的当前环境和完整条件。
 选择在 execution.scenes 已有的地点活动时，用该条目的准确名称填写 current_scene.title；描述当前地点和已知条件，保留其他仍成立的环境信息。
 处理真实事项时，用 choice 指定具体操作，pursuit 填写该操作的内容。考虑多个已有主题；一件事在等结果时可选择独立的主题，不因阻碍重复登记原任务。start_pursuit 需要具体动机、可核验目标和确有用途的 next_action，title 用短标题表达。可以用 episode_origin_id 将真实行动接到 topic_heads 提供的一个个人主题。用户相关事项只可承接已有真实约定，不能由人设、偏好、虚拟情境或沉默补出约定。advance_pursuit 用于添加有意义的下一步或根据新结果改变方向，complete_pursuit 需要确凿成果且无未解决步骤。暂停、恢复、放下和转向要有实际理由；用户暂停须由用户要求恢复，resume_after 未到继续等待。转向时保留旧结果归属。
-pursuit_evidence.steps 提供真实步骤及其阶段。原步骤 planned、running（含 waiting）或 unknown 时，沿原请求等待核对。能力和技术状态只用来判断可行性；面向用户的 narrative.pursuit、event 和 action 用自然话写动机、真实变化或打算，省去重复等待和技术过程。登记行动要提供 narrative.action 或 next_action.narrative。当前场景和活动不通过 pursuit 修改。
+pursuit_evidence.steps 提供真实步骤及其阶段。原步骤 planned、running（含 waiting）或 unknown 时，沿原请求等待核对。能力和技术状态只用来判断可行性；用自然话写动机、真实变化或打算，省去重复等待和技术过程。登记行动时只在 next_action.narrative 写一次我准备怎样做和目的。当前场景和活动不通过 pursuit 修改。
 execution 是真实能力和素材目录。visual.generate、scene.create、outfit.create 和 action.design 各自会制作真实素材；只在需要该成果时使用。content.read 只读已存资讯、公开资料或一次搜索得到的最多三份来源。next_action 是计划。改变 progress 或完成事项须引用提供的 evidence_event_ids，引用与目标有关的已确认成果。pursuit_evidence.events 中未绑定事项的发布记录，只有内容确实支持此目标时才能引用。已保存的一件作品不一定足以完成整个目标。只用中文输出符合 schema 的 JSON。""",
     "en": """Decide how to continue your own life. Use the persona, the established setting and past experiences to find something you have a concrete reason to do now. Notice something you enjoy, develop a habit, try a different approach, advance a real pursuit, or quietly carry on.
 life_context.recent_events gives recorded experiences from newest to oldest. topic_heads gives the latest entry in each thread. Follow interests, questions and actual results, and show how one experience changes a later choice. A new time or another look at the same state is not a new development.
 {life_facts}
 {life_narrative}
+For a pursuit change, write its current state and next step in pursuit.narrative.pursuit, and the decision actually made this turn in pursuit.narrative.event, both in your own voice. Planning to create something does not establish delivery.
+When you decide to begin a feasible creation that is not already registered, put the action and its purpose in pursuit.next_action. A next_step describes an idea; it does not start production. Wait for an existing attempt at the same work.
 
 rhythm describes your own routine. Only for a concrete reason in today's life, give bedtime_change with the reason and the offset in minutes from the usual bedtime (negative for earlier, positive for later, up to two hours); otherwise leave it null. The change in schedule itself does not establish a past experience.
 Use memory to understand the other person and recent_exchange for their latest explicit correction, request, or agreement. A persona, preference or inference does not authorize an action. Set review_after_minutes according to the time needed for your own next activity or wait. A new result may bring that review forward.
@@ -106,15 +179,15 @@ choice=keep means carry on with no record. Leave episode and pursuit null. Use i
 choice=private_episode is available only when private_episode_allowed. Fill episode for a new observation, choice, habit or feeling within the companion's established virtual setting, alone. Do not stage a meeting with the user, prepare something for them, observe their actions or wait for them. You may refer to existing evidence of actual reading or works as motivation. The new development described here remains solo and virtual. For an existing thread use its latest id from topic_heads; start a new thread only for a distinct interest. title is a short label, narrative one to three first-person sentences with the concrete change and why it matters, and activity_type the present activity within the virtual setting. When the setting or available objects change, use current_scene and scene_tags for the supported setting and its full current conditions.
 When the activity takes place in an existing location from execution.scenes, use that entry's exact title in current_scene.title. Describe the present setting and known conditions, retaining relevant details that still apply.
 For a real pursuit, set choice to the specific operation and put its details in pursuit. Consider multiple threads. Pending work leaves room for other interests but must not be resubmitted. start_pursuit needs a specific motivation, a verifiable goal, and a useful next_action, with a short pursuit_title. episode_origin_id may connect the action to a personal thread from topic_heads. Continue a user-related matter only from an actual recorded agreement. Persona, preferences, virtual scenes and silence cannot supply an agreement. Use advance_pursuit for a meaningful next action or change based on a new result, and complete_pursuit only with sufficient evidence and no unresolved steps. Give a real reason for pausing, resuming, setting aside or redirecting. A user pause requires the user's request to resume, and respect resume_after. Keep old results on the original pursuit.
-pursuit_evidence.steps describes actual attempts. When a step is planned, running (including waiting) or unknown, retain the original request and wait for resolution. Capabilities and technical status establish feasibility. In narrative.pursuit, event and action describe motivation, real changes or intention naturally. Provide narrative.action or next_action.narrative for a new action. Do not use pursuit to change the current scene or activity.
+pursuit_evidence.steps describes actual attempts. When a step is planned, running (including waiting) or unknown, retain the original request and wait for resolution. Capabilities and technical status establish feasibility. Describe motivation, real changes or intention naturally. For a new action, write what you intend to do and why once in next_action.narrative. Do not use pursuit to change the current scene or activity.
 execution lists available capabilities and real materials. visual.generate, scene.create, outfit.create and action.design produce real assets; use them when their deliverable is useful. content.read reads saved items, public sources, or up to three sources from one search. next_action is a plan. Changing progress or completing requires evidence_event_ids for relevant confirmed results. An unassigned publication in pursuit_evidence.events may be cited only when its content supports this goal. One saved artifact does not necessarily fulfill the goal. Output schema JSON in English only.""",
 }
 
 _CANDIDATE_REVIEW = {
     "zh": """本轮审阅的是生活选择。source.fact_type=virtual_activity 按结构化契约说明整段正在写成一段新的虚拟独处经历。虚拟日常里的新行动、观察和结果是本次创作内容，符合提供的人设及情境即可，无需证据表明同一细节过去已经发生。只有草稿把内容说成现实活动、已完成的工具行动或外部作品时，才对该项寻找现实证据。逐段核对参与者与行为指向，拒绝虚构用户参与、替用户安排、观察用户行为或等待用户，也拒绝与已知虚拟情境的明确冲突。draft.publication_intent 的 JSON 是舞台候选描述，允许符合当前片段的虚拟道具和状态，保留素材准确名称及枚举。根据 topic_heads 和 recent_events 核对有没有新的变化。继续已有主题时，改用新方法或认识足以构成新变化，原样等待或换一个说法才是重复。
-source.mode 为 pursuit 时，draft.publication_intent 是待核对的拟议行动，JSON 字段名和资源 id 属于动作参数。核对真实成果、用户约定与角色范围。用户相关安排必须有已存在的、来自真实交流的事项记录。记录中缺少用户同意、只有模拟情境或偏好时，不得据此补写约定。新内容只描述实际转折、结果或下一步目的；技术状态及重复等待不构成转折。""",
+source.mode 为 pursuit 时，draft.publication_intent 是拟议行动，JSON 字段名和资源 id 是参数。available_materials 是本次可选素材，不代表所有历史资产。伙伴可以当下选择创作方法、给自己的尝试命名或表达动机，不需过去有同一句话；已产出的作品、实际经历与用户约定则必须有依据。用户相关安排必须来自真实交流，不能用模拟情境或偏好补写约定。记录实际转折、结果或下一步目的；技术状态及重复等待不构成转折。""",
     "en": """Review a life choice. The structured source.fact_type=virtual_activity frames the entire draft as a newly authored solo episode in a virtual setting. Newly imagined solo actions, observations and outcomes can originate in this episode when consistent with the persona and setting. They do not require records showing the same details happened previously. Require real-world evidence for claims presented as actual actions, completed tools or external works. Check the actor and whom the activity is directed at. Flag invented user involvement, arranging something for the user, observing their behavior, waiting for them, or directly contradicting the established virtual setting. The JSON in draft.publication_intent describes stage candidates, and can specify virtual props consistent with this episode. Preserve exact material names and enum values. A different approach or new understanding is meaningful continuation, while pure rewording, elapsed time, or continued waiting alone repeats an earlier state.
-When source.mode is pursuit, draft.publication_intent encodes the proposed action. Treat JSON field names and resource ids as action metadata. Verify actual results, agreements and participants. A user-related arrangement needs an existing matter grounded in an actual exchange. An unconfirmed user wish, a simulated scene or a preference cannot support an agreement. Entries should express a genuine turning point, result or purpose. Technical status and repeated waiting are not turning points.""",
+When source.mode is pursuit, draft.publication_intent encodes the proposed action; its field names and resource ids are parameters. available_materials lists selectable assets, not the entire historical inventory. A present creative choice, personal name for an attempt, or motive need not have been worded the same way in the past. Actual results, real experiences and user agreements do need evidence. Ground user-related arrangements in real exchanges, not simulations or preferences. Record genuine turning points, results or purposes rather than technical status or repeated waiting.""",
 }
 
 _LOCKS: dict[int, asyncio.Lock] = {}
@@ -250,10 +323,11 @@ async def _consider_life(user_id: int) -> dict[str, object]:
     }
     evidence_payload = evidence.prompt_payload()
     attempts: list[LlmAttemptDiagnostic] = []
+    original_decision: dict[str, Any] | None = None
     original_share_scope: tuple[object, object, object] | None = None
 
     def parse_decision(value: Any) -> LifeDecision:
-        nonlocal original_share_scope
+        nonlocal original_decision, original_share_scope
         if isinstance(value, dict):
             raw_share = value.get("share")
             share_scope = (
@@ -262,6 +336,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 else None
             )
             if any(attempt.validation in ("invalid_json", "invalid_contract") for attempt in attempts):
+                value = _keep_original_action(original_decision, value)
                 if raw_share is not None and (
                     share_scope is None
                     or original_share_scope is None
@@ -272,6 +347,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 ):
                     value = {**value, "share": None}
             else:
+                original_decision = value
                 original_share_scope = share_scope
         return LifeDecision.model_validate(value)
 
@@ -289,7 +365,10 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         schema=LifeDecision.model_json_schema(),
         schema_name="companion_life_decision",
         parse_output=parse_decision,
-        repair_prompt="Keep the share source, channel and stage permission. Use null for share when no original share was recoverable.",
+        repair_prompt=(
+            "Keep the original pursuit id, next_action, timing and library choice. Repair structure, not the plan. "
+            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable."
+        ),
         preserve_choices=("choice",),
         diagnostics=attempts,
     )
@@ -321,7 +400,12 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         )
         _validate_pursuit(pursuit, life, evidence)
         draft = _pursuit_draft(pursuit)
-        review_source = {"mode": "pursuit", **personal, "pursuit_evidence": evidence_payload}
+        review_source = {
+            "mode": "pursuit",
+            **personal,
+            "pursuit_evidence": evidence_payload,
+            "available_materials": {kind: execution[kind] for kind in ("actions", "outfits", "scenes")},
+        }
     if draft:
         review = await review_narrative(
             config,

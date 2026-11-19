@@ -350,7 +350,7 @@ async def manually_review_image(
     if request.action == "regenerate":
         fresh = ImageChainState(
             inputs=chain.inputs.model_copy(update={"n": 1}, deep=True) if chain.inputs and chain.providers else None,
-            providers=chain.providers if chain.inputs else [],
+            providers=chain.configured_providers() if chain.inputs else [],
             storage_directory=chain.storage_directory or params.directory,
             generation_id=uuid4().hex,
         )
@@ -401,15 +401,20 @@ def _fold_manual_generation(row: ImageGenJob) -> None:
     original = ImageChainState.model_validate(checkpoint.get("chain") or row.result_json.get("chain") or {})
     if original.inputs is None and fresh.inputs is not None:
         original.inputs = fresh.inputs.model_copy(update={"n": len(row.params_json["media_ids"])}, deep=True)
-    if not original.providers:
-        original.providers = fresh.providers
+    attempt_map: dict[int, int] = {}
+    for index, provider in enumerate(fresh.providers):
+        if provider not in original.providers:
+            original.providers.append(provider)
+        attempt_map[index] = original.providers.index(provider)
     slot = manual["slot"]
     original.candidates = [
         candidate
         for candidate in original.candidates
         if candidate.slot != slot or candidate.generation_id != fresh.generation_id
     ] + [
-        candidate.model_copy(update={"slot": slot, "generation_id": fresh.generation_id})
+        candidate.model_copy(
+            update={"slot": slot, "generation_id": fresh.generation_id, "attempt": attempt_map[candidate.attempt]}
+        )
         for candidate in fresh.candidates
     ]
     retained = [

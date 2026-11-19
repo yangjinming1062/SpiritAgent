@@ -6,6 +6,8 @@ from math import ceil, gcd
 from infrastructure.assets.asset_store import validate_image_bytes
 from PIL import Image, ImageOps
 
+from .schemas import OutfitCrop
+
 
 def visual_aspect_ratio(width: int, height: int) -> str:
     divisor = gcd(width, height)
@@ -35,6 +37,27 @@ def actor_reference_frame(data: bytes, target_width: int, target_height: int) ->
                 source.convert("RGBA"), ((size[0] - source.width) // 2, (size[1] - source.height) // 2)
             )
             canvas.convert("RGB").save(output, format="PNG")
+            return output.getvalue()
+
+
+def cropped_outfit_frame(data: bytes, target_width: int, target_height: int, crop: OutfitCrop) -> bytes | None:
+    """在造型原图中容纳选定区域，保持像素、方向和比例；不能可靠取景时交回生成。"""
+    normalized, _mime = validate_image_bytes(data)
+    with Image.open(BytesIO(normalized)) as source:
+        ImageOps.exif_transpose(source, in_place=True)
+        scale = max(
+            (crop.right - crop.left) * source.width / target_width,
+            (crop.bottom - crop.top) * source.height / target_height,
+        )
+        width, height = ceil(target_width * scale), ceil(target_height * scale)
+        if min(width, height) < 128 or width > source.width or height > source.height:
+            return None
+        left = min(source.width - width, max(0, round((crop.left + crop.right) * source.width / 2 - width / 2)))
+        top = min(source.height - height, max(0, round((crop.top + crop.bottom) * source.height / 2 - height / 2)))
+        with source.crop((left, top, left + width, top + height)) as region, BytesIO() as output:
+            with Image.new("RGBA", region.size, (128, 128, 128, 255)) as canvas:
+                canvas.alpha_composite(region.convert("RGBA"))
+                canvas.convert("RGB").save(output, format="PNG")
             return output.getvalue()
 
 

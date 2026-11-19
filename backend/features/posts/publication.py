@@ -89,7 +89,7 @@ from features.media.video_jobs import (
 from features.posts.context import load_post_prompt_context, post_prompt_entry
 from features.posts.output_contracts import POST_DECISION, parse_post_decision
 from features.posts.prompt_contract import render_post_instructions
-from features.posts.prompts import POST_DECISION_REPAIR_TEXTS, POST_PUBLISH_INSTRUCTIONS
+from features.posts.prompts import POST_DECISION_REPAIR_TEXTS, POST_MEDIA_NARRATIVE_REVIEW, POST_PUBLISH_INSTRUCTIONS
 from features.posts.publication_models import PostPublication
 from features.posts.schemas import (
     PostContext,
@@ -244,19 +244,26 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         if plan is None:
             return None
         plan = _drop_inapplicable_fields(user_id, plan, payload["available_types"])
+        artwork = plan.content_type in {PostContentType.IMAGE, PostContentType.VIDEO}
         review = await review_narrative(
             config,
-            payload,
+            {**payload, "planned_artwork": {"medium": plan.content_type.value, "brief": plan.prompt}}
+            if artwork
+            else payload,
             {
                 field: value
                 for field in ("publication_intent", "title", "body", "text", "narration")
                 if (value := getattr(plan, field))
             },
             language,
+            requirements=resolve_prompt_text(POST_MEDIA_NARRATIVE_REVIEW, language) if artwork else "",
         )
         if not review.issues:
             return plan
         if revision:
+            fields = {issue.field for issue in review.issues}
+            if artwork and fields <= {"body", "narration"}:
+                return plan.model_copy(update=dict.fromkeys(fields, ""))
             raise NarrativeQualityError(review)
         creation_payload = {
             **payload,
@@ -403,7 +410,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
         progress["identity"] = identity.model_dump(mode="json")
     if plan.content_type == PostContentType.IMAGE:
         chain = ImageChainState.model_validate(progress.get("image_chain", {}))
-        if chain.candidates and (chain.best() is None):
+        if chain.candidates and chain.best() is None and chain.stop_reason:
             raise PostMediaWaiting(row.id)
 
         async def save_image(value: ImageChainState) -> None:
@@ -443,10 +450,12 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
         job_id = row.video_job_id
         if job_id is None:
             references: tuple[str, ...] = ()
+            reference_guidance = ""
             identity_reference_role: CharacterReferenceRole = "portrait"
             if visual_plan is not None:
-                inputs = await build_self_video_inputs(visual_plan, plan.prompt)
-                prompt, references = inputs.prompt, inputs.references
+                inputs = await build_self_video_inputs(visual_plan)
+                prompt, references = plan.prompt, inputs.references
+                reference_guidance = inputs.reference_guidance
                 identity_reference_role = inputs.identity_reference_role
             else:
                 prompt = build_plain_video_prompt(plan.prompt)
@@ -474,6 +483,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     duration=plan.duration,
                     resolution=resolution,
                     reference_images=references,
+                    reference_guidance=reference_guidance,
                     aspect_ratio=plan.aspect_ratio,
                     identity_reference_path=visual_plan.context.fullbody_path if visual_plan else None,
                     identity=identity,

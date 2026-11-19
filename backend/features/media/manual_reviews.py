@@ -180,7 +180,7 @@ def regenerate_image_chain(original: ImageChainState) -> ImageChainState:
         raise RequestError(status_code=409, message="原任务缺少制作输入，无法重新生成")
     return ImageChainState(
         inputs=original.inputs.model_copy(deep=True),
-        providers=original.providers,
+        providers=original.configured_providers(),
         storage_directory=original.storage_directory,
         generation_id=uuid4().hex,
     )

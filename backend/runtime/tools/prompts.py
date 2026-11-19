@@ -1,7 +1,7 @@
 """工具 schema 描述文本；结构（name/enum/类型/required）留在各工具文件，本模块只承载措辞。
 与 prompts.chat 的媒体/工具教学块语义耦合（如 subject='self' 在两处表述），调整时两边核对。"""
 
-from infrastructure.ai.media_guidance import VIDEO_GOAL_GUIDANCE
+from infrastructure.ai.media_guidance import IMAGE_GOAL_GUIDANCE, VIDEO_GOAL_GUIDANCE
 
 COMPANION_WAIT_DESC = (
     "Save a one-time follow-up for a later time or desktop event, list saved follow-ups, or cancel one. Use it "
@@ -63,9 +63,7 @@ _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
 
 IMAGE_GENERATION_PARAM_DESCS = {
     "prompt": (
-        "Self-contained visual description: who or what is in the picture, pose or action, setting, light source "
-        "and framing. Pictures are always rendered as real photographs, so describe a believable real scene without "
-        "decorative words such as dreamy or cinematic, and do not name an art style. Keep the "
+        IMAGE_GOAL_GUIDANCE["en"] + "Keep the "
         "user's concrete requirements and add no unrelated detail. Quote only text that must appear in the picture. "
         "With subject='self', describe the scene, pose and expression only; appearance and outfit are applied "
         "automatically."
@@ -86,7 +84,7 @@ VIDEO_GENERATION_DESC = (
 
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": (
-        VIDEO_GOAL_GUIDANCE["en"] + "Describe the result as real footage. With subject='self', "
+        VIDEO_GOAL_GUIDANCE["en"] + "With subject='self', "
         "focus on the present scene and action; the character's appearance and styling are applied automatically."
     ),
     "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",

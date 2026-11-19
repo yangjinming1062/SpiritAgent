@@ -52,15 +52,26 @@ def build_avatar_reference_prompt(
     *, personality: str, feedback: str | None = None, has_presentation_reference: bool = False, description: str = ""
 ) -> str:
     """装配身份参考头像提示词；明确外貌文字只覆盖其涉及的视觉维度。"""
+    change = (feedback or "").strip()
+    expression = "\n".join(
+        part
+        for part in (
+            f"神态参考：{personality.strip()}。" if personality.strip() else "",
+            f"画面建议（服从本次外貌要求）：{description.strip()}" if description.strip() else "",
+        )
+        if part
+    )
     prompt = AVATAR_REFERENCE_TEMPLATE.format(
         reference="图 1" if has_presentation_reference else "参考图",
-        presentation=AVATAR_PRESENTATION_REFERENCE if has_presentation_reference else "",
-        payload=json.dumps(
-            {"personality": personality.strip(), "feedback": (feedback or "").strip()}, ensure_ascii=False
+        appearance_goal=(
+            f"本次外貌修改要求为 {json.dumps(change, ensure_ascii=False)}。请直接画出修改后的样子。"
+            if change
+            else "保留角色原有的外貌与五官关系。"
         ),
-        description=f"画面与神态建议：{description.strip()}" if description.strip() else "",
+        presentation=AVATAR_PRESENTATION_REFERENCE if has_presentation_reference else "",
+        expression=expression,
     )
-    return "\n\n".join((prompt.strip(), AVATAR_IMAGE_RULES, CHARACTER_VISUAL_STYLE))
+    return "\n\n".join((prompt.strip(), AVATAR_IMAGE_RULES))
 
 
 async def enhance_avatar_prompt(

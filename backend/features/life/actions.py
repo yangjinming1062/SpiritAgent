@@ -100,9 +100,13 @@ LIFE_CAPABILITIES = {
         OutfitAction, "制作并保存新造型图片；已有造型不合适且有具体需要时使用，保持角色固定身份。"
     ),
     "scene.create": LifeCapability(SceneAction, "制作并保存环境照片；不描绘参考角色，不改变当前画面，与造型相互独立。"),
-    "action.design": LifeCapability(DesignAction, "设计并评审可复用动作；先复用已有动作，登记和评审不代表已经表演。"),
+    "action.design": LifeCapability(
+        DesignAction,
+        "反复出现的生活情境确实缺少合适动作时，设计并评审一个可复用动作；已有合适动作直接复用，入库不代表已经表演。",
+    ),
     "visual.generate": LifeCapability(
-        VisualAction, "用已有造型、环境和动作制作图片或视频，要求须与所选素材相容；成品保存后才可呈现。"
+        VisualAction,
+        "优先使用已有合适成品；确有新画面用途时用已就绪的造型、环境和动作制作。一个瞬间用图片，值得观看的连续变化才用视频；检查通过并保存后才可呈现。",
     ),
     "content.read": LifeCapability(
         ReadingAction, "为当前生活目的读取已有资讯或公开网页，也可搜索一次，总计最多三份资料。"

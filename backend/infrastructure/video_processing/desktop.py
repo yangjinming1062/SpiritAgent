@@ -1,5 +1,6 @@
 """桌面影像视频校验与适配；原始上传保留，派生视频按目标画幅裁切。"""
 
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -33,6 +34,27 @@ class DesktopVideoFrames:
     times_seconds: tuple[float, ...]
 
 
+def _scene_change_times(src: Path) -> tuple[float, ...]:
+    metadata = ffmpeg_stdout(
+        [
+            "-i",
+            str(src),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-vf",
+            "setpts=PTS-STARTPTS,scale=96:64,select='gt(scene,0.25)',metadata=mode=print:key=lavfi.scene_score:file=-",
+            "-f",
+            "null",
+            "-",
+        ],
+        failure_message="视频转场采样失败",
+    )
+    changes = re.findall(rb"pts_time:([\d.eE+-]+)\s+lavfi\.scene_score=([\d.eE+-]+)", metadata)
+    ranked = sorted(((float(score), float(time)) for time, score in changes), key=lambda item: -item[0])
+    return tuple(time for _score, time in ranked[:2])
+
+
 def sample_desktop_video_frames(
     src: Path,
     *,
@@ -41,6 +63,7 @@ def sample_desktop_video_frames(
     preserve_alpha: bool = False,
     background: tuple[int, int, int] | None = None,
     include_opening_transition: bool = False,
+    include_scene_changes: bool = False,
 ) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
@@ -52,6 +75,8 @@ def sample_desktop_video_frames(
     targets = [first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count)]
     if include_opening_transition:
         targets.extend(first + offset for offset in (0.25, 0.5) if first + offset < last)
+    if include_scene_changes:
+        targets.extend(first + offset for offset in _scene_change_times(src))
     indices = sorted({min(range(len(times)), key=lambda index: abs(times[index] - target)) for target in targets})
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
         scale = min(1.0, max_edge / max(frame.size))
