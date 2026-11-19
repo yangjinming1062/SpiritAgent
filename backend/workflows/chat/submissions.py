@@ -43,8 +43,7 @@ from workflows.chat.inputs import (
 )
 from workflows.chat.orchestrator import run_chat_turn
 from workflows.chat.persistence import _persist_assistant_no_tool_turn
-from workflows.chat.streaming import _LLMTurnResult
-from workflows.chat.types import TerminalReplyDelivery
+from workflows.chat.types import LLMTurnResult, TerminalReplyDelivery
 from workflows.companion_rhythm import close_rhythm_contact
 
 
@@ -214,7 +213,7 @@ def create_submission_handler(
                 return
             partial_reply, partial_content = partial
             conv = await _require_owned_conv(user_id, runtime.session_id)
-            partial_result = _LLMTurnResult(
+            partial_result = LLMTurnResult(
                 turn_content=partial_content,
                 tool_calls_list=[],
                 final_prompt_tokens=0,

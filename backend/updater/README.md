@@ -17,7 +17,7 @@
 
 代码只以 fast-forward 推进，目标必须仍是检查时所选 upstream 最新提交。Git 决定本地修改能否安全保留；分叉、覆盖风险或获取失败即停止，不自动暂存或清理。同版本部署重试仍执行 Git 检查。容器以 root 操作仓库，新写文件可能需要宿主机相应权限处理。
 
-后端通过共享 Unix socket 调用，容器回环入口仅用于内部排障，不映射宿主机端口。响应契约 [contracts.py](contracts.py) 与 [service_schemas.py](../features/updates/service_schemas.py) 同步；Backend 校验完整响应，非法任务或预检项返回错误，不能过滤后呈现为空状态。
+后端通过共享 Unix socket 调用，容器回环入口仅用于内部排障，不映射宿主机端口。两个进程使用同一份[更新契约](../infrastructure/updater_contracts.py)；Backend 校验完整响应，非法任务或预检项返回错误，不能过滤后呈现为空状态。
 
 ## 中断与验证
 

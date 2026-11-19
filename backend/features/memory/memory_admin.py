@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from infrastructure.config import SETTINGS
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
@@ -83,7 +83,7 @@ async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileCha
     if len({change.field for change in changes}) != len(changes):
         raise ValueError("Each profile field may only be changed once")
     values = {change.field: validate_profile_value(change.field, change.value) for change in changes}
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await memory_write_lock(db, scope)
         rows = list(await db.scalars(select(Memory).where(scope_filter(scope), Memory.kind == "user_profile")))
         slots = {row.slot_key: row for row in rows}
@@ -170,7 +170,7 @@ async def update_memory(
         raise ValueError("content must be non-empty")
     if "\x00" in content:
         raise ValueError("content must not contain NUL characters")
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await memory_write_lock(db, scope)
         row = await get_memory(db, scope, memory_id)
         if row is None:

@@ -423,12 +423,6 @@ class LifePursuitPublicListResponse(BaseModel):
     next_cursor: str | None
 
 
-class LifeEventListResponse(BaseModel):
-    items: list[LifeEventView] = Field(default_factory=list)
-    has_more: bool
-    next_cursor: str | None
-
-
 class LifeEventPublicListResponse(BaseModel):
     items: list[LifeEventPublicView] = Field(default_factory=list)
     has_more: bool

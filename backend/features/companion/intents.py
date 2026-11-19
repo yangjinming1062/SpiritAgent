@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from infrastructure.config import SETTINGS
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.text import utc_now
 from runtime.desktop.connection import MANAGER
@@ -231,7 +231,7 @@ async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent
         # 主动回合内只暂存计划，成功终态时与消息原子提交；取消或失败不能留下幽灵跟进。
         plan.followup = request
         return plan.intent_id
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
         row = (
             (
@@ -279,7 +279,7 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
             raise ValueError("This proactive turn can only end its current follow-up: use its own intent_id")
         plan.followup = None
         return True
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
         result = await db.execute(
             update(CompanionIntent)
@@ -365,7 +365,7 @@ async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_
 
 async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None = None) -> bool:
     """轻量事件合并与到期认领；等待状态持久化，不依赖常驻 LLM 或长 sleep。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
         now = utc_now()
         scope = CompanionIntent.user_id == user_id
@@ -484,7 +484,7 @@ async def claim_companion_intent(user_id: int) -> None:
 
 
 async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) -> CompanionIntentView | None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
         now = utc_now()
         row = (
@@ -528,7 +528,7 @@ async def finish_companion_intent(
     interrupted: bool = False,
     tools_started: bool = False,
 ) -> bool:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
         row = (
             await db.execute(

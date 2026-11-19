@@ -140,10 +140,6 @@ async def delivered_life_excerpts(
     ]
 
 
-async def load_recent_context_window(db: AsyncSession, user_id: int) -> str:
-    return (await load_companion_dialogue(db, user_id)).content
-
-
 async def load_recent_companion_exchange(
     db: AsyncSession, user_id: int, *, conversation_id: int | None = None, current_interaction: bool = True
 ) -> str:

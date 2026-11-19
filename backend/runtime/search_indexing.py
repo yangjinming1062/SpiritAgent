@@ -3,7 +3,7 @@
 import asyncio
 
 from infrastructure.ai.llm_client import embedding_model_key, generate_embeddings, resolve_embedding_provider
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.search import QueryEmbedding, valid_vectors
 from infrastructure.search_index import SearchIndexRow
@@ -43,7 +43,7 @@ class SearchIndexWorker:
         try:
             while not is_user_in_maintenance(user_id):
                 self._requests.discard(user_id)
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     provider = await resolve_embedding_provider(db, user_id)
                     if provider is None:
                         return
@@ -76,7 +76,7 @@ class SearchIndexWorker:
                     or is_user_in_maintenance(user_id)
                 ):
                     return
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     for row, vector in zip(rows, vectors, strict=True):
                         await db.execute(
                             update(model)

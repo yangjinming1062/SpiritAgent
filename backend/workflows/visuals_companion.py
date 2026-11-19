@@ -42,7 +42,7 @@ from features.scenes.queries import count_ready_scenes, list_scenes, scene_snaps
 from features.scenes.query_contracts import SceneSnapshot
 from features.visuals import service as visuals_service
 from features.visuals.interpret import interpret_visual_description
-from features.visuals.queries import creation_request, presentation_state
+from features.visuals.queries import creation_preferences, creation_request
 from features.visuals.schemas import (
     ActionMaterialRef,
     ActorClipSource,
@@ -324,10 +324,10 @@ async def generate_visual_reference(
     """冻结本次制作输入并提交工作项；空影像库也能开始第一次制作。"""
 
     async with user_asset_lock(user_id):
-        state = await presentation_state(user_id, with_catalog=False)
-        if not state.autonomous_enabled:
-            raise ComboAssemblyError("伙伴自主制作已关闭")
         async with SESSION_LOCAL() as db:
+            state = await creation_preferences(db, user_id)
+            if not state.autonomous_enabled:
+                raise ComboAssemblyError("伙伴自主制作已关闭")
             combo = await load_visual_snapshot(
                 db,
                 user_id,
@@ -720,8 +720,8 @@ async def generate_scene_media_reference(
             return job
         async with SESSION_LOCAL() as db:
             scene = await scene_snapshot(db, user_id, scene_id)
+            state = await creation_preferences(db, user_id)
         _require_ready_scene(scene)
-        state = await presentation_state(user_id, with_catalog=False)
         scene_hash = await asyncio.to_thread(_asset_hash, scene.media_path)
         combo = VisualSnapshot(
             source=SceneMediaSource(

@@ -9,26 +9,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qsl
 
-from pydantic import BaseModel
+from infrastructure.updater_contracts import (
+    ServiceRuntimeView,
+    ServiceUpdateApplyRequest,
+    ServiceUpdateCheckRequest,
+    ServiceUpdateLogChunk,
+    ServiceUpdateTaskAccepted,
+    ServiceUpdateTaskList,
+    ServiceUpdateTaskView,
+    UpdaterStatus,
+)
+from pydantic import BaseModel, ValidationError
 from updater import compose, gitops
 from updater.config import LISTEN_HOST, LISTEN_PORT, UpdaterSettings
-from updater.contracts import (
-    ServiceRuntime,
-    TaskAccepted,
-    UpdateRequest,
-    UpdaterLogChunk,
-    UpdaterMessage,
-    UpdaterStatus,
-    UpdaterTaskList,
-    UpdaterTaskView,
-)
-from updater.engine import UNAVAILABLE_CHECKS, TaskBusyError, TaskEngine, collect_preflight
-from updater.state import StateStore, TaskRecord
+from updater.engine import UNAVAILABLE_CHECKS, TaskEngine, collect_preflight
+from updater.state import StateStore, TaskBusyError, TaskRecord
 
 __version__ = "1"
 
 _MAX_BODY = 64 * 1024
-_MAX_REQUEST_ID = 128
 _REASONS = {200: "OK", 400: "Bad Request", 404: "Not Found", 409: "Conflict", 413: "Payload Too Large"}
 
 Handler = Callable[[dict], Awaitable[object]]
@@ -64,20 +63,22 @@ class UpdaterApp:
     async def dispatch(self, method: str, path: str, payload: dict) -> _Response:
         handler = self._routes.get(f"{method} {path}")
         if handler is None:
-            return _Response(404, UpdaterMessage(message="未知接口。"))
+            return _Response(404, {"message": "未知接口。"})
         try:
             result = await handler(payload)
         except TaskBusyError as busy:
-            return _Response(409, UpdaterMessage(message=str(busy)))
+            return _Response(409, {"message": str(busy)})
         except LookupError as exc:
-            return _Response(404, UpdaterMessage(message=str(exc)))
+            return _Response(404, {"message": str(exc)})
+        except ValidationError:
+            return _Response(409, {"message": "更新请求的参数无效。"})
         except (gitops.GitError, RuntimeError, ValueError) as exc:
-            return _Response(409, UpdaterMessage(message=str(exc)[:300]))
+            return _Response(409, {"message": str(exc)[:300]})
         return _Response(200, result)
 
     async def _status(self, _payload: dict) -> UpdaterStatus:
         repo, issues = await collect_preflight(self._settings)
-        runtime: ServiceRuntime | None = None
+        runtime: ServiceRuntimeView | None = None
         with contextlib.suppress(RuntimeError, ValueError, OSError):
             # 读不到运行状态时保留空值，不覆盖仓库与预检结论。
             runtime = await compose.read_backend(self._settings)
@@ -92,32 +93,30 @@ class UpdaterApp:
             latest_task=tasks[0].view() if tasks else None,
         )
 
-    async def _list_tasks(self, _payload: dict) -> UpdaterTaskList:
-        return UpdaterTaskList(tasks=[record.view() for record in self._store.tasks()])
+    async def _list_tasks(self, _payload: dict) -> ServiceUpdateTaskList:
+        return ServiceUpdateTaskList(tasks=[record.view() for record in self._store.tasks()])
 
-    async def _start_check(self, payload: dict) -> TaskAccepted:
-        record, existing = await self._engine.start("check", request_id=_request_id(payload))
-        return TaskAccepted(task_id=record.task_id, existing=existing)
+    async def _start_check(self, payload: dict) -> ServiceUpdateTaskAccepted:
+        request = ServiceUpdateCheckRequest.model_validate(payload)
+        record, existing = await self._engine.start("check", request_id=request.request_id)
+        return ServiceUpdateTaskAccepted(task_id=record.task.task_id, existing=existing)
 
-    async def _start_update(self, payload: dict) -> TaskAccepted:
-        try:
-            request = UpdateRequest.model_validate(payload)
-        except ValueError as exc:
-            raise ValueError(f"更新请求无效：{exc}") from None
+    async def _start_update(self, payload: dict) -> ServiceUpdateTaskAccepted:
+        request = ServiceUpdateApplyRequest.model_validate(payload)
         record, existing = await self._engine.start(
-            "update", request_id=_request_id(payload), target_commit=request.target_commit.lower()
+            "update", request_id=request.request_id, target_commit=request.target_commit.lower()
         )
-        return TaskAccepted(task_id=record.task_id, existing=existing)
+        return ServiceUpdateTaskAccepted(task_id=record.task.task_id, existing=existing)
 
-    async def _task_view(self, payload: dict) -> UpdaterTaskView:
+    async def _task_view(self, payload: dict) -> ServiceUpdateTaskView:
         return self._require_task(payload).view()
 
-    async def _task_log(self, payload: dict) -> UpdaterLogChunk:
+    async def _task_log(self, payload: dict) -> ServiceUpdateLogChunk:
         record = self._require_task(payload)
         offset = max(0, int(payload.get("offset") or 0))
         new_offset, total, truncated, lines = await record.log.read(offset)
-        return UpdaterLogChunk(
-            task_id=record.task_id, offset=new_offset, total_bytes=total, truncated=truncated, lines=lines
+        return ServiceUpdateLogChunk(
+            task_id=record.task.task_id, offset=new_offset, total_bytes=total, truncated=truncated, lines=lines
         )
 
     def _require_task(self, payload: dict) -> TaskRecord:
@@ -125,10 +124,6 @@ class UpdaterApp:
         if record is None:
             raise LookupError("任务不存在。")
         return record
-
-
-def _request_id(payload: dict) -> str:
-    return str(payload.get("request_id") or "")[:_MAX_REQUEST_ID]
 
 
 def _payload_from(query: str, body: bytes) -> dict:
@@ -157,13 +152,13 @@ async def _handle_client(app: UpdaterApp, reader: asyncio.StreamReader, writer: 
             if name.strip().lower() == "content-length":
                 content_length = int(value.strip() or 0)
         if content_length > _MAX_BODY:
-            response = _Response(413, UpdaterMessage(message="请求体过大。"))
+            response = _Response(413, {"message": "请求体过大。"})
         else:
             body = await asyncio.wait_for(reader.readexactly(content_length), timeout=10.0) if content_length else b""
             try:
                 payload = _payload_from(query, body)
             except (json.JSONDecodeError, ValueError) as exc:
-                response = _Response(400, UpdaterMessage(message=f"请求体无效：{exc}"))
+                response = _Response(400, {"message": f"请求体无效：{exc}"})
             else:
                 response = await app.dispatch(method, path, payload)
         reason = _REASONS.get(response.status, "Error")

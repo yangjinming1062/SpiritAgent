@@ -27,7 +27,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import resolve_prompt_text, utc_now
 from infrastructure.web.social_content import RequestGuard, SocialContent, SocialSourceError
 from infrastructure.web.social_platforms import SocialPlatform, get_social_platform
@@ -113,7 +113,7 @@ def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> 
 
 
 async def _configured(scope: MemoryScope) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         account = await nightly_account(db, scope.user_id)
     if account is None or not account.is_active or not account.nightly_activity_enabled:
         raise DiscoveryDisabledError("夜间检索已关闭或账户不可用")
@@ -135,7 +135,7 @@ async def _before_batch_call(scope: MemoryScope, timezone: ZoneInfo, expires_at:
 
 
 async def _save(scope: MemoryScope, batch_id: int, checkpoint: _Checkpoint) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await save_checkpoint(db, batch_id, scope, checkpoint.model_dump(mode="json"))
         await db.commit()
 
@@ -155,7 +155,7 @@ async def _remote_call[T](
         limit = (
             SETTINGS.topic_search_requests_per_night if kind == "search" else SETTINGS.topic_detail_requests_per_night
         )
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             if not await credential_is_current(db, scope.user_id, platform, source_revision):
                 raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
             permitted = await reserve_request(db, batch_id, scope, kind=kind, limit=limit)
@@ -168,7 +168,7 @@ async def _remote_call[T](
             return await operation(before_request)
         except SocialSourceError as exc:
             if exc.reason == "login_required":
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     await mark_login_required(db, scope.user_id, platform, source_revision)
                     await db.commit()
             # 限流/额度与请求参数失败留给下一夜；只有网络或服务故障做一次预算内重试。
@@ -363,7 +363,7 @@ async def discover_topics(
     activity_date = target_date + timedelta(days=1)
     available_from = datetime.combine(activity_date, time.min, timezone).astimezone(UTC)
     expires_at = datetime.combine(activity_date + timedelta(days=1), time.min, timezone).astimezone(UTC)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         connections = await load_social_credentials(db, scope.user_id)
         if not connections and await load_batch(db, scope, activity_date) is None:
             return TopicDiscoveryResult(status="skipped", summary={"reason": "unconfigured"})
@@ -387,7 +387,7 @@ async def discover_topics(
     if batch.status == "failed":
         return TopicDiscoveryResult(status="error", summary={"batch_id": batch.id, "reason": batch.error})
     if batch.status == "ready":
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             topics = await load_batch_topics(db, scope, batch.id)
         return TopicDiscoveryResult(
             status="ok",
@@ -486,7 +486,7 @@ async def discover_topics(
         # 已提交请求的结果先留检查点；停用或跨过当地午夜后不再发布新储备。
         await _configured(scope)
         _require_batch_lifetime(batch.expires_at)
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             completed = await publish_batch(db, batch.id, scope, selections, limit=SETTINGS.topic_reserve_limit)
             topics = await load_batch_topics(db, scope, batch.id)
             await db.commit()
@@ -515,7 +515,7 @@ async def discover_topics(
             if isinstance(exc, DiscoveryDisabledError)
             else type(exc).__name__
         )
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             await finish_failed_batch(db, batch.id, scope, error)
             await db.commit()
         if isinstance(exc, NightlyWindowClosedError | DiscoveryDisabledError):

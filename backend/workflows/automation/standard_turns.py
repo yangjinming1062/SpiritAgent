@@ -5,7 +5,7 @@ from weakref import WeakValueDictionary
 from features.accounts.queries import user_is_active
 from features.automation.cron_jobs import STANDARD_CRON_KIND, get_user_job, resolve_job_conversation
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.events.emit import emit_ws_event
 
@@ -34,7 +34,7 @@ async def _emit_notification(user_id: int, *, name: str, text: str, conversation
     preview = text.strip()
     if len(preview) > 240:
         preview = preview[:237].rstrip() + "..."
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         emit_ws_event(
             db,
             user_id=user_id,
@@ -87,7 +87,7 @@ async def execute_standard_turn(
     slot.admitted += 1
     try:
         async with slot.lock:
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 active = await user_is_active(db, user_id)
             if not active:
                 logger.info(

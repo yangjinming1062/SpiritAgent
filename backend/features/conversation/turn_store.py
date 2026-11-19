@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.constants import ATTACHMENT_TYPE_AUDIO, ATTACHMENT_TYPE_VIDEO
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from runtime.events.emit import emit_ws_event
 from runtime.events.queries import invalidate_history_events
@@ -122,7 +122,7 @@ async def persist_compression_checkpoint(
 async def persist_tool_results(
     conv_id: int, results: list[tuple[str, Any]], *, user_id: int, call_record_id: int | None = None
 ) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         for call_id, content in results:
             text, content_type = _tool_result_row(content)
             db.add(
@@ -142,7 +142,7 @@ async def persist_tool_results(
 async def persist_tool_call(
     conv_id: int, data: AssistantTurnData, *, user_id: int, call_record_id: int | None = None
 ) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         db.add(
             Message(
                 user_id=user_id,
@@ -172,7 +172,7 @@ async def persist_assistant_message(
     on_committed: Callable[[], None] | None = None,
     call_record_id: int | None = None,
 ) -> int:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = Message(
             user_id=user_id,
             conversation_id=conv_id,
@@ -217,7 +217,7 @@ async def replace_assistant_message(
     """媒体绑定和终端行原子交接；锁顺序为用户源行、视频任务、回复行。"""
     if not data.content.strip() or data.tool_calls:
         raise ValueError("Replacement requires a complete final answer")
-    async with user_asset_lock(user_id), session_scope() as db:
+    async with user_asset_lock(user_id), SESSION_LOCAL() as db:
         source_id = await replacement_source_id(db, user_id, str(conv_id), old_message_id)
         await db.execute(select(Message).where(Message.id == source_id).with_for_update())
         row = Message(

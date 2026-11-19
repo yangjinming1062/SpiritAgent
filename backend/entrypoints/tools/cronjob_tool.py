@@ -4,7 +4,7 @@ from typing import Any
 from features.automation.cron_jobs import compute_next_run_at, create_job, get_job, list_jobs, remove_job, update_job
 from features.conversation.memory_scope import resolve_memory_scope
 from infrastructure.api_ids import ResourceId
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import coerce_int, tool_error, utc_now
 from runtime.memory_scope import MemoryScope
 from runtime.tools.prompts import CRONJOB_DESC, CRONJOB_PARAM_DESCS
@@ -105,7 +105,7 @@ async def cronjob(
 ) -> str:
     normalized = (action or "").strip().lower()
     try:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             scope = await resolve_memory_scope(db, user_id, parent_session_id)
         return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, kind)
     except ValueError as e:

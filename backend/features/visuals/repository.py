@@ -267,7 +267,6 @@ async def dispatch_play_command(
     item: VisualItem | PresentedVisual,
     *,
     source: PlaybackSource,
-    origin: str | None = None,
     version_id: int | None = None,
     snapshot: VisualSnapshot | None = None,
     selection: str = "base",
@@ -315,11 +314,11 @@ async def dispatch_play_command(
         presentation_epoch=presentation.revision,
         state_revision=revision,
         source=source,
-        origin=origin or {"manual": "user", "autonomous": "user", "life": "life", "restore": "restore"}[source],
+        origin="user" if source in ("manual", "autonomous") else source,
         expires_at=expires_at,
         composition=composition,
-        outfit=_frozen_outfit(snapshot),
-        scene=_frozen_scene(snapshot),
+        outfit=snapshot.source.outfit if snapshot.source.kind != "scene" else None,
+        scene=snapshot.source.scene if snapshot.source.kind != "actor" else None,
         body=_clip_body(item),
         day_phase=snapshot.source.day_phase if snapshot.source.kind == "scene" else None,
     )
@@ -384,16 +383,6 @@ async def dispatch_play_command(
         payload=client_play_command(command).model_dump(mode="json"),
     )
     return play, command
-
-
-def _frozen_outfit(snapshot: VisualSnapshot):
-    source = snapshot.source
-    return source.outfit if source.kind in ("actor", "cinematic", "analysis") else None
-
-
-def _frozen_scene(snapshot: VisualSnapshot):
-    source = snapshot.source
-    return source.scene if source.kind in ("scene", "cinematic", "analysis") else None
 
 
 def _clip_body(item: VisualItem | PresentedVisual) -> ActorClipBody | None:

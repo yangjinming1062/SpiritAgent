@@ -427,12 +427,6 @@ async def regenerate_visual(
     return view
 
 
-def _play_origin(source: PlaybackSource) -> str:
-    """网关入口的语义细分；与 PlaybackSource 一一对应。"""
-
-    return {"manual": "user", "autonomous": "user", "life": "life", "restore": "restore"}[source]
-
-
 async def _life_context_is_current(
     db: AsyncSession, user_id: int, state: VisualPresentation, life_revision: int | None, life_activity_type: str | None
 ) -> bool:
@@ -544,7 +538,6 @@ async def play_visual(
             user_id,
             item,
             source=source,
-            origin=origin or _play_origin(source),
             version_id=version_id,
             snapshot=snapshot,
             selection=selection,

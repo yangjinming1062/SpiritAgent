@@ -19,7 +19,7 @@ from features.conversation.reply_audio import discard_reply_audio, prepare_reply
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.turn_access import ensure_main_conversation
 from features.life.context import read_contact_excerpt
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
@@ -112,7 +112,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
         async with asyncio.timeout(max(0.0, remaining)):
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 if intent.source_kind and intent.source_kind.startswith("reply:"):
                     source = await deferred_reply_source(db, user_id, intent.source_kind)
                     conversation_id = source.conversation_id if source is not None else None

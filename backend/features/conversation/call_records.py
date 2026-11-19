@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from infrastructure.api_ids import ResourceId
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from pydantic import BaseModel
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import exists, select, update
@@ -29,7 +29,7 @@ class CallRecordPage(BaseModel):
 
 
 async def start_call_record(user_id: int, conversation_id: int, started_at: datetime) -> int:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = Message(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -44,7 +44,7 @@ async def start_call_record(user_id: int, conversation_id: int, started_at: date
 
 
 async def observe_call(record_id: int, at: datetime) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await db.execute(
             update(Message)
             .where(Message.id == record_id, Message.call_duration_ms.is_(None), Message.call_last_seen_at < at)
@@ -64,7 +64,7 @@ def _finalize(db: AsyncSession, row: Message, ended_at: datetime, duration_ms: i
 
 
 async def finish_call_record(record_id: int, duration_ms: int) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = await db.get(Message, record_id, with_for_update=True)
         if row is not None and row.call_duration_ms is None and row.subtype == CALL_RECORD_SUBTYPE:
             _finalize(db, row, row.created_at + timedelta(milliseconds=duration_ms), duration_ms)
@@ -72,7 +72,7 @@ async def finish_call_record(record_id: int, duration_ms: int) -> None:
 
 
 async def recover_call_records() -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         for row in await db.scalars(
             select(Message)
             .where(Message.subtype == CALL_RECORD_SUBTYPE, Message.call_duration_ms.is_(None))
@@ -87,7 +87,7 @@ async def recover_call_records() -> None:
 async def read_call_record(
     user_id: int, conversation_id: int, record_id: int, *, after_id: int | None, limit: int
 ) -> CallRecordPage | None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = await db.scalar(
             select(Message)
             .where(

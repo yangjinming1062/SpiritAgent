@@ -14,11 +14,13 @@ from weakref import WeakValueDictionary
 from features.action_library.import_materials import action_is_imported, undo_imported_action
 from features.action_library.queries import action_detail, list_actions
 from features.action_library.review import review_action
+from features.action_library.schemas import ActionAssetView
 from features.action_library.service import create_action, retry_review, update_action
 from features.appearance.avatar_service import FULLBODY_SIZE
 from features.appearance.identity import load_visual_identity
 from features.appearance.import_materials import accept_imported_outfit, undo_imported_outfit
 from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot, ready_outfit_snapshots
+from features.appearance.query_contracts import OutfitSnapshot
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.configuration.settings.values import get_user_setting
 from features.life.material_references import material_has_references
@@ -26,6 +28,7 @@ from features.media.character_images import ImageChainState, generate_reviewed_i
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.scenes.import_materials import accept_imported_scene, undo_imported_scene
 from features.scenes.queries import scene_snapshot
+from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.snapshots import list_scene_snapshots
 from features.visuals.import_jobs import (
     ImportCatalogCandidate,
@@ -33,7 +36,6 @@ from features.visuals.import_jobs import (
     ImportWork,
     claim_import_job,
     command_import_job,
-    ensure_import_job,
     fail_import_work,
     guard_import_work,
     recover_import_jobs,
@@ -114,17 +116,9 @@ async def run_manual_import_job(user_id: int, job_id: int) -> bool:
     return True
 
 
-async def queue_import_analysis(user_id: int, visual_id: int) -> ImportAnalysisView | None:
-    view = await ensure_import_job(user_id, visual_id)
-    if view is not None and view.state == "queued":
-        schedule_import_analysis(user_id, view.id)
-    return view
-
-
 async def control_import_analysis(user_id: int, visual_id: int, request: ImportAnalysisRequest) -> ImportAnalysisView:
     if request.command == "apply_result":
-        await apply_import_result(user_id, visual_id, request.expected_revision)
-        return await ensure_import_job(user_id, visual_id)
+        return await apply_import_result(user_id, visual_id, request.expected_revision)
     view = await command_import_job(user_id, visual_id, request)
     if request.command == "cancel":
         await _TASKS.cancel_and_wait((user_id, view.id))
@@ -216,76 +210,80 @@ async def _rank_candidates(work: ImportWork, observation: ImportObservation) -> 
     return await run_blocking(ranked)
 
 
+async def _outfit_candidate(row: OutfitSnapshot) -> ImportCatalogCandidate:
+    outfit = ComboMaterialRef(
+        material_id=row.id,
+        name=row.name,
+        description=row.description or "",
+        path=row.fullbody_url,
+        content_hash=await _hash(row.fullbody_url),
+        revision=row.updated_at,
+    )
+    return ImportCatalogCandidate(
+        kind="outfit",
+        material_id=row.id,
+        name=outfit.name,
+        description=outfit.description,
+        path=outfit.path,
+        outfit=outfit,
+    )
+
+
+async def _scene_candidate(row: SceneSnapshot) -> ImportCatalogCandidate:
+    scene = SceneMediaRef(
+        scene_id=row.id,
+        title=row.title,
+        description=row.description,
+        path=row.media_path,
+        content_hash=await _hash(row.media_path),
+        revision=row.updated_at,
+    )
+    return ImportCatalogCandidate(
+        kind="scene",
+        material_id=row.id,
+        name=scene.title,
+        description=scene.description,
+        path=scene.path,
+        scene=scene,
+    )
+
+
+def _action_candidate(row: ActionAssetView) -> ImportCatalogCandidate:
+    return ImportCatalogCandidate(
+        kind="action",
+        material_id=row.id,
+        name=row.name,
+        description=row.motion_description,
+        action=freeze_action_reference(row),
+    )
+
+
 async def _refresh_material_candidates(work: ImportWork, kind: str) -> None:
-    """创建前读取完整的当前可用目录，包括本任务与其他任务刚入库的素材。"""
+    """分页读取该类已就绪素材，释放读事务后再校验文件并冻结内容。"""
     candidates: list[ImportCatalogCandidate] = []
-    async with SESSION_LOCAL() as db:
-        cursor = None
-        while True:
-            if kind == "outfit":
+    cursor = None
+    while True:
+        if kind == "outfit":
+            async with SESSION_LOCAL() as db:
                 outfits = await ready_outfit_snapshots(db, work.user_id, limit=100, cursor=cursor)
-                for row in outfits:
-                    if resolve_asset_reference(row.fullbody_url):
-                        candidates.append(
-                            ImportCatalogCandidate(
-                                kind="outfit",
-                                material_id=row.id,
-                                name=row.name,
-                                description=row.description or "",
-                                path=row.fullbody_url,
-                                outfit=ComboMaterialRef(
-                                    material_id=row.id,
-                                    name=row.name,
-                                    description=row.description or "",
-                                    path=row.fullbody_url,
-                                    content_hash=await _hash(row.fullbody_url),
-                                    revision=row.updated_at,
-                                ),
-                            )
-                        )
-                if len(outfits) < 100:
-                    break
-                cursor = outfits[-1].id
-            elif kind == "scene":
+            candidates.extend(
+                [await _outfit_candidate(row) for row in outfits if resolve_asset_reference(row.fullbody_url)]
+            )
+            cursor = outfits[-1].id if len(outfits) == 100 else None
+        elif kind == "scene":
+            async with SESSION_LOCAL() as db:
                 scenes = await list_scene_snapshots(db, work.user_id, limit=100, cursor=cursor, ready_only=True)
-                for scene in scenes.scenes:
-                    if resolve_asset_reference(scene.media_path):
-                        candidates.append(
-                            ImportCatalogCandidate(
-                                kind="scene",
-                                material_id=scene.id,
-                                name=scene.title,
-                                description=scene.description,
-                                path=scene.media_path,
-                                scene=SceneMediaRef(
-                                    scene_id=scene.id,
-                                    title=scene.title,
-                                    description=scene.description,
-                                    path=scene.media_path,
-                                    content_hash=await _hash(scene.media_path),
-                                    revision=scene.updated_at,
-                                ),
-                            )
-                        )
-                if not scenes.has_more:
-                    break
-                cursor = int(scenes.next_cursor)
-            else:
+            candidates.extend(
+                [await _scene_candidate(row) for row in scenes.scenes if resolve_asset_reference(row.media_path)]
+            )
+            cursor = int(scenes.next_cursor) if scenes.next_cursor is not None else None
+        else:
+            async with SESSION_LOCAL() as db:
                 actions = await list_actions(db, work.user_id, limit=100, cursor=cursor)
-                candidates.extend(
-                    ImportCatalogCandidate(
-                        kind="action",
-                        material_id=action.id,
-                        name=action.name,
-                        description=action.motion_description,
-                        action=freeze_action_reference(action),
-                    )
-                    for action in actions.actions
-                )
-                if not actions.has_more:
-                    break
-                cursor = int(actions.next_cursor)
-        await db.commit()
+            candidates.extend(_action_candidate(row) for row in actions.actions)
+            cursor = int(actions.next_cursor) if actions.next_cursor is not None else None
+        if cursor is None:
+            break
     work.candidates = [entry for entry in work.candidates if entry.kind != kind] + candidates
 
 
@@ -323,60 +321,23 @@ async def _read_selected(work: ImportWork, kind: str, material_id: int) -> Impor
         )
         if frozen is not None:
             return frozen
+    if kind == "outfit":
+        async with SESSION_LOCAL() as db:
+            outfit = await ready_outfit_snapshot(db, work.user_id, material_id)
+        if outfit is None:
+            raise ValueError("所选着装不存在或尚未就绪")
+        return await _outfit_candidate(outfit)
+    if kind == "scene":
+        async with SESSION_LOCAL() as db:
+            scene = await scene_snapshot(db, work.user_id, material_id)
+        if scene is None or scene.status != "ready":
+            raise ValueError("所选环境不存在或尚未就绪")
+        return await _scene_candidate(scene)
     async with SESSION_LOCAL() as db:
-        if kind == "outfit":
-            row = await ready_outfit_snapshot(db, work.user_id, material_id)
-            if row is None:
-                raise ValueError("所选着装不存在或尚未就绪")
-            await db.commit()
-            ref = ComboMaterialRef(
-                material_id=row.id,
-                name=row.name,
-                path=row.fullbody_url,
-                content_hash=await _hash(row.fullbody_url),
-                description=row.description or "",
-                revision=row.updated_at,
-            )
-            return ImportCatalogCandidate(
-                kind="outfit",
-                material_id=row.id,
-                name=row.name,
-                description=row.description or "",
-                path=row.fullbody_url,
-                outfit=ref,
-            )
-        if kind == "scene":
-            row = await scene_snapshot(db, work.user_id, material_id)
-            if row is None or row.status != "ready":
-                raise ValueError("所选环境不存在或尚未就绪")
-            await db.commit()
-            ref = SceneMediaRef(
-                scene_id=row.id,
-                title=row.title,
-                path=row.media_path,
-                content_hash=await _hash(row.media_path),
-                description=row.description,
-                revision=row.updated_at,
-            )
-            return ImportCatalogCandidate(
-                kind="scene",
-                material_id=row.id,
-                name=row.title,
-                description=row.description,
-                path=row.media_path,
-                scene=ref,
-            )
         action = await action_detail(db, work.user_id, material_id)
-        if action is None or action.status != "approved":
-            raise ValueError("所选动作尚未通过评审，请在动作库中处理")
-        await db.commit()
-        return ImportCatalogCandidate(
-            kind="action",
-            material_id=action.id,
-            name=action.name,
-            description=action.motion_description,
-            action=freeze_action_reference(action),
-        )
+    if action is None or action.status != "approved":
+        raise ValueError("所选动作尚未通过评审，请在动作库中处理")
+    return _action_candidate(action)
 
 
 def _remember_created_material(work: ImportWork, component: ImportComponent) -> None:
@@ -517,7 +478,7 @@ async def _restore_previous_reference(
 async def _cleanup_inactive_created_materials(work: ImportWork, component: ImportComponent) -> None:
     """收敛本条目不再作为当前关联的创建素材，覆盖中断后的重试路径。"""
 
-    if component.status not in {"created", "reused", "skipped", "undone"}:
+    if not component.settled:
         return
     current_id = (
         component.material_id
@@ -994,7 +955,7 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
         else:
             await _extract(work, component, explicit=True)
         return
-    if component.status in {"reused", "created", "skipped", "undone", "ambiguous"}:
+    if component.settled or component.status == "ambiguous":
         return
     if work.media_kind == "image" and component.observation.crop is None:
         exact = [
@@ -1103,7 +1064,7 @@ async def _publish_organized_result(work: ImportWork) -> bool:
     await save_import_progress(work, "presentation_review")
     verdict = (
         ImportQualityVerdict(decision="review", reason="素材整理尚未完成，原件与已完成结果已保存")
-        if any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in work.result.components)
+        if not work.result.materials_complete
         else await review_import_presentation(work, selected)
     )
     return await complete_import_analysis(work, selected, verdict.decision, verdict.reason)

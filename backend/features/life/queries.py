@@ -17,7 +17,8 @@ from .schemas import (
     EVIDENCE_EVENTS_PER_PURSUIT,
     PUBLISHED_ENTRY_KINDS,
     UNRESOLVED_STEP_STATES,
-    LifeEventListResponse,
+    LifeEventPublicListResponse,
+    LifeEventPublicView,
     LifeEventView,
     LifePursuitEvidence,
     LifePursuitListResponse,
@@ -399,18 +400,15 @@ async def list_pursuits(
     )
 
 
-async def list_events(
+async def list_public_events(
     db: AsyncSession,
     user_id: int,
     *,
     pursuit_id: int | None = None,
     cursor: str | None = None,
     limit: int = 20,
-    shared_only: bool = False,
-) -> LifeEventListResponse:
-    where = [LifeEvent.user_id == user_id]
-    if shared_only:
-        where.append(LifeEvent.shared_with_user.is_(True))
+) -> LifeEventPublicListResponse:
+    where = [LifeEvent.user_id == user_id, LifeEvent.shared_with_user.is_(True)]
     if pursuit_id is not None:
         where.append(LifeEvent.pursuit_id == pursuit_id)
     if position := decode_timestamp_cursor(cursor):
@@ -423,10 +421,9 @@ async def list_events(
     more = len(rows) > limit
     rows = rows[:limit]
     items = [event_view(row) for row in rows]
-    if shared_only:
-        await project_public_completions(db, user_id, items)
-    return LifeEventListResponse(
-        items=items,
+    await project_public_completions(db, user_id, items)
+    return LifeEventPublicListResponse(
+        items=[LifeEventPublicView.model_validate(item) for item in items],
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
     )

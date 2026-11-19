@@ -15,10 +15,12 @@ from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.jobs.service import RETAINED_JOB_ASSET_ROLE, bind_job_assets
 
+from .import_jobs import ImportContext
 from .models import VisualImportJob, VisualItem, VisualVersion
 from .publication import publish_imported_visual
 from .queries import visual_detail
@@ -42,6 +44,35 @@ def _image_size(data: bytes) -> tuple[int, int]:
         return ImageOps.exif_transpose(image).size
 
 
+async def _existing_import(db: AsyncSession, user_id: int, digest: str) -> int | None:
+    row = (
+        await db.execute(
+            select(
+                VisualItem.id, VisualVersion.snapshot_json["source"]["original_path"].astext, VisualVersion.media_path
+            )
+            .outerjoin(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
+            .where(
+                VisualItem.user_id == user_id,
+                or_(
+                    VisualItem.content_hash == digest,
+                    VisualItem.id.in_(
+                        select(VisualImportJob.visual_id).where(
+                            VisualImportJob.user_id == user_id,
+                            VisualImportJob.original_hash == digest,
+                        )
+                    ),
+                ),
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    visual_id, original_path, media_path = row
+    if resolve_asset_reference(original_path or media_path) is None:
+        raise VisualStateError("同内容影像的原件已缺失，请先恢复原件")
+    return visual_id
+
+
 async def import_visual(user_id: int, data: bytes, *, filename: str, title: str, description: str) -> VisualDetailView:
     ext = sniff_media_ext(data)
     image = ext in {"png", "jpg", "webp", "gif"}
@@ -50,39 +81,15 @@ async def import_visual(user_id: int, data: bytes, *, filename: str, title: str,
     limit = REMOTE_ASSET_DOWNLOAD_MAX_BYTES if image else SETTINGS.video_attachment_max_bytes
     if len(data) > limit:
         raise VisualStateError(f"影像超过 {limit // (1024 * 1024)} MB 上限")
-    digest = hashlib.sha256(data).hexdigest()
+    digest = (await run_blocking(hashlib.sha256, data)).hexdigest()
     directory = f"visuals/imports/{uuid4().hex}"
     try:
         async with user_asset_lock(user_id), SESSION_LOCAL() as db:
             # 与制作、恢复共用账户串行边界，数据库行锁覆盖并发上传。
             await require_presentation_row(db, user_id, lock=True)
-            existing = (
-                await db.execute(
-                    select(
-                        VisualItem.id,
-                        VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
-                        VisualVersion.media_path,
-                    )
-                    .select_from(VisualItem)
-                    .outerjoin(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
-                    .where(
-                        VisualItem.user_id == user_id,
-                        or_(
-                            VisualItem.content_hash == digest,
-                            VisualItem.id.in_(
-                                select(VisualImportJob.visual_id).where(
-                                    VisualImportJob.user_id == user_id, VisualImportJob.original_hash == digest
-                                )
-                            ),
-                        ),
-                    )
-                )
-            ).first()
+            visual_id = await _existing_import(db, user_id, digest)
             await db.commit()
-            if existing is not None:
-                visual_id, original_path, media_path = existing
-                if resolve_asset_reference(original_path or media_path) is None:
-                    raise VisualStateError("同内容影像的原件已缺失，请先恢复原件")
+            if visual_id is not None:
                 return await visual_detail(user_id, visual_id)
             with asset_write_context():
                 path = await run_blocking(
@@ -129,33 +136,8 @@ async def import_visual(user_id: int, data: bytes, *, filename: str, title: str,
                 )
                 await require_presentation_row(db, user_id, lock=True)
                 # 探测期间不持事务；提交前重查其他请求已经发布的相同内容。
-                existing = (
-                    await db.execute(
-                        select(
-                            VisualItem.id,
-                            VisualVersion.snapshot_json["source"]["original_path"].astext.label("original_path"),
-                            VisualVersion.media_path,
-                        )
-                        .select_from(VisualItem)
-                        .outerjoin(VisualVersion, VisualVersion.id == VisualItem.current_version_id)
-                        .where(
-                            VisualItem.user_id == user_id,
-                            or_(
-                                VisualItem.content_hash == digest,
-                                VisualItem.id.in_(
-                                    select(VisualImportJob.visual_id).where(
-                                        VisualImportJob.user_id == user_id, VisualImportJob.original_hash == digest
-                                    )
-                                ),
-                            ),
-                        )
-                    )
-                ).first()
-                if existing is not None:
-                    visual_id, original_path, media_path = existing
-                    if resolve_asset_reference(original_path or media_path) is None:
-                        raise VisualStateError("同内容影像的原件已缺失，请先恢复原件")
-                else:
+                visual_id = await _existing_import(db, user_id, digest)
+                if visual_id is None:
                     visual_id = await publish_imported_visual(db, user_id, asset, snapshot, title=title)
                     # 原件与分析任务在同一个事务登记，避免进程在两步之间退出后留下孤立影像。
                     job = VisualImportJob(
@@ -163,6 +145,7 @@ async def import_visual(user_id: int, data: bytes, *, filename: str, title: str,
                         visual_id=visual_id,
                         expected_version=1,
                         original_hash=digest,
+                        context_json=ImportContext(user_notes=description).model_dump(mode="json", exclude_unset=True),
                         state="queued",
                         stage="analyze",
                     )

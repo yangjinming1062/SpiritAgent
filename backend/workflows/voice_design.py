@@ -11,7 +11,7 @@ from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.providers.base import TTSProvider
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.constants import MAX_VOICE_DESIGN_PROMPT_CHARS
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 
 _VOICE_DESCRIPTION_TASK = """根据角色资料写出日常说话的音色描述，优先满足声音偏好。
 {guide}
@@ -35,7 +35,7 @@ async def generate_voice_prompt(
     guide = build_provider(config, TTSProvider).VOICE_DESIGN_GUIDE
     if not guide:
         raise ValueError("音色设计写法未配置")
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         persona = await persona_snapshot(db, user_id)
     if persona is None:
         raise ValueError("请先填写伙伴资料")

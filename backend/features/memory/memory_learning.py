@@ -6,7 +6,7 @@ from typing import Any
 
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import DEFAULT_LANGUAGE
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.search import extract_search_terms
 from infrastructure.text import resolve_language, utc_now
 from pydantic import BaseModel
@@ -240,7 +240,7 @@ async def apply_memory_decisions(
     revisions: list[dict[str, Any]] = []
     existing_fact_changed = False
     unchanged_ids: list[int] = []
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await memory_write_lock(db, scope)
         if await memory_versions(db, scope) != context.versions:
             raise MemoryConflictError("Memory changed during review; inspect again before writing")

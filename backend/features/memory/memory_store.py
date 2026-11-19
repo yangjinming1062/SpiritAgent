@@ -4,7 +4,7 @@ from datetime import date
 
 from infrastructure.ai.llm_client import embedding_model_key, generate_embeddings, resolve_embedding_provider
 from infrastructure.ai.providers.base import EmbeddingProvider
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import transaction_owner, transaction_owns
 from infrastructure.logger import get_logger
 from infrastructure.search import QueryEmbedding, valid_vectors
@@ -56,7 +56,7 @@ async def _rebuild_embeddings(user_id: int) -> None:
     try:
         while not is_user_in_maintenance(user_id):
             _EMBEDDING_REQUESTS.discard(user_id)
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 if not await user_is_active(db, user_id):
                     return
                 provider = await resolve_embedding_provider(db, user_id)
@@ -313,7 +313,7 @@ async def _backfill_embeddings(
         dimensions = len(vectors[0])
         model_key = embedding_model_key(provider.config)
         supplied = {row.id: (row, vector) for row, vector in zip(rows, vectors, strict=True)}
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             # 与内容写入共用作用域锁；供应商等待发生在锁与事务之外。
             await memory_write_lock(db, scope)
             current = await db.execute(

@@ -1,11 +1,31 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol, TypedDict
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol, TypedDict
 
+from features.companion.intent_contracts import DeferredReply
 from features.conversation.replies import CompanionReply
+from infrastructure.ai.selection import GenerationOrigin
 
 TrackTask = Callable[[asyncio.Task], None]
 ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[asyncio.Future[None]]]
+
+
+@dataclass
+class LLMTurnResult:
+    """单次模型调用的可交付结果。工具标识由编排层分配。"""
+
+    turn_content: str
+    tool_calls_list: list[dict]
+    final_prompt_tokens: int
+    final_completion_tokens: int
+    final_usage_payload: dict | None
+    turn_duration_ms: int
+    reasoning: str | None = None
+    reply: CompanionReply | None = None
+    generation_origin: GenerationOrigin | None = None
+    decision: Literal["silent", "deferred"] | None = None
+    followup: DeferredReply | None = None
 
 
 class LifeContactEvidence(TypedDict):

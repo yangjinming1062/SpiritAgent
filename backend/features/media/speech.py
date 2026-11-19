@@ -8,13 +8,14 @@ from dataclasses import replace
 from infrastructure.ai.providers.base import ProviderConfig, TTSResult, TTSStreamChunk, VoiceReferenceAudio
 from infrastructure.ai.speech_contracts import SpeechStyle
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.tts_service import CustomVoiceInput
 from infrastructure.ai.tts_service import resolve_reply_voice as resolve_provider_voice
 from infrastructure.ai.tts_service import stream_synthesize_speech as stream_provider_speech
 from infrastructure.ai.tts_service import synthesize_speech as synthesize_provider_speech
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.write_protection import protect_asset_write, user_asset_lock
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,15 +35,25 @@ def _reference_bytes(user_id: int, path: str) -> VoiceReferenceAudio:
     return VoiceReferenceAudio(audio=resolved[0].read_bytes(), mime="audio/wav")
 
 
-async def _protect_reference(user_id: int, snapshot: CustomVoiceSnapshot) -> VoiceReferenceAudio | None:
-    if snapshot.reference_path is None:
+async def _voice_input(user_id: int, snapshot: CustomVoiceSnapshot | None) -> CustomVoiceInput | None:
+    if snapshot is None:
         return None
-    async with user_asset_lock(user_id):
-        protect_asset_write(snapshot.reference_path)
-        try:
-            return await asyncio.to_thread(_reference_bytes, user_id, snapshot.reference_path)
-        except OSError as exc:
-            raise ValueError("声音样本已不可读取，请重新录制或上传") from exc
+    reference = None
+    if snapshot.reference_path is not None:
+        async with user_asset_lock(user_id):
+            protect_asset_write(snapshot.reference_path)
+            try:
+                reference = await asyncio.to_thread(_reference_bytes, user_id, snapshot.reference_path)
+            except OSError as exc:
+                raise ValueError("声音样本已不可读取，请重新录制或上传") from exc
+    return CustomVoiceInput(
+        provider=snapshot.provider,
+        model=snapshot.model,
+        model_card_id=snapshot.model_card_id,
+        voice_id=snapshot.provider_voice_id,
+        design_prompt=snapshot.prompt,
+        reference_audio=reference,
+    )
 
 
 async def resolve_reply_voice(
@@ -50,19 +61,13 @@ async def resolve_reply_voice(
 ) -> tuple[ProviderConfig | None, str]:
     try:
         snapshot = await resolve_custom_voice(db, user_id, voice)
-        if snapshot is None:
-            return await resolve_provider_voice(db, user_id, voice, language, prefer_streaming=prefer_streaming)
-        reference = await _protect_reference(user_id, snapshot)
         return await resolve_provider_voice(
             db,
             user_id,
             voice,
             language,
-            provider_name=snapshot.provider,
-            model=snapshot.model,
-            model_card_id=snapshot.model_card_id,
-            design_prompt=snapshot.prompt,
-            reference_audio=reference,
+            prefer_streaming=prefer_streaming,
+            custom=await _voice_input(user_id, snapshot),
         )
     except ValueError:
         logger.warning("Reply voice unavailable; continuing with text", extra={"user_id": user_id}, exc_info=True)
@@ -79,28 +84,19 @@ async def synthesize_speech(
     task: AiTaskKey,
     preserve_performance: bool = False,
 ) -> TTSResult:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         snapshot = await resolve_custom_voice(db, user_id, voice)
-    if snapshot is None:
-        return await synthesize_provider_speech(
-            user_id, text, voice, language, speech_style, task=task, preserve_performance=preserve_performance
-        )
-    reference = await _protect_reference(user_id, snapshot)
     result = await synthesize_provider_speech(
         user_id,
         text,
-        snapshot.provider_voice_id,
+        voice,
         language,
         speech_style,
         task=task,
         preserve_performance=preserve_performance,
-        reference_audio=reference,
-        provider_name=snapshot.provider,
-        model=snapshot.model,
-        model_card_id=snapshot.model_card_id,
-        design_prompt=snapshot.prompt,
+        custom=await _voice_input(user_id, snapshot),
     )
-    return replace(result, voice=voice)
+    return replace(result, voice=voice) if snapshot is not None else result
 
 
 async def stream_synthesize_speech(
@@ -114,22 +110,17 @@ async def stream_synthesize_speech(
     preserve_performance: bool = False,
 ) -> AsyncGenerator[TTSStreamChunk]:
     """使用与整段语音相同的自定义音色解析入口，再进入供应商流式接口。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         snapshot = await resolve_custom_voice(db, user_id, voice)
-    reference = await _protect_reference(user_id, snapshot) if snapshot is not None else None
     chunks = stream_provider_speech(
         user_id,
         text,
-        snapshot.provider_voice_id if snapshot is not None else voice,
+        voice,
         language,
         speech_style,
         task=task,
         preserve_performance=preserve_performance,
-        reference_audio=reference,
-        provider_name=snapshot.provider if snapshot is not None else "",
-        model=snapshot.model if snapshot is not None else "",
-        model_card_id=snapshot.model_card_id if snapshot is not None else "",
-        design_prompt=snapshot.prompt if snapshot is not None else "",
+        custom=await _voice_input(user_id, snapshot),
     )
     async with aclosing(chunks):
         async for chunk in chunks:

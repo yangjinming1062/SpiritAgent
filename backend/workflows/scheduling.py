@@ -46,7 +46,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.correlation import begin_local_scope
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
@@ -192,13 +192,13 @@ async def drain() -> None:
 
 async def _select_due_jobs() -> list[DueJob]:
     now = utc_now()
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         active_users = await list_user_ids(db, active_only=True)
         return await due_jobs(db, now, MANAGER.local_user_ids(), active_users, limit=_MAX_DUE_PER_TICK + 1)
 
 
 async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJob]:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         # 与编辑共用调度锁，再锁账户；旧快照不能在编辑撤销意图后重新交接。
         for user_id in sorted({job.user_id for job in due_jobs}):
             await lock_domain(db, user_id, "automation")
@@ -218,7 +218,7 @@ async def _advance_due_jobs(due_jobs: list[DueJob], now: datetime) -> None:
     """批量推进调度游标：standard 启动独立任务回合，special 在保存等待意图后按用户认领。"""
     expired_ids = {job.id for job in due_jobs if job.expires_at is not None and job.expires_at <= now}
     if expired_ids:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             await delete_expired_jobs(db, expired_ids, now)
             await db.commit()
 
@@ -296,7 +296,7 @@ async def _consider_contact(user_id: int) -> None:
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             if (
                 await get_disturbance_tier(user_id, db=db) == "still"
                 or await has_pending_companion_intent(db, user_id)
@@ -368,7 +368,7 @@ async def run_tick() -> None:
 
 async def _discover_life_work() -> list[ScheduledWork]:
     now = utc_now()
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         active_users = await list_user_ids(db, active_only=True)
         completed = await complete_user_ids(db, active_users)
         onboarded = await onboarded_user_ids(db, completed)
@@ -400,7 +400,7 @@ async def _discover_life_work() -> list[ScheduledWork]:
 
 
 async def _discover_rhythm_work() -> list[ScheduledWork]:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         candidates = await due_rhythm_users(db, utc_now(), MANAGER.local_user_ids())
     return [
         ScheduledWork("rhythm", partial(update_account_rhythm, user_id), user_id)
@@ -416,7 +416,7 @@ async def run_rhythm_tick() -> None:
 
 async def _run_memory_review(scope: MemoryScope) -> None:
     """没有可用 LLM 配置时跳过，不记录审阅成功或失败。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         if not await user_is_active(db, scope.user_id):
             return
         llm_config = await resolve_user_llm_config(db, scope.user_id, AiTaskKey.memory_review)
@@ -428,7 +428,7 @@ async def _run_memory_review(scope: MemoryScope) -> None:
 
 async def _discover_memory_reviews() -> list[ScheduledWork]:
     """按域发现待审材料；在途域不重复提交，不阻塞其他用户的后续扫描。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         scopes = await list_memory_review_scopes(db)
     return [
         ScheduledWork(scope.system_preset_id, partial(_run_memory_review, scope), scope.user_id)
@@ -438,14 +438,14 @@ async def _discover_memory_reviews() -> list[ScheduledWork]:
 
 
 async def _close_nightly_logs(log_ids: list[int]) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await close_expired_logs(db, log_ids)
         await db.commit()
 
 
 async def _discover_nightly_activity() -> list[ScheduledWork]:
     now = utc_now()
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         active_users = await list_user_ids(db, active_only=True)
         eligible_users = await companion_conversation_users(db, active_users, COMPANION_PRESET_ID)
         eligible_users.update(await complete_user_ids(db, active_users))
@@ -483,7 +483,7 @@ async def _discover_nightly_activity() -> list[ScheduledWork]:
 
 
 async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         if not await user_is_active(db, scope.user_id):
             return
         zone = parse_timezone(await get_user_setting(db, scope.user_id, "timezone"))

@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.search import SearchStatus, embed_search_query
 from infrastructure.search_index import SearchDocument, search_documents, upsert_search_documents
 from runtime.search_indexing import SearchIndexWorker
@@ -55,7 +55,7 @@ async def search_diary_entries(
         raise ValueError("开始日期不能晚于结束日期")
     query = query.strip()
     vector = await embed_search_query(user_id, query)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         where = [CompanionEntry.user_id == user_id, CompanionEntry.kind == "diary"]
         if date_from is not None:
             where.append(CompanionEntry.activity_date >= date_from)

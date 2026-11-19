@@ -1,7 +1,7 @@
 """聊天回合、委派和标题生成使用的会话数据入口。"""
 
 from infrastructure.api_ids import parse_resource_id
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,7 +88,7 @@ async def conversation_topic_ids(db: AsyncSession, conv: ConversationSnapshot) -
 
 
 async def create_delegated_conversation(user_id: int, parent_id: int | None) -> str | None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         parent = await db.get(Conversation, parent_id) if parent_id else None
         if parent is None:
             return None

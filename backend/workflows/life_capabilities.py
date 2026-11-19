@@ -19,7 +19,7 @@ from features.media.image_generation import resolve_image_gen_chain
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.snapshots import list_scene_snapshots
 from features.topics.store import load_prompt_topics
-from features.visuals.queries import presentation_state
+from features.visuals.queries import creation_preferences
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.tasks import AiTaskKey
@@ -108,13 +108,13 @@ async def capability_blocks(
         blocked["scene.create"] = CapabilityBlock("permission_required", "自主添置环境已关闭")
     if not SETTINGS.action_autocreate_enabled:
         blocked["action.design"] = CapabilityBlock("permission_required", "自主设计动作已关闭")
-    if "visual.generate" in targets and not (await presentation_state(user_id, with_catalog=False)).autonomous_enabled:
-        blocked["visual.generate"] = CapabilityBlock("permission_required", "自主影像制作已关闭")
     if source != "nightly":
         blocked["outreach.schedule"] = CapabilityBlock(
             "permission_required", "日常联系用经历的 chat 摘选，次日定时安排由夜间规划登记"
         )
     async with SESSION_LOCAL() as db:
+        if "visual.generate" in targets and not (await creation_preferences(db, user_id)).autonomous_enabled:
+            blocked["visual.generate"] = CapabilityBlock("permission_required", "自主影像制作已关闭")
         for capability, task in (
             ("outfit.create", AiTaskKey.outfit),
             ("scene.create", AiTaskKey.scene),

@@ -3,8 +3,13 @@
 import re
 from datetime import UTC, datetime
 
+from infrastructure.updater_contracts import (
+    ServiceCommitInfo,
+    ServicePreflightIssue,
+    ServiceRepoView,
+    ServiceUpdateStage,
+)
 from updater.config import UpdaterSettings
-from updater.contracts import CommitInfo, PreflightIssue, RepoStatus, UpdateStage
 from updater.redact import redact_text
 from updater.runner import LineSink, RunOutput, run_command
 
@@ -12,7 +17,7 @@ _SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 class GitError(RuntimeError):
-    def __init__(self, message: str, *, stage: UpdateStage = "fetch", reason: str = "git_failed") -> None:
+    def __init__(self, message: str, *, stage: ServiceUpdateStage = "fetch", reason: str = "git_failed") -> None:
         super().__init__(message)
         self.stage = stage
         self.reason = reason
@@ -49,7 +54,7 @@ async def _git(settings: UpdaterSettings, *args: str, timeout: float | None = No
 async def _git_value(
     settings: UpdaterSettings,
     *args: str,
-    stage: UpdateStage = "preflight",
+    stage: ServiceUpdateStage = "preflight",
     reason: str = "repository_failed",
     log: LineSink | None = None,
 ) -> str:
@@ -66,14 +71,14 @@ async def _git_value(
     return output.stdout.strip()
 
 
-async def repo_status(settings: UpdaterSettings) -> RepoStatus:
+async def repo_status(settings: UpdaterSettings) -> ServiceRepoView:
     """只读收集仓库状态；仓库不可用按 GitError 上抛。"""
 
     branch = await _git_value(settings, "rev-parse", "--abbrev-ref", "HEAD")
     if branch == "HEAD":
         raise GitError("仓库处于 detached HEAD 状态，无法确定要更新的分支。", stage="preflight", reason="detached_head")
     dirty = bool(await _git_value(settings, "status", "--porcelain"))
-    status = RepoStatus(branch=branch, current_commit=await _git_value(settings, "rev-parse", "HEAD"), dirty=dirty)
+    status = ServiceRepoView(branch=branch, current_commit=await _git_value(settings, "rev-parse", "HEAD"), dirty=dirty)
     # 分支可能没有配置 upstream（命令非零退出），按未设置处理而不是仓库故障。
     upstream = await _git(settings, "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}")
     status.upstream = upstream.stdout.strip() if upstream.code == 0 else ""
@@ -86,23 +91,20 @@ async def repo_status(settings: UpdaterSettings) -> RepoStatus:
         )
     ).split()
     status.ahead, status.behind = int(counts[0]), int(counts[1])
-    if status.behind:
-        status.incoming = await list_commits(settings, f"{status.current_commit}..{status.remote_commit}", limit=50)
     return status
 
 
-async def list_commits(settings: UpdaterSettings, revision_range: str, *, limit: int = 50) -> list[CommitInfo]:
-    out = (
-        await _git(
-            settings,
-            "log",
-            "--no-color",
-            f"--max-count={limit}",
-            "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%cI",
-            revision_range,
-        )
-    ).stdout
-    commits: list[CommitInfo] = []
+async def list_commits(settings: UpdaterSettings, revision_range: str, *, limit: int = 50) -> list[ServiceCommitInfo]:
+    out = await _git_value(
+        settings,
+        "log",
+        "--no-color",
+        f"--max-count={limit}",
+        "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%cI",
+        revision_range,
+        stage="fetch",
+    )
+    commits: list[ServiceCommitInfo] = []
     for line in out.splitlines():
         parts = line.split("\x1f")
         if len(parts) != 5:
@@ -113,7 +115,7 @@ async def list_commits(settings: UpdaterSettings, revision_range: str, *, limit:
         except ValueError:
             committed_at = None
         commits.append(
-            CommitInfo(
+            ServiceCommitInfo(
                 sha=sha,
                 short_sha=short,
                 subject=redact_text(subject)[:200],
@@ -124,15 +126,15 @@ async def list_commits(settings: UpdaterSettings, revision_range: str, *, limit:
     return commits
 
 
-def preflight_issues(status: RepoStatus) -> list[PreflightIssue]:
-    issues: list[PreflightIssue] = []
+def preflight_issues(status: ServiceRepoView) -> list[ServicePreflightIssue]:
+    issues: list[ServicePreflightIssue] = []
     if not status.upstream:
         issues.append(
-            PreflightIssue(check="upstream", message=f"当前分支 {status.branch} 没有 upstream，无法确定远端。")
+            ServicePreflightIssue(check="upstream", message=f"当前分支 {status.branch} 没有 upstream，无法确定远端。")
         )
     if status.ahead > 0:
         issues.append(
-            PreflightIssue(
+            ServicePreflightIssue(
                 check="divergence",
                 message=f"本地领先 upstream {status.ahead} 个提交，请先在服务器上处理（推送或重置）。",
             )
@@ -150,12 +152,12 @@ async def ssh_probe(settings: UpdaterSettings) -> tuple[bool, str]:
     return False, detail[-1] if detail else "未知错误"
 
 
-async def fetch(settings: UpdaterSettings, log: LineSink) -> RepoStatus:
+async def fetch(settings: UpdaterSettings, log: LineSink) -> ServiceRepoView:
     await _git_value(settings, "fetch", "--prune", "--no-tags", "origin", stage="fetch", reason="fetch_failed", log=log)
     return await repo_status(settings)
 
 
-async def fast_forward(settings: UpdaterSettings, target_commit: str, log: LineSink) -> RepoStatus:
+async def fast_forward(settings: UpdaterSettings, target_commit: str, log: LineSink) -> ServiceRepoView:
     """仅 fast-forward 推进当前分支；目标提交必须仍是当前分支 upstream 的最新提交。"""
 
     target = target_commit.lower()

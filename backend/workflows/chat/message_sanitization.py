@@ -133,6 +133,31 @@ def replace_media_parts(parts: list) -> list:
     ]
 
 
+def _tool_history_entry(item: dict[str, Any]) -> dict[str, Any]:
+    # 工具帧改写为文字资料，多模态结果的媒体只留占位，不把 data URL 当文字写入。
+    output = item.get("output")
+    return {**item, "output": replace_media_parts(output)} if isinstance(output, list) else item
+
+
+def reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """恢复请求保留历史顺序与工具结果事实，排除原生工具续轮帧和中间推理。"""
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": json.dumps({"tool_history": _tool_history_entry(item)}, ensure_ascii=False),
+                }
+            ],
+        }
+        if item.get("type") in {"function_call", "function_call_output"}
+        else item
+        for item in input_items
+        if item.get("type") != "reasoning"
+    ]
+
+
 def _normalize_older_response_item(item: dict, *, replace_images: bool, max_chars: int) -> dict:
     normalized = dict(item)
     if replace_images:

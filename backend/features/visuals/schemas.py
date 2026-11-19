@@ -354,6 +354,10 @@ class ImportComponent(BaseModel):
         | None
     ) = None
 
+    @property
+    def settled(self) -> bool:
+        return self.status in {"created", "reused", "skipped", "undone"}
+
 
 class ImportComponentView(ImportComponent):
     """响应在分析事实之上投影操作进度与可用操作。"""
@@ -409,6 +413,10 @@ class ImportAnalysisResult(BaseModel):
     components: list[ImportComponent] = Field(default_factory=list)
     presentation_verdict: Literal["pass", "review", "fail"] | None = None
     blocking_reasons: list[ImportPlaybackBlock] = Field(default_factory=list)
+
+    @property
+    def materials_complete(self) -> bool:
+        return all(component.settled for component in self.components)
 
 
 class ImportAnalysisResultView(ImportAnalysisResult):
@@ -497,10 +505,7 @@ def carries_scene(source: VisualSource) -> bool:
 
 
 class VisualSnapshot(BaseModel):
-    """一次制作的完整冻结输入：判别 `source` 类型，另存目标画幅。
-
-    旧组合结构已按目标架构直接替换；快照内容哈希按本结构计算。
-    """
+    """成品内容哈希使用冻结的制作来源和目标画幅。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -923,9 +928,7 @@ class VisualPresentationView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     composition: StageComposition | None = None
-    ambient_actor: StageLayerMedia | None = None
     ambient_catalog: list[AmbientCatalogEntry] = Field(default_factory=list)
-    ambient_scene: list[StageLayerMedia] = Field(default_factory=list)
     intent: StageIntent | None = None
     rhythm: RhythmView | None = None
     stage_plan: StagePlaybackPlan | None = None

@@ -24,7 +24,7 @@ from infrastructure.constants import (
     TTS_MAX_TEXT_CHARS,
     VOICE_REFERENCE_MAX_BASE64_BYTES,
 )
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.text import ensure_utc, utc_now
 from infrastructure.uploads import UploadSource, read_capped_upload
@@ -62,7 +62,7 @@ def _preview_text(text: str) -> str:
 
 
 async def design_configuration(user_id: int, provider_name: str = "") -> ProviderConfig:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_design)
     config = next((item for item in chain if not provider_name or item.provider_name == provider_name), None)
     if config is None:
@@ -87,7 +87,7 @@ async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleRe
     )
     token = uuid4().hex
     try:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             db.add(
                 CustomVoice(
                     user_id=user_id,
@@ -106,7 +106,7 @@ async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleRe
 
 
 async def _expected_state(user_id: int) -> tuple[int, str]:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         value = await db.scalar(select(func.max(CustomVoice.version)).where(CustomVoice.user_id == user_id))
         voice = await get_user_setting(db, user_id, "companion.voice_id")
     return value or 0, voice or ""
@@ -133,7 +133,7 @@ async def _save_preview(
     )
     token = uuid4().hex
     try:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             db.add(
                 CustomVoice(
                     user_id=user_id,
@@ -185,13 +185,13 @@ async def design_voice(
 
 
 async def clone_voice(user_id: int, sample_id: str, *, preview_text: str) -> VoicePreviewResponse:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_clone)
     if not chain:
         raise MissingLlmConfigError("声音克隆服务未配置或已不可用")
     config = chain[0]
     async with user_asset_lock(user_id):
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             row = await db.scalar(
                 select(CustomVoice).where(
                     CustomVoice.user_id == user_id, CustomVoice.token == sample_id, CustomVoice.kind == "sample"
@@ -224,7 +224,7 @@ async def clone_voice(user_id: int, sample_id: str, *, preview_text: str) -> Voi
 
 
 async def confirm_voice(user_id: int, candidate_id: str, expected_version: int) -> VoiceConfirmResponse:
-    async with user_asset_lock(user_id), session_scope() as db:
+    async with user_asset_lock(user_id), SESSION_LOCAL() as db:
         candidate = await db.scalar(
             select(CustomVoice)
             .where(CustomVoice.user_id == user_id, CustomVoice.token == candidate_id)

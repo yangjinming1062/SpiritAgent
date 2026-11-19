@@ -12,7 +12,7 @@ from infrastructure.database import database_url
 from infrastructure.models import ModelBase
 
 config = context.config
-# fileConfig 默认会替换 root logger；启动迁移（bootstrap/lifecycle.py::_run_migrations 设置 configure_logger=False，lifespan 已先 setup_logging）必须跳过，否则 web 进程会"失明"。仅 CLI 调用 alembic 时才配置日志。
+# 应用内迁移沿用进程日志，CLI 自行配置。
 if config.config_file_name and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 

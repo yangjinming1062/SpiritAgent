@@ -21,7 +21,7 @@ from .queries import (
     event_view,
     get_life_state_view,
     get_pursuit,
-    list_events,
+    list_public_events,
     list_pursuits,
     project_public_completions,
     pursuit_view,
@@ -32,7 +32,6 @@ from .queries import (
 from .schemas import (
     LifeDecisionRequest,
     LifeEventInput,
-    LifeEventListResponse,
     LifeEventPublicListResponse,
     LifeEventView,
     LifePursuitDetail,
@@ -68,11 +67,7 @@ from .trajectory import list_trajectory, public_result_reference
 
 async def read_state(user_id: int) -> LifeStateView:
     async with SESSION_LOCAL() as db:
-        view = await get_life_state_view(db, user_id)
-        if view is not None:
-            return view
-    # 读取接口保持只读；缺少持久行表示初始状态，只有流程接纳变更时才落库。
-    return empty_state_view(user_id)
+        return await get_life_state_view(db, user_id) or empty_state_view(user_id)
 
 
 async def read_public_state(user_id: int) -> LifeStatePublicView:
@@ -218,17 +213,11 @@ async def read_pursuits(user_id: int, *, status: str | None, cursor: str | None,
         return await list_pursuits(db, user_id, status=status, cursor=cursor, limit=limit)
 
 
-async def read_events(user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int) -> LifeEventListResponse:
-    async with SESSION_LOCAL() as db:
-        return await list_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
-
-
 async def read_public_events(
     user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int
 ) -> LifeEventPublicListResponse:
     async with SESSION_LOCAL() as db:
-        response = await list_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit, shared_only=True)
-    return LifeEventPublicListResponse.model_validate(response, from_attributes=True)
+        return await list_public_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
 
 
 _PURSUIT_OPERATIONS = frozenset(

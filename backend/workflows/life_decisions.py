@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import timedelta
 from typing import Any, Literal
+from weakref import WeakValueDictionary
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
@@ -242,7 +243,7 @@ source.mode 为 pursuit 时，draft.publication_intent 是拟议行动，JSON �
 When source.mode is pursuit, draft.publication_intent encodes the proposed action; its field names and resource ids are parameters. available_materials lists selectable assets, not the entire historical inventory. A present creative choice, personal name for an attempt, or motive need not have been worded the same way in the past. Actual results, real experiences and user agreements do need evidence. Ground user-related arrangements in real exchanges, not simulations or preferences. Record genuine turning points, results or purposes rather than technical status or repeated waiting.""",
 }
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 logger = get_logger(__name__)
 
 _DISCLOSURE_REVIEW = {

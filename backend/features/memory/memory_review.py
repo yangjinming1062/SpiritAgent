@@ -9,7 +9,7 @@ from infrastructure.ai.prompt_engineer import call_llm_once
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import UserLlmConfig, resolve_user_llm_config
 from infrastructure.config import SETTINGS
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, utc_now
 from runtime.memory_scope import MemoryScope, MemorySource
@@ -159,10 +159,10 @@ async def _review_batches(
 ) -> None:
     started_at = utc_now()
     if through_message_id is None:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             through_message_id = await latest_scope_message_id(db, scope.user_id, scope.system_preset_id)
     while True:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             context = await load_review_context(
                 db,
                 scope,

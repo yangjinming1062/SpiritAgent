@@ -25,7 +25,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
 from runtime.memory_scope import MemoryScope, validate_memory_scope
@@ -148,7 +148,7 @@ async def _stage_4_reflection(
     fact_versions: dict[int, int],
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> bool:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         previous_result = await load_narrative_result(db, log_id, "reflection")
         if previous_result is not None:
             return previous_result
@@ -188,11 +188,11 @@ async def _stage_4_reflection(
         diagnostics=diagnostics,
     )
     if content is None:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             await save_narrative_result(db, log_id, "reflection", False)
             await db.commit()
         return False
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await memory_write_lock(db, scope)
         if await memory_versions(db, scope) != fact_versions:
             return False
@@ -207,7 +207,7 @@ async def _update_log(
     log_id: int, *, status: str, summary: str | None = None, payload: dict[str, Any] | None = None
 ) -> None:
     """在独立事务中更新夜间活动日志行；各阶段在各自事务里跑，不复用流水线开头的 session。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         log = await db.get(NightlyActivityLog, log_id)
         if log is None:
             return
@@ -268,7 +268,7 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
     user_id = scope.user_id
     validate_memory_scope(scope)
     try:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             log = (
                 await db.execute(
                     select(NightlyActivityLog).where(
@@ -308,7 +308,7 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
 
 async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log_id: int) -> bool:
     user_id = scope.user_id
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         user = await nightly_account(db, user_id)
         tz_str = await resolve_user_timezone(db, user_id)
         log = await db.get(NightlyActivityLog, log_id)
@@ -351,7 +351,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
 
     local_date_str = target_date.isoformat()
     # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话），活动统计才可比较。
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await memory_write_lock(db, scope)
         fact_versions = await memory_versions(db, scope)
         today_messages = await nightly_messages(db, user_id, scope.system_preset_id, utc_start, utc_end)
@@ -488,7 +488,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         _record_stage(stages, {"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
     # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         posts = await collect_post_interactions(
             db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
         )
@@ -520,7 +520,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             user_id=user_id,
         )
     else:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             if await load_narrative_result(db, log_id, "reflection") is None:
                 await save_narrative_result(db, log_id, "reflection", False)
             await db.commit()

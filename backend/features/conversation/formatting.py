@@ -13,7 +13,11 @@ from features.conversation.snapshots import MessageSnapshot
 
 # 与 chat-runtime.ts 的分段和 JavaScript trim 保持一致。
 _BLANK_LINE_SPLIT = r"\r?\n(?:[ \t]*\r?\n)+"
-_DISPLAY_WHITESPACE = " \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+# PostgreSQL Unicode 字面量保留显示空白字符，离线 Alembic 不会把其中的制表符展开为空格。
+_DISPLAY_WHITESPACE = literal_column(
+    r"U&' \0009\000D\000A\000B\000C\00A0\1680\2000\2001\2002\2003\2004\2005\2006"
+    r"\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'"
+)
 
 
 def _is_json_array(content: ColumnElement[str | None] = Message.content) -> ColumnElement[bool]:

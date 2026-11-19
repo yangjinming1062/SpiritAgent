@@ -5,11 +5,13 @@ import contextlib
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from infrastructure.updater_contracts import ServiceUpdateTaskView
+from pydantic import ValidationError
 from updater.config import UpdaterSettings
-from updater.contracts import CheckResult, TaskKind, TaskState, UpdaterError, UpdaterTaskView, UpdateStage
 from updater.redact import sanitize_line
 
 STATE_FILENAME = "updater-state.json"
@@ -22,11 +24,11 @@ def utc_now() -> datetime:
 class TaskLog:
     """单任务日志：上限截断 + 增量读取（按字节偏移）。"""
 
-    def __init__(self, path: Path, max_bytes: int) -> None:
+    def __init__(self, path: Path, max_bytes: int, *, truncated: bool = False) -> None:
         self._path = path
         self._max_bytes = max_bytes
-        self._truncated = False
-        self._written = 0
+        self._truncated = truncated
+        self._written = self.size()
         self._lock = asyncio.Lock()
 
     @property
@@ -41,14 +43,15 @@ class TaskLog:
 
     async def append(self, line: str) -> None:
         async with self._lock:
+            if self._truncated:
+                return
             encoded = (sanitize_line(line) + "\n").encode("utf-8", "replace")
             if self._written + len(encoded) > self._max_bytes:
-                if not self._truncated:
-                    self._truncated = True
-                    await asyncio.to_thread(self._raw_append, "…[日志达到上限，后续输出不再记录]\n".encode())
+                await asyncio.to_thread(self._raw_append, "…[日志达到上限，后续输出不再记录]\n".encode())
+                self._truncated = True
                 return
-            self._written += len(encoded)
             await asyncio.to_thread(self._raw_append, encoded)
+            self._written += len(encoded)
 
     def _raw_append(self, data: bytes) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,47 +69,30 @@ class TaskLog:
 
         def _read() -> tuple[int, int, bool, list[str]]:
             try:
-                blob = self._path.read_bytes()
+                with self._path.open("rb") as handle:
+                    total = os.fstat(handle.fileno()).st_size
+                    handle.seek(offset)
+                    chunk = handle.read(max(0, min(max_bytes, total - offset)))
             except FileNotFoundError:
                 return 0, 0, self._truncated, []
-            chunk = blob[offset : offset + max_bytes]
-            return offset + len(chunk), len(blob), self._truncated, chunk.decode("utf-8", "replace").splitlines()
+            return offset + len(chunk), total, self._truncated, chunk.decode("utf-8", "replace").splitlines()
 
         return await asyncio.to_thread(_read)
 
 
+class TaskBusyError(RuntimeError):
+    def __init__(self, active_task_id: str) -> None:
+        super().__init__(f"已有任务在执行：{active_task_id}")
+        self.active_task_id = active_task_id
+
+
+@dataclass
 class TaskRecord:
-    def __init__(self, *, task_id: str, request_id: str, kind: TaskKind, target_commit: str, log: TaskLog) -> None:
-        self.task_id = task_id
-        self.request_id = request_id
-        self.kind = kind
-        self.target_commit = target_commit
-        self.state: TaskState = "running"
-        self.stage: UpdateStage = "preflight"
-        self.error: UpdaterError | None = None
-        self.check: CheckResult | None = None
-        self.created_at = utc_now()
-        self.updated_at = self.created_at
-        self.log = log
+    task: ServiceUpdateTaskView
+    log: TaskLog
 
-    def view(self) -> UpdaterTaskView:
-        return UpdaterTaskView(
-            task_id=self.task_id,
-            request_id=self.request_id,
-            kind=self.kind,
-            state=self.state,
-            stage=self.stage,
-            target_commit=self.target_commit,
-            created_at=self.created_at,
-            updated_at=self.updated_at,
-            error=self.error,
-            log_offset=self.log.size(),
-            log_truncated=self.log.truncated,
-            check=self.check,
-        )
-
-    def to_json(self) -> dict:
-        return json.loads(self.view().model_dump_json())
+    def view(self) -> ServiceUpdateTaskView:
+        return self.task.model_copy(update={"log_offset": self.log.size(), "log_truncated": self.log.truncated})
 
 
 class StateStore:
@@ -119,7 +105,6 @@ class StateStore:
         self._tasks: list[TaskRecord] = []
         self._active: TaskRecord | None = None
         self._lock = asyncio.Lock()
-        self._loggers: dict[str, TaskLog] = {}
 
     def load(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
@@ -131,74 +116,49 @@ class StateStore:
             return
         active_id = raw.get("active_task_id")
         for item in raw.get("tasks", []):
-            record = self._restore(item)
-            if record is None:
+            try:
+                task = ServiceUpdateTaskView.model_validate(item)
+            except ValidationError:
                 continue
-            self._tasks.append(record)
-            if record.task_id == active_id and record.state == "running":
-                # 重启后遗留的 running 任务不可能仍执行，标记中断；运行状态由 /status 重新读取。
-                record.state = "interrupted"
-                record.updated_at = utc_now()
-        self._persist_sync()
+            if task.task_id == active_id and task.state == "running":
+                task.state = "interrupted"
+                task.updated_at = utc_now()
+            self._tasks.append(self.record(task))
+        self._persist_sync(None, self._tasks)
 
-    def log_for(self, task_id: str) -> TaskLog:
-        log = self._loggers.get(task_id)
-        if log is None:
-            log = TaskLog(self._root / "logs" / f"{task_id}.log", self._settings.log_max_bytes)
-            self._loggers[task_id] = log
-        return log
-
-    def _restore(self, item: dict) -> TaskRecord | None:
-        try:
-            record = TaskRecord(
-                task_id=item["task_id"],
-                request_id=item.get("request_id", ""),
-                kind=item["kind"],
-                target_commit=item.get("target_commit", ""),
-                log=self.log_for(item["task_id"]),
-            )
-            record.state = item["state"]
-            record.stage = item["stage"]
-            record.created_at = datetime.fromisoformat(item["created_at"])
-            record.updated_at = datetime.fromisoformat(item["updated_at"])
-            record.error = UpdaterError.model_validate(item["error"]) if item.get("error") else None
-            record.check = CheckResult.model_validate(item["check"]) if item.get("check") else None
-            return record
-        except (KeyError, ValueError):
-            return None
+    def record(self, task: ServiceUpdateTaskView) -> TaskRecord:
+        log = TaskLog(
+            self._root / "logs" / f"{task.task_id}.log", self._settings.log_max_bytes, truncated=task.log_truncated
+        )
+        return TaskRecord(task, log)
 
     @property
     def active(self) -> TaskRecord | None:
         return self._active
 
-    async def begin(self, record: TaskRecord) -> None:
+    async def begin(self, record: TaskRecord) -> tuple[TaskRecord, bool]:
         async with self._lock:
-            self._active = record
-            self._tasks.insert(0, record)
-            self._trim()
-            await self._persist()
+            if record.task.request_id and (existing := self.find_by_request(record.task.request_id)):
+                return existing, True
+            if self._active is not None:
+                raise TaskBusyError(self._active.task.task_id)
+            tasks = [record, *self._tasks]
+            kept = tasks[: self._settings.task_history_limit]
+            await asyncio.to_thread(self._persist_sync, record, kept)
+            self._active, self._tasks = record, kept
+            for expired in tasks[len(kept) :]:
+                expired.log.remove()
+            return record, False
 
     async def finish(self) -> None:
         async with self._lock:
             self._active = None
-            await self._persist()
+            await asyncio.to_thread(self._persist_sync, None, self._tasks)
 
-    def _trim(self) -> None:
-        limit = self._settings.task_history_limit
-        if len(self._tasks) <= limit:
-            return
-        for record in self._tasks[limit:]:
-            self.log_for(record.task_id).remove()
-            self._loggers.pop(record.task_id, None)
-        self._tasks = self._tasks[:limit]
-
-    async def _persist(self) -> None:
-        await asyncio.to_thread(self._persist_sync)
-
-    def _persist_sync(self) -> None:
+    def _persist_sync(self, active: TaskRecord | None, tasks: list[TaskRecord]) -> None:
         payload = {
-            "active_task_id": self._active.task_id if self._active else None,
-            "tasks": [record.to_json() for record in self._tasks],
+            "active_task_id": active.task.task_id if active else None,
+            "tasks": [record.view().model_dump(mode="json") for record in tasks],
         }
         self._root.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(dir=self._root, prefix=".state-", suffix=".tmp")
@@ -217,7 +177,9 @@ class StateStore:
         return list(self._tasks)
 
     def find(self, task_id: str) -> TaskRecord | None:
-        return next((record for record in self._tasks if record.task_id == task_id), None)
+        return next((record for record in self._tasks if record.task.task_id == task_id), None)
 
     def find_by_request(self, request_id: str) -> TaskRecord | None:
-        return next((record for record in self._tasks if record.request_id and record.request_id == request_id), None)
+        return next(
+            (record for record in self._tasks if record.task.request_id and record.task.request_id == request_id), None
+        )

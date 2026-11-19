@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import BigInteger, case, delete, literal, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,7 +84,7 @@ def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str | Non
 async def find_submission(
     user_id: int, conversation_id: int, request_id: str, fingerprint: str | None, *, is_realtime_call: bool = False
 ) -> SubmissionReceipt | None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = await db.scalar(
             select(PromptSubmission).where(
                 PromptSubmission.user_id == user_id, PromptSubmission.request_id == request_id
@@ -129,7 +129,7 @@ async def reserve_submission(
     *,
     is_realtime_call: bool = False,
 ) -> tuple[SubmissionReceipt, bool]:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         inserted_id = await db.scalar(
             insert(PromptSubmission)
             .values(
@@ -213,7 +213,7 @@ async def persist_submission_inputs(
     if not messages or (persisted_message_id is not None and len(messages) != 1):
         raise SubmissionConflictError("提交必须包含完整输入，重试只能引用一条原消息")
     contents = [build_persisted_content(message.content, message.attachments) for message in messages]
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         submission = await db.scalar(
             select(PromptSubmission)
             .options(defer(PromptSubmission.message_ids, raiseload=True))
@@ -278,7 +278,7 @@ async def record_submission_state(
     user_id: int, request_id: str, status: str, *, message_ids: list[int] | None = None, error: str | None = None
 ) -> tuple[str, str | None]:
     values: dict[str, object] = {"status": status, "error": error}
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         row = await db.scalar(
             select(PromptSubmission)
             .options(defer(PromptSubmission.message_ids, raiseload=True))
@@ -320,7 +320,7 @@ async def settle_no_reply_in_session(
 
 
 async def recover_interrupted_submissions() -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         rows = list(
             await db.scalars(
                 select(PromptSubmission).where(PromptSubmission.status.in_(("accepted", "running"))).with_for_update()

@@ -1,4 +1,4 @@
-"""服务更新的管理端契约；更新器侧对应 updater/contracts.py。"""
+"""服务更新器与管理 API 共用的请求、状态和任务契约。"""
 
 from datetime import datetime
 from typing import Literal
@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 ServiceUpdateStage = Literal[
     "preflight", "fetch", "fast_forward", "build", "restart", "verify", "done", "failed", "interrupted"
 ]
+
+
+TaskKind = Literal["check", "update"]
+TaskState = Literal["running", "done", "failed", "interrupted"]
 
 
 class ServiceCommitInfo(BaseModel):
@@ -56,8 +60,8 @@ class ServiceCheckResultView(BaseModel):
 class ServiceUpdateTaskView(BaseModel):
     task_id: str
     request_id: str = ""
-    kind: Literal["check", "update"]
-    state: Literal["running", "done", "failed", "interrupted"]
+    kind: TaskKind
+    state: TaskState
     stage: ServiceUpdateStage = "preflight"
     target_commit: str = ""
     created_at: datetime
@@ -68,26 +72,30 @@ class ServiceUpdateTaskView(BaseModel):
     check: ServiceCheckResultView | None = None
 
 
-class ServiceUpdaterStatus(BaseModel):
-    enabled: bool
-    updater_ready: bool = False
+class UpdaterStatus(BaseModel):
+    updater_ready: bool
     version: str = ""
-    repo: ServiceRepoView = Field(default_factory=ServiceRepoView)
+    repo: ServiceRepoView
     runtime: ServiceRuntimeView | None = None
     preflight_issues: list[ServicePreflightIssue] = Field(default_factory=list)
     active_task: ServiceUpdateTaskView | None = None
     latest_task: ServiceUpdateTaskView | None = None
 
 
+class ServiceUpdaterStatus(UpdaterStatus):
+    enabled: bool
+    updater_ready: bool = False
+    repo: ServiceRepoView = Field(default_factory=ServiceRepoView)
+
+
 class ServiceUpdateCheckRequest(BaseModel):
     request_id: str = Field(default="", max_length=128, pattern=r"^[0-9A-Za-z._-]*$")
 
 
-class ServiceUpdateApplyRequest(BaseModel):
+class ServiceUpdateApplyRequest(ServiceUpdateCheckRequest):
     """提交更新：目标提交取检查时确认的远端提交，远端变化后需重新检查。"""
 
     target_commit: str = Field(min_length=7, max_length=40, pattern=r"^[0-9a-fA-F]+$")
-    request_id: str = Field(default="", max_length=128, pattern=r"^[0-9A-Za-z._-]*$")
 
 
 class ServiceUpdateTaskAccepted(BaseModel):

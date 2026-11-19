@@ -37,7 +37,7 @@ from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 from infrastructure.request_errors import RequestError
-from workflows.visual_imports import control_import_analysis, queue_import_analysis
+from workflows.visual_imports import control_import_analysis, schedule_import_analysis
 from workflows.visuals_companion import VisualDraftError, create_visual_from_draft, interpret_visual_reference
 
 from entrypoints.http.auth import CurrentUser
@@ -179,8 +179,9 @@ async def upload_visual(
         detail = await import_visual(
             user.id, data, filename=name, title=title.strip() or name[:160], description=description.strip()
         )
-        await queue_import_analysis(user.id, detail.id)
-        return await _visuals.visual_detail(user.id, detail.id)
+        if detail.analysis is not None and detail.analysis.state == "queued":
+            schedule_import_analysis(user.id, detail.analysis.id)
+        return detail
     except VisualError as exc:
         raise RequestError(status_code=400, message=str(exc)) from exc
 

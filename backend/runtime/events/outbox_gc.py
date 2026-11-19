@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from sqlalchemy import delete, or_, select
@@ -24,7 +24,7 @@ async def run_outbox_gc() -> None:
     failed_cutoff = now - timedelta(seconds=WS_EVENT_FAILED_RETENTION_SECONDS)
     companion_cutoff = now - timedelta(seconds=COMPANION_TURN_MAX_AGE_SECONDS)
 
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         stmt = (
             select(WSEvent.id)
             .where(

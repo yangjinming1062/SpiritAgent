@@ -34,8 +34,9 @@ from infrastructure.ai.usage import LlmUsageAccumulator
 from infrastructure.assets.asset_store import dated_asset_directory
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.config import SETTINGS
-from infrastructure.constants import CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT
-from infrastructure.database import session_scope
+from infrastructure.constants import CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT, TOOL_CALL_ID_HEX_PREFIX_LEN
+from infrastructure.correlation import new_request_id
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.search import QueryEmbedding
 from infrastructure.text import resolve_prompt_text, utc_now
@@ -56,7 +57,6 @@ from workflows.chat.model_turn import generate_turn_response
 from workflows.chat.persistence import _persist_assistant_no_tool_turn, _persist_assistant_with_tool_calls_and_results
 from workflows.chat.prompt_presets import COMPANION_MEDIA_TOOL_NAMES
 from workflows.chat.prompts import REPLACE_REPLY_GUIDANCES
-from workflows.chat.streaming import _assign_tool_call_ids
 from workflows.chat.system_prompt import build_companion_environment_prompt
 from workflows.chat.tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
 from workflows.chat.topic_context import load_topic_context
@@ -113,7 +113,7 @@ async def compress_session_history(
     req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(content=""))
     memory_scope = conversation_memory_scope(conv, user_id)
     task = conversation_ai_task(conv)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings)
         inputs = await build_turn_inputs(
             db, conv, user_id, req, client_context, effective_settings, memory_scope, task=task
@@ -131,7 +131,7 @@ async def compress_session_history(
         return ManualCompressionResult(
             info=None, total_tokens=inputs.estimated_tokens, context_window=inputs.ctx_length
         )
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await persist_compression_checkpoint(db, conv.id, info, user_id=user_id)
         history = await context_messages(db, conv)
     return ManualCompressionResult(
@@ -252,7 +252,7 @@ async def _load_turn_setup(
     """读取会话与作用域，核对已受理输入或保存内部入口的消息；None 表示已发错误帧结束本轮。"""
     user_message_id: int | None = None
     replacement: ReplyReplacement | None = None
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         conv = await turn_conversation(db, req.session_id, user_id)
         if not conv:
             language = await get_user_setting(db, user_id, "language")
@@ -330,7 +330,7 @@ async def _prepare_turn(
     call_record_id: int | None,
 ) -> _TurnContext | None:
     """上下文阶段：召回与工具装配、自动压缩、截断与媒体状态；`None` 表示已发错误帧结束本轮。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         try:
             inputs = await build_turn_inputs(
                 db,
@@ -409,7 +409,7 @@ async def _prepare_turn(
             # 自动压缩失败不阻断本轮，按原上下文继续。
             compress_info = None
         if compress_info is not None:
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 checkpoint = await persist_compression_checkpoint(
                     db,
                     setup.conv.id,
@@ -451,7 +451,7 @@ async def _prepare_turn(
 
     # 陪伴用户会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
     companion_reply = setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         media_turn = await load_media_turn(
             db,
             setup.conv,
@@ -552,7 +552,7 @@ async def _refresh_turn_material(
     instruction_parts = [base_instructions]
     action_tools_not_ready: frozenset[str] = frozenset()
     action_view = None
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await refresh_video_media(db, media_turn)
         if replacement is not None:
             for artifact in media_turn.artifacts.values():
@@ -709,63 +709,37 @@ async def _run_chat_turn(
                 or (media_turn.structured_reply and media_turn.final_reply_due())
                 or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
             )
-            planner_pass = callable(reply_bubble_sink) and bool(active_schemas) and not reply_only
+            planner_pass = reply_bubble_sink is not None and bool(active_schemas) and not reply_only
+            generate = partial(
+                generate_turn_response,
+                generation_emitter,
+                user_id=user_id,
+                session_id=str(setup.conv.id),
+                task=setup.task,
+                context=current_context,
+                inputs=inputs,
+                inference=turn.inference,
+                media_turn=media_turn,
+                schemas=active_schemas,
+                request=req.message.content,
+                delivery=turn.delivery,
+                allow_silence=allow_silence,
+                allow_deferral=allow_deferral,
+                pace_bubbles=has_viewer and not headless and setup.replacement is None,
+                selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
+                if setup.replacement
+                else None,
+                transcripts=audio_transcripts,
+                usage=turn_usage,
+            )
             try:
-                llm_result = await generate_turn_response(
-                    generation_emitter,
-                    user_id=user_id,
-                    session_id=str(setup.conv.id),
-                    task=setup.task,
-                    context=current_context,
-                    inputs=inputs,
-                    inference=turn.inference,
-                    media_turn=media_turn,
-                    schemas=active_schemas,
-                    request=req.message.content,
-                    delivery=turn.delivery,
-                    # A tool-enabled turn cannot safely expose speculative dialogue: a later
-                    # function call would make the already spoken bubble part of the wrong turn.
-                    # Tool-free turns and final-reply-only turns retain ordered
-                    # incremental text/voice delivery.
-                    reply_bubble_sink=(
-                        reply_bubble_sink
-                        if callable(reply_bubble_sink) and (not active_schemas or reply_only)
-                        else None
-                    ),
-                    allow_silence=allow_silence,
-                    allow_deferral=allow_deferral,
-                    pace_bubbles=has_viewer and not headless and setup.replacement is None,
+                # 工具决策结束前保留推测性台词；确定为回复后才按序交付气泡。
+                llm_result = await generate(
+                    reply_bubble_sink=None if planner_pass else reply_bubble_sink,
                     final_reply_only=reply_only,
-                    selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
-                    if setup.replacement
-                    else None,
-                    transcripts=audio_transcripts,
-                    usage=turn_usage,
                 )
                 if planner_pass and not llm_result.tool_calls_list:
-                    llm_result = await generate_turn_response(
-                        generation_emitter,
-                        user_id=user_id,
-                        session_id=str(setup.conv.id),
-                        task=setup.task,
-                        context=current_context,
-                        inputs=inputs,
-                        inference=turn.inference,
-                        media_turn=media_turn,
-                        schemas=active_schemas,
-                        request=req.message.content,
-                        delivery=turn.delivery,
-                        reply_bubble_sink=reply_bubble_sink,
-                        allow_silence=allow_silence,
-                        allow_deferral=allow_deferral,
-                        pace_bubbles=has_viewer and not headless and setup.replacement is None,
-                        final_reply_only=True,
-                        selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
-                        if setup.replacement
-                        else None,
-                        transcripts=audio_transcripts,
-                        usage=turn_usage,
-                    )
+                    llm_result = await generate(reply_bubble_sink=reply_bubble_sink, final_reply_only=True)
             except LLMRuntimeError as exc:
                 logger.warning(
                     "LLM turn failed",
@@ -823,7 +797,9 @@ async def _run_chat_turn(
                 name = tc.get("name")
                 if isinstance(name, str) and name:
                     active_tool_names.add(name)
-            _assign_tool_call_ids(llm_result.tool_calls_list)
+            # Runner 与等待表用后端生成的 ID 区分调用，供应商 ID 可能缺失或重复。
+            for tool_call in llm_result.tool_calls_list:
+                tool_call["call_id"] = f"call_{new_request_id()[:TOOL_CALL_ID_HEX_PREFIX_LEN]}"
             await _persist_assistant_with_tool_calls_and_results(
                 setup.conv,
                 llm_result,

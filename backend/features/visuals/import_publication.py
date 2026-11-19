@@ -12,7 +12,9 @@ from .import_jobs import (
     ImportCatalogCandidate,
     ImportContext,
     ImportWork,
-    import_manual_review_available,
+    PendingImportApplication,
+    import_job_view,
+    pause_for_import_input,
     sync_import_assets,
 )
 from .import_operations import import_operations
@@ -24,10 +26,10 @@ from .schemas import (
     AnalyzingVisualSource,
     CinematicSource,
     ImportAnalysisResult,
+    ImportAnalysisView,
     ImportPlaybackBlock,
     SceneMediaSource,
     VisualAsset,
-    VisualSnapshot,
 )
 
 
@@ -39,7 +41,7 @@ def import_playback_blocks(
     understanding = work.result.understanding
     final_review = work.context.presentation_review
     blocks: list[ImportPlaybackBlock] = []
-    if any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in work.result.components):
+    if not work.result.materials_complete:
         blocks.append(ImportPlaybackBlock(code="materials_incomplete", reason="素材整理尚未完成"))
     if work.context.animated_image:
         blocks.append(ImportPlaybackBlock(code="animated", reason="动图原件可预览，暂不支持自动播放"))
@@ -100,43 +102,35 @@ def update_pending_import_review(work: ImportWork) -> None:
     )
     work.result.presentation_verdict = report.verdict
     work.result.blocking_reasons = import_playback_blocks(work, selected, report.verdict, reason)
-    pending = dict(pending)
-    snapshot = dict(pending["snapshot"])
-    source = dict(snapshot["source"])
-    report.reference_basis = visual_reference_basis(source)
-    snapshot["review_result"] = report.model_dump(mode="json")
-    source["presentation_approved"] = report.verdict == "pass" and not work.result.blocking_reasons
-    snapshot["source"] = source
-    pending["snapshot"] = snapshot
-    work.context.pending_application = pending
+    source = pending.snapshot.source
+    report.reference_basis = visual_reference_basis(source.model_dump(mode="json"))
+    pending.snapshot.review_result = report
+    source.presentation_approved = report.verdict == "pass" and not work.result.blocking_reasons
 
 
 async def _publish_pending_import(
     db: AsyncSession,
-    user_id: int,
-    visual_id: int,
     job: VisualImportJob,
-    pending: dict,
+    context: ImportContext,
+    pending: PendingImportApplication,
 ) -> None:
-    """在调用方事务内发布已准备好的导入结果。
-
-    旧版 `apply_result` 命令和上传自动完成流程共用此路径，保证发布、版本核对和
-    资产保留具备幂等性。
-    """
-
+    """自动发布和人工确认在同一事务内核对版本、采纳成品并转移资产引用。"""
+    user_id, visual_id = job.user_id, job.visual_id
     item = await visual_item(db, user_id, visual_id, lock=True)
-    snapshot = VisualSnapshot.model_validate(pending["snapshot"])
-    asset = VisualAsset.model_validate(pending["asset"])
-    await publish_import_revision(
-        db, user_id, visual_id, pending["expected_version"], asset=asset, snapshot=snapshot, title=pending["title"]
+    job.expected_version = await publish_import_revision(
+        db,
+        user_id,
+        visual_id,
+        pending.expected_version,
+        asset=pending.asset,
+        snapshot=pending.snapshot,
+        title=pending.title,
     )
-    job.expected_version = pending["expected_version"] + 1
     job.state, job.stage, job.error = "succeeded", "complete", None
-    context = ImportContext.model_validate(job.context_json)
-    context.pending_application, context.selected_materials = None, []
+    context = context.model_copy(update={"pending_application": None, "selected_materials": []})
     job.context_json = context.model_dump(mode="json")
     result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
-    original = snapshot.source.original_path or item.media_path
+    original = pending.snapshot.source.original_path or item.media_path
     await sync_import_assets(db, user_id, job.id, context, result, original)
 
 
@@ -162,11 +156,8 @@ async def complete_import_analysis(
         and work.context.presentation_review.verdict == "pass"
     )
     original = work.snapshot.source
-    metadata = {
-        key: value
-        for key, value in original.model_dump(mode="python").items()
-        if key
-        in {
+    metadata = original.model_dump(
+        include={
             "original_filename",
             "original_path",
             "original_content_hash",
@@ -174,21 +165,16 @@ async def complete_import_analysis(
             "original_height",
             "original_duration_ms",
         }
-    }
+    )
     common = {
         **metadata,
         "analysis_job_id": work.id,
-        "analysis_pending": False,
-        "presentation_approved": bool(approved),
-        "analysis_revision": None,
+        "presentation_approved": approved,
         "identity_reason": understanding.identity_reason,
-        "media_semantics": understanding.media_semantics,
     }
     identity_reference_role = getattr(original, "identity_reference_role", "fullbody")
     if understanding.asset_kind == "scene" and scene is not None:
-        source = SceneMediaSource(
-            scene=scene, **{key: value for key, value in common.items() if key != "media_semantics"}
-        )
+        source = SceneMediaSource(scene=scene, **common)
     elif (
         understanding.asset_kind == "actor"
         and work.context.identity is not None
@@ -208,6 +194,7 @@ async def complete_import_analysis(
             identity_reference_role=identity_reference_role,
             outfit=outfit,
             action=action,
+            media_semantics=understanding.media_semantics,
             **common,
         )
     elif (
@@ -231,12 +218,13 @@ async def complete_import_analysis(
             outfit=outfit,
             scene=scene,
             action=action,
+            media_semantics=understanding.media_semantics,
             **common,
         )
     else:
         # 保留分析态，允许用户继续补充关联；仍然是同一份影像成品。
         source = AnalyzingVisualSource(
-            **metadata,
+            **common,
             asset_kind=understanding.asset_kind,
             identity=work.context.identity,
             identity_path=work.context.identity_path,
@@ -249,9 +237,6 @@ async def complete_import_analysis(
             action=action,
             media_semantics=understanding.media_semantics,
             clip_kind=understanding.clip_kind,
-            presentation_approved=bool(approved),
-            analysis_job_id=work.id,
-            identity_reason=understanding.identity_reason,
         )
     async with SESSION_LOCAL() as db:
         job = await db.scalar(
@@ -294,32 +279,29 @@ async def complete_import_analysis(
                 }
             )
         automatic_titles = {original.original_filename, original.original_filename[:160], ""}
-        work.context.pending_application = {
-            "asset": asset.model_dump(mode="json"),
-            "snapshot": snapshot.model_dump(mode="json"),
-            "title": understanding.title if item.title in automatic_titles else item.title,
-            "expected_version": work.expected_version,
-        }
+        pending = PendingImportApplication(
+            asset=asset,
+            snapshot=snapshot,
+            title=understanding.title if item.title in automatic_titles else item.title,
+            expected_version=work.expected_version,
+        )
+        work.context.pending_application = pending
         job.context_json = work.context.model_dump(mode="json")
         job.result_json = work.result.model_dump(mode="json")
         await sync_import_assets(db, work.user_id, job.id, work.context, work.result, work.media_path)
         # 用户上传原件通过基础校验后即可收藏。呈现审核可以取消自动演出资格，
         # 但不能把原件变成候选；素材歧义以及生成或处理后的候选仍走各自确认流程。
-        materials_complete = all(
-            entry.status in {"created", "reused", "skipped", "undone"} for entry in work.result.components
-        )
-        auto_publish = materials_complete and source.kind != "analysis" and work.context.actor_asset is None
+        auto_publish = work.result.materials_complete and source.kind != "analysis" and work.context.actor_asset is None
         if auto_publish:
-            await _publish_pending_import(db, work.user_id, work.visual_id, job, work.context.pending_application)
+            await _publish_pending_import(db, job, work.context, pending)
         else:
-            review_pending = import_manual_review_available(work.context, work.result, "review_pending")
-            job.state, job.stage, job.error = "paused", "review_pending" if review_pending else "confirmation", None
+            pause_for_import_input(job, work)
         await notify_visuals_updated(db, work.user_id)
         await db.commit()
         return True
 
 
-async def apply_import_result(user_id: int, visual_id: int, expected_revision: int | None) -> None:
+async def apply_import_result(user_id: int, visual_id: int, expected_revision: int | None) -> ImportAnalysisView:
     async with SESSION_LOCAL() as db:
         job = await db.scalar(
             select(VisualImportJob)
@@ -328,13 +310,13 @@ async def apply_import_result(user_id: int, visual_id: int, expected_revision: i
         )
         if job is None or expected_revision is None or job.revision != expected_revision:
             raise VisualStateError("分析版本已变化，请刷新")
-        pending = job.context_json.get("pending_application")
+        context = ImportContext.model_validate(job.context_json)
+        pending = context.pending_application
         if pending is None or job.stage != "confirmation":
             raise VisualStateError("分析结果尚不能应用")
-        if any(
-            entry.state in {"queued", "running", "paused", "failed"} for entry in import_operations(job.selections_json)
-        ):
+        if job.selections_json:
             raise VisualStateError("素材操作尚未完成")
-        await _publish_pending_import(db, user_id, visual_id, job, pending)
+        await _publish_pending_import(db, job, context, pending)
         await notify_visuals_updated(db, user_id)
         await db.commit()
+        return import_job_view(job)

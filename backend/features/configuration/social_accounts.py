@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
@@ -334,7 +334,7 @@ async def cancel_social_login(db: AsyncSession, user_id: int, platform: str, ses
 async def _poll_login(user_id: int, platform: str, session_id: str) -> None:
     try:
         while not is_user_in_maintenance(user_id):
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 row = await _row(db, user_id, platform)
                 if (
                     row is None
@@ -368,7 +368,7 @@ async def _poll_login(user_id: int, platform: str, session_id: str) -> None:
             await asyncio.sleep(2)
     finally:
         if is_user_in_maintenance(user_id):
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 current = await _row(db, user_id, platform)
                 if current is not None and current.login_session_id == session_id:
                     pending = _pending_login(current)
@@ -392,7 +392,7 @@ def _start_worker(user_id: int, platform: str, session_id: str) -> None:
 
 
 async def resume_user_social_logins(user_id: int | None = None) -> None:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         query = select(UserSocialAccount).where(
             UserSocialAccount.login_session_id.is_not(None),
             UserSocialAccount.login_state.not_in(_TERMINAL_LOGIN_STATES),

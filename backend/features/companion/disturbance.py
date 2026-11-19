@@ -1,4 +1,4 @@
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.values import get_user_setting
@@ -12,7 +12,7 @@ TIER_SETTING_KEY = "companion.disturbance_tier"
 
 async def get_disturbance_tier(user_id: int, *, db: AsyncSession | None = None) -> str:
     if db is None:
-        async with session_scope() as session:
+        async with SESSION_LOCAL() as session:
             return await get_disturbance_tier(user_id, db=session)
     value = await get_user_setting(db, user_id, TIER_SETTING_KEY)
     return value if isinstance(value, str) and value in ALLOWED_TIERS else DEFAULT_TIER

@@ -4,7 +4,7 @@ from typing import Literal
 from features.companion.intent_contracts import CompanionWaitRequest, CompanionWakeEvent
 from features.companion.intents import cancel_companion_wait, list_companion_intents, set_companion_wait
 from infrastructure.api_ids import ResourceId
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import tool_error
 from runtime.tools.prompts import COMPANION_WAIT_DESC, COMPANION_WAIT_PARAM_DESCS
 from runtime.tools.registry import ToolsRegistry
@@ -61,7 +61,7 @@ async def companion_wait(
 ) -> str:
     try:
         if action == "list":
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 rows = await list_companion_intents(db, user_id)
             return json.dumps({"intents": [row.model_dump(mode="json") for row in rows]}, ensure_ascii=False)
         if action == "cancel":

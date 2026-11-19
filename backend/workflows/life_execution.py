@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from weakref import WeakValueDictionary
 
 from features.action_library.queries import action_detail
 from features.appearance.outfit_jobs import create_outfit_job, run_outfit_job
@@ -43,7 +44,7 @@ from workflows.nightly.window import in_nightly_window
 from workflows.visuals_companion import design_action_reference, generate_visual_reference
 
 logger = get_logger(__name__)
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _CONCURRENCY = asyncio.Semaphore(4)
 
 

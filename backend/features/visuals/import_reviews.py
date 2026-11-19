@@ -26,7 +26,7 @@ from features.media.review_views import (
     MediaSlotView,
 )
 
-from .import_jobs import ImportContext, ImportWork, sync_import_assets
+from .import_jobs import ImportContext, ImportWork, pause_for_import_input, sync_import_assets
 from .import_operations import ImportOperation, import_operations, import_result_view
 from .import_publication import update_pending_import_review
 from .models import VisualImportJob
@@ -165,12 +165,10 @@ async def manually_review_import(
         update_pending_import_review(work)
         job.context_json, job.result_json = context.model_dump(mode="json"), result.model_dump(mode="json")
         await sync_import_assets(db, user_id, job_id, context, result, work.media_path)
-        unresolved = any(entry.status not in {"created", "reused", "skipped", "undone"} for entry in result.components)
-        job.state, job.stage, job.error = (
-            ("paused", "review_pending" if unresolved else "confirmation", None)
-            if context.pending_application
-            else ("queued", "organize", None)
-        )
+        if context.pending_application is None:
+            job.state, job.stage, job.error = "queued", "organize", None
+        else:
+            pause_for_import_input(job, work)
         await notify_visuals_updated(db, user_id)
         return ManualAction(
             restart_job_id=job_id if not context.pending_application else None,
@@ -178,7 +176,7 @@ async def manually_review_import(
             result_snapshot={"context_json": context.model_dump(mode="json")},
         )
     component = result.components[request.slot - component_slot_start]
-    if component.status in {"created", "reused", "skipped", "undone"} or component.observation.kind == "action":
+    if component.settled or component.observation.kind == "action":
         raise RequestError(status_code=409, message="这条素材已经完成或不属于图片候选")
     key = component.observation.key
     chain = context.image_chains.get(key)

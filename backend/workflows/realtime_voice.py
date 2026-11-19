@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -205,7 +205,7 @@ class RealtimeVoicePipeline:
         if self._cancel_task is task:
             self._cancel_task = None
 
-    async def _input_chunks(self, queue: asyncio.Queue[bytes | None]):
+    async def _input_chunks(self, queue: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
         while True:
             chunk = await queue.get()
             if chunk is None:

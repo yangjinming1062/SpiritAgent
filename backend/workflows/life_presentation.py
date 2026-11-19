@@ -8,6 +8,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import avatar_snapshot, initial_outfit_snapshot
@@ -18,12 +19,11 @@ from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
 from features.scenes.queries import stage_scene_by_title
 from features.scenes.snapshots import list_scene_snapshots
-from features.visuals.queries import presentation_state
+from features.visuals.queries import StageRecoveryView, stage_recovery_view
 from features.visuals.schemas import (
     ComboMaterialRef,
     SceneMediaRef,
     StagePresentation,
-    VisualPresentationView,
 )
 from features.visuals.stage_selection import project_stage_intent
 from features.visuals.static_presentation import present_static
@@ -35,7 +35,7 @@ from infrastructure.text import utc_now
 from runtime.user_maintenance import user_request_scope
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_LOCKS: dict[int, asyncio.Lock] = {}
+_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _RETRY_AT: dict[int, datetime] = {}
 logger = get_logger(__name__)
 
@@ -69,7 +69,7 @@ async def read_ready_stage_scene(db: AsyncSession, user_id: int, title: str) -> 
 
 
 async def _fresh_static_snapshot(
-    user_id: int, epoch: int, revision: int, projection: VisualPresentationView
+    user_id: int, epoch: int, revision: int, projection: StageRecoveryView
 ) -> StagePresentation:
     """保留有效的冻结素材，只从库存补齐缺失部分。"""
 
@@ -138,8 +138,8 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             record = get_user_proactive_record(user_id)
             if presence is None or not record.available:
                 return
-            projection = await presentation_state(user_id, with_catalog=False)
             async with SESSION_LOCAL() as db:
+                projection = await stage_recovery_view(db, user_id)
                 pending = user_id in await pending_presentation_users(db, user_id=user_id)
                 motion = await get_motion_level(user_id, db=db)
             stale_static = (
@@ -162,7 +162,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             # 动态关闭、媒体缺失或环境被删除时，重新冻结静态目标；角色视频不能替代环境恢复。
             # 已有冻结素材直接沿用到新代次（换新请求身份），仅缺失时才重新冻结。
             composition_media = projection.composition.media if projection.composition is not None else None
-            has_media = projection.ambient_actor is not None or bool(
+            has_media = projection.has_idle_actor or bool(
                 composition_media
                 and (
                     composition_media.actor is not None

@@ -7,12 +7,10 @@ from infrastructure.request_errors import RequestError
 
 from . import queries, service
 from .client_assets import (
-    client_catalog_entry,
     client_composition,
     client_layer_media,
     client_material,
     client_play_command,
-    client_scene,
     client_stage_plan,
 )
 from .repository import VisualError, VisualNotFoundError, VisualStateError
@@ -40,39 +38,28 @@ def _http_error(exc: VisualError) -> RequestError:
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
     actual = await queries.actual_presentation_snapshot(user_id)
+    wallpaper = presentation.default_wallpaper
+    static = presentation.static_presentation
     presentation = presentation.model_copy(
         update={
-            "ambient_actor": client_layer_media(presentation.ambient_actor),
-            "ambient_catalog": [client_catalog_entry(entry) for entry in presentation.ambient_catalog],
-            "ambient_scene": [client_layer_media(scene) for scene in presentation.ambient_scene],
+            "ambient_catalog": [client_layer_media(entry) for entry in presentation.ambient_catalog],
             "stage_plan": client_stage_plan(presentation.stage_plan),
+            "pending_play": client_play_command(presentation.pending_play) if presentation.pending_play else None,
+            "composition": client_composition(presentation.composition),
+            "default_wallpaper": wallpaper.model_copy(update={"composition": client_composition(wallpaper.composition)})
+            if wallpaper
+            else None,
+            "static_presentation": static.model_copy(
+                update={
+                    "outfit": client_material(static.outfit),
+                    "scene": client_material(static.scene),
+                    "identity_path": client_asset_url(static.identity_path) if static.identity_path else None,
+                }
+            )
+            if static
+            else None,
         }
     )
-    if presentation.pending_play is not None:
-        presentation = presentation.model_copy(update={"pending_play": client_play_command(presentation.pending_play)})
-    if presentation.composition is not None:
-        presentation = presentation.model_copy(update={"composition": client_composition(presentation.composition)})
-    if presentation.default_wallpaper is not None:
-        presentation = presentation.model_copy(
-            update={
-                "default_wallpaper": presentation.default_wallpaper.model_copy(
-                    update={"composition": client_composition(presentation.default_wallpaper.composition)}
-                )
-            }
-        )
-    if presentation.static_presentation is not None:
-        static = presentation.static_presentation
-        presentation = presentation.model_copy(
-            update={
-                "static_presentation": static.model_copy(
-                    update={
-                        "outfit": client_material(static.outfit) if static.outfit else None,
-                        "scene": client_scene(static.scene),
-                        "identity_path": client_asset_url(static.identity_path) if static.identity_path else None,
-                    }
-                )
-            }
-        )
     return VisualPresentationResponse(
         **presentation.model_dump(),
         actual=actual.model_copy(

@@ -54,7 +54,7 @@ def import_result_view(
             else "paused"
             if component.status == "reviewing"
             else "succeeded"
-            if component.status in {"created", "reused", "skipped", "undone", "ambiguous"}
+            if component.settled or component.status == "ambiguous"
             else "idle"
         )
         if operation is not None and operation.state != "failed" and state in {"paused", "cancelled"}:
@@ -125,13 +125,7 @@ def resume_material_operations(
         previous = next((entry for entry in operations if entry.key == component.observation.key), None)
         if previous is not None and previous.state in {"queued", "running"}:
             continue
-        if (previous is None or previous.state != "paused") and component.status in {
-            "created",
-            "reused",
-            "skipped",
-            "undone",
-            "ambiguous",
-        }:
+        if (previous is None or previous.state != "paused") and (component.settled or component.status == "ambiguous"):
             continue
         command = extraction_command(component, chains.get(component.observation.key))
         operation = ImportOperation(

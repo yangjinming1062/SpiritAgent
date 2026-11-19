@@ -1,5 +1,6 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -921,80 +922,98 @@ async def _default_wallpaper(
     return DefaultWallpaperView(visual=item_view(item, snapshot), composition=projected)
 
 
-async def presentation_state(user_id: int, *, with_catalog: bool = True) -> VisualPresentationView:
-    """呈现状态装配；内部决策路径不需要目录时跳过（目录含逐行文件核对）。"""
+@dataclass(frozen=True)
+class VisualCreationPreferences:
+    autonomous_enabled: bool = True
+    target_width: int | None = None
+    target_height: int | None = None
 
+
+async def creation_preferences(db: AsyncSession, user_id: int) -> VisualCreationPreferences:
+    row = (
+        await db.execute(
+            select(
+                VisualPresentation.autonomous_enabled, VisualPresentation.target_width, VisualPresentation.target_height
+            ).where(VisualPresentation.user_id == user_id)
+        )
+    ).one_or_none()
+    return VisualCreationPreferences(*row) if row else VisualCreationPreferences()
+
+
+@dataclass(frozen=True)
+class StageRecoveryView:
+    state_revision: int = 0
+    static_presentation: StagePresentation | None = None
+    composition: StageComposition | None = None
+    has_idle_actor: bool = False
+
+
+async def _stage_materials(
+    db: AsyncSession, row: VisualPresentation
+) -> tuple[StagePresentation | None, StageComposition | None]:
+    static, lost_static = await _existing_static(db, row.user_id, row.pending_static_json or row.current_static_json)
+    composition, lost_composition = await _existing_composition(db, row.user_id, stage_composition(row))
+    presence = get_presentation_snapshot(row.user_id)
+    # 已呈现的目标丢失素材时唤醒恢复；准备中的目标由原流程继续。
+    if (
+        lost_static
+        or lost_composition
+        or (
+            static is not None
+            and presence is not None
+            and static.receipt_kind == ("window_static" if presence.mode == "window" else "desktop_static")
+            and static.error is None
+            and (static.outfit is None or static.scene is None)
+        )
+    ):
+        request_stage_recovery(row.user_id)
+    return static, composition
+
+
+async def stage_recovery_view(db: AsyncSession, user_id: int) -> StageRecoveryView:
+    row = await db.get(VisualPresentation, user_id)
+    if row is None:
+        return StageRecoveryView()
+    static, composition = await _stage_materials(db, row)
+    return StageRecoveryView(
+        state_revision=row.state_revision,
+        static_presentation=static,
+        composition=await composition_with_media(db, user_id, composition),
+        has_idle_actor=await _has_idle_actor(db, row),
+    )
+
+
+async def presentation_state(user_id: int) -> VisualPresentationView:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
+        row = await db.get(VisualPresentation, user_id)
         now = utc_now()
-        rhythm = await read_rhythm(db, user_id, now=now) if with_catalog else None
+        rhythm = await read_rhythm(db, user_id, now=now)
         if row is None:
             return VisualPresentationView(rhythm=rhythm)
         current = presented_item(row)
         loop = presented_item(row, loop=True)
-        pending = _pending_command(row)
-        static, lost_static = await _existing_static(db, user_id, row.pending_static_json or row.current_static_json)
-        composition, lost_composition = await _existing_composition(db, user_id, stage_composition(row))
-        default_wallpaper = await _default_wallpaper(db, user_id, row, composition)
-        presence = get_presentation_snapshot(user_id)
-        # 已按当前模式呈现过的目标缺少素材说明文件后来被删除；准备中的目标仍走原流程。
-        needs_recovery = (
-            lost_static
-            or lost_composition
-            or (
-                static is not None
-                and presence is not None
-                and static.receipt_kind == ("window_static" if presence.mode == "window" else "desktop_static")
-                and static.error is None
-                and (static.outfit is None or static.scene is None)
-            )
-        )
-        if needs_recovery:
-            request_stage_recovery(user_id)
+        static, composition = await _stage_materials(db, row)
         scene = (static.scene if static else None) or (composition.scene_material if composition else None)
         intent = StageIntent.model_validate(row.intent_json) if row.intent_json else None
-        if with_catalog:
-            life = await get_life_state_view(db, user_id)
-            if life is not None and (intent is None or life.presentation_revision > intent.life_revision):
-                intent = project_stage_intent(life, await active_pursuit_title(db, user_id, life.active_pursuit_id))
-        catalog = await ambient_catalog(db, row, intent=intent) if with_catalog else []
-        scenes = await ambient_scene_catalog(db, user_id, scene) if with_catalog else []
-        stage_plan = (
-            await _stage_playback_plan(db, user_id, catalog, scene, scenes, intent, rhythm, now)
-            if rhythm is not None
-            else None
-        )
-        ambient_actor = (
-            next(
-                (
-                    item.entry
-                    for item in catalog
-                    if item.entry.asset_kind == "actor"
-                    and item.entry.preset_key == "idle"
-                    and item.entry.clip_kind == "loop"
-                ),
-                None,
-            )
-            if with_catalog
-            else await _ambient_actor(db, row)
-        )
+        life = await get_life_state_view(db, user_id)
+        if life is not None and (intent is None or life.presentation_revision > intent.life_revision):
+            intent = project_stage_intent(life, await active_pursuit_title(db, user_id, life.active_pursuit_id))
+        catalog = await ambient_catalog(db, row, intent=intent)
         return VisualPresentationView(
             composition=await composition_with_media(db, user_id, composition),
-            ambient_actor=ambient_actor,
             ambient_catalog=[candidate.entry for candidate in catalog],
-            ambient_scene=scenes,
             intent=intent,
             rhythm=rhythm,
-            stage_plan=stage_plan,
+            stage_plan=await _stage_playback_plan(db, user_id, catalog, scene, intent, rhythm, now),
             current_visual=item_view(current) if current is not None and current.user_id == user_id else None,
             loop_visual=item_view(loop) if loop is not None and loop.user_id == user_id else None,
-            default_wallpaper=default_wallpaper,
+            default_wallpaper=await _default_wallpaper(db, user_id, row, composition),
             autonomous_enabled=row.autonomous_enabled,
             target_width=row.target_width,
             target_height=row.target_height,
             presentation_epoch=row.presentation_epoch,
             state_revision=row.state_revision,
-            pending_play=pending,
+            pending_play=_pending_command(row),
             static_presentation=static,
         )
 
@@ -1215,15 +1234,15 @@ async def ambient_catalog(
     ]
 
 
-async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLayerMedia | None:
-    """只为冻结的当前造型投影已有且可自动使用的待机成品；不制作、不消费演出指令。"""
+async def _has_idle_actor(db: AsyncSession, state: VisualPresentation) -> bool:
+    """当前冻结造型是否有可自动播放的待机成品。"""
 
     outfit, identity_hash = frozen_stage_reference(state)
     if outfit is None or identity_hash is None:
-        return None
+        return False
     idle = await action_by_preset_key(db, state.user_id, "idle")
     if idle is None:
-        return None
+        return False
     versions = await db.scalars(
         select(VisualVersion)
         .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
@@ -1264,8 +1283,8 @@ async def _ambient_actor(db: AsyncSession, state: VisualPresentation) -> StageLa
                 action_clip_kind=frozen.action.clip_kind,
             )
         ):
-            return await _layer_media(db, state.user_id, version.visual_id, version.number)
-    return None
+            return True
+    return False
 
 
 async def ambient_scene_catalog(db: AsyncSession, user_id: int, scene: SceneMediaRef | None) -> list[StageLayerMedia]:
@@ -1375,7 +1394,6 @@ async def _stage_playback_plan(
     user_id: int,
     catalog: list[StageMediaCandidate],
     base: SceneMediaRef | None,
-    base_scenes: list[StageLayerMedia],
     intent: StageIntent | None,
     rhythm: RhythmView,
     now: datetime,
@@ -1428,10 +1446,10 @@ async def _stage_playback_plan(
                 actors = [sleep]
                 cinematics = []
 
-    scene_catalog = base_scenes if scene == base else await ambient_scene_catalog(db, user_id, scene)
+    scene_catalog = await ambient_scene_catalog(db, user_id, scene)
     wake_catalog = scene_catalog
     if wake is not None and resting_scene != scene:
-        wake_catalog = base_scenes if resting_scene == base else await ambient_scene_catalog(db, user_id, resting_scene)
+        wake_catalog = await ambient_scene_catalog(db, user_id, resting_scene)
     pose = next((entry.body.first_frame_path for entry in (actors or fallback) if entry.body is not None), None)
     return StagePlaybackPlan(
         activity_type=activity,

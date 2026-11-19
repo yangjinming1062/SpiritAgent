@@ -79,10 +79,21 @@ _ABBREVIATION = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|(?
 _SPEECH_SEGMENTS_ADAPTER = TypeAdapter(list[SpeechSegment])
 
 
+def unwrap_companion_reply_fence(raw: str, *, partial: bool = False) -> str:
+    """流式读取只需完整的起始行，终态还须匹配结束围栏。"""
+    opening = re.match(r"\s*```(?:json)?[ \t]*\r?\n", raw, flags=re.IGNORECASE)
+    if opening is None:
+        return raw
+    body = raw[opening.end() :]
+    closing = re.search(r"\r?\n```\s*\Z", body)
+    if closing is not None:
+        return body[: closing.start()]
+    return body if partial else raw
+
+
 def normalize_companion_reply_content(raw: str) -> str:
     """只恢复完整响应的 JSON 外层与闭合符，不改字符串内容或抽取夹在正文中的 JSON。"""
-    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", raw.strip(), flags=re.IGNORECASE)
-    content = fenced[1] if fenced else raw
+    content = unwrap_companion_reply_fence(raw)
     try:
         json.loads(content)
     except ValueError:

@@ -1,5 +1,4 @@
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends
@@ -26,24 +25,9 @@ ENGINE: AsyncEngine = create_async_engine(
 SESSION_LOCAL = async_sessionmaker(ENGINE, autoflush=False, expire_on_commit=False)
 
 
-@asynccontextmanager
-async def session_scope() -> AsyncIterator[AsyncSession]:
-    db = SESSION_LOCAL()
-    try:
-        yield db
-    except Exception:
-        await db.rollback()
-        raise
-    finally:
-        await db.close()
-
-
 async def get_db() -> AsyncIterator[AsyncSession]:
-    db = SESSION_LOCAL()
-    try:
+    async with SESSION_LOCAL() as db:
         yield db
-    finally:
-        await db.close()
 
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]

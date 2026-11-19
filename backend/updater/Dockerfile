@@ -20,6 +20,7 @@ WORKDIR /srv/updater
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-install-project
 
+COPY backend/infrastructure/__init__.py backend/infrastructure/updater_contracts.py ./infrastructure/
 COPY backend/updater ./updater
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1

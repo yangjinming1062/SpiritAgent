@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from .ai.llm_client import embedding_model_key, generate_embedding, resolve_embedding_provider
-from .database import session_scope
+from .database import SESSION_LOCAL
 
 RRF_K = 60
 SEARCH_TERM_MAX = 16
@@ -73,7 +73,7 @@ def fuse_rankings(*rankings: list[int]) -> dict[int, float]:
 async def embed_search_query(user_id: int, query: str) -> QueryEmbedding | None:
     if not query.strip():
         return None
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         provider = await resolve_embedding_provider(db, user_id)
     vector = await generate_embedding(query, provider, user_id=user_id, purpose="query")
     if provider is None or vector is None or not valid_vectors([vector], 1):

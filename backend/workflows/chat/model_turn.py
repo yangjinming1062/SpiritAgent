@@ -7,19 +7,19 @@ from features.media.turn_state import MediaTurnState
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.llm_fallback import execute_media_with_fallback
 from infrastructure.ai.providers.base import ChatProvider
-from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import request_input_modalities
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.usage import LlmUsageAccumulator, collect_llm_usage
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 
 from workflows.chat.chat_emitter import Emitter
-from workflows.chat.streaming import _generate_llm_response, _LLMTurnResult, _reply_repair_history
+from workflows.chat.message_sanitization import reply_repair_history
+from workflows.chat.streaming import generate_provider_response
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
 from workflows.chat.turn_inputs import InferenceSettings, TurnInputs
-from workflows.chat.types import ReplyBubbleSink
+from workflows.chat.types import LLMTurnResult, ReplyBubbleSink
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ async def generate_turn_response(
     selection: ProviderSelection | None,
     transcripts: dict[str, str | Exception],
     usage: LlmUsageAccumulator,
-) -> _LLMTurnResult:
+) -> LLMTurnResult:
     """每步刷新模型链；先尝试后续槽位，链尾仅恢复一次，已交付正文禁止回退。"""
     text_delivered = False
     reply_only = final_reply_only
@@ -54,7 +54,7 @@ async def generate_turn_response(
         nonlocal text_delivered
         text_delivered = True
 
-    async def call(provider: ChatProvider, native_audio: bool, has_next_attempt: bool) -> _LLMTurnResult:
+    async def call(provider: ChatProvider, native_audio: bool, has_next_attempt: bool) -> LLMTurnResult:
         nonlocal reply_only
         input_length = len(context["input"])
         call_context = {
@@ -69,12 +69,10 @@ async def generate_turn_response(
         while True:
             try:
                 with collect_llm_usage(usage):
-                    result = await _generate_llm_response(
+                    result = await generate_provider_response(
                         emitter,
-                        provider.config.model,
                         call_context,
                         schemas,
-                        resolve_context_tokens(provider.config),
                         provider,
                         delivery=delivery,
                         on_text_delivered=set_text_delivered,
@@ -124,11 +122,11 @@ async def generate_turn_response(
                 reply_only = True
                 raise
 
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         chain = order_provider_chain(await resolve_provider_chain(db, user_id, "llm", task=task), selection)
     return await execute_media_with_fallback(
         chain,
-        request_input_modalities(_reply_repair_history(context["input"]) if reply_only else context["input"]),
+        request_input_modalities(reply_repair_history(context["input"]) if reply_only else context["input"]),
         call,
         user_id=user_id,
         stream_started=lambda: text_delivered,

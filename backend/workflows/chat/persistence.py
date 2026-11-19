@@ -32,7 +32,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.usage import CacheUsageSummary
 from infrastructure.async_io import settle_task
 from infrastructure.constants import DEFAULT_SESSION_TITLE, TITLE_GENERATION_TEMPERATURE
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from runtime.background import TaskScope
@@ -42,7 +42,6 @@ from runtime.tools.registry import REGISTRY
 
 from workflows.chat.background_review import run_background_memory_review
 from workflows.chat.chat_emitter import Emitter
-from workflows.chat.streaming import _LLMTurnResult
 from workflows.chat.tool_dispatch import (
     _BatchProgress,
     _run_tool_batch,
@@ -51,7 +50,7 @@ from workflows.chat.tool_dispatch import (
     matched_tool_names,
 )
 from workflows.chat.turn_inputs import parse_temperature
-from workflows.chat.types import TerminalReplyDelivery, TrackTask
+from workflows.chat.types import LLMTurnResult, TerminalReplyDelivery, TrackTask
 from workflows.companion_reactions import emit_companion_reaction
 
 logger = get_logger(__name__)
@@ -61,7 +60,7 @@ _BG = TaskScope("chat.persistence")
 _PERSISTENCE_WRITE_TIMEOUT_SECONDS = 30.0
 
 
-def _turn_data(result: _LLMTurnResult) -> AssistantTurnData:
+def _turn_data(result: LLMTurnResult) -> AssistantTurnData:
     return AssistantTurnData(
         result.turn_content,
         result.tool_calls_list,
@@ -152,7 +151,7 @@ async def _persist_interrupted_tool_results(
 async def _persist_assistant_no_tool_turn(
     conv: ConversationSnapshot,
     user_id: int,
-    result: _LLMTurnResult,
+    result: LLMTurnResult,
     *,
     task: AiTaskKey,
     emitter: Emitter,
@@ -177,7 +176,7 @@ async def _persist_assistant_no_tool_turn(
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     if result.decision is not None:
         if persist and submission_request_id is not None and submitted_message_id is not None:
-            async with session_scope() as db:
+            async with SESSION_LOCAL() as db:
                 if result.followup is not None:
                     await enqueue_deferred_reply(db, user_id, conv.id, submitted_message_id, result.followup)
                 await settle_no_reply_in_session(db, user_id, conv.id, submission_request_id, result.decision)
@@ -269,7 +268,7 @@ async def _persist_assistant_no_tool_turn(
     if conv.system_preset_id == COMPANION_PRESET_ID:
         turn_data = replace(turn_data, reasoning=None)
     if persist and reply is None and media_request_scope is not None:
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             plain_reply = await plain_media_delivery_reply(db, user_id, str(conv.id), turn_content, media_request_scope)
         if plain_reply is not None:
             reply = plain_reply
@@ -285,7 +284,7 @@ async def _persist_assistant_no_tool_turn(
             conv.id, user_id, replace_reply_message_id, turn_data, media, request_id=submission_request_id
         )
         await cancel_reply_audio(user_id, {replace_reply_message_id})
-        async with session_scope() as db:
+        async with SESSION_LOCAL() as db:
             messages = await build_session_messages(conv.id, db, only_ids=[message_id])
             current = await turn_conversation(db, str(conv.id), user_id)
         if current is None:
@@ -429,7 +428,7 @@ async def _persist_assistant_no_tool_turn(
 
 async def _persist_assistant_with_tool_calls_and_results(
     conv: ConversationSnapshot,
-    result: _LLMTurnResult,
+    result: LLMTurnResult,
     dispatch_ctx: _ToolDispatchContext,
     context: dict[str, Any],
     active_tool_names: set[str],

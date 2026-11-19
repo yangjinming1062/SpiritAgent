@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from sqlalchemy import select
 
@@ -47,6 +47,6 @@ def _recover_update_directories(registered_versions: frozenset[str]) -> None:
 
 async def recover_update_storage() -> None:
     """完整读取库存版本后再回收，提交结果未知的已登记版本不被误删。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         versions = frozenset(await db.scalars(select(UpdateVersion.version)))
     await asyncio.to_thread(_recover_update_directories, versions)

@@ -5,7 +5,7 @@ import random
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from functools import cache
 from typing import Any, Literal
 
 from features.companion.intent_contracts import DeferredReply
@@ -14,6 +14,7 @@ from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.providers.base import ChatProvider, ProviderCapabilityError, ProviderConfig
+from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.providers.speech_style import speech_style_guidance
 from infrastructure.ai.response_validation import (
     IncompleteLlmResponseError,
@@ -21,18 +22,15 @@ from infrastructure.ai.response_validation import (
     validate_response_output,
 )
 from infrastructure.ai.responses import build_responses_kwargs
-from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.ai.token_budget import request_output_budget
 from infrastructure.ai.user_config import UserLlmConfig
-from infrastructure.constants import TOOL_CALL_ID_HEX_PREFIX_LEN
-from infrastructure.correlation import new_request_id
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text
 from openai.types.responses import Response
 
 from workflows.chat.bubble import BubbleEvent, BubbleSplitter
 from workflows.chat.chat_emitter import Emitter
-from workflows.chat.message_sanitization import replace_media_parts, truncate_responses_context
+from workflows.chat.message_sanitization import reply_repair_history, truncate_responses_context
 from workflows.chat.personal_recollection import consulted_personal_archive, ground_recollection, recollection_evidence
 from workflows.chat.prompts import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
@@ -53,11 +51,12 @@ from workflows.chat.reply_delivery import (
     companion_reply_source,
     normalize_incremental_dialogue_bubble,
     resolve_companion_reply,
+    unwrap_companion_reply_fence,
 )
 from workflows.chat.reply_links import ReplyReferences, reply_reference_texts
 from workflows.chat.system_prompt import refresh_volatile_header_in_prompt
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
-from workflows.chat.types import ReplyBubbleSink
+from workflows.chat.types import LLMTurnResult, ReplyBubbleSink
 
 logger = get_logger(__name__)
 
@@ -67,85 +66,72 @@ BUBBLE_BREAK_MAX_SECONDS = 1.5
 
 
 class _ReplyBubbleExtractor:
-    """Extract closed objects from a streamed companion ``bubbles`` array.
+    """只从已确认的顶层 dialogue 连续取完整气泡；每个气泡仍经交付校验。"""
 
-    Extraction is deliberately syntax-only.  A caller must still run the object through the
-    normal reply validator before presenting it as spoken content; malformed or incomplete
-    objects remain buffered until the terminal response is validated.
-    """
+    _array = re.compile(r'(?:[{,])\s*"bubbles"\s*:\s*\[')
+    _decoder = json.JSONDecoder()
 
     def __init__(self) -> None:
         self._buffer = ""
-        self._search_from = 0
-        self._array_start: int | None = None
-        self._cursor = 0
-        self._index = 0
-        self.kind: str | None = None
+        self._cursor: int | None = None
+        self._after_bubble = False
+        self._done = False
 
-    def feed(self, text: str) -> list[tuple[int, dict[str, Any]]]:
+    def feed(self, text: str) -> list[dict[str, Any]]:
+        if self._done:
+            return []
         self._buffer += text
-        if self.kind is None:
-            kind = re.search(r'(?:^|[,{])\s*"kind"\s*:\s*"(dialogue|written|recollection)"', self._buffer)
-            if kind is not None:
-                self.kind = kind.group(1)
-        if self.kind is None:
-            return []
-        if self.kind in {"written", "recollection"}:
-            return []
-        if self._array_start is None:
-            marker = re.search(r'(?:^|[,{])\s*"bubbles"\s*:\s*\[', self._buffer[self._search_from :])
+        if self._cursor is None:
+            content = unwrap_companion_reply_fence(self._buffer, partial=True)
+            marker = self._array.search(content)
             if marker is None:
-                self._search_from = max(0, len(self._buffer) - 12)
                 return []
-            self._array_start = self._search_from + marker.end()
-            self._cursor = self._array_start
-
-        result: list[tuple[int, dict[str, Any]]] = []
-        while True:
-            while self._cursor < len(self._buffer) and self._buffer[self._cursor] in " \t\r\n,":
-                self._cursor += 1
-            if self._cursor >= len(self._buffer) or self._buffer[self._cursor] == "]":
-                return result
-            if self._buffer[self._cursor] != "{":
-                # The terminal validator owns the detailed error; stop extracting on unexpected syntax.
-                return result
-            end = self._object_end(self._cursor)
-            if end is None:
-                return result
-            raw = self._buffer[self._cursor : end]
             try:
-                value = json.loads(raw)
+                header = json.loads(content[: marker.end()] + "]}")
             except ValueError:
-                return result
-            if not isinstance(value, dict):
-                return result
-            result.append((self._index, value))
-            self._index += 1
-            self._cursor = end
+                return []
+            if not isinstance(header, dict):
+                return []
+            if "kind" not in header:
+                # kind 排在数组之后时，收到完整对象才能确定能否朗读。
+                if not content.rstrip().endswith("}"):
+                    return []
+                try:
+                    envelope = json.loads(content)
+                except ValueError:
+                    return []
+                self._done = True
+                if isinstance(envelope, dict) and envelope.get("kind") == "dialogue":
+                    bubbles = envelope.get("bubbles")
+                    if isinstance(bubbles, list) and all(isinstance(bubble, dict) for bubble in bubbles):
+                        return bubbles
+                return []
+            if header["kind"] != "dialogue":
+                self._done = True
+                return []
+            self._buffer = content
+            self._cursor = marker.end()
 
-    def _object_end(self, start: int) -> int | None:
-        depth = 0
-        in_string = False
-        escaped = False
-        for index in range(start, len(self._buffer)):
-            char = self._buffer[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_string = False
+        result = []
+        while self._cursor < len(self._buffer):
+            char = self._buffer[self._cursor]
+            if char in " \t\r\n":
+                self._cursor += 1
                 continue
-            if char == '"':
-                in_string = True
-            elif char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return index + 1
-        return None
+            if self._after_bubble and char == ",":
+                self._after_bubble = False
+                self._cursor += 1
+                continue
+            if char != "{" or self._after_bubble:
+                self._done = True
+                break
+            try:
+                bubble, self._cursor = self._decoder.raw_decode(self._buffer, self._cursor)
+            except ValueError:
+                break
+            result.append(bubble)
+            self._after_bubble = True
+        return result
 
 
 class _StreamErrorEvent(RuntimeError):
@@ -156,29 +142,6 @@ class _StreamErrorEvent(RuntimeError):
         self.code = code if isinstance(code, str) else None
         self.body = {"code": self.code, "message": text}
         super().__init__(text)
-
-
-@dataclass
-class _LLMTurnResult:
-    """单次 LLM 调用的输出：正文、tool 调用与 usage；orchestrator 会就地改写 call_id，故不冻结。"""
-
-    turn_content: str
-    tool_calls_list: list[dict]
-    final_prompt_tokens: int
-    final_completion_tokens: int
-    final_usage_payload: dict | None
-    turn_duration_ms: int
-    reasoning: str | None = None
-    reply: CompanionReply | None = None
-    generation_origin: GenerationOrigin | None = None
-    decision: Literal["silent", "deferred"] | None = None
-    followup: DeferredReply | None = None
-
-
-def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
-    """为每个 tool call 换上后端 call_id。供应商标识可能缺失/重复（按序号生成），而设备等待表、桌面去重、Runner 日志与截断配对都按 call_id 识别一次调用，必须全局唯一。"""
-    for tc in tool_calls_list:
-        tc["call_id"] = f"call_{new_request_id()[:TOOL_CALL_ID_HEX_PREFIX_LEN]}"
 
 
 def _usage_payload(usage: Any) -> dict[str, Any]:
@@ -205,31 +168,6 @@ def _reasoning_item_text(item: Any) -> str:
     return "\n\n".join(texts)
 
 
-def _tool_history_entry(item: dict[str, Any]) -> dict[str, Any]:
-    # 工具帧改写为文字资料，多模态结果的媒体只留占位，不把 data URL 当文字写入。
-    output = item.get("output")
-    return {**item, "output": replace_media_parts(output)} if isinstance(output, list) else item
-
-
-def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """恢复请求保留历史顺序与工具结果事实，排除原生工具续轮帧和中间推理。"""
-    return [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": json.dumps({"tool_history": _tool_history_entry(item)}, ensure_ascii=False),
-                }
-            ],
-        }
-        if item.get("type") in {"function_call", "function_call_output"}
-        else item
-        for item in input_items
-        if item.get("type") != "reasoning"
-    ]
-
-
 def _misdirected_reply(tool_calls: list[dict[str, Any]], active_schemas: list[dict]) -> str | None:
     """模型把完整的最终回复对象写成对未提供工具的单个调用（弱模型常见）：返回该参数文本，按回复交付并走同一套校验。"""
     if len(tool_calls) != 1 or tool_calls[0].get("name") in {schema.get("name") for schema in active_schemas}:
@@ -248,12 +186,10 @@ def _misdirected_reply(tool_calls: list[dict[str, Any]], active_schemas: list[di
     return None
 
 
-async def _generate_llm_response(
+async def generate_provider_response(
     emitter: Emitter,
-    model_name: str,
     context: dict[str, Any],
     active_schemas: list[dict],
-    ctx_length: int,
     provider: ChatProvider,
     *,
     delivery: Literal["stream", "buffered", "complete", "reply_stream"],
@@ -275,8 +211,10 @@ async def _generate_llm_response(
     reply_persona: str = "",
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
-) -> _LLMTurnResult:
+) -> LLMTurnResult:
     """单次 LLM 调用与正文交付；正文发送时锁定供应商，未确认的正文和推理留在本次尝试。"""
+    model_name = provider.config.model
+    ctx_length = resolve_context_tokens(provider.config)
     reasoning = await provider.reasoning_param(reasoning_effort)
     reply_repair = reply_preference is not None and reply_format_error is not None
     # 格式修复接口只接受完整响应，校验修正后的整份草稿后再交付。
@@ -289,12 +227,15 @@ async def _generate_llm_response(
     )
     final_only = final_reply_only or reply_format_error is not None
     tool_decision = delivery == "reply_stream" and reply_bubble_sink is None and bool(active_schemas) and not final_only
-    reference_texts = (
-        reply_reference_texts(context["input"], turn_request, user_input_indices=context.get("user_input_indices", []))
-        if reply_preference is not None
-        else ()
-    )
-    request_input = _reply_repair_history(context["input"]) if final_only and not reply_repair else context["input"]
+
+    @cache
+    def reply_references() -> ReplyReferences:
+        texts = reply_reference_texts(
+            context["input"], turn_request, user_input_indices=context.get("user_input_indices", [])
+        )
+        return ReplyReferences.from_texts(texts)
+
+    request_input = reply_repair_history(context["input"]) if final_only and not reply_repair else context["input"]
     if final_reply_only and not reply_repair:
         instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
         last_item = context["input"][-1] if context["input"] else {}
@@ -469,10 +410,8 @@ async def _generate_llm_response(
     final_prompt_tokens = final_completion_tokens = 0
     final_usage_payload: dict | None = None
     pending_text: list[str] = []
-    partial_bubbles: list[dict[str, Any]] = []
     incremental_receipts: list[tuple[dict[str, Any], asyncio.Future[None]]] = []
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
-    incremental_index = 0
     archive_turn = "personal_evidence" in context and consulted_personal_archive(context)
     selected_contact = "contact_evidence" in context
     incremental_blocked = archive_turn or selected_contact
@@ -483,37 +422,29 @@ async def _generate_llm_response(
     completed_response: Any = None
     text_emitted = False
 
-    async def _settle_incremental_receipts() -> None:
-        confirmed: list[dict[str, Any]] = []
+    async def _recover_incremental_reply() -> bool:
+        """只保存从第一条起连续收到交付回执的对话气泡。"""
+        nonlocal pending_text, reply
+        confirmed = []
         for bubble, receipt in incremental_receipts:
             try:
                 await receipt
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 break
             confirmed.append(bubble)
-        partial_bubbles[:] = confirmed
-        incremental_receipts.clear()
-
-    async def _recover_incremental_reply() -> bool:
-        """Turn independently normalized, delivered bubbles into a terminal reply."""
-        nonlocal pending_text, reply
-        await _settle_incremental_receipts()
-        if tool_call_started or tool_calls_list or not partial_bubbles:
-            return False
-        values = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
-        if len(values) != len(partial_bubbles):
+        if (
+            tool_call_started
+            or tool_calls_list
+            or not confirmed
+            or any(item.get("type") not in {"text", "voice"} for item in confirmed)
+        ):
             return False
         try:
-            reply = CompanionReply.model_validate({"bubbles": values})
+            reply = CompanionReply.model_validate({"bubbles": confirmed})
         except ValueError:
             return False
         pending_text = [companion_reply_source(reply)]
-        logger.warning(
-            "Companion reply stream failed after incremental delivery; preserving delivered bubbles",
-            extra={"bubble_count": len(values)},
-        )
+        logger.warning("Recovered delivered companion bubbles", extra={"bubble_count": len(confirmed)})
         return True
 
     def _record_usage(usage: Any) -> None:
@@ -588,17 +519,10 @@ async def _generate_llm_response(
                 await _send_text(event.text)
 
     async def _emit_reply_bubbles(text: str) -> None:
-        nonlocal incremental_blocked, incremental_index, text_emitted
-        if reply_extractor is None or reply_bubble_sink is None:
+        nonlocal incremental_blocked, text_emitted
+        if reply_extractor is None or reply_bubble_sink is None or incremental_blocked:
             return
-        if incremental_blocked:
-            return
-        references = ReplyReferences.from_texts(reference_texts)
-        extracted = reply_extractor.feed(text)
-        if reply_extractor.kind in {"written", "recollection"}:
-            incremental_blocked = True
-            return
-        for _, bubble in extracted:
+        for bubble in reply_extractor.feed(text):
             # A media/link bubble, or an invalid dialogue bubble, blocks later bubbles so an
             # incomplete prefix can never be skipped by an independently delivered suffix.
             if bubble.get("type") not in {"text", "voice"}:
@@ -611,7 +535,7 @@ async def _generate_llm_response(
                     voice_id=voice_id,
                     language=lang,
                     media_turn=media_turn,
-                    references=references,
+                    references=reply_references(),
                     topic_cards=context.get("topic_cards", {}),
                 )
                 if not normalized:
@@ -622,18 +546,16 @@ async def _generate_llm_response(
             except Exception:
                 incremental_blocked = True
                 logger.warning(
-                    "Incremental companion bubble validation failed", extra={"bubble_index": incremental_index}
+                    "Incremental companion bubble validation failed", extra={"bubble_index": len(incremental_receipts)}
                 )
                 break
             for item in normalized:
                 try:
-                    receipt = await reply_bubble_sink(incremental_index, item)
+                    receipt = await reply_bubble_sink(len(incremental_receipts), item)
                 except ProviderCapabilityError:
                     incremental_blocked = True
                     return
-                partial_bubbles.append(item)
                 incremental_receipts.append((item, receipt))
-                incremental_index += 1
                 if not text_emitted and on_text_delivered is not None:
                     on_text_delivered()
                 text_emitted = True
@@ -801,8 +723,6 @@ async def _generate_llm_response(
                 raise IncompleteResponseError("empty_output", text_emitted=False)
             text = '{"kind":"dialogue","bubbles":[]}'
         if reply_preference is not None:
-            # 本回合全部校验共享一次语料扫描；工具轮与失败路径不进入此块，保持零扫描。
-            refs = ReplyReferences.from_texts(reference_texts)
             try:
                 resolved = resolve_companion_reply(
                     text,
@@ -812,31 +732,16 @@ async def _generate_llm_response(
                     allow_silence=allow_silence,
                     allow_deferral=allow_deferral,
                     media_turn=media_turn,
-                    references=refs,
+                    references=reply_references(),
                     topic_cards=topic_cards,
                     topic_context_at=context.get("topic_context_at"),
                     allow_voice_fallback=allow_voice_fallback,
                     repair=reply_format_error,
                 )
             except CompanionReplyFormatError as exc:
-                if reply_bubble_sink is None or not partial_bubbles:
+                if not await _recover_incremental_reply():
                     _log_reply_format_failure(exc)
                     raise
-                await _settle_incremental_receipts()
-                # 已经实际交付的标准化对话气泡必须有可恢复的事实记录；若后续对象让终态校验失败，
-                # 保留这些独立验证过的气泡，避免出现“说过但历史没有”的事实。
-                partial_reply = [bubble for bubble in partial_bubbles if bubble.get("type") in {"text", "voice"}]
-                if not partial_reply or len(partial_reply) != len(partial_bubbles):
-                    _log_reply_format_failure(exc)
-                    raise
-                recovered = CompanionReply.model_validate({"bubbles": partial_reply})
-                reply = recovered
-                text = companion_reply_source(recovered)
-                pending_text = [text]
-                logger.warning(
-                    "Companion reply terminal validation failed after incremental delivery; preserving bubbles",
-                    extra={"bubble_count": len(partial_reply)},
-                )
                 resolved = None
             if resolved is not None and resolved.degraded:
                 logger.warning(
@@ -856,7 +761,7 @@ async def _generate_llm_response(
                         or resolved.source_kind == "recollection"
                         or (archive_turn and resolved.source_kind == "dialogue")
                     )
-                    and not partial_bubbles
+                    and not incremental_receipts
                     and ("personal_evidence" in context or selected_contact)
                 ):
                     text, reply = await ground_recollection(
@@ -886,7 +791,7 @@ async def _generate_llm_response(
     await _flush_reasoning()
     context["input"].extend(reasoning_items)
 
-    return _LLMTurnResult(
+    return LLMTurnResult(
         turn_content=turn_content if not tool_calls_list else "",
         reasoning=turn_reasoning,
         reply=reply,

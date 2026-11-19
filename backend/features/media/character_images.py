@@ -417,6 +417,17 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
     return selected
 
 
+def _image_state_for_directory(state: ImageChainState | None, storage_directory: str) -> ImageChainState:
+    if not storage_directory:
+        raise ValueError("image task requires a storage directory")
+    if state is None:
+        return ImageChainState(storage_directory=storage_directory)
+    if state.storage_directory is not None and state.storage_directory != storage_directory:
+        raise ImageGenerationError("图片任务存储归属已变化")
+    state.storage_directory = storage_directory
+    return state
+
+
 async def generate_reviewed_images(
     prompt: str,
     *,
@@ -449,13 +460,7 @@ async def generate_reviewed_images(
     nearest_resolution: bool = False,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
-    state = state if state is not None else ImageChainState()
-    if not storage_directory:
-        raise ValueError("image task requires a storage directory")
-    if state.storage_directory is None:
-        state.storage_directory = storage_directory
-    elif state.storage_directory != storage_directory:
-        raise ImageGenerationError("图片任务存储归属已变化")
+    state = _image_state_for_directory(state, storage_directory)
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
         if (target_width is None) != (target_height is None):
@@ -596,13 +601,7 @@ async def generate_scene_images(
     task: AiTaskKey = AiTaskKey.scene,
 ) -> list[str]:
     """返回通过伙伴重复出镜检查的原始用户资产；画布和每家尝试随任务冻结。"""
-    state = state if state is not None else ImageChainState()
-    if not storage_directory:
-        raise ValueError("image task requires a storage directory")
-    if state.storage_directory is None:
-        state.storage_directory = storage_directory
-    elif state.storage_directory != storage_directory:
-        raise ImageGenerationError("图片任务存储归属已变化")
+    state = _image_state_for_directory(state, storage_directory)
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
         inputs = SceneImageInput(

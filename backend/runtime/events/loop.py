@@ -12,7 +12,7 @@ from typing import Any
 import asyncpg
 from infrastructure.async_io import cancel_and_wait
 from infrastructure.correlation import begin_local_scope
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -86,7 +86,7 @@ def compute_backoff(retry_count: int) -> timedelta:
 async def _recover_stale_locks() -> None:
     """恢复超过 STALE_LOCK_TIMEOUT_SECONDS 仍处于 PROCESSING 的僵尸锁行。"""
     cutoff = utc_now() - timedelta(seconds=STALE_LOCK_TIMEOUT_SECONDS)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await db.execute(
             update(WSEvent)
             .where(WSEvent.status == "PROCESSING", WSEvent.locked_at < cutoff)
@@ -98,7 +98,7 @@ async def _recover_stale_locks() -> None:
 async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
     """以原子锁认领待投递事件，按创建顺序返回（UPDATE ... RETURNING 不保证顺序）。"""
     now = utc_now()
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         subq = (
             select(WSEvent.id)
             .where(
@@ -139,7 +139,7 @@ async def _mark_events_delivered(event_ids: list[int]) -> None:
     if not event_ids:
         return
     now = utc_now()
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await db.execute(
             update(WSEvent)
             .where(WSEvent.id.in_(event_ids))
@@ -159,7 +159,7 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
         new_status = "PENDING"
         next_retry = now + compute_backoff(current_retries)
 
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await db.execute(
             update(WSEvent)
             .where(WSEvent.id == event_id)

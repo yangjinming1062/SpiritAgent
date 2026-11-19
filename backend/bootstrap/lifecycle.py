@@ -54,13 +54,7 @@ async def _best_effort(step: str, operation: Awaitable[object], *, level: int = 
 
 def _run_migrations() -> None:
     """升级到最新 Alembic 版本。"""
-    config_path = Path(__file__).parents[1] / "alembic.ini"
-    cfg = Config()
-    cfg.file_config["DEFAULT"]["here"] = config_path.parent.as_posix()
-    cfg.file_config.read(config_path, encoding="utf-8")
-    # 跳过 fileConfig，否则 alembic.ini 的 WARNING root 会接管全局日志、禁用已建 logger。
-    cfg.attributes["configure_logger"] = False
-    cfg.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))
+    cfg = Config(Path(__file__).parents[1] / "alembic.ini", attributes={"configure_logger": False})
     command.upgrade(cfg, "head")
 
 
@@ -82,18 +76,9 @@ async def _cleanup_formal_assets(*, discover: bool) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+async def _running_services() -> AsyncGenerator[None]:
     cleanup_task = BackgroundTask("backend.temp-file-cleanup")
     try:
-        setup_logging()
-        configure_runtime_lifecycle()
-        if insecure := insecure_secret_settings():
-            raise RuntimeError(f"Set non-empty, non-example values for: {', '.join(insecure)}.")
-        await asyncio.to_thread(_run_migrations)
-        async with SESSION_LOCAL() as session:
-            await load_and_apply_system_settings(session)
-
-        attachment_root().mkdir(parents=True, exist_ok=True)
         await RUNTIME_LIFECYCLE.prepare()
         start_scheduler()
         # LISTEN 专线直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
@@ -128,9 +113,23 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
         await _best_effort("realtime voice calls", CALL_MANAGER.end_all())
 
-        # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await _best_effort("runtime tasks", RUNTIME_LIFECYCLE.drain())
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    setup_logging()
+    try:
+        if insecure := insecure_secret_settings():
+            raise RuntimeError(f"Set non-empty, non-example values for: {', '.join(insecure)}.")
+        await asyncio.to_thread(_run_migrations)
+        async with SESSION_LOCAL() as session:
+            await load_and_apply_system_settings(session)
+        attachment_root().mkdir(parents=True, exist_ok=True)
+        configure_runtime_lifecycle()
+        async with _running_services():
+            yield
+    finally:
         await _best_effort("database engine", ENGINE.dispose())
         await _best_effort("web providers", aclose_web_providers())
         await _best_effort("LLM clients", asyncio.wait_for(aclose_all(), timeout=_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS))

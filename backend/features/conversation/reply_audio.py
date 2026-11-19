@@ -8,7 +8,7 @@ from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import client_asset_url, dated_asset_directory, save_companion_asset_async
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.async_io import cancel_and_wait, run_blocking, settle_task
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from infrastructure.video_processing.audio import audio_bytes_info
@@ -74,7 +74,7 @@ async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, directory: str) 
 
 async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
     """为尚未接受的主动答复准备音频；调用方负责清理未提交的全部资产。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         timezone = await resolve_user_timezone(db, user_id) or "UTC"
     if reply.audio_directory is None:
         reply.audio_directory = dated_asset_directory(utc_now(), timezone=timezone)
@@ -141,7 +141,7 @@ async def _synthesize_reply_audio(
     lock = _locks.setdefault(key, asyncio.Lock())
     await lock.acquire()
     try:
-        async with user_asset_lock(user_id), session_scope() as db:
+        async with user_asset_lock(user_id), SESSION_LOCAL() as db:
             row = await db.scalar(
                 select(Message)
                 .join(Conversation)
@@ -183,7 +183,7 @@ async def _synthesize_reply_audio(
                         path = bubble.audio.url
                         # 取到结果才算消费：取消丢弃的结果由排空清理回收。
                         consumed.add(index)
-                        async with user_asset_lock(user_id), session_scope() as db:
+                        async with user_asset_lock(user_id), SESSION_LOCAL() as db:
                             current = await db.scalar(
                                 select(Message)
                                 .where(

@@ -1,6 +1,6 @@
 """动态表现设置：控制客户端视觉活动强度，与主动联系档位相互独立。"""
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.values import get_user_setting
@@ -15,7 +15,7 @@ MOTION_SETTING_KEY = "companion.motion_level"
 
 async def get_motion_level(user_id: int, *, db: AsyncSession | None = None) -> str:
     if db is None:
-        async with session_scope() as session:
+        async with SESSION_LOCAL() as session:
             return await get_motion_level(user_id, db=session)
     value = await get_user_setting(db, user_id, MOTION_SETTING_KEY)
     return value if isinstance(value, str) and value in ALLOWED_LEVELS else DEFAULT_LEVEL

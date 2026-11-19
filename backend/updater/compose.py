@@ -4,8 +4,8 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from infrastructure.updater_contracts import ServicePreflightIssue, ServiceRuntimeView
 from updater.config import UpdaterSettings
-from updater.contracts import PreflightIssue, ServiceRuntime
 from updater.runner import run_command
 
 # 更新范围：只构建与重启后端。
@@ -28,14 +28,14 @@ async def _docker(settings: UpdaterSettings, *args: str, timeout: float = 60.0) 
     return output.stdout
 
 
-async def toolchain_issues(settings: UpdaterSettings) -> list[PreflightIssue]:
+async def toolchain_issues(settings: UpdaterSettings) -> list[ServicePreflightIssue]:
     """docker 与 compose 可用性；探测器自身故障（如工作目录缺失）按该项问题呈现。"""
 
     checks: tuple[tuple[str, Sequence[str]], ...] = (
         ("docker", ("docker", "version", "--format", "{{.Server.Version}}")),
         ("compose", ("docker", "compose", "version", "--format", "{{.Version}}")),
     )
-    issues: list[PreflightIssue] = []
+    issues: list[ServicePreflightIssue] = []
     for check, command in checks:
         try:
             output = await run_command(*command, timeout=15.0, cwd=compose_cwd(settings))
@@ -43,15 +43,15 @@ async def toolchain_issues(settings: UpdaterSettings) -> list[PreflightIssue]:
         except OSError as exc:
             detail = str(exc)
         if detail:
-            issues.append(PreflightIssue(check=check, message=detail[:200]))
+            issues.append(ServicePreflightIssue(check=check, message=detail[:200]))
     return issues
 
 
-async def read_backend(settings: UpdaterSettings) -> ServiceRuntime:
+async def read_backend(settings: UpdaterSettings) -> ServiceRuntimeView:
     """按部署项目身份读取后端服务；容器以 compose ps 为准，不猜测。"""
 
     entries = _parse_ps_json(await _docker(settings, "compose", "ps", "--all", "--format", "json"))
-    service = ServiceRuntime(name="backend")
+    service = ServiceRuntimeView(name="backend")
     info = next((entry for entry in entries if entry.get("Service") == "backend"), None)
     if info is None:
         return service

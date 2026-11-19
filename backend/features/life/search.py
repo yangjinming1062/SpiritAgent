@@ -4,7 +4,7 @@ import json
 from collections.abc import Sequence
 from datetime import date
 
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.search import SearchStatus, embed_search_query, local_date_bounds
 from infrastructure.search_index import SearchDocument, search_documents, upsert_search_documents
 from pydantic import BaseModel
@@ -148,7 +148,7 @@ async def recall_life(
     trajectory_only: bool = True,
     limit: int = 20,
 ) -> LifeRecallResponse:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         rows, status = await _search_events(
             db,
             user_id,
@@ -171,7 +171,7 @@ async def search_life(
     pursuit_id: int | None = None,
     limit: int = 20,
 ) -> LifeSearchResponse:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         rows, status = await _search_events(
             db,
             user_id,
@@ -198,7 +198,7 @@ async def search_trajectory(
     topic_id: int | None,
     limit: int,
 ) -> LifeTrajectorySearchResponse:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         rows, status = await _search_events(
             db,
             user_id,

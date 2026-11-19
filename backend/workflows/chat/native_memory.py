@@ -11,7 +11,7 @@ from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.api_ids import parse_resource_id
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import tool_error, utc_now
 from runtime.memory_scope import MemoryScope, MemorySource
@@ -36,7 +36,7 @@ class NativeMemory:
                     return tool_error("query must be a string")
                 if before_memory_id is not None:
                     before_memory_id = parse_resource_id(before_memory_id)
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     self._inspection = await load_review_context(
                         db,
                         self._scope,
@@ -57,7 +57,7 @@ class NativeMemory:
                 if self._inspection is None:
                     return tool_error("Call memory_inspect first to obtain original evidence and current versions")
                 proposal = MemoryDecisions.model_validate(args)
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     config = await resolve_user_llm_config(db, self._scope.user_id, self._task)
                 rows = await assess_memory_changes(
                     self._scope, self._source, self._inspection, llm_config=config, proposal=proposal.model_dump()
@@ -82,7 +82,7 @@ class NativeMemory:
                 if not query.strip():
                     return tool_error("Provide a non-empty query")
                 vector = await embed_memory_text(self._scope.user_id, query)
-                async with session_scope() as db:
+                async with SESSION_LOCAL() as db:
                     rows = await retrieve_hybrid_memories(db, self._scope, query, query_embedding=vector)
                 return json.dumps(
                     {"memories": [row.model_dump(mode="json") for row in rows]}, default=str, ensure_ascii=False

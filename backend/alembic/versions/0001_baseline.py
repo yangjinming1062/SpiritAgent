@@ -1,15 +1,11 @@
-"""全量基线：空库一次性建立完整当前结构。
-
-依赖 `vector` 与 `pg_trgm` 扩展，upgrade 首行自建；约束命名遵循 infrastructure/models.py 的稳定约定。
-"""
+"""空库基线。表、约束及触发器均冻结在本修订中。"""
 
 import pgvector.sqlalchemy.vector
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
-revision: str = "0001"
+revision: str = "baseline"
 down_revision: str | None = None
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
@@ -88,6 +84,19 @@ def upgrade() -> None:
     op.create_index(op.f("ix_users_activation_token_hash"), "users", ["activation_token_hash"], unique=True)
     op.create_index(op.f("ix_users_username"), "users", ["username"], unique=True)
     op.create_table(
+        "library_works",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("output_paths", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
+        sa.Column("released_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("library_works_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("library_works_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_library_works_owner_id"),
+    )
+    op.create_index(op.f("ix_library_works_user_id"), "library_works", ["user_id"], unique=False)
+    op.create_table(
         "action_definitions",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("source_key", sa.String(length=36), nullable=False),
@@ -126,6 +135,8 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("request_key", sa.String(length=128), nullable=True),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
         sa.CheckConstraint(
             "motion_intensity IN ('subtle', 'normal', 'expressive')",
             name=op.f("ck_action_definitions_action_motion_intensity"),
@@ -135,11 +146,18 @@ def upgrade() -> None:
             name=op.f("ck_action_definitions_action_performance_role"),
         ),
         sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_action_definitions_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("action_definitions_user_id_fkey"), ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("action_definitions_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_action_definitions_owner_id"),
         sa.UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),
+        sa.UniqueConstraint("user_id", "request_key", name="uq_action_definitions_request"),
         sa.UniqueConstraint("user_id", "source_key", name="uq_action_definitions_source"),
     )
     op.create_index(
@@ -341,11 +359,18 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
         sa.CheckConstraint(
             "state IN ('queued','running','paused','unknown','succeeded','failed','cancelled')",
             name=op.f("ck_jobs_job_state"),
         ),
         sa.CheckConstraint("revision >= 0", name=op.f("ck_jobs_job_revision")),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_jobs_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("jobs_user_id_fkey"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("jobs_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_jobs_user_id"),
@@ -396,6 +421,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("shared_with_user", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.CheckConstraint(
             "status IN ('active', 'paused', 'completed', 'abandoned')", name=op.f("ck_life_pursuits_pursuit_status")
         ),
@@ -469,12 +495,6 @@ def upgrade() -> None:
         "personas",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("definition_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column(
-            "onboarding_progress_json",
-            postgresql.JSONB(astext_type=sa.Text()),
-            server_default=sa.text("'{}'"),
-            nullable=False,
-        ),
         sa.Column(
             "personality_tags_json",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -597,6 +617,13 @@ def upgrade() -> None:
         sa.Column("delivered_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_ws_events_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("ws_events_user_id_fkey"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("ws_events_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_ws_events_owner_id"),
@@ -669,11 +696,18 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
         sa.ForeignKeyConstraint(
             ["user_id", "asset_id"],
             ["assets.user_id", "assets.id"],
             name="fk_companion_outfits_asset_id_owner",
             ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_companion_outfits_library_work_id_owner",
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("companion_outfits_user_id_fkey"), ondelete="CASCADE"
@@ -717,6 +751,13 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_companion_scenes_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
         sa.ForeignKeyConstraint(
             ["user_id", "media_asset_id"],
             ["assets.user_id", "assets.id"],
@@ -933,11 +974,13 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("reply_not_before", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("reply_followup", sa.Text(), nullable=True),
         sa.CheckConstraint(
             "(role = 'companion') = (reply_status = 'none')", name=op.f("ck_entry_comments_entry_comment_delivery")
         ),
         sa.CheckConstraint(
-            "reply_status IN ('none', 'pending', 'running', 'completed', 'failed')",
+            "reply_status IN ('none', 'pending', 'running', 'deferred', 'completed', 'silent', 'failed')",
             name=op.f("ck_entry_comments_entry_comment_state"),
         ),
         sa.CheckConstraint("role IN ('user', 'companion')", name=op.f("ck_entry_comments_entry_comment_role")),
@@ -969,7 +1012,7 @@ def upgrade() -> None:
         "entry_comments",
         ["user_id", "post_id"],
         unique=False,
-        postgresql_where=sa.text("role = 'user' AND reply_status IN ('pending', 'running')"),
+        postgresql_where=sa.text("role = 'user' AND reply_status IN ('pending', 'running', 'deferred')"),
     )
     op.create_table(
         "entry_links",
@@ -1053,10 +1096,17 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
         sa.ForeignKeyConstraint(
             ["user_id", "dependency_job_id"],
             ["jobs.user_id", "jobs.id"],
             name="fk_media_continuations_dependency_job_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_media_continuations_library_work_id_owner",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -1090,10 +1140,17 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
         sa.ForeignKeyConstraint(
             ["user_id", "job_id"],
             ["jobs.user_id", "jobs.id"],
             name="fk_media_manual_operations_job_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_media_manual_operations_library_work_id_owner",
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
@@ -1175,6 +1232,455 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_table(
+        "visual_items",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("media_kind", sa.String(length=8), nullable=False),
+        sa.Column("asset_kind", sa.String(length=16), nullable=False),
+        sa.Column("title", sa.String(length=160), server_default="", nullable=False),
+        sa.Column("status", sa.String(length=24), server_default="ready", nullable=False),
+        sa.Column("description", sa.Text(), server_default="", nullable=False),
+        sa.Column("content_hash", sa.String(length=64), nullable=False),
+        sa.Column("clip_kind", sa.String(length=8), nullable=True),
+        sa.Column("allowed_triggers", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
+        sa.Column("outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("action_id", sa.BigInteger(), nullable=True),
+        sa.Column("current_version_id", sa.BigInteger(), nullable=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "asset_kind <> 'actor' OR media_kind = 'video'", name=op.f("ck_visual_items_ck_visual_items_actor_video")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "action_id"],
+            ["action_definitions.user_id", "action_definitions.id"],
+            name="fk_visual_items_action_id_owner",
+            ondelete="SET NULL (action_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_visual_items_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "outfit_id"],
+            ["companion_outfits.user_id", "companion_outfits.id"],
+            name="fk_visual_items_outfit_id_owner",
+            ondelete="SET NULL (outfit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "scene_id"],
+            ["companion_scenes.user_id", "companion_scenes.id"],
+            name="fk_visual_items_scene_id_owner",
+            ondelete="SET NULL (scene_id)",
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("visual_items_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("visual_items_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_visual_items_user_id"),
+    )
+    op.create_index(op.f("ix_visual_items_action_id"), "visual_items", ["action_id"], unique=False)
+    op.create_index(
+        "ix_visual_items_catalog", "visual_items", ["user_id", "status", "media_kind", "asset_kind", "id"], unique=False
+    )
+    op.create_index(op.f("ix_visual_items_outfit_id"), "visual_items", ["outfit_id"], unique=False)
+    op.create_index(op.f("ix_visual_items_scene_id"), "visual_items", ["scene_id"], unique=False)
+    op.create_index(op.f("ix_visual_items_user_id"), "visual_items", ["user_id"], unique=False)
+    op.create_index(
+        "uq_visual_items_image_content",
+        "visual_items",
+        ["user_id", "content_hash", "library_work_id"],
+        unique=True,
+        postgresql_nulls_not_distinct=True,
+        postgresql_where=sa.text("media_kind = 'image'"),
+    )
+    op.create_table(
+        "visual_versions",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("visual_id", sa.BigInteger(), nullable=False),
+        sa.Column("number", sa.Integer(), server_default="1", nullable=False),
+        sa.Column("description", sa.Text(), server_default="", nullable=False),
+        sa.Column("content_hash", sa.String(length=64), nullable=False),
+        sa.Column("outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("action_id", sa.BigInteger(), nullable=True),
+        sa.Column("media_path", sa.Text(), nullable=False),
+        sa.Column("poster_path", sa.Text(), nullable=True),
+        sa.Column("width", sa.Integer(), nullable=False),
+        sa.Column("height", sa.Integer(), nullable=False),
+        sa.Column("duration_ms", sa.Integer(), nullable=True),
+        sa.Column("outfit_description", sa.Text(), server_default="", nullable=False),
+        sa.Column("snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("body_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("input_image_id", sa.BigInteger(), nullable=True),
+        sa.Column("input_image_version_id", sa.BigInteger(), nullable=True),
+        sa.Column("input_image_path", sa.Text(), nullable=True),
+        sa.Column("input_image_hash", sa.String(length=64), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "number > 0 AND width > 0 AND height > 0", name=op.f("ck_visual_versions_visual_version_dimensions")
+        ),
+        sa.ForeignKeyConstraint(
+            ["input_image_id", "input_image_version_id"],
+            ["visual_versions.visual_id", "visual_versions.id"],
+            name="fk_visual_version_input_pair",
+            ondelete="SET NULL",
+            initially="DEFERRED",
+            deferrable=True,
+            match="FULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "action_id"],
+            ["action_definitions.user_id", "action_definitions.id"],
+            name="fk_visual_versions_action_id_owner",
+            ondelete="SET NULL (action_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "input_image_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_visual_versions_input_image_id_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_visual_versions_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "outfit_id"],
+            ["companion_outfits.user_id", "companion_outfits.id"],
+            name="fk_visual_versions_outfit_id_owner",
+            ondelete="SET NULL (outfit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "scene_id"],
+            ["companion_scenes.user_id", "companion_scenes.id"],
+            name="fk_visual_versions_scene_id_owner",
+            ondelete="SET NULL (scene_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "visual_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_visual_versions_visual_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("visual_versions_user_id_fkey"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("visual_versions_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_visual_versions_user_id"),
+        sa.UniqueConstraint("visual_id", "id", name="uq_visual_versions_item_id"),
+        sa.UniqueConstraint("visual_id", "number", name="uq_visual_versions_number"),
+    )
+    op.create_index(op.f("ix_visual_versions_user_id"), "visual_versions", ["user_id"], unique=False)
+    op.create_index(op.f("ix_visual_versions_visual_id"), "visual_versions", ["visual_id"], unique=False)
+    op.create_table(
+        "life_steps",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
+        sa.Column("idempotency_key", sa.String(length=160), nullable=False),
+        sa.Column("kind", sa.String(length=32), nullable=False),
+        sa.Column("description", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("narrative", sa.Text(), nullable=True),
+        sa.Column("state", sa.String(length=16), server_default=sa.text("'planned'"), nullable=False),
+        sa.Column("action_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("checkpoint", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
+        sa.Column("reading_result_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("disposition", sa.String(length=24), server_default="ready", nullable=False),
+        sa.Column("wait_reason", sa.Text(), server_default="", nullable=False),
+        sa.Column("not_before", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("budget_date", sa.Date(), nullable=True),
+        sa.Column("is_creation", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("source", sa.String(length=24), server_default="life", nullable=False),
+        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("business_action_id", sa.BigInteger(), nullable=True),
+        sa.Column("job_id", sa.BigInteger(), nullable=True),
+        sa.Column("generation_id", sa.String(length=64), nullable=True),
+        sa.Column("result_job_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
+        sa.Column(
+            "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
+        ),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("failure_code", sa.String(length=64), nullable=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("library_work_id", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "disposition IN ('ready','waiting','permission_required','unavailable','executing','done','failed','cancelled','unknown')",
+            name=op.f("ck_life_steps_step_disposition"),
+        ),
+        sa.CheckConstraint(
+            "reading_result_json IS NULL OR kind = 'content.read'", name=op.f("ck_life_steps_reading_result_kind")
+        ),
+        sa.CheckConstraint(
+            "state IN ('planned', 'running', 'completed', 'failed', 'cancelled', 'unknown')",
+            name=op.f("ck_life_steps_step_state"),
+        ),
+        sa.CheckConstraint("attempts >= 0", name=op.f("ck_life_steps_step_attempts")),
+        sa.ForeignKeyConstraint(
+            ["result_visual_id", "result_visual_version_id"],
+            ["visual_versions.visual_id", "visual_versions.id"],
+            name="fk_life_step_result_version",
+            ondelete="SET NULL",
+            initially="DEFERRED",
+            deferrable=True,
+            match="FULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "business_action_id"],
+            ["action_definitions.user_id", "action_definitions.id"],
+            name="fk_life_steps_business_action_id_owner",
+            ondelete="SET NULL (business_action_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "job_id"],
+            ["jobs.user_id", "jobs.id"],
+            name="fk_life_steps_job_id_owner",
+            ondelete="SET NULL (job_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "library_work_id"],
+            ["library_works.user_id", "library_works.id"],
+            name="fk_life_steps_library_work_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "pursuit_id"],
+            ["life_pursuits.user_id", "life_pursuits.id"],
+            name="fk_life_steps_pursuit_id_owner",
+            ondelete="SET NULL (pursuit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_action_id"],
+            ["action_definitions.user_id", "action_definitions.id"],
+            name="fk_life_steps_result_action_id_owner",
+            ondelete="SET NULL (result_action_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_entry_id"],
+            ["companion_entries.user_id", "companion_entries.id"],
+            name="fk_life_steps_result_entry_id_owner",
+            ondelete="SET NULL (result_entry_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_job_id"],
+            ["jobs.user_id", "jobs.id"],
+            name="fk_life_steps_result_job_id_owner",
+            ondelete="SET NULL (result_job_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_outfit_id"],
+            ["companion_outfits.user_id", "companion_outfits.id"],
+            name="fk_life_steps_result_outfit_id_owner",
+            ondelete="SET NULL (result_outfit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_scene_id"],
+            ["companion_scenes.user_id", "companion_scenes.id"],
+            name="fk_life_steps_result_scene_id_owner",
+            ondelete="SET NULL (result_scene_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_visual_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_life_steps_result_visual_id_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_visual_version_id"],
+            ["visual_versions.user_id", "visual_versions.id"],
+            name="fk_life_steps_result_visual_version_id_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("life_steps_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("life_steps_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_life_steps_owner_id"),
+        sa.UniqueConstraint("user_id", "idempotency_key", name="uq_life_steps_user_idempotency"),
+    )
+    op.create_index("ix_life_steps_budget", "life_steps", ["user_id", "budget_date"], unique=False)
+    op.create_index("ix_life_steps_due", "life_steps", ["state", "not_before", "user_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_job_id"), "life_steps", ["job_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_pursuit_id"), "life_steps", ["pursuit_id"], unique=False)
+    op.create_index(op.f("ix_life_steps_state"), "life_steps", ["state"], unique=False)
+    op.create_index(op.f("ix_life_steps_user_id"), "life_steps", ["user_id"], unique=False)
+    op.create_index("ix_life_steps_user_state", "life_steps", ["user_id", "state"], unique=False)
+    op.create_table(
+        "life_events",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("event_key", sa.String(length=180), nullable=False),
+        sa.Column("kind", sa.String(length=48), nullable=False),
+        sa.Column("source", sa.String(length=48), nullable=False),
+        sa.Column("subject", sa.String(length=24), server_default=sa.text("'companion'"), nullable=False),
+        sa.Column("fact_type", sa.String(length=24), server_default="execution", nullable=False),
+        sa.Column("fact_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("narrative", sa.Text(), nullable=True),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
+        sa.Column("step_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_job_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
+        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
+        sa.Column(
+            "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
+        ),
+        sa.Column("is_meaningful", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("trajectory_kind", sa.String(length=16), nullable=True),
+        sa.Column("trajectory_result_key", sa.String(length=96), nullable=True),
+        sa.Column("topic_id", sa.BigInteger(), nullable=True),
+        sa.Column("previous_episode_id", sa.BigInteger(), nullable=True),
+        sa.Column("shared_with_user", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.CheckConstraint(
+            "fact_type IN ('intent', 'virtual_activity', 'execution', 'result')", name=op.f("ck_life_events_fact_type")
+        ),
+        sa.CheckConstraint("subject IN ('companion', 'user', 'system')", name=op.f("ck_life_events_event_subject")),
+        sa.CheckConstraint(
+            "trajectory_kind IN ('virtual', 'milestone', 'result')", name=op.f("ck_life_events_trajectory_kind")
+        ),
+        sa.ForeignKeyConstraint(
+            ["result_visual_id", "result_visual_version_id"],
+            ["visual_versions.visual_id", "visual_versions.id"],
+            name="fk_life_event_result_version",
+            ondelete="SET NULL",
+            initially="DEFERRED",
+            deferrable=True,
+            match="FULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "previous_episode_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_life_event_previous_episode_owner",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "pursuit_id"],
+            ["life_pursuits.user_id", "life_pursuits.id"],
+            name="fk_life_events_pursuit_id_owner",
+            ondelete="SET NULL (pursuit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_action_id"],
+            ["action_definitions.user_id", "action_definitions.id"],
+            name="fk_life_events_result_action_id_owner",
+            ondelete="SET NULL (result_action_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_entry_id"],
+            ["companion_entries.user_id", "companion_entries.id"],
+            name="fk_life_events_result_entry_id_owner",
+            ondelete="SET NULL (result_entry_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_job_id"],
+            ["jobs.user_id", "jobs.id"],
+            name="fk_life_events_result_job_id_owner",
+            ondelete="SET NULL (result_job_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_outfit_id"],
+            ["companion_outfits.user_id", "companion_outfits.id"],
+            name="fk_life_events_result_outfit_id_owner",
+            ondelete="SET NULL (result_outfit_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_scene_id"],
+            ["companion_scenes.user_id", "companion_scenes.id"],
+            name="fk_life_events_result_scene_id_owner",
+            ondelete="SET NULL (result_scene_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_visual_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_life_events_result_visual_id_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "result_visual_version_id"],
+            ["visual_versions.user_id", "visual_versions.id"],
+            name="fk_life_events_result_visual_version_id_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "step_id"],
+            ["life_steps.user_id", "life_steps.id"],
+            name="fk_life_events_step_id_owner",
+            ondelete="SET NULL (step_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "topic_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_life_event_topic_owner",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("life_events_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("life_events_pkey")),
+        sa.UniqueConstraint("user_id", "event_key", name="uq_life_events_user_key"),
+        sa.UniqueConstraint("user_id", "id", name="uq_life_events_owner_id"),
+    )
+    op.create_index(op.f("ix_life_events_occurred_at"), "life_events", ["occurred_at"], unique=False)
+    op.create_index(op.f("ix_life_events_pursuit_id"), "life_events", ["pursuit_id"], unique=False)
+    op.create_index(
+        "ix_life_events_pursuit_occurred",
+        "life_events",
+        ["user_id", "pursuit_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(op.f("ix_life_events_step_id"), "life_events", ["step_id"], unique=False)
+    op.create_index(
+        "ix_life_events_trajectory",
+        "life_events",
+        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+        postgresql_where=sa.text("trajectory_kind IS NOT NULL"),
+    )
+    op.create_index(op.f("ix_life_events_user_id"), "life_events", ["user_id"], unique=False)
+    op.create_index("ix_life_events_user_kind", "life_events", ["user_id", "kind"], unique=False)
+    op.create_index(
+        "ix_life_events_user_occurred",
+        "life_events",
+        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(
+        "uq_life_events_trajectory_result",
+        "life_events",
+        ["user_id", "trajectory_result_key", "pursuit_id"],
+        unique=True,
+        postgresql_where=sa.text("trajectory_result_key IS NOT NULL"),
+    )
+    op.create_table(
         "messages",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("conversation_id", sa.BigInteger(), nullable=False),
@@ -1194,9 +1700,18 @@ def upgrade() -> None:
         sa.Column("summary_through_message_id", sa.BigInteger(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("call_record_id", sa.BigInteger(), nullable=True),
+        sa.Column("call_last_seen_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("call_duration_ms", sa.BigInteger(), nullable=True),
+        sa.Column("life_excerpt_id", sa.BigInteger(), nullable=True),
+        sa.Column("gesture_request_id", sa.Uuid(), nullable=True),
         sa.CheckConstraint(
             "(content_type = 'companion_reply') = (reply_json IS NOT NULL)",
             name=op.f("ck_messages_ck_messages_reply_delivery"),
+        ),
+        sa.CheckConstraint(
+            "(subtype IS NOT DISTINCT FROM 'realtime_call') = (call_last_seen_at IS NOT NULL) AND (call_last_seen_at IS NULL OR (role = 'system' AND call_record_id IS NULL)) AND (call_duration_ms IS NULL OR (call_last_seen_at IS NOT NULL AND call_duration_ms >= 0))",
+            name=op.f("ck_messages_realtime_call"),
         ),
         sa.CheckConstraint(
             "content_type != 'companion_reply' OR (role = 'assistant' AND content IS NOT NULL AND tool_calls IS NULL)",
@@ -1207,14 +1722,34 @@ def upgrade() -> None:
             name=op.f("ck_messages_ck_messages_content_type"),
         ),
         sa.ForeignKeyConstraint(
+            ["user_id", "conversation_id", "call_record_id"],
+            ["messages.user_id", "messages.conversation_id", "messages.id"],
+            name="fk_messages_call_record",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
             ["user_id", "conversation_id"],
             ["conversations.user_id", "conversations.id"],
             name="fk_messages_owned_conversation",
             ondelete="CASCADE",
         ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "life_excerpt_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_messages_life_excerpt_id_owner",
+            ondelete="SET NULL (life_excerpt_id)",
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("messages_user_id_fkey"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("messages_pkey")),
+        sa.UniqueConstraint("user_id", "conversation_id", "id", name="uq_messages_owned_id"),
         sa.UniqueConstraint("user_id", "id", name="uq_messages_user_id"),
+    )
+    op.create_index(
+        "ix_messages_call_record",
+        "messages",
+        ["call_record_id", "id"],
+        unique=False,
+        postgresql_where=sa.text("call_record_id IS NOT NULL"),
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index("ix_messages_conversation_order", "messages", ["conversation_id", "id"], unique=False)
@@ -1227,6 +1762,13 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
     op.create_index(op.f("ix_messages_user_id"), "messages", ["user_id"], unique=False)
+    op.create_index(
+        "uq_messages_gesture",
+        "messages",
+        ["user_id", "gesture_request_id"],
+        unique=True,
+        postgresql_where=sa.text("gesture_request_id IS NOT NULL"),
+    )
     op.create_table(
         "provider_attempts",
         sa.Column("token", sa.String(length=32), nullable=False),
@@ -1378,6 +1920,11 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("life_event_id", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "(source_kind IS NOT DISTINCT FROM 'life') = (life_event_id IS NOT NULL)",
+            name=op.f("ck_companion_intents_intent_life_source"),
+        ),
         sa.CheckConstraint(
             "cron_job_id IS NULL OR source_kind IS NOT DISTINCT FROM 'cron'",
             name=op.f("ck_companion_intents_intent_cron_source"),
@@ -1389,10 +1936,17 @@ def upgrade() -> None:
             ondelete="SET NULL (cron_job_id)",
         ),
         sa.ForeignKeyConstraint(
+            ["user_id", "life_event_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_companion_intents_life_event_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("companion_intents_user_id_fkey"), ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("companion_intents_pkey")),
         sa.UniqueConstraint("user_id", "id", name="uq_companion_intents_owner_id"),
+        sa.UniqueConstraint("user_id", "life_event_id", name="uq_companion_intents_life_event"),
     )
     op.create_index(op.f("ix_companion_intents_expires_at"), "companion_intents", ["expires_at"], unique=False)
     op.create_index(
@@ -1710,6 +2264,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("is_realtime_call", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.ForeignKeyConstraint(
             ["user_id", "conversation_id"],
             ["conversations.user_id", "conversations.id"],
@@ -1813,63 +2368,6 @@ def upgrade() -> None:
     op.create_index(op.f("ix_video_gen_jobs_conversation_id"), "video_gen_jobs", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_reply_message_id"), "video_gen_jobs", ["reply_message_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_source_message_id"), "video_gen_jobs", ["source_message_id"], unique=False)
-    op.create_table(
-        "visual_items",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("media_kind", sa.String(length=8), nullable=False),
-        sa.Column("asset_kind", sa.String(length=16), nullable=False),
-        sa.Column("title", sa.String(length=160), server_default="", nullable=False),
-        sa.Column("status", sa.String(length=24), server_default="ready", nullable=False),
-        sa.Column("description", sa.Text(), server_default="", nullable=False),
-        sa.Column("content_hash", sa.String(length=64), nullable=False),
-        sa.Column("clip_kind", sa.String(length=8), nullable=True),
-        sa.Column("allowed_triggers", postgresql.JSONB(astext_type=sa.Text()), server_default="[]", nullable=False),
-        sa.Column("outfit_id", sa.BigInteger(), nullable=True),
-        sa.Column("scene_id", sa.BigInteger(), nullable=True),
-        sa.Column("action_id", sa.BigInteger(), nullable=True),
-        sa.Column("current_version_id", sa.BigInteger(), nullable=True),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint(
-            "asset_kind <> 'actor' OR media_kind = 'video'", name=op.f("ck_visual_items_ck_visual_items_actor_video")
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "action_id"],
-            ["action_definitions.user_id", "action_definitions.id"],
-            name="fk_visual_items_action_id_owner",
-            ondelete="SET NULL (action_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "outfit_id"],
-            ["companion_outfits.user_id", "companion_outfits.id"],
-            name="fk_visual_items_outfit_id_owner",
-            ondelete="SET NULL (outfit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "scene_id"],
-            ["companion_scenes.user_id", "companion_scenes.id"],
-            name="fk_visual_items_scene_id_owner",
-            ondelete="SET NULL (scene_id)",
-        ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("visual_items_user_id_fkey"), ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id", name=op.f("visual_items_pkey")),
-        sa.UniqueConstraint("user_id", "id", name="uq_visual_items_user_id"),
-    )
-    op.create_index(op.f("ix_visual_items_action_id"), "visual_items", ["action_id"], unique=False)
-    op.create_index(
-        "ix_visual_items_catalog", "visual_items", ["user_id", "status", "media_kind", "asset_kind", "id"], unique=False
-    )
-    op.create_index(op.f("ix_visual_items_outfit_id"), "visual_items", ["outfit_id"], unique=False)
-    op.create_index(op.f("ix_visual_items_scene_id"), "visual_items", ["scene_id"], unique=False)
-    op.create_index(op.f("ix_visual_items_user_id"), "visual_items", ["user_id"], unique=False)
-    op.create_index(
-        "uq_visual_items_image_content",
-        "visual_items",
-        ["user_id", "content_hash"],
-        unique=True,
-        postgresql_where=sa.text("media_kind = 'image'"),
-    )
     op.create_table(
         "visual_observation_jobs",
         sa.Column("id", sa.BigInteger(), nullable=False),
@@ -2084,220 +2582,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_visual_import_jobs_visual_id"), "visual_import_jobs", ["visual_id"], unique=False)
     op.create_table(
-        "visual_versions",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("visual_id", sa.BigInteger(), nullable=False),
-        sa.Column("number", sa.Integer(), server_default="1", nullable=False),
-        sa.Column("description", sa.Text(), server_default="", nullable=False),
-        sa.Column("content_hash", sa.String(length=64), nullable=False),
-        sa.Column("outfit_id", sa.BigInteger(), nullable=True),
-        sa.Column("scene_id", sa.BigInteger(), nullable=True),
-        sa.Column("action_id", sa.BigInteger(), nullable=True),
-        sa.Column("media_path", sa.Text(), nullable=False),
-        sa.Column("poster_path", sa.Text(), nullable=True),
-        sa.Column("width", sa.Integer(), nullable=False),
-        sa.Column("height", sa.Integer(), nullable=False),
-        sa.Column("duration_ms", sa.Integer(), nullable=True),
-        sa.Column("outfit_description", sa.Text(), server_default="", nullable=False),
-        sa.Column("snapshot_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("body_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
-        sa.Column("input_image_id", sa.BigInteger(), nullable=True),
-        sa.Column("input_image_version_id", sa.BigInteger(), nullable=True),
-        sa.Column("input_image_path", sa.Text(), nullable=True),
-        sa.Column("input_image_hash", sa.String(length=64), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.CheckConstraint(
-            "number > 0 AND width > 0 AND height > 0", name=op.f("ck_visual_versions_visual_version_dimensions")
-        ),
-        sa.ForeignKeyConstraint(
-            ["input_image_id", "input_image_version_id"],
-            ["visual_versions.visual_id", "visual_versions.id"],
-            name="fk_visual_version_input_pair",
-            ondelete="SET NULL",
-            initially="DEFERRED",
-            deferrable=True,
-            match="FULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "action_id"],
-            ["action_definitions.user_id", "action_definitions.id"],
-            name="fk_visual_versions_action_id_owner",
-            ondelete="SET NULL (action_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "input_image_id"],
-            ["visual_items.user_id", "visual_items.id"],
-            name="fk_visual_versions_input_image_id_owner",
-            ondelete="NO ACTION",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "outfit_id"],
-            ["companion_outfits.user_id", "companion_outfits.id"],
-            name="fk_visual_versions_outfit_id_owner",
-            ondelete="SET NULL (outfit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "scene_id"],
-            ["companion_scenes.user_id", "companion_scenes.id"],
-            name="fk_visual_versions_scene_id_owner",
-            ondelete="SET NULL (scene_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "visual_id"],
-            ["visual_items.user_id", "visual_items.id"],
-            name="fk_visual_versions_visual_id_owner",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("visual_versions_user_id_fkey"), ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("visual_versions_pkey")),
-        sa.UniqueConstraint("user_id", "id", name="uq_visual_versions_user_id"),
-        sa.UniqueConstraint("visual_id", "id", name="uq_visual_versions_item_id"),
-        sa.UniqueConstraint("visual_id", "number", name="uq_visual_versions_number"),
-    )
-    op.create_index(op.f("ix_visual_versions_user_id"), "visual_versions", ["user_id"], unique=False)
-    op.create_index(op.f("ix_visual_versions_visual_id"), "visual_versions", ["visual_id"], unique=False)
-    op.create_table(
-        "life_steps",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
-        sa.Column("idempotency_key", sa.String(length=160), nullable=False),
-        sa.Column("kind", sa.String(length=32), nullable=False),
-        sa.Column("description", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("narrative", sa.Text(), nullable=True),
-        sa.Column("state", sa.String(length=16), server_default=sa.text("'planned'"), nullable=False),
-        sa.Column("action_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
-        sa.Column("checkpoint", postgresql.JSONB(astext_type=sa.Text()), server_default="{}", nullable=False),
-        sa.Column("reading_result_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
-        sa.Column("disposition", sa.String(length=24), server_default="ready", nullable=False),
-        sa.Column("wait_reason", sa.Text(), server_default="", nullable=False),
-        sa.Column("not_before", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("budget_date", sa.Date(), nullable=True),
-        sa.Column("is_creation", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("source", sa.String(length=24), server_default="life", nullable=False),
-        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("business_action_id", sa.BigInteger(), nullable=True),
-        sa.Column("job_id", sa.BigInteger(), nullable=True),
-        sa.Column("generation_id", sa.String(length=64), nullable=True),
-        sa.Column("result_job_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
-        sa.Column(
-            "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
-        ),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("failure_code", sa.String(length=64), nullable=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint(
-            "disposition IN ('ready','waiting','permission_required','unavailable','executing','done','failed','cancelled','unknown')",
-            name=op.f("ck_life_steps_step_disposition"),
-        ),
-        sa.CheckConstraint(
-            "reading_result_json IS NULL OR kind = 'content.read'", name=op.f("ck_life_steps_reading_result_kind")
-        ),
-        sa.CheckConstraint(
-            "state IN ('planned', 'running', 'completed', 'failed', 'cancelled', 'unknown')",
-            name=op.f("ck_life_steps_step_state"),
-        ),
-        sa.CheckConstraint("attempts >= 0", name=op.f("ck_life_steps_step_attempts")),
-        sa.ForeignKeyConstraint(
-            ["result_visual_id", "result_visual_version_id"],
-            ["visual_versions.visual_id", "visual_versions.id"],
-            name="fk_life_step_result_version",
-            ondelete="SET NULL",
-            initially="DEFERRED",
-            deferrable=True,
-            match="FULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "business_action_id"],
-            ["action_definitions.user_id", "action_definitions.id"],
-            name="fk_life_steps_business_action_id_owner",
-            ondelete="SET NULL (business_action_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "job_id"],
-            ["jobs.user_id", "jobs.id"],
-            name="fk_life_steps_job_id_owner",
-            ondelete="SET NULL (job_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "pursuit_id"],
-            ["life_pursuits.user_id", "life_pursuits.id"],
-            name="fk_life_steps_pursuit_id_owner",
-            ondelete="SET NULL (pursuit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_action_id"],
-            ["action_definitions.user_id", "action_definitions.id"],
-            name="fk_life_steps_result_action_id_owner",
-            ondelete="SET NULL (result_action_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_entry_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_life_steps_result_entry_id_owner",
-            ondelete="SET NULL (result_entry_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_job_id"],
-            ["jobs.user_id", "jobs.id"],
-            name="fk_life_steps_result_job_id_owner",
-            ondelete="SET NULL (result_job_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_outfit_id"],
-            ["companion_outfits.user_id", "companion_outfits.id"],
-            name="fk_life_steps_result_outfit_id_owner",
-            ondelete="SET NULL (result_outfit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_scene_id"],
-            ["companion_scenes.user_id", "companion_scenes.id"],
-            name="fk_life_steps_result_scene_id_owner",
-            ondelete="SET NULL (result_scene_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_visual_id"],
-            ["visual_items.user_id", "visual_items.id"],
-            name="fk_life_steps_result_visual_id_owner",
-            ondelete="NO ACTION",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_visual_version_id"],
-            ["visual_versions.user_id", "visual_versions.id"],
-            name="fk_life_steps_result_visual_version_id_owner",
-            ondelete="NO ACTION",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("life_steps_user_id_fkey"), ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id", name=op.f("life_steps_pkey")),
-        sa.UniqueConstraint("user_id", "id", name="uq_life_steps_owner_id"),
-        sa.UniqueConstraint("user_id", "idempotency_key", name="uq_life_steps_user_idempotency"),
-    )
-    op.create_index("ix_life_steps_budget", "life_steps", ["user_id", "budget_date"], unique=False)
-    op.create_index("ix_life_steps_due", "life_steps", ["state", "not_before", "user_id"], unique=False)
-    op.create_index(op.f("ix_life_steps_job_id"), "life_steps", ["job_id"], unique=False)
-    op.create_index(op.f("ix_life_steps_pursuit_id"), "life_steps", ["pursuit_id"], unique=False)
-    op.create_index(op.f("ix_life_steps_state"), "life_steps", ["state"], unique=False)
-    op.create_index(op.f("ix_life_steps_user_id"), "life_steps", ["user_id"], unique=False)
-    op.create_index("ix_life_steps_user_state", "life_steps", ["user_id", "state"], unique=False)
-    op.create_table(
         "nightly_activity_actions",
         sa.Column("log_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -2314,12 +2598,18 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.CheckConstraint(
+            "life_step_id IS NULL OR (status = 'pending' AND reason IS NULL)",
+            name=op.f("ck_nightly_activity_actions_step_owns_execution"),
+        ),
+        sa.CheckConstraint(
             "status IN ('pending', 'skipped', 'blocked', 'failed')",
             name=op.f("ck_nightly_activity_actions_plan_status"),
         ),
-        sa.CheckConstraint(
-            "life_step_id IS NULL OR (status = 'pending' AND reason IS NULL)",
-            name=op.f("ck_nightly_activity_actions_step_owns_execution"),
+        sa.ForeignKeyConstraint(
+            ["user_id", "life_step_id"],
+            ["life_steps.user_id", "life_steps.id"],
+            name="fk_nightly_activity_actions_life_step_id_owner",
+            ondelete="NO ACTION",
         ),
         sa.ForeignKeyConstraint(
             ["user_id", "log_id"],
@@ -2329,12 +2619,6 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("nightly_activity_actions_user_id_fkey"), ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "life_step_id"],
-            ["life_steps.user_id", "life_steps.id"],
-            name="fk_nightly_activity_actions_life_step_id_owner",
-            ondelete="NO ACTION",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("nightly_activity_actions_pkey")),
         sa.UniqueConstraint("life_step_id", name="uq_nightly_activity_actions_step"),
@@ -2503,6 +2787,7 @@ def upgrade() -> None:
         sa.Column("loop_snapshot_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("default_visual_id", sa.BigInteger(), nullable=True),
         sa.ForeignKeyConstraint(
             ["current_visual_id", "current_version_id"],
             ["visual_versions.visual_id", "visual_versions.id"],
@@ -2530,6 +2815,14 @@ def upgrade() -> None:
             deferrable=True,
         ),
         sa.ForeignKeyConstraint(
+            ["user_id", "default_visual_id"],
+            ["visual_items.user_id", "visual_items.id"],
+            name="fk_presentation_default_visual_owner",
+            ondelete="NO ACTION",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
             ["user_id", "loop_visual_id"],
             ["visual_items.user_id", "visual_items.id"],
             name="fk_visual_presentations_loop_visual_id_owner",
@@ -2541,6 +2834,9 @@ def upgrade() -> None:
             ["user_id"], ["users.id"], name=op.f("visual_presentations_user_id_fkey"), ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("user_id", name=op.f("visual_presentations_pkey")),
+    )
+    op.create_index(
+        op.f("ix_visual_presentations_default_visual_id"), "visual_presentations", ["default_visual_id"], unique=False
     )
     op.create_table(
         "visual_version_assets",
@@ -2571,126 +2867,6 @@ def upgrade() -> None:
     op.create_index(op.f("ix_visual_version_assets_asset_id"), "visual_version_assets", ["asset_id"], unique=False)
     op.create_index(op.f("ix_visual_version_assets_version_id"), "visual_version_assets", ["version_id"], unique=False)
     op.create_table(
-        "life_events",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("event_key", sa.String(length=180), nullable=False),
-        sa.Column("kind", sa.String(length=48), nullable=False),
-        sa.Column("source", sa.String(length=48), nullable=False),
-        sa.Column("subject", sa.String(length=24), server_default=sa.text("'companion'"), nullable=False),
-        sa.Column("fact_type", sa.String(length=24), server_default="execution", nullable=False),
-        sa.Column("fact_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("narrative", sa.Text(), nullable=True),
-        sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("pursuit_id", sa.BigInteger(), nullable=True),
-        sa.Column("step_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_job_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_visual_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_visual_version_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_entry_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_outfit_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_scene_id", sa.BigInteger(), nullable=True),
-        sa.Column("result_action_id", sa.BigInteger(), nullable=True),
-        sa.Column(
-            "result_ref_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
-        ),
-        sa.Column("is_meaningful", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint(
-            "fact_type IN ('intent', 'virtual_activity', 'execution', 'result')", name=op.f("ck_life_events_fact_type")
-        ),
-        sa.CheckConstraint("subject IN ('companion', 'user', 'system')", name=op.f("ck_life_events_event_subject")),
-        sa.ForeignKeyConstraint(
-            ["result_visual_id", "result_visual_version_id"],
-            ["visual_versions.visual_id", "visual_versions.id"],
-            name="fk_life_event_result_version",
-            ondelete="SET NULL",
-            initially="DEFERRED",
-            deferrable=True,
-            match="FULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "pursuit_id"],
-            ["life_pursuits.user_id", "life_pursuits.id"],
-            name="fk_life_events_pursuit_id_owner",
-            ondelete="SET NULL (pursuit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_action_id"],
-            ["action_definitions.user_id", "action_definitions.id"],
-            name="fk_life_events_result_action_id_owner",
-            ondelete="SET NULL (result_action_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_entry_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_life_events_result_entry_id_owner",
-            ondelete="SET NULL (result_entry_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_job_id"],
-            ["jobs.user_id", "jobs.id"],
-            name="fk_life_events_result_job_id_owner",
-            ondelete="SET NULL (result_job_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_outfit_id"],
-            ["companion_outfits.user_id", "companion_outfits.id"],
-            name="fk_life_events_result_outfit_id_owner",
-            ondelete="SET NULL (result_outfit_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_scene_id"],
-            ["companion_scenes.user_id", "companion_scenes.id"],
-            name="fk_life_events_result_scene_id_owner",
-            ondelete="SET NULL (result_scene_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_visual_id"],
-            ["visual_items.user_id", "visual_items.id"],
-            name="fk_life_events_result_visual_id_owner",
-            ondelete="NO ACTION",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "result_visual_version_id"],
-            ["visual_versions.user_id", "visual_versions.id"],
-            name="fk_life_events_result_visual_version_id_owner",
-            ondelete="NO ACTION",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "step_id"],
-            ["life_steps.user_id", "life_steps.id"],
-            name="fk_life_events_step_id_owner",
-            ondelete="SET NULL (step_id)",
-        ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("life_events_user_id_fkey"), ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id", name=op.f("life_events_pkey")),
-        sa.UniqueConstraint("user_id", "event_key", name="uq_life_events_user_key"),
-        sa.UniqueConstraint("user_id", "id", name="uq_life_events_owner_id"),
-    )
-    op.create_index(op.f("ix_life_events_occurred_at"), "life_events", ["occurred_at"], unique=False)
-    op.create_index(op.f("ix_life_events_pursuit_id"), "life_events", ["pursuit_id"], unique=False)
-    op.create_index(
-        "ix_life_events_pursuit_occurred",
-        "life_events",
-        ["user_id", "pursuit_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(op.f("ix_life_events_step_id"), "life_events", ["step_id"], unique=False)
-    op.create_index(op.f("ix_life_events_user_id"), "life_events", ["user_id"], unique=False)
-    op.create_index("ix_life_events_user_kind", "life_events", ["user_id", "kind"], unique=False)
-    op.create_index(
-        "ix_life_events_user_occurred",
-        "life_events",
-        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_table(
         "life_states",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("current_activity", sa.Text(), server_default=sa.text("''"), nullable=False),
@@ -2715,6 +2891,8 @@ def upgrade() -> None:
         sa.Column("scene_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("review_slot", sa.String(length=16), nullable=True),
+        sa.Column("activity_shared_with_user", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.CheckConstraint(
             "activity_kind IN ('intent', 'virtual_activity', 'execution', 'result')",
             name=op.f("ck_life_states_activity_kind"),
@@ -2786,6 +2964,7 @@ def upgrade() -> None:
         sa.Column("pursuit_id", sa.BigInteger(), nullable=False),
         sa.Column("event_id", sa.BigInteger(), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("used_for_completion", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.ForeignKeyConstraint(
             ["user_id", "event_id"],
             ["life_events.user_id", "life_events.id"],
@@ -2808,8 +2987,52 @@ def upgrade() -> None:
     op.create_index(op.f("ix_pursuit_evidence_event_id"), "pursuit_evidence", ["event_id"], unique=False)
     op.create_index(op.f("ix_pursuit_evidence_pursuit_id"), "pursuit_evidence", ["pursuit_id"], unique=False)
     op.create_index(op.f("ix_pursuit_evidence_user_id"), "pursuit_evidence", ["user_id"], unique=False)
+    op.create_table(
+        "companion_rhythms",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("schedule_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("schedule_basis", sa.String(length=64), nullable=True),
+        sa.Column("retry_schedule_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("adjustment_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("contact_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
+        sa.Column("next_check_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("projection_key", sa.String(length=240), nullable=True),
+        sa.Column("revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("companion_rhythms_user_id_fkey"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("user_id", name=op.f("companion_rhythms_pkey")),
+    )
+    op.create_index(op.f("ix_companion_rhythms_next_check_at"), "companion_rhythms", ["next_check_at"], unique=False)
+    op.create_table(
+        "life_growth",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("evidence_event_id", sa.BigInteger(), nullable=False),
+        sa.Column("aspect", sa.String(length=16), nullable=False),
+        sa.Column("text", sa.String(length=400), nullable=False),
+        sa.Column("outlook", sa.String(length=180), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("aspect IN ('interest','view','habit','boundary')", name=op.f("ck_life_growth_aspect")),
+        sa.ForeignKeyConstraint(
+            ["user_id", "evidence_event_id"],
+            ["life_events.user_id", "life_events.id"],
+            name="fk_life_growth_evidence_event_id_owner",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("life_growth_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("life_growth_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_life_growth_owner_id"),
+    )
+    op.create_index(
+        "ix_life_growth_account_aspect",
+        "life_growth",
+        ["user_id", "aspect", sa.literal_column("updated_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
 
-    # 循环引用外键（use_alter）在 create_table 内联时被 alembic 略过，统一在表建成后补建。
+    # 循环引用在两端的表建成后连接。
     op.create_foreign_key(
         "fk_avatar_assets_preparation_job_id_owner",
         "avatar_assets",
@@ -2844,37 +3067,57 @@ def upgrade() -> None:
         ["owner_id", "id"],
         ondelete="SET NULL (replacement_job_id)",
     )
-    # 语句级触发器与统计函数是 features/conversation/statistics.py 生成结果的内联快照；
-    # autogenerate 不产出触发器，调整生成器后须同步更新此处。
+
+    # 会话统计的静态 SQL 快照由 conversation_statistics_ddl 生成。
     op.execute(
-        "CREATE OR REPLACE FUNCTION conversation_statistics_insert() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM new_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM new_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        sa.DDL(
+            "CREATE OR REPLACE FUNCTION conversation_statistics_insert() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM new_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.call_record_id IS NOT NULL) THEN 0 WHEN (messages.subtype = 'realtime_call') THEN CASE WHEN (messages.call_duration_ms IS NOT NULL) THEN 1 ELSE 0 END WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM new_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        )
     )
     op.execute(
-        "CREATE TRIGGER messages_statistics_insert AFTER INSERT ON messages REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_insert()"
+        sa.DDL(
+            "CREATE TRIGGER messages_statistics_insert AFTER INSERT ON messages REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_insert()"
+        )
     )
     op.execute(
-        "CREATE OR REPLACE FUNCTION conversation_statistics_update() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM new_rows UNION SELECT conversation_id FROM old_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM new_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id LEFT OUTER JOIN old_rows AS previous ON previous.id = messages.id \nWHERE (messages.conversation_id, messages.role, messages.subtype, messages.content, messages.content_type, messages.prompt_tokens, messages.completion_tokens, messages.tool_calls, messages.media_json, messages.reply_json) IS DISTINCT FROM (previous.conversation_id, previous.role, previous.subtype, previous.content, previous.content_type, previous.prompt_tokens, previous.completion_tokens, previous.tool_calls, previous.media_json, previous.reply_json) GROUP BY messages.conversation_id UNION ALL SELECT messages.conversation_id, sum(CASE WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * -1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * -1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * -1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * -1 AS tool_call_count \nFROM old_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id LEFT OUTER JOIN new_rows AS previous ON previous.id = messages.id \nWHERE (messages.conversation_id, messages.role, messages.subtype, messages.content, messages.content_type, messages.prompt_tokens, messages.completion_tokens, messages.tool_calls, messages.media_json, messages.reply_json) IS DISTINCT FROM (previous.conversation_id, previous.role, previous.subtype, previous.content, previous.content_type, previous.prompt_tokens, previous.completion_tokens, previous.tool_calls, previous.media_json, previous.reply_json) GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        sa.DDL(
+            "CREATE OR REPLACE FUNCTION conversation_statistics_update() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM new_rows UNION SELECT conversation_id FROM old_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.call_record_id IS NOT NULL) THEN 0 WHEN (messages.subtype = 'realtime_call') THEN CASE WHEN (messages.call_duration_ms IS NOT NULL) THEN 1 ELSE 0 END WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM new_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id LEFT OUTER JOIN old_rows AS previous ON previous.id = messages.id \nWHERE (messages.conversation_id, messages.role, messages.subtype, messages.content, messages.content_type, messages.prompt_tokens, messages.completion_tokens, messages.tool_calls, messages.media_json, messages.reply_json, messages.call_record_id, messages.call_duration_ms) IS DISTINCT FROM (previous.conversation_id, previous.role, previous.subtype, previous.content, previous.content_type, previous.prompt_tokens, previous.completion_tokens, previous.tool_calls, previous.media_json, previous.reply_json, previous.call_record_id, previous.call_duration_ms) GROUP BY messages.conversation_id UNION ALL SELECT messages.conversation_id, sum(CASE WHEN (messages.call_record_id IS NOT NULL) THEN 0 WHEN (messages.subtype = 'realtime_call') THEN CASE WHEN (messages.call_duration_ms IS NOT NULL) THEN 1 ELSE 0 END WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * -1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * -1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * -1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * -1 AS tool_call_count \nFROM old_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id LEFT OUTER JOIN new_rows AS previous ON previous.id = messages.id \nWHERE (messages.conversation_id, messages.role, messages.subtype, messages.content, messages.content_type, messages.prompt_tokens, messages.completion_tokens, messages.tool_calls, messages.media_json, messages.reply_json, messages.call_record_id, messages.call_duration_ms) IS DISTINCT FROM (previous.conversation_id, previous.role, previous.subtype, previous.content, previous.content_type, previous.prompt_tokens, previous.completion_tokens, previous.tool_calls, previous.media_json, previous.reply_json, previous.call_record_id, previous.call_duration_ms) GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        )
     )
     op.execute(
-        "CREATE TRIGGER messages_statistics_update AFTER UPDATE ON messages REFERENCING NEW TABLE AS new_rows OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_update()"
+        sa.DDL(
+            "CREATE TRIGGER messages_statistics_update AFTER UPDATE ON messages REFERENCING NEW TABLE AS new_rows OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_update()"
+        )
     )
     op.execute(
-        "CREATE OR REPLACE FUNCTION conversation_statistics_delete() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM old_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * -1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * -1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * -1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * -1 AS tool_call_count \nFROM old_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        sa.DDL(
+            "CREATE OR REPLACE FUNCTION conversation_statistics_delete() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    -- 先按会话顺序取锁，再用最新预设/父会话语义计算增量；与元数据重算串行。\n    PERFORM id FROM conversations WHERE id IN (SELECT conversation_id FROM old_rows) ORDER BY id FOR NO KEY UPDATE;\n    WITH batches AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.call_record_id IS NOT NULL) THEN 0 WHEN (messages.subtype = 'realtime_call') THEN CASE WHEN (messages.call_duration_ms IS NOT NULL) THEN 1 ELSE 0 END WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * -1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * -1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * -1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * -1 AS tool_call_count \nFROM old_rows AS messages JOIN conversations ON conversations.id = messages.conversation_id GROUP BY messages.conversation_id), delta AS (\n        SELECT conversation_id, sum(visible_message_count) AS visible_message_count, sum(input_token_count) AS input_token_count, sum(output_token_count) AS output_token_count, sum(tool_call_count) AS tool_call_count FROM batches GROUP BY conversation_id\n    )\n    UPDATE conversations AS target SET visible_message_count = target.visible_message_count + delta.visible_message_count, input_token_count = target.input_token_count + delta.input_token_count, output_token_count = target.output_token_count + delta.output_token_count, tool_call_count = target.tool_call_count + delta.tool_call_count\n    FROM delta WHERE target.id = delta.conversation_id AND (delta.visible_message_count != 0 OR delta.input_token_count != 0 OR delta.output_token_count != 0 OR delta.tool_call_count != 0);\n    RETURN NULL;\nEND\n$statistics$"
+        )
     )
     op.execute(
-        "CREATE TRIGGER messages_statistics_delete AFTER DELETE ON messages REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_delete()"
+        sa.DDL(
+            "CREATE TRIGGER messages_statistics_delete AFTER DELETE ON messages REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_delete()"
+        )
     )
     op.execute(
-        "CREATE OR REPLACE FUNCTION conversation_statistics_truncate() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    UPDATE conversations SET visible_message_count = 0, input_token_count = 0, output_token_count = 0, tool_call_count = 0 WHERE visible_message_count != 0 OR input_token_count != 0 OR output_token_count != 0 OR tool_call_count != 0;\n    RETURN NULL;\nEND\n$statistics$"
+        sa.DDL(
+            "CREATE OR REPLACE FUNCTION conversation_statistics_truncate() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    UPDATE conversations SET visible_message_count = 0, input_token_count = 0, output_token_count = 0, tool_call_count = 0 WHERE visible_message_count != 0 OR input_token_count != 0 OR output_token_count != 0 OR tool_call_count != 0;\n    RETURN NULL;\nEND\n$statistics$"
+        )
     )
     op.execute(
-        "CREATE TRIGGER messages_statistics_truncate AFTER TRUNCATE ON messages FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_truncate()"
+        sa.DDL(
+            "CREATE TRIGGER messages_statistics_truncate AFTER TRUNCATE ON messages FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_truncate()"
+        )
     )
     op.execute(
-        "CREATE OR REPLACE FUNCTION conversation_statistics_context() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    IF NOT EXISTS (SELECT current.id FROM new_conversations AS current JOIN old_conversations AS previous USING (id)\n        WHERE (current.parent_id, current.system_preset_id) IS DISTINCT FROM (previous.parent_id, previous.system_preset_id)) THEN RETURN NULL; END IF;\n    WITH changed AS (SELECT current.id FROM new_conversations AS current JOIN old_conversations AS previous USING (id)\n        WHERE (current.parent_id, current.system_preset_id) IS DISTINCT FROM (previous.parent_id, previous.system_preset_id)), totals AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, ' \t\r\n\x0b\x0c\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM messages AS messages JOIN conversations ON conversations.id = messages.conversation_id \nWHERE messages.conversation_id IN (SELECT changed.id \nFROM changed) GROUP BY messages.conversation_id)\n    UPDATE conversations AS target SET visible_message_count = coalesce(totals.visible_message_count, 0), input_token_count = coalesce(totals.input_token_count, 0), output_token_count = coalesce(totals.output_token_count, 0), tool_call_count = coalesce(totals.tool_call_count, 0)\n    FROM changed LEFT JOIN totals ON totals.conversation_id = changed.id\n    WHERE target.id = changed.id;\n    RETURN NULL;\nEND\n$statistics$"
+        sa.DDL(
+            "CREATE OR REPLACE FUNCTION conversation_statistics_context() RETURNS trigger\nLANGUAGE plpgsql AS $statistics$\nBEGIN\n    IF NOT EXISTS (SELECT current.id FROM new_conversations AS current JOIN old_conversations AS previous USING (id)\n        WHERE (current.parent_id, current.system_preset_id) IS DISTINCT FROM (previous.parent_id, previous.system_preset_id)) THEN RETURN NULL; END IF;\n    WITH changed AS (SELECT current.id FROM new_conversations AS current JOIN old_conversations AS previous USING (id)\n        WHERE (current.parent_id, current.system_preset_id) IS DISTINCT FROM (previous.parent_id, previous.system_preset_id)), totals AS (SELECT messages.conversation_id, sum(CASE WHEN (messages.call_record_id IS NOT NULL) THEN 0 WHEN (messages.subtype = 'realtime_call') THEN CASE WHEN (messages.call_duration_ms IS NOT NULL) THEN 1 ELSE 0 END WHEN (messages.role = 'user' AND conversations.system_preset_id = 'companion' AND conversations.parent_id IS NULL AND (messages.subtype IS NULL OR messages.subtype = '')) THEN (SELECT greatest(count(*), 1) AS greatest_1 \nFROM regexp_split_to_table(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_2.value ->> 'text'), '\n' ORDER BY anon_2.position) AS string_agg_1 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_2(value, position) \nWHERE (anon_2.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_2.value['text']) = 'string') ELSE messages.content END, '\\r?\\n(?:[ \\t]*\\r?\\n)+') AS anon_1(segment) \nWHERE btrim(anon_1.segment, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '') WHEN (messages.role = 'user') THEN 1 WHEN (messages.role = 'assistant' AND messages.content_type = 'companion_reply') THEN CASE WHEN (jsonb_typeof(messages.reply_json['bubbles']) = 'array') THEN jsonb_array_length(messages.reply_json['bubbles']) ELSE 0 END WHEN (messages.role = 'assistant' AND (btrim(CASE WHEN (messages.content_type = 'multimodal_v1' AND (messages.content IS JSON ARRAY) AND pg_input_is_valid(messages.content, 'jsonb')) THEN (SELECT string_agg((anon_3.value ->> 'text'), '\n' ORDER BY anon_3.position) AS string_agg_2 \nFROM jsonb_array_elements(CAST(messages.content AS JSONB)) WITH ORDINALITY AS anon_3(value, position) \nWHERE (anon_3.value ->> 'type') = 'input_text' AND jsonb_typeof(anon_3.value['text']) = 'string') ELSE messages.content END, U&' \\0009\\000D\\000A\\000B\\000C\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') != '' OR CASE WHEN (jsonb_typeof(messages.media_json) = 'array') THEN (messages.media_json @? 'strict $[*] ? (@.type() == \"object\")'::jsonpath) ELSE false END)) THEN 1 ELSE 0 END) * 1 AS visible_message_count, coalesce(sum(messages.prompt_tokens), 0) * 1 AS input_token_count, coalesce(sum(messages.completion_tokens), 0) * 1 AS output_token_count, (count(messages.id) FILTER (WHERE messages.tool_calls IS NOT NULL)) * 1 AS tool_call_count \nFROM messages AS messages JOIN conversations ON conversations.id = messages.conversation_id \nWHERE messages.conversation_id IN (SELECT changed.id \nFROM changed) GROUP BY messages.conversation_id)\n    UPDATE conversations AS target SET visible_message_count = coalesce(totals.visible_message_count, 0), input_token_count = coalesce(totals.input_token_count, 0), output_token_count = coalesce(totals.output_token_count, 0), tool_call_count = coalesce(totals.tool_call_count, 0)\n    FROM changed LEFT JOIN totals ON totals.conversation_id = changed.id\n    WHERE target.id = changed.id;\n    RETURN NULL;\nEND\n$statistics$"
+        )
     )
     op.execute(
-        "CREATE TRIGGER conversations_statistics_context AFTER UPDATE ON conversations REFERENCING OLD TABLE AS old_conversations NEW TABLE AS new_conversations FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_context()"
+        sa.DDL(
+            "CREATE TRIGGER conversations_statistics_context AFTER UPDATE ON conversations REFERENCING OLD TABLE AS old_conversations NEW TABLE AS new_conversations FOR EACH STATEMENT EXECUTE FUNCTION conversation_statistics_context()"
+        )
     )
     op.execute(
         """
@@ -2896,5 +3139,26 @@ FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 
 
 def downgrade() -> None:
-    op.execute("DROP SCHEMA public CASCADE")
-    op.execute("CREATE SCHEMA public")
+    # 一次移除互相引用的业务表，保留 public 中的其它对象及共享扩展。
+    op.execute("""
+        DROP TABLE
+            action_definitions, admin_sessions, appearance_assets, appearance_image_jobs,
+            appearance_preparation_jobs, assets, avatar_assets, companion_entries,
+            companion_fullbody_candidates, companion_intents, companion_outfits, companion_rhythms,
+            companion_scenes, companion_topic_batches, companion_topic_feedback, companion_topic_usages,
+            companion_topics, conversations, cron_jobs, custom_voices, diary_search_index, entry_assets,
+            entry_comments, entry_links, fullbody_review_jobs, image_gen_jobs, job_assets, job_requests, jobs,
+            library_works, life_action_admissions, life_event_search_index, life_events, life_growth,
+            life_pursuits, life_states, life_steps, login_records, media_continuations, media_manual_operations,
+            memories, memory_embeddings, memory_evidence, memory_fingerprints, memory_revisions, message_assets,
+            message_voice_refs, messages, nightly_activity_actions, nightly_activity_logs, outfit_creation_jobs,
+            personas, post_publications, prompt_submissions, provider_attempts, provider_lanes,
+            pursuit_evidence, remote_pairings, remote_sessions, scene_jobs, submission_messages,
+            system_settings, update_versions, user_model_configs, user_settings, user_social_accounts, users,
+            video_gen_jobs, visual_import_jobs, visual_items, visual_jobs, visual_observation_jobs,
+            visual_playbacks, visual_presentations, visual_version_assets, visual_versions, ws_events
+    """)
+    op.execute("""
+        DROP FUNCTION notify_ws_event(), conversation_statistics_insert(), conversation_statistics_update(),
+            conversation_statistics_delete(), conversation_statistics_truncate(), conversation_statistics_context()
+    """)

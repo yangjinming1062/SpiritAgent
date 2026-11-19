@@ -6,7 +6,11 @@ from fastapi import File, Form, Path, Query, UploadFile
 from fastapi.responses import FileResponse
 from features.updates.release_contracts import ReleaseManifestResponse
 from features.updates.schemas import UpdateVersionItem, UpdateVersionListResponse, UpdateVersionUpdate
-from features.updates.service_schemas import (
+from infrastructure.api_ids import ResourceId
+from infrastructure.constants import POSTGRES_INT8_MAX
+from infrastructure.database import DbSession
+from infrastructure.http_contracts import operation_policy
+from infrastructure.updater_contracts import (
     ServiceUpdateApplyRequest,
     ServiceUpdateCheckRequest,
     ServiceUpdateLogChunk,
@@ -15,10 +19,6 @@ from features.updates.service_schemas import (
     ServiceUpdateTaskList,
     ServiceUpdateTaskView,
 )
-from infrastructure.api_ids import ResourceId
-from infrastructure.constants import POSTGRES_INT8_MAX
-from infrastructure.database import DbSession
-from infrastructure.http_contracts import operation_policy
 from runtime.responses import MessageResponse
 
 from entrypoints.http.auth import CurrentAdmin

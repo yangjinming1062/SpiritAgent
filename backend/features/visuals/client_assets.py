@@ -4,7 +4,6 @@ from infrastructure.assets.asset_store import client_asset_url
 
 from .schemas import (
     ActorClipBody,
-    AmbientCatalogEntry,
     ComboMaterialRef,
     SceneMediaRef,
     StageComposition,
@@ -15,15 +14,9 @@ from .schemas import (
 )
 
 
-def client_material(material: ComboMaterialRef | None) -> ComboMaterialRef | None:
+def client_material[T: ComboMaterialRef | SceneMediaRef | None](material: T) -> T:
     if material is None:
-        return None
-    return material.model_copy(update={"path": client_asset_url(material.path)})
-
-
-def client_scene(material: SceneMediaRef | None) -> SceneMediaRef | None:
-    if material is None:
-        return None
+        return material
     return material.model_copy(update={"path": client_asset_url(material.path)})
 
 
@@ -39,9 +32,9 @@ def client_body(body: ActorClipBody | None) -> ActorClipBody | None:
     )
 
 
-def client_layer_media(layer: StageLayerMedia | None) -> StageLayerMedia | None:
+def client_layer_media[T: StageLayerMedia | None](layer: T) -> T:
     if layer is None:
-        return None
+        return layer
     return layer.model_copy(
         update={
             "media_url": client_asset_url(layer.media_url),
@@ -51,29 +44,19 @@ def client_layer_media(layer: StageLayerMedia | None) -> StageLayerMedia | None:
     )
 
 
-def client_catalog_entry(entry: AmbientCatalogEntry) -> AmbientCatalogEntry:
-    return entry.model_copy(
-        update={
-            "media_url": client_asset_url(entry.media_url),
-            "poster_url": client_asset_url(entry.poster_url) if entry.poster_url else None,
-            "body": client_body(entry.body),
-        }
-    )
-
-
 def client_stage_plan(plan: StagePlaybackPlan | None) -> StagePlaybackPlan | None:
     if plan is None:
         return None
     return plan.model_copy(
         update={
-            "scene": client_scene(plan.scene),
+            "scene": client_material(plan.scene),
             "scene_media": client_layer_media(plan.scene_media),
-            "actor_variants": [client_catalog_entry(entry) for entry in plan.actor_variants],
-            "fallback_actor_variants": [client_catalog_entry(entry) for entry in plan.fallback_actor_variants],
-            "cinematic_variants": [client_catalog_entry(entry) for entry in plan.cinematic_variants],
+            "actor_variants": [client_layer_media(entry) for entry in plan.actor_variants],
+            "fallback_actor_variants": [client_layer_media(entry) for entry in plan.fallback_actor_variants],
+            "cinematic_variants": [client_layer_media(entry) for entry in plan.cinematic_variants],
             "actor_still_url": client_asset_url(plan.actor_still_url) if plan.actor_still_url else None,
-            "wake_actor": client_catalog_entry(plan.wake_actor) if plan.wake_actor else None,
-            "wake_scene": client_scene(plan.wake_scene),
+            "wake_actor": client_layer_media(plan.wake_actor),
+            "wake_scene": client_material(plan.wake_scene),
             "wake_scene_media": client_layer_media(plan.wake_scene_media),
         }
     )
@@ -86,7 +69,7 @@ def client_composition(composition: StageComposition | None) -> StageComposition
     return composition.model_copy(
         update={
             "outfit_material": client_material(composition.outfit_material),
-            "scene_material": client_scene(composition.scene_material),
+            "scene_material": client_material(composition.scene_material),
             "identity_path": client_asset_url(composition.identity_path) if composition.identity_path else None,
             "media": StageCompositionMedia(
                 mode=media.mode,
@@ -106,7 +89,7 @@ def client_play_command(command: VisualPlayCommand) -> VisualPlayCommand:
             "media_path": client_asset_url(command.media_path),
             "poster_path": client_asset_url(command.poster_path) if command.poster_path else None,
             "outfit": client_material(command.outfit),
-            "scene": client_scene(command.scene),
+            "scene": client_material(command.scene),
             "body": client_body(command.body),
             "composition": client_composition(command.composition),
         }

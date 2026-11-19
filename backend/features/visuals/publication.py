@@ -494,7 +494,7 @@ async def publish_import_revision(
         action_id=source.action.action_id if getattr(source, "action", None) else None,
     )
     item, version, links = _publish_entity("analysis", target, asset, snapshot, references, regenerate=True)
-    result = await db.scalar(select(version.c.id).join(item, version.c.visual_id == item.c.id).add_cte(links))
+    result = await db.scalar(select(version.c.number).join(item, version.c.visual_id == item.c.id).add_cte(links))
     if result is None:
         raise VisualStateError("影像版本已更新，分析结果尚未替换旧版本")
     return result

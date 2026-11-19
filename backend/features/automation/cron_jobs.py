@@ -4,7 +4,7 @@ from typing import Any
 
 from croniter import croniter
 from infrastructure.config import SETTINGS
-from infrastructure.database import session_scope
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -103,7 +103,7 @@ async def create_job(
     kind: str = STANDARD_CRON_KIND,
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         job = await create_job_in_session(db, scope, prompt, schedule, name, one_shot, kind, expires_at)
         await db.commit()
         return job
@@ -154,21 +154,21 @@ async def create_job_in_session(
 
 async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
     validate_memory_scope(scope)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         job = await _get_scoped_job(db, scope, job_id)
         return job.to_dict() if job else None
 
 
 async def get_user_job(user_id: int, job_id: int) -> dict[str, Any] | None:
     """按 (id, user_id) 读取任务，不限预设；触发回合据此核对任务是否仍可执行。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         job = await db.scalar(select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id))
         return job.to_dict() if job else None
 
 
 async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
     validate_memory_scope(scope)
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         stmt = select(CronJob).where(
             CronJob.user_id == scope.user_id, CronJob.system_preset_id == scope.system_preset_id
         )
@@ -184,7 +184,7 @@ async def update_job(scope: MemoryScope, job_id: int, updates: dict[str, Any]) -
     _validate_job_text(updates.get("name"), updates.get("schedule"), updates.get("prompt"))
     validate_memory_scope(scope)
     user_id = scope.user_id
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "automation")
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
@@ -211,7 +211,7 @@ async def update_job(scope: MemoryScope, job_id: int, updates: dict[str, Any]) -
 async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     validate_memory_scope(scope)
     user_id = scope.user_id
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "automation")
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
@@ -224,7 +224,7 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
 
 async def resolve_job_conversation(user_id: int, job_id: int, conversation_id: int | None, name: str) -> int:
     """返回 standard 任务的执行会话；会话已被删除时新建并回写仍存在的任务（一次性任务触发时已删除）。"""
-    async with session_scope() as db:
+    async with SESSION_LOCAL() as db:
         if conversation_id is not None:
             existing = await owned_task_conversation_id(db, user_id, conversation_id)
             if existing is not None:
