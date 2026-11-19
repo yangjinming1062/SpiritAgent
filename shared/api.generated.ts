@@ -85,8 +85,8 @@ export interface ApiSchemas {
   "FullbodyReferenceGenerateRequest": { "feedback"?: (string | null); "image"?: (string | null); "content_type"?: (string | null); "mode": "edit" | "regenerate"; "candidate_id"?: (string | null) }
   "GatewayTicketRequest": { "stream_id"?: (string | null) }
   "GatewayTicketResponse": { "ticket": string; "expires_in": number }
-  "GestureReactionRequest": { "request_id": string; "kind": "tap" | "drag_released" | "chat_opened"; "occurred_at": string; "count"?: number }
-  "GestureReactionResponse": { "visual": (ApiSchemas["ReactionVisual"] | null); "text": (string | null) }
+  "GestureReactionRequest": { "request_id": string; "kind": "tap" | "drag_released" | "chat_opened"; "occurred_at": string; "count"?: number; "conversation_id"?: (string | null) }
+  "GestureReactionResponse": { "visual": (ApiSchemas["ReactionVisual"] | null) }
   "HumanReviewApproval": { "request_id": string; "approved_at": string; "content_basis_id": string; "dimensions": Array<"identity" | "goal" | "quality"> }
   "ImageJobParams": { "request": string; "request_scope": string; "prompt": string; "size": string; "subject": ("self" | null); "reference_image": (string | null); "secondary_reference_image": (string | null); "identity_json": (string | null); "identity_reference_mode": "primary" | "portrait_and_outfit"; "task": ApiSchemas["AiTaskKey"]; "directory": string; "media_ids": Array<string>; "goal_ids": Array<string>; "parent_media_id": (string | null) }
   "ImagePromptResponse": { "prompt": string }
@@ -201,7 +201,7 @@ export interface ApiSchemas {
   "RpcComboMaterialRef": { "material_id": (string | null); "name": string; "path": string; "content_hash": string; "description": string; "revision": (string | null) }
   "RpcCommandDispatchResult": { "command": string; "result": ApiSchemas["RpcCommandResult"] }
   "RpcCommandResult": { "status": "ok" | "error"; "message": string; "payload": (ApiSchemas["RpcSessionClearResult"] | ApiSchemas["RpcSessionCompressionResult"] | ApiSchemas["RpcRememberCommandResult"] | null); "hydrate": boolean }
-  "RpcCompanionMessageEvent": { "is_main": boolean; "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
+  "RpcCompanionMessageEvent": { "read_aloud": boolean; "gesture_at": (string | null); "is_main": boolean; "session_id": string; "message_id": string; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
   "RpcCompanionReactionEvent": { "visual_id": string; "version": number; "occurred_at": string }
   "RpcCompanionSessionMessageView": { "id": string; "role": "assistant"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "companion_reply"; "bubbles": Array<ApiSchemas["RpcReplyBubbleView"]> }
   "RpcCompanionSignalResult": { "queued": boolean }

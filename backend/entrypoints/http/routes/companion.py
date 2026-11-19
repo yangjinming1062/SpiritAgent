@@ -86,7 +86,7 @@ from features.companion.views import get_persona_view, update_persona_view
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
-from infrastructure.api_ids import ResourceId
+from infrastructure.api_ids import ResourceId, parse_resource_id
 from infrastructure.assets.asset_store import (
     ImagePixelLimitError,
     UnsupportedImageFormatError,
@@ -96,8 +96,9 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.http_range import serve_ranged_file
 from infrastructure.config import SETTINGS
-from infrastructure.database import DbSession
+from infrastructure.database import SESSION_LOCAL, DbSession
 from infrastructure.http_contracts import operation_policy
+from infrastructure.library_visibility import released_work_file
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from pydantic import ValidationError
@@ -605,6 +606,17 @@ async def serve_companion_asset(
     is_authed = session is not None and (session[0].id == user_id)
     if not is_authed and not verify_signed_asset_request(user_id, asset_path, expires, sig):
         raise HTTPException(status_code=403, detail="Invalid or expired signature")
+    if asset_path.partition("/")[0].casefold() == "private-work" and not verify_signed_asset_request(
+        user_id, asset_path, expires, sig
+    ):
+        parts = asset_path.split("/", 2)
+        try:
+            work_id = parse_resource_id(parts[1])
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(status_code=404, detail="Asset not found") from exc
+        async with SESSION_LOCAL() as db:
+            if not await released_work_file(db, user_id, work_id, f"companion-assets/{user_id}/{asset_path}"):
+                raise HTTPException(status_code=404, detail="Asset not found")
     result = resolve_companion_asset_path(user_id, asset_path)
     if result is None:
         raise HTTPException(status_code=404, detail="Asset not found")

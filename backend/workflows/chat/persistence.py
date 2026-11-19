@@ -413,14 +413,14 @@ async def _persist_assistant_no_tool_turn(
     if persist and call_record_id is None and reply_bubbles is not None and is_companion_turn:
         _spawn_post_turn_task(
             user_id,
-            update_mood_from_companion_turn(user_id, user_text, reply_bubbles),
+            update_mood_from_companion_turn(user_id, conv.id, user_text, reply_bubbles),
             track_task,
             session_id=str(conv.id),
             transcripts=audio_transcripts,
         )
         _spawn_post_turn_task(
             user_id,
-            emit_companion_reaction(user_id, user_text, reply_bubbles),
+            emit_companion_reaction(user_id, conv.id, user_text, reply_bubbles),
             track_task,
             session_id=str(conv.id),
             transcripts=audio_transcripts,

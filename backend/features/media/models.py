@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from infrastructure.job_models import JobRecord
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -21,7 +22,7 @@ class ImageGenJob(JobRecord):
     cleanup_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class MediaContinuation(ModelBase, TimestampMixin):
+class MediaContinuation(LibraryMaterial, ModelBase, TimestampMixin):
     __tablename__ = "media_continuations"
     __table_args__ = (UniqueConstraint("user_id", "operation_id", name="uq_media_continuation_operation"),)
 
@@ -36,7 +37,7 @@ class MediaContinuation(ModelBase, TimestampMixin):
     result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
-class MediaManualOperation(ModelBase, TimestampMixin):
+class MediaManualOperation(LibraryMaterial, ModelBase, TimestampMixin):
     __tablename__ = "media_manual_operations"
     __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_media_manual_request"),)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

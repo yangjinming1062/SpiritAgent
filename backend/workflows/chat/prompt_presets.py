@@ -26,6 +26,7 @@ LIFE_SPACE_TOOL_NAMES = VISUAL_TOOL_NAMES | frozenset(
         "life_recall",
         "diary_recall",
         "life_adjust",
+        "life_share_work",
         "scene_list",
         "scene_get",
         "scene_create",

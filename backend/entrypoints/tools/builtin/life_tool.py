@@ -10,6 +10,7 @@ from features.life.schemas import (
     LifeDecisionRequest,
     LifeNarrativePatch,
     LifePursuitView,
+    LifeShare,
     LifeStepView,
 )
 from features.life.use_cases import read_pursuit, read_pursuits, read_state
@@ -19,7 +20,7 @@ from infrastructure.text import resolve_language, resolve_prompt_text, tool_erro
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.memory_scope import MemoryScope
 from runtime.tools.registry import ToolsRegistry
-from workflows.life_decisions import adjust_life
+from workflows.life_decisions import adjust_life, share_finished_work
 
 _STATE_INTERNAL_FIELDS = {"user_id", "next_review_at", "scene_revision", "presentation_revision", "updated_at"}
 _RESULT_RESOURCE_KEYS = LIFE_REFERENCE_KEYS - {
@@ -198,7 +199,47 @@ async def life_adjust(
         return tool_error(str(exc))
 
 
+class PersonalWorkExcerpt(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    event_id: ResourceId = Field(description="private_works 或 life_recall 中已完成作品的事件 id")
+    title: str = Field(min_length=1, max_length=120)
+    narrative: str = Field(min_length=1, max_length=600, description="你愿意让对方看到的片段")
+
+
+async def life_share_work(
+    user_id: ResourceId,
+    memory_scope: MemoryScope | None = None,
+    llm_config: UserLlmConfig | None = None,
+    user_settings: dict[str, Any] | None = None,
+    **arguments: Any,
+) -> str:
+    if memory_scope != MemoryScope(user_id, "companion") or llm_config is None or not llm_config.is_configured:
+        return tool_error("仅伙伴本人可以选择公开作品")
+    try:
+        excerpt = PersonalWorkExcerpt.model_validate(
+            {k: v for k, v in arguments.items() if k in PersonalWorkExcerpt.model_fields}
+        )
+        await share_finished_work(
+            user_id,
+            LifeShare(**excerpt.model_dump(), channel="life", release_work=True),
+            llm_config,
+            resolve_language((user_settings or {}).get("language")),
+        )
+        return json.dumps({"available_in_library": True, "event_id": str(excerpt.event_id)})
+    except ValueError as exc:
+        return tool_error(str(exc))
+
+
 def register(registry: ToolsRegistry) -> None:
+    registry.register(
+        {
+            "name": "life_share_work",
+            "description": "你决定公开一件已经完成的私下作品时，把原件加入素材库，并在生活页留下你选的片段。只聊感受无需公开作品。 / Release an existing private work and your chosen excerpt only when you want the other person to see the artifact.",
+            "parameters": PersonalWorkExcerpt.model_json_schema(),
+        },
+        life_share_work,
+    )
     registry.register(
         {
             "name": "life_inspect",

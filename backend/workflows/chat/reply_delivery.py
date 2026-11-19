@@ -47,7 +47,7 @@ class OmittedMediaError(ValueError):
 
 class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["dialogue", "written"]
+    kind: Literal["dialogue", "written", "recollection"]
     bubbles: list[dict[str, JsonValue]]
     used_topic_ids: list[Annotated[ResourceId, Field(gt=0, strict=True)]] = Field(default_factory=list)
 
@@ -188,7 +188,7 @@ def companion_reply_schema(
                 COMPANION_DIALOGUE_FIELD_GUIDANCES, language
             )
         definitions["TextBubble"]["properties"]["text"]["description"] = (
-            "kind=dialogue: "
+            "kind=dialogue or recollection: "
             + resolve_prompt_text(COMPANION_DIALOGUE_FIELD_GUIDANCES, language)
             + " kind=written: "
             + resolve_prompt_text(COMPANION_WRITTEN_FIELD_GUIDANCES, language)
@@ -361,7 +361,8 @@ def decode_companion_reply(
     if len(set(draft.used_topic_ids)) != len(draft.used_topic_ids):
         raise ValueError("Topic references must be unique")
     # 分句前核对完整地址，防止查询串中的问号被拆开后丢失校验依据。
-    validate_reply_links(draft.bubbles, kind=draft.kind, references=references)
+    delivery_kind: Literal["dialogue", "written"] = "written" if draft.kind == "written" else "dialogue"
+    validate_reply_links(draft.bubbles, kind=delivery_kind, references=references)
     values = draft.bubbles
     if draft.kind == "written":
         if not values:
@@ -413,7 +414,7 @@ def decode_companion_reply(
         for bubble in values:
             if bubble.get("type") == "text" and isinstance(bubble.get("text"), str):
                 bubble["text"] = bubble["text"].strip()
-    return json.dumps(values, ensure_ascii=False), draft.kind, draft.used_topic_ids
+    return json.dumps(values, ensure_ascii=False), delivery_kind, draft.used_topic_ids
 
 
 def validate_companion_reply_repair(
@@ -678,6 +679,7 @@ class ResolvedCompanionReply:
     text: str
     reply: CompanionReply | None
     degraded: bool
+    source_kind: Literal["dialogue", "written", "recollection"] | None = None
     decision: Literal["silent", "deferred"] | None = None
     followup: DeferredReply | None = None
 
@@ -715,7 +717,7 @@ def resolve_companion_reply(
                 original = parsed
         original_kind = original.get("kind")
         if kind_value != original_kind and (
-            original_kind in ("dialogue", "written", "quiet", "defer")
+            original_kind in ("dialogue", "written", "recollection", "quiet", "defer")
             or (kind_value in ("quiet", "defer") and not media_turn.required_goals)
         ):
             raise CompanionReplyFormatError(
@@ -814,4 +816,6 @@ def resolve_companion_reply(
             )
         except ValueError as exc:
             raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=True) from exc
-    return ResolvedCompanionReply(text=text, reply=reply, degraded=degraded)
+    return ResolvedCompanionReply(
+        text=text, reply=reply, degraded=degraded, source_kind="recollection" if kind_value == "recollection" else kind
+    )

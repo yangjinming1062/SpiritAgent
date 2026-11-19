@@ -84,12 +84,9 @@ async def material_has_external_references(
                 (VisualJob.result_image_id.is_(None) | (VisualJob.result_image_id != exclude_visual_id)),
             )
         )
-    if await db.scalar(visual_query.limit(1)) is not None:
-        return True
-    if await db.scalar(version_query.limit(1)) is not None:
-        return True
-    if await db.scalar(job_query.limit(1)) is not None:
-        return True
+    for query in (visual_query, version_query, job_query):
+        if await db.scalar(query.limit(1).execution_options(discover_private_works=True)) is not None:
+            return True
 
     # 静态呈现可能只保存素材冻结引用而没有成品列，不能因撤销动作破坏当前舞台。
     presentations = await db.execute(
@@ -110,7 +107,7 @@ async def material_has_external_references(
     )
     if exclude_import_job_id is not None:
         import_query = import_query.where(VisualImportJob.id != exclude_import_job_id)
-    for row in await db.execute(import_query):
+    for row in await db.execute(import_query.execution_options(discover_private_works=True)):
         if _analysis_contains_material(row.result_json, kind, material_id) or _analysis_contains_material(
             row.context_json, kind, material_id
         ):

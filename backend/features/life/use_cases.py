@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from secrets import token_hex
 
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import release_private_work, released_work, visible_library_work
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import or_, select
@@ -14,7 +15,7 @@ from features.configuration.settings.timezone import resolve_user_timezone
 
 from .execution import enqueue_action, notify_shared_step
 from .lifecycle import transition_pursuit
-from .models import LifeEvent, LifeState, LifeStep
+from .models import LifeEvent, LifeGrowth, LifeState, LifeStep
 from .queries import (
     empty_state_view,
     event_view,
@@ -22,6 +23,7 @@ from .queries import (
     get_pursuit,
     list_events,
     list_pursuits,
+    project_public_completions,
     pursuit_view,
     shared_pursuit_ids,
     state_view,
@@ -44,7 +46,6 @@ from .schemas import (
     LifeStepRequest,
     LifeStepView,
     LifeTrajectoryListResponse,
-    PersonalGrowth,
     PersonalGrowthChange,
     PrivateLifeEpisode,
 )
@@ -187,9 +188,17 @@ async def read_pursuit(user_id: int, pursuit_id: int, *, shared_only: bool = Fal
         if row is None or (shared_only and not row.shared_with_user):
             return None
         steps = await db.scalars(
-            select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.pursuit_id == pursuit_id).order_by(LifeStep.id)
+            select(LifeStep)
+            .where(
+                LifeStep.user_id == user_id,
+                LifeStep.pursuit_id == pursuit_id,
+                *([visible_library_work(LifeStep.library_work_id)] if shared_only else []),
+            )
+            .order_by(LifeStep.id)
         )
         pursuit = pursuit_view(row)
+        if shared_only:
+            await project_public_completions(db, user_id, [pursuit])
         if (
             shared_only
             and pursuit.previous_pursuit_id is not None
@@ -324,21 +333,59 @@ async def commit_private_episode_in_session(
     return event_view(view)
 
 
-async def share_life_event_in_session(db: AsyncSession, user_id: int, share: LifeShare, source_id: int) -> None:
+async def share_life_event_in_session(db: AsyncSession, user_id: int, share: LifeShare, source_id: int) -> bool:
     """公开一段独立写就的片段。保留原记录及其可见范围。"""
     await get_or_create_state(db, user_id, lock=True)
     original = await db.scalar(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id == source_id))
     if original is None:
         raise LifeInputError("分享来源不属于当前生活记录")
-    if await db.scalar(
-        select(LifeEvent.id).where(
+    if original.source == "life_share":
+        return False
+    step = await db.get(LifeStep, original.step_id) if original.step_id is not None else None
+    work_id = step.library_work_id if step else None
+    public_artifact = work_id is None or await released_work(db, user_id, work_id)
+    result = public_result_reference(original)
+    release = False
+    if share.release_work:
+        if (
+            work_id is None
+            or step is None
+            or step.state != "completed"
+            or not step.is_creation
+            or original.kind != "life.step.completed"
+            or not result
+            or ("visual_id" in result and "visual_version_id" not in result)
+        ):
+            raise LifeInputError("原作品已不可用")
+        if not public_artifact:
+            release = await release_private_work(db, user_id, work_id)
+    if not release and await db.scalar(
+        select(LifeEvent.id)
+        .where(
             LifeEvent.user_id == user_id,
             LifeEvent.source == "life_share",
             LifeEvent.fact_json["event_id"].as_string() == str(source_id),
             LifeEvent.fact_json["channel"].as_string() == share.channel,
         )
+        .limit(1)
     ):
-        return
+        return False
+    if release:
+        public_artifact = True
+        if "scene_id" in result:
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": result["scene_id"]}
+            )
+        elif "outfit_id" in result:
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": result["outfit_id"]}
+            )
+        elif "action_id" in result:
+            emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+        elif "visual_id" in result:
+            emit_ws_event(
+                db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
+            )
     public = share.channel == "life"
     await accept_event_in_session(
         db,
@@ -353,19 +400,27 @@ async def share_life_event_in_session(db: AsyncSession, user_id: int, share: Lif
             occurred_at=original.occurred_at,
             # 摘选有自己的轨迹身份，成果事实和完整阅读笔记仍属于来源事件。
             trajectory_kind=("virtual" if original.trajectory_kind == "virtual" else "milestone") if public else None,
-            result_ref=public_result_reference(original) if public else {},
+            result_ref=result if public and public_artifact else {},
             shared_with_user=public,
         ),
     )
+    return True
 
 
 async def update_personal_growth_in_session(
     db: AsyncSession, user_id: int, change: PersonalGrowthChange, evidence: LifeEventView | None
 ) -> None:
-    row = await get_or_create_state(db, user_id, lock=True)
-    values = dict(row.personal_growth_json)
+    state = await get_or_create_state(db, user_id, lock=True)
+    existing = None
+    if change.growth_id is not None:
+        existing = await db.scalar(
+            select(LifeGrowth).where(LifeGrowth.user_id == user_id, LifeGrowth.id == change.growth_id)
+        )
+        if existing is None or existing.aspect != change.aspect:
+            raise LifeStateConflictError("选定的认识已失效")
     if change.text is None:
-        values.pop(change.aspect, None)
+        if existing is not None:
+            await db.delete(existing)
     else:
         if (
             evidence is None
@@ -373,17 +428,27 @@ async def update_personal_growth_in_session(
             or evidence.fact_type not in ("virtual_activity", "result")
         ):
             raise LifeInputError("个人认识需要来自伙伴自己的经历或已确认成果")
-        if not await db.scalar(select(LifeEvent.id).where(LifeEvent.user_id == user_id, LifeEvent.id == evidence.id)):
-            raise LifeInputError("个人认识的依据不属于当前生活记录")
-        previous = values.get(change.aspect)
-        if previous is not None and previous.get("text") == change.text:
+        if existing is None:
+            existing = await db.scalar(
+                select(LifeGrowth)
+                .where(
+                    LifeGrowth.user_id == user_id,
+                    LifeGrowth.aspect == change.aspect,
+                    LifeGrowth.text == change.text,
+                )
+                .limit(1)
+            )
+        if existing is None:
+            existing = LifeGrowth(user_id=user_id, aspect=change.aspect)
+            db.add(existing)
+        if (
+            existing.text == change.text
+            and existing.outlook == change.outlook
+            and existing.evidence_event_id == evidence.id
+        ):
             return
-        values[change.aspect] = PersonalGrowth(
-            text=change.text, evidence_event_id=evidence.id, updated_at=utc_now()
-        ).model_dump(mode="json")
-    if row.personal_growth_json != values:
-        row.personal_growth_json = values
-        row.revision += 1
+        existing.text, existing.outlook, existing.evidence_event_id = change.text, change.outlook, evidence.id
+    state.revision += 1
 
 
 async def _apply_pursuit_operation(

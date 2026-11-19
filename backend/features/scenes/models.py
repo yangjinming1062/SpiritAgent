@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from infrastructure.job_models import JobRecord
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -47,7 +48,7 @@ class SceneSource(StrEnum):
     USER_UPLOAD = "user_upload"
 
 
-class CompanionScene(ModelBase, TimestampMixin):
+class CompanionScene(LibraryMaterial, ModelBase, TimestampMixin):
     __tablename__ = "companion_scenes"
     __table_args__ = (UniqueConstraint("user_id", "source_key", name="uq_companion_scenes_user_source"),)
 

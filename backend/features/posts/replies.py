@@ -64,7 +64,6 @@ class CommentReplyDecision(BaseModel):
 
 
 async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
-    ctx = await load_post_prompt_context(user_id)
     async with SESSION_LOCAL() as db:
         target = await begin_reply(db, user_id, post_id, comment_id)
         if target is None:
@@ -74,7 +73,7 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
             return
         attempt = target.reply_attempts
         deadline = ensure_utc(target.created_at) + timedelta(days=1)
-        if target.reply_followup is not None and ctx.now >= deadline:
+        if target.reply_followup is not None and utc_now() >= deadline:
             await finish_reply(db, user_id, post_id, comment_id, attempt, None)
             await db.commit()
             return
@@ -90,37 +89,38 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
             for c in comments
             if c.id in allowed_users or (c.role == "companion" and c.reply_to_comment_id in allowed_users)
         ]
-        post_data = post_prompt_entry(post, ctx)
-        payload = {
-            **ctx.payload,
-            "media_context": post_data.pop("media_context"),
-            "post": post_data,
-            "previous_followup": target.reply_followup,
-            "max_delay_seconds": max(0, min(23 * 3600, int((deadline - ctx.now).total_seconds()) - 1)),
-            "target_comment": {
-                "id": target.id,
-                "role": "user",
-                "content": target.content,
-                "created_at": format_local_iso(target.created_at, ctx.user_timezone),
-                "seconds_after_publication": elapsed_seconds(target.created_at, post.published_at),
-                "seconds_until_reply": elapsed_seconds(ctx.now, target.created_at),
-            },
-            "comments": [
-                {
-                    "id": c.id,
-                    "reply_to_comment_id": c.reply_to_comment_id,
-                    "role": c.role,
-                    "content": c.content,
-                    "created_at": format_local_iso(c.created_at, ctx.user_timezone),
-                    "seconds_after_previous_comment": elapsed_seconds(c.created_at, thread[i - 1].created_at)
-                    if i
-                    else None,
-                }
-                for i, c in enumerate(thread)
-            ],
-        }
         config = await resolve_user_llm_config(db, user_id, AiTaskKey.posts)
         await db.commit()
+    ctx = await load_post_prompt_context(user_id, memory_query=target.content + " " + post.title)
+    post_data = post_prompt_entry(post, ctx)
+    payload = {
+        **ctx.payload,
+        "media_context": post_data.pop("media_context"),
+        "post": post_data,
+        "previous_followup": target.reply_followup,
+        "max_delay_seconds": max(0, min(23 * 3600, int((deadline - ctx.now).total_seconds()) - 1)),
+        "target_comment": {
+            "id": target.id,
+            "role": "user",
+            "content": target.content,
+            "created_at": format_local_iso(target.created_at, ctx.user_timezone),
+            "seconds_after_publication": elapsed_seconds(target.created_at, post.published_at),
+            "seconds_until_reply": elapsed_seconds(ctx.now, target.created_at),
+        },
+        "comments": [
+            {
+                "id": c.id,
+                "reply_to_comment_id": c.reply_to_comment_id,
+                "role": c.role,
+                "content": c.content,
+                "created_at": format_local_iso(c.created_at, ctx.user_timezone),
+                "seconds_after_previous_comment": elapsed_seconds(c.created_at, thread[i - 1].created_at)
+                if i
+                else None,
+            }
+            for i, c in enumerate(thread)
+        ],
+    }
     if not config.is_configured:
         raise RuntimeError("LLM is not configured")
 

@@ -41,6 +41,7 @@ _EFFECT_TOOLS = frozenset(
     {
         "companion_wait",
         "life_adjust",
+        "life_share_work",
         "visual_play",
         "visual_generate",
         "action_design",

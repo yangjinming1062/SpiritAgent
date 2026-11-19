@@ -13,6 +13,7 @@ from features.companion.persona_service import onboarded_user_ids
 from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.values import load_user_settings
 from features.life.actions import LIFE_CAPABILITIES, ReadingAction, VisualAction
+from features.life.execution import checkpoint
 from features.life.schemas import LifeStepView
 from features.media.image_generation import resolve_image_gen_chain
 from features.scenes.query_contracts import SceneSnapshot
@@ -26,7 +27,7 @@ from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import utc_now
-from infrastructure.web.extract_provider import resolve_extract_provider
+from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope
 from runtime.tools.toolsets import disabled_backend_tool_names
@@ -110,7 +111,9 @@ async def capability_blocks(
     if "visual.generate" in targets and not (await presentation_state(user_id, with_catalog=False)).autonomous_enabled:
         blocked["visual.generate"] = CapabilityBlock("permission_required", "自主影像制作已关闭")
     if source != "nightly":
-        blocked["outreach.schedule"] = CapabilityBlock("permission_required", "后续联系由夜间规划安排")
+        blocked["outreach.schedule"] = CapabilityBlock(
+            "permission_required", "日常联系用经历的 chat 摘选，次日定时安排由夜间规划登记"
+        )
     async with SESSION_LOCAL() as db:
         for capability, task in (
             ("outfit.create", AiTaskKey.outfit),
@@ -140,18 +143,37 @@ async def capability_blocks(
     return {name: problem for name, problem in blocked.items() if name in targets}
 
 
+def _web_reading_block(disabled: set[str], *, search: bool) -> CapabilityBlock | None:
+    if "web_extract" in disabled or (search and "web_search" in disabled):
+        return CapabilityBlock("permission_required", "网页读取工具已关闭")
+    extractor = resolve_extract_provider()
+    if not extractor.is_available() or not extractor.supports_extract():
+        return CapabilityBlock("unavailable", "网页正文提取尚未配置")
+    if search:
+        searcher = resolve_search_provider()
+        if not searcher.is_available() or not searcher.supports_search():
+            return CapabilityBlock("unavailable", "网页搜索尚不可用")
+    return None
+
+
 async def life_capability_context(user_id: int) -> dict[str, Any]:
     """日常生活判断的行动目录与素材；模型只从此处了解可执行范围。"""
     materials = await load_life_materials(user_id)
     blocked = await capability_blocks(user_id, materials=materials)
     async with SESSION_LOCAL() as db:
         topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
+        disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
+    url_block = _web_reading_block(disabled, search=False)
+    search_block = url_block or _web_reading_block(disabled, search=True)
+    if url_block and not topics:
+        blocked.setdefault("content.read", url_block)
     return {
         "capabilities": {name: name not in blocked for name in LIFE_CAPABILITIES},
         "blocked_capabilities": {name: problem.reason for name, problem in blocked.items()},
         "capability_descriptions": {
             name: definition.description for name, definition in LIFE_CAPABILITIES.items() if name not in blocked
         },
+        "reading_sources": {"public_urls": url_block is None, "web_search": search_block is None},
         "outfits": [
             {"id": str(item.id), "name": item.name, "description": item.description} for item in materials.outfits
         ],
@@ -172,17 +194,12 @@ async def action_block_reason(user_id: int, step: LifeStepView) -> tuple[str, st
     """已登记步骤的执行前复核；素材与工具条件变化时阻止本次提交。"""
     if problem := (await capability_blocks(user_id, source=step.source, capabilities=(step.kind,))).get(step.kind):
         return problem.disposition, problem.reason
-    if isinstance(step.action, ReadingAction):
+    if isinstance(step.action, ReadingAction) and (step.action.urls or step.action.query):
         async with SESSION_LOCAL() as db:
             disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
-        if (step.action.query and "web_search" in disabled) or (
-            (step.action.query or step.action.urls) and "web_extract" in disabled
-        ):
-            return "permission_required", "网页读取工具已关闭"
-        if step.action.query or step.action.urls:
-            provider = resolve_extract_provider()
-            if not provider.is_available() or not provider.supports_extract():
-                return "unavailable", "网页正文提取尚未配置"
+        problem = _web_reading_block(disabled, search=not step.action.urls)
+        if problem and not (await checkpoint(user_id, step.id)).get("sources"):
+            return problem.disposition, problem.reason
     if isinstance(step.action, VisualAction) and step.action.media_kind == "video":
         async with SESSION_LOCAL() as db:
             if not await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.visuals):

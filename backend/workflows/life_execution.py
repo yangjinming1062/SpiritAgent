@@ -30,6 +30,7 @@ from features.life.use_cases import read_step, require_step_submission, update_b
 from features.scenes.service import SceneBusyError, SceneLockedError, SceneQuotaExceededError
 from features.scenes.snapshots import schedule_scene_snapshot
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from infrastructure.timezone import parse_timezone
@@ -164,7 +165,8 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
                 return
             if step.state in {"running", "unknown"}:
                 try:
-                    await _reconcile(user_id, step)
+                    with library_work(step.library_work_id):
+                        await _reconcile(user_id, step)
                 except Exception as exc:
                     if step.kind == "content.read":
                         await finish_step(user_id, step.id, state="failed", error=str(exc))
@@ -194,7 +196,8 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
             if claimed is None:
                 return
             try:
-                await _execute(user_id, claimed)
+                with library_work(claimed.library_work_id):
+                    await _execute(user_id, claimed)
             except (SceneBusyError, SceneLockedError, SceneQuotaExceededError) as exc:
                 await defer_step(
                     user_id,

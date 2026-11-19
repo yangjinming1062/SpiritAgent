@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from pydantic import BaseModel, ConfigDict
@@ -131,8 +132,10 @@ async def continue_media_wait(user_id: int, operation_id: str, *, explicit: bool
 
 async def reconcile_media_waits(user_id: int | None = None, job_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
-        statement = select(MediaContinuation.user_id, MediaContinuation.operation_id).where(
-            MediaContinuation.state == "waiting", MediaContinuation.automatic.is_(True)
+        statement = (
+            select(MediaContinuation.user_id, MediaContinuation.operation_id, MediaContinuation.library_work_id)
+            .execution_options(discover_private_works=True)
+            .where(MediaContinuation.state == "waiting", MediaContinuation.automatic.is_(True))
         )
         if user_id is not None:
             statement = statement.where(MediaContinuation.user_id == user_id)
@@ -141,9 +144,10 @@ async def reconcile_media_waits(user_id: int | None = None, job_id: int | None =
         waits = list(
             (await db.execute(statement.order_by(MediaContinuation.updated_at, MediaContinuation.id).limit(100))).all()
         )
-    for owner, operation in waits:
+    for owner, operation, work_id in waits:
         try:
-            await continue_media_wait(owner, operation)
+            with library_work(work_id):
+                await continue_media_wait(owner, operation)
         except Exception:
             logger.warning(
                 "Media continuation deferred", extra={"user_id": owner, "operation_id": operation}, exc_info=True

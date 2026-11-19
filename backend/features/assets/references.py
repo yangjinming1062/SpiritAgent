@@ -3,6 +3,7 @@
 from typing import Any, Protocol
 
 from infrastructure.assets.references import asset_paths
+from infrastructure.library_visibility import all_asset_references
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,10 +36,11 @@ def message_asset_paths(message: MessageAssetSnapshot, user_id: int) -> set[str]
 
 
 async def collect_live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    referenced: set[str] = set()
-    for contribution in asset_contributions():
-        referenced |= await contribution.references(db, user_id)
-    return referenced
+    with all_asset_references(db):
+        referenced: set[str] = set()
+        for contribution in asset_contributions():
+            referenced |= await contribution.references(db, user_id)
+        return referenced
 
 
 async def scanned_asset_paths(db: AsyncSession, user_id: int, statement: Select) -> set[str]:

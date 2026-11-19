@@ -64,6 +64,7 @@ async def generate_turn_response(
             ),
         }
         recovery_used = False
+        reasoning_effort = inference.reasoning_effort
         reply_format_error: CompanionReplyFormatError | None = None
         while True:
             try:
@@ -78,7 +79,7 @@ async def generate_turn_response(
                         delivery=delivery,
                         on_text_delivered=set_text_delivered,
                         reply_bubble_sink=reply_bubble_sink,
-                        reasoning_effort=inference.reasoning_effort,
+                        reasoning_effort=reasoning_effort,
                         temperature=inference.temperature,
                         turn_request=request,
                         user_local_tz=inputs.user_local_tz,
@@ -103,6 +104,8 @@ async def generate_turn_response(
                 if has_next_attempt or recovery_used or not exc.retryable:
                     raise
                 recovery_used = True
+                if task == AiTaskKey.proactive and exc.reason == "max_output_tokens":
+                    reasoning_effort = "none"
                 logger.warning(
                     "Retrying incomplete response at the final chain attempt",
                     extra={"provider": provider.provider_name, "model": provider.config.model, "error": str(exc)},

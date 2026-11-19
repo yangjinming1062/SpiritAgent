@@ -7,6 +7,7 @@ from weakref import WeakValueDictionary
 
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import current_library_work
 from infrastructure.text import ensure_utc, utc_now
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from sqlalchemy import select, update
@@ -283,6 +284,7 @@ async def create_visual_job(
         pending = await db.scalars(
             select(VisualJob).where(
                 VisualJob.user_id == user_id,
+                VisualJob.library_work_id == current_library_work(),
                 VisualJob.purpose == "create",
                 VisualJob.state.in_(("queued", "running", "paused", "unknown")),
                 VisualJob.target_kind == target_kind,

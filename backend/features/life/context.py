@@ -4,17 +4,26 @@
 和日记分别拼出互相漂移的背景。
 """
 
+from collections.abc import Collection
 from datetime import datetime
 
+from infrastructure.search import extract_search_terms
 from infrastructure.text import format_local_iso, utc_now
-from sqlalchemy import case, or_, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
 
-from .models import LifeEvent, LifePursuit
-from .queries import empty_state_view, event_view, get_life_state_view, pursuit_view
-from .schemas import LifeContext, LifeShareChannel
+from .models import LifeEvent, LifeGrowth, LifePursuit
+from .queries import (
+    completed_personal_works,
+    empty_state_view,
+    event_view,
+    get_life_state_view,
+    pursuit_view,
+    visible_completion_results,
+)
+from .schemas import LifeContext, LifeShareChannel, PersonalGrowth
 from .trajectory import trajectory_scope, trajectory_topic_heads
 
 
@@ -22,6 +31,7 @@ async def read_life_context_in_session(
     db: AsyncSession,
     user_id: int,
     *,
+    growth_query: str = "",
     pursuit_limit: int = 5,
     event_limit: int = 12,
     include_topic_heads: bool = False,
@@ -32,14 +42,6 @@ async def read_life_context_in_session(
     """在调用方事务内读取一份一致的生活快照。"""
 
     state = await get_life_state_view(db, user_id) or empty_state_view(user_id)
-    if state.personal_growth:
-        evidence_ids = {item.evidence_event_id for item in state.personal_growth.values()}
-        current_evidence = set(
-            await db.scalars(select(LifeEvent.id).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(evidence_ids)))
-        )
-        state.personal_growth = {
-            aspect: item for aspect, item in state.personal_growth.items() if item.evidence_event_id in current_evidence
-        }
     pursuit_rows = []
     for status in ("active", "paused"):
         priority = (
@@ -69,13 +71,75 @@ async def read_life_context_in_session(
         .order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
         .limit(event_limit)
     )
+    terms = extract_search_terms(" ".join((growth_query, state.current_activity, *(row.title for row in pursuit_rows))))
+    ranking = [LifeGrowth.updated_at.desc(), LifeGrowth.id.desc()]
+    if terms:
+        ranking.insert(
+            0, case((or_(*(LifeGrowth.text.icontains(term, autoescape=True) for term in terms)), 0), else_=1)
+        )
+    ranked = (
+        select(
+            LifeGrowth.id,
+            func.row_number().over(partition_by=LifeGrowth.aspect, order_by=ranking).label("position"),
+        )
+        .where(LifeGrowth.user_id == user_id)
+        .subquery()
+    )
+    growth = await db.scalars(
+        select(LifeGrowth)
+        .join(ranked, ranked.c.id == LifeGrowth.id)
+        .where(ranked.c.position <= 6)
+        .order_by(ranked.c.position, LifeGrowth.id)
+    )
+    recent = [event_view(row) for row in events]
+    shared_completed = {
+        item.pursuit_id
+        for item in recent
+        if item.shared_with_user and item.kind == "life.pursuit.completed" and item.pursuit_id is not None
+    }
     return LifeContext(
         state=state,
+        shared_completion_results=await visible_completion_results(db, user_id, shared_completed),
+        private_works=await completed_personal_works(db, user_id) if not publication_events_only else [],
+        personal_growth=[PersonalGrowth.model_validate(row) for row in growth],
         active_pursuits=[pursuit_view(row) for row in pursuit_rows if row.status == "active"][:pursuit_limit],
         paused_pursuits=[pursuit_view(row) for row in pursuit_rows if row.status == "paused"][:pursuit_limit],
-        recent_events=[event_view(row) for row in events],
+        recent_events=recent,
         topic_heads=await trajectory_topic_heads(db, user_id) if include_topic_heads else [],
     )
+
+
+def _contact_excerpt(event: LifeEvent) -> dict[str, str]:
+    return {
+        "id": str(event.id),
+        "title": event.fact_json["title"],
+        "excerpt": event.narrative or "",
+        "fact_type": event.fact_type,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
+def _chat_excerpts(user_id: int) -> Select[tuple[LifeEvent]]:
+    return select(LifeEvent).where(
+        LifeEvent.user_id == user_id,
+        LifeEvent.kind == "life.share.prepared",
+        LifeEvent.fact_json["channel"].as_string() == "chat",
+    )
+
+
+async def read_contact_excerpt(db: AsyncSession, user_id: int, event_id: int) -> dict[str, str] | None:
+    excerpt = await db.scalar(
+        _chat_excerpts(user_id).where(LifeEvent.fact_json["event_id"].as_string() == str(event_id)).limit(1)
+    )
+    return _contact_excerpt(excerpt) if excerpt is not None else None
+
+
+async def contact_excerpt_sources(db: AsyncSession, user_id: int, ids: Collection[int]) -> dict[int, dict[str, str]]:
+    if not ids:
+        return {}
+    return {
+        row.id: _contact_excerpt(row) for row in await db.scalars(_chat_excerpts(user_id).where(LifeEvent.id.in_(ids)))
+    }
 
 
 async def read_life_share_excerpts(

@@ -24,8 +24,10 @@ class PostPromptContext:
     payload: dict[str, Any]
 
 
-async def load_post_prompt_context(user_id: int, *, publication: bool = False) -> PostPromptContext:
-    companion = await load_companion_prompt_context(user_id)
+async def load_post_prompt_context(
+    user_id: int, *, publication: bool = False, memory_query: str = ""
+) -> PostPromptContext:
+    companion = await load_companion_prompt_context(user_id, memory_query=memory_query)
     if companion is None:
         raise PostError("伙伴资料尚未就绪")
     now = utc_now()
@@ -49,6 +51,7 @@ async def load_post_prompt_context(user_id: int, *, publication: bool = False) -
             "persona": companion.persona_extras,
             "user_profile": companion.memory.user_profile,
             "long_term_memories": companion.memory.recalled,
+            **({"background_memory": companion.memory.background} if not publication else {}),
             "companion_reflection": companion.memory.relationship,
             "life_context": companion.life_context.prompt_payload(shared_only=True, for_publication=publication),
             **({"selected_life_excerpts": excerpts} if publication else {}),

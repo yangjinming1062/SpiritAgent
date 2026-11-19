@@ -64,7 +64,7 @@ export function ConversationPage({
   const cycleFocus = createFocusCycleHandler('button, input, [tabindex="0"]')
   const sidebarToggle = useRef<HTMLButtonElement>(null)
   const railToggle = useRef<HTMLButtonElement>(null)
-  const companionVisible = useRef(false)
+  const companionVisible = useRef<string | null>(null)
   const sidebarId = useId()
   const railId = useId()
   const strings = useStrings()
@@ -132,14 +132,14 @@ export function ConversationPage({
   const companion = sessionPresetId === 'companion'
 
   useEffect(() => {
-    const next = active && visible && foreground && companion
+    const next = active && visible && foreground && companion && !callActive ? sessionId : null
 
-    if (next && !companionVisible.current) {
-      enqueueGesture('chat_opened')
+    if (next && next !== companionVisible.current) {
+      enqueueGesture('chat_opened', next)
     }
 
     companionVisible.current = next
-  }, [active, visible, foreground, companion])
+  }, [active, visible, foreground, companion, callActive, sessionId])
 
   return (
     <MediaViewHost viewId={viewId}>

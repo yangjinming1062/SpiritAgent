@@ -13,10 +13,12 @@ from features.companion.intents import (
 from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.prompts import PROACTIVE_CONTEXT_LABELS
 from features.configuration.settings.values import get_user_setting
+from features.conversation.context_window import load_recent_companion_exchange
 from features.conversation.evidence import latest_user_message_id
 from features.conversation.reply_audio import discard_reply_audio, prepare_reply_audio
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.turn_access import ensure_main_conversation
+from features.life.context import read_contact_excerpt
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
@@ -34,9 +36,17 @@ _FAILURE_REASON_MAX_CHARS = 200
 
 
 def _build_proactive_hint(
-    intent: CompanionIntentView, disturbance_tier: str, language: str, source: DeferredReplySource | None
+    intent: CompanionIntentView,
+    disturbance_tier: str,
+    language: str,
+    source: DeferredReplySource | None,
+    life_experience: dict[str, str] | None,
+    recent_exchange: str,
 ) -> str:
     data = {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier}
+    if life_experience is not None:
+        data["life_experience"] = life_experience
+        data["recent_exchange"] = recent_exchange
     if source is not None:
         data["deferred_from_user_message"] = {"id": str(source.message_id), "content": source.content}
     return resolve_prompt_text(PROACTIVE_CONTEXT_LABELS, language) + "\n" + json.dumps(data, ensure_ascii=False)
@@ -95,6 +105,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     revision = get_user_proactive_record(user_id).contact_revision
     message_id = 0
     reply = None
+    reply_content = None
     delivered = False
     language = "zh"
     source = None
@@ -107,6 +118,16 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     conversation_id = source.conversation_id if source is not None else None
                 else:
                     conversation_id = (await ensure_main_conversation(db, user_id)).id
+                life_experience = (
+                    await read_contact_excerpt(db, user_id, intent.life_event_id) if intent.life_event_id else None
+                )
+                if intent.source_kind == "life" and life_experience is None:
+                    raise LookupError("Selected experience is no longer available")
+                recent_exchange = (
+                    await load_recent_companion_exchange(db, user_id, current_interaction=False)
+                    if life_experience
+                    else ""
+                )
                 message_id = await latest_user_message_id(db, user_id)
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
                 language = resolve_language(await get_user_setting(db, user_id, "language"))
@@ -115,7 +136,11 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 return
             request = ChatRequest(
                 session_id=str(conversation_id),
-                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier, language, source)),
+                message=ChatMessageRequest(
+                    content=_build_proactive_hint(
+                        intent, disturbance_tier, language, source, life_experience, recent_exchange
+                    )
+                ),
             )
             with companion_turn_plan(user_id, intent.id, intent.expires_at) as plan:
                 await run_chat_turn(
@@ -123,6 +148,9 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     user_id,
                     emitter,
                     ephemeral=True,
+                    contact_evidence={"selected_experience": life_experience, "recent_dialogue": recent_exchange}
+                    if life_experience is not None
+                    else None,
                     headless=True,
                     # 常规档主动回合只提供文字能力：语音由回合装配按档位关闭，视觉表达在此排除。
                     excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"})
@@ -135,6 +163,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     ),
                 )
             reply = emitter.final_reply
+            reply_content = emitter.final_reply_content
             if reply and not emitter.error:
                 await prepare_reply_audio(user_id, reply)
         finish_task = asyncio.create_task(
@@ -142,7 +171,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 user_id,
                 trigger,
                 reply=reply,
-                reply_content=emitter.final_reply_content,
+                reply_content=reply_content,
                 followup=plan.followup,
                 contact_revision=revision,
                 user_message_id=message_id,

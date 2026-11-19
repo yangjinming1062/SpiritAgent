@@ -13,6 +13,7 @@ import asyncpg
 from infrastructure.async_io import cancel_and_wait
 from infrastructure.correlation import begin_local_scope
 from infrastructure.database import session_scope
+from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from sqlalchemy import Row, and_, or_, select, update
@@ -126,6 +127,7 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
                     WSEvent.user_id,
                     WSEvent.created_at,
                     WSEvent.retry_count,
+                    WSEvent.library_work_id,
                 )
             )
         ).all()
@@ -289,7 +291,7 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
 
     backpressure = False
     handled_delivered_ids: list[int] = []
-    for event_id, event_type, payload, user_id, _, retry_count in claimed:
+    for event_id, event_type, payload, user_id, _, retry_count, work_id in claimed:
         if payload is None:
             logger.warning("Skipping and failing unparseable WSEvent", extra={"event_id": event_id})
             await _mark_event_failure(event_id, retry_count, error="Unparseable JSON payload")
@@ -297,14 +299,15 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
 
         handler = _handlers.get(event_type)
         if handler is not None:
-            _EVENT_TASKS.spawn(
-                (event_type, user_id, event_id),
-                partial(handler, user_id, payload),
-                user_id=user_id,
-            )
+            with library_work(work_id):
+                _EVENT_TASKS.spawn(
+                    (event_type, user_id, event_id),
+                    partial(handler, user_id, payload),
+                    user_id=user_id,
+                )
             handled_delivered_ids.append(event_id)
             # 受众为 all 的事件在内部处理之外仍要送达客户端；本行已按内部处理认领，推送失败不回退业务唤醒。
-            if event_type in remote_event_types():
+            if work_id is None and event_type in remote_event_types():
                 try:
                     await MANAGER.publish_event(user_id, event_type, payload, event_id=event_id)
                 except Exception:
@@ -315,6 +318,9 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
                     )
             continue
 
+        if work_id is not None:
+            handled_delivered_ids.append(event_id)
+            continue
         try:
             enqueued = await MANAGER.publish_event(user_id, event_type, payload, event_id=event_id)
         except Exception as e:

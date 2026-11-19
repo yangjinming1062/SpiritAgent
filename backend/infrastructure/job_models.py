@@ -22,11 +22,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapped, Mapper, mapped_column
 
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from infrastructure.text import utc_now
 
 
-class JobRecord(ModelBase, TimestampMixin):
+class JobRecord(LibraryMaterial, ModelBase, TimestampMixin):
     __tablename__ = "jobs"
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_jobs_user_id"),

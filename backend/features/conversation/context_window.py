@@ -3,12 +3,13 @@ from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from infrastructure.text import ensure_utc, utc_now
+from pydantic import JsonValue
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
-from features.conversation.formatting import format_messages_compact
+from features.conversation.formatting import companion_context_items, format_messages_compact
 from features.conversation.main_conversation import UI_ONLY_SUBTYPES
 from features.conversation.memory_scope import user_authored_conversation
 from features.conversation.models import PRIVATE_CHECKPOINT_SUBTYPE, Conversation, Message
@@ -106,28 +107,72 @@ async def load_companion_dialogue(db: AsyncSession, user_id: int, *, now: dateti
     )
 
 
+@dataclass(frozen=True)
+class DeliveredLifeExcerpt:
+    excerpt_id: int
+    delivered_at: datetime
+    bubbles: list[dict[str, JsonValue]]
+
+
+async def delivered_life_excerpts(
+    db: AsyncSession, user_id: int, conversation_id: int | None = None
+) -> list[DeliveredLifeExcerpt]:
+    query = (
+        select(Message)
+        .join(Conversation)
+        .where(
+            Message.user_id == user_id,
+            Message.life_excerpt_id.is_not(None),
+            Message.role == "assistant",
+            Message.content_type == "companion_reply",
+            Message.id > Conversation.context_after_message_id,
+            user_authored_conversation(),
+            Conversation.system_preset_id == COMPANION_PRESET_ID,
+        )
+    )
+    if conversation_id is not None:
+        query = query.where(Conversation.id == conversation_id)
+    rows = await db.scalars(query.order_by(Message.created_at.desc(), Message.id.desc()).limit(12))
+    return [
+        DeliveredLifeExcerpt(row.life_excerpt_id, row.created_at, companion_context_items(row, dialogue_only=True))
+        for row in rows
+        if row.life_excerpt_id is not None
+    ]
+
+
 async def load_recent_context_window(db: AsyncSession, user_id: int) -> str:
     return (await load_companion_dialogue(db, user_id)).content
 
 
-async def load_recent_companion_exchange(db: AsyncSession, user_id: int, *, conversation_id: int | None = None) -> str:
-    """读取指定陪伴会话近期的文本及通话发言；账户级生活判断使用主会话。"""
+async def load_recent_companion_exchange(
+    db: AsyncSession, user_id: int, *, conversation_id: int | None = None, current_interaction: bool = True
+) -> str:
+    """即时状态参考半小时内的互动。关系判断保留最近的带日期往来，可以跨日及同预设顶层会话。"""
     now = utc_now()
+    window = [Message.created_at >= now - timedelta(minutes=30)] if current_interaction else []
+    if conversation_id is not None:
+        window.append(Conversation.id == conversation_id)
+    elif current_interaction:
+        window.append(Conversation.kind == "special")
     rows = await db.scalars(
         select(Message)
         .join(Conversation)
         .where(
             Conversation.user_id == user_id,
-            Conversation.id == conversation_id if conversation_id is not None else Conversation.kind == "special",
             Conversation.system_preset_id == COMPANION_PRESET_ID,
             user_authored_conversation(),
             Message.id > Conversation.context_after_message_id,
             Message.role.in_(("user", "assistant")),
             context_visible_subtype(),
             Message.tool_calls.is_(None),
-            Message.created_at.between(now - timedelta(minutes=30), now),
+            Message.created_at <= now,
+            *window,
         )
-        .order_by(Message.id.desc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(16)
     )
-    return format_messages_compact(list(reversed(rows.all())), user_local_tz=await resolve_user_timezone(db, user_id))
+    return format_messages_compact(
+        list(reversed(rows.all())),
+        user_local_tz=await resolve_user_timezone(db, user_id),
+        max_content_chars=None if current_interaction else 600,
+    )

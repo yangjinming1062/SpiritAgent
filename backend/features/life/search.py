@@ -17,7 +17,7 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from .actions import ReadingResultView
 from .models import LifeEvent, LifeEventSearchIndex, LifeStep
 from .prompts import life_content_payload
-from .queries import event_view, step_view
+from .queries import event_view, project_public_completions, step_view
 from .schemas import LifeEventPublicView, LifeEventView, LifeTrajectoryEntry
 from .trajectory import trajectory_entries, trajectory_scope
 
@@ -183,9 +183,9 @@ async def search_life(
             shared_only=True,
             limit=limit,
         )
-        return LifeSearchResponse.model_validate(
-            LifeRecallResponse(items=await _recall_items(db, user_id, rows), search=status), from_attributes=True
-        )
+        items = await _recall_items(db, user_id, rows)
+        await project_public_completions(db, user_id, items)
+        return LifeSearchResponse.model_validate(LifeRecallResponse(items=items, search=status), from_attributes=True)
 
 
 async def search_trajectory(

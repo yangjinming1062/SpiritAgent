@@ -238,7 +238,7 @@ def _nightly_capability(name: str) -> NightlyCapability:
     schema["required"] = list(dict.fromkeys([*schema["required"], "narrative"]))
     if name in CREATION_CAPABILITIES:
         schema["properties"]["add_to_user_library"] = {
-            "const": True,
+            "type": "boolean",
             "description": "选择让用户在素材库看到这项创作的成品",
         }
         schema["required"].append("add_to_user_library")
@@ -371,7 +371,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         if action.pursuit_id is not None and action.pursuit_id not in active_pursuits:
             raise LlmJsonValidationError("unknown_pursuit", fields=("pursuit_id",))
-        if capability_name in CREATION_CAPABILITIES and action.arguments.get("add_to_user_library") is not True:
+        if capability_name in CREATION_CAPABILITIES and type(action.arguments.get("add_to_user_library")) is not bool:
             raise LlmJsonValidationError("missing_library_choice", fields=("add_to_user_library",))
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
         # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。

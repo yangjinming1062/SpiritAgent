@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from infrastructure.assets import asset_store
+from infrastructure.domain_locks import lock_domain
 from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -40,9 +41,11 @@ async def scene_exists(db: AsyncSession, user_id: int, scene_id: int) -> bool:
     )
 
 
-async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionScene | None:
-    return await db.scalar(
-        select(CompanionScene)
+async def account_has_pending_scene_task(db: AsyncSession, user_id: int) -> bool:
+    """在受理事务内串行检查账户的全部场景，调用方只取得忙碌状态。"""
+    await lock_domain(db, user_id, "scenes")
+    pending = await db.scalar(
+        select(CompanionScene.id)
         .where(
             CompanionScene.user_id == user_id,
             or_(
@@ -50,9 +53,10 @@ async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionSce
                 CompanionScene.replacement_job.has(SceneJob.state.in_(("queued", "running"))),
             ),
         )
-        .order_by(CompanionScene.id.desc())
         .limit(1)
+        .execution_options(discover_private_works=True)
     )
+    return pending is not None
 
 
 async def scene_policy(db: AsyncSession, user_id: int) -> ScenePolicy:

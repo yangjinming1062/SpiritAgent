@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.job_models import JobRecord
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
@@ -66,7 +67,7 @@ class OutfitCreationJob(JobRecord):
     result_outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
 
 
-class CompanionOutfit(ModelBase, TimestampMixin):
+class CompanionOutfit(LibraryMaterial, ModelBase, TimestampMixin):
     """衣柜造型素材及其着装参考；ready 表示静态造型图就绪。"""
 
     __tablename__ = "companion_outfits"

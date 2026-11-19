@@ -208,6 +208,7 @@ async def settle_business_steps(
                 source="life_step",
                 fact_type="result" if final_state == "completed" else "execution",
                 step_id=row.id,
+                shared_with_user=False if row.library_work_id else None,
                 pursuit_id=row.pursuit_id,
                 fact={
                     "description": row.description,
@@ -230,6 +231,7 @@ async def settle_business_steps(
                     fact_type="result",
                     pursuit_id=pursuit.id,
                     step_id=row.id,
+                    shared_with_user=False if row.library_work_id else None,
                     fact={"title": pursuit.title, "progress": current["progress"], "next_step": current["next_step"]},
                     result_ref=deepcopy(final_result),
                 )
@@ -264,7 +266,9 @@ async def settle_business_steps(
                     life_state,
                     activity_step,
                     now,
-                    shared_with_user=pursuit is not None and pursuit.shared_with_user,
+                    shared_with_user=not activity_step.library_work_id
+                    and pursuit is not None
+                    and pursuit.shared_with_user,
                 )
         elif life_state.activity_step_id in step_changes:
             clear_activity_step(db, life_state, kind="result" if state == "completed" else "intent")

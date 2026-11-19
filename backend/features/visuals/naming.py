@@ -9,6 +9,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import read_valid_image_data_uri
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import current_library_work, library_work
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,7 +26,7 @@ from .models import VisualItem
 from .prompts import VISUAL_TITLE
 from .repository import notify_visuals_updated
 
-_PENDING: dict[int, dict[int, None]] = {}
+_PENDING: dict[int, dict[int, int | None]] = {}
 _TASKS = TaskScope("visuals.naming")
 _STOPPING = False
 logger = get_logger(__name__)
@@ -117,9 +118,10 @@ async def _run_naming_jobs(user_id: int) -> None:
     attempted: set[_NamingInput] = set()
     while pending := _PENDING.get(user_id):
         visual_id = next(iter(pending))
-        pending.pop(visual_id)
+        work_id = pending.pop(visual_id)
         try:
-            await _name_visual(user_id, visual_id, attempted)
+            with library_work(work_id):
+                await _name_visual(user_id, visual_id, attempted)
         except LlmCallBlockedError:
             continue
         except Exception:
@@ -129,7 +131,7 @@ async def _run_naming_jobs(user_id: int) -> None:
 def schedule_visual_title(user_id: int, visual_id: int) -> None:
     if _STOPPING or is_user_in_maintenance(user_id):
         return
-    _PENDING.setdefault(user_id, {})[visual_id] = None
+    _PENDING.setdefault(user_id, {})[visual_id] = current_library_work()
 
     def finished(_done: asyncio.Task[None]) -> None:
         # 同键可能已被新 worker 接管，只清理没有继任者的待办。
@@ -146,12 +148,17 @@ async def resume_visual_title_jobs(user_id: int | None = None) -> None:
     if user_id is None:
         _STOPPING = False
     async with SESSION_LOCAL() as db:
-        query = select(VisualItem.user_id, VisualItem.id).where(VisualItem.title == "")
+        query = (
+            select(VisualItem.user_id, VisualItem.id, VisualItem.library_work_id)
+            .where(VisualItem.title == "")
+            .execution_options(discover_private_works=True)
+        )
         if user_id is not None:
             query = query.where(VisualItem.user_id == user_id)
         rows = list(await db.execute(query.order_by(VisualItem.user_id, VisualItem.id)))
-    for owner_id, visual_id in rows:
-        schedule_visual_title(owner_id, visual_id)
+    for owner_id, visual_id, work_id in rows:
+        with library_work(work_id):
+            schedule_visual_title(owner_id, visual_id)
 
 
 async def stop_visual_title_jobs() -> None:

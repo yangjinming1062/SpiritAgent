@@ -63,7 +63,6 @@ class LifeState(ModelBase, TimestampMixin):
     activity_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activity_step_id: Mapped[int | None] = mapped_column(ForeignKey("life_steps.id", ondelete="SET NULL"))
     activity_shared_with_user: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    personal_growth_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     presentation_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     presentation_evaluated_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     current_scene_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
@@ -155,6 +154,7 @@ class LifeStep(ModelBase, TimestampMixin):
     pursuit_id: Mapped[int | None] = mapped_column(
         ForeignKey("life_pursuits.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    library_work_id: Mapped[int | None] = mapped_column(ForeignKey("library_works.id", ondelete="CASCADE"))
     idempotency_key: Mapped[str] = mapped_column(String(160))
     kind: Mapped[str] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
@@ -278,6 +278,21 @@ class LifeEvent(ModelBase, TimestampMixin):
     )
 
 
+class LifeGrowth(ModelBase, TimestampMixin):
+    """每条当前认识可单独延续或撤回；删除来源经历也删除其派生认识。"""
+
+    __tablename__ = "life_growth"
+    __table_args__ = (
+        CheckConstraint("aspect IN ('interest','view','habit','boundary')", name="aspect"),
+        Index("ix_life_growth_account_aspect", "user_id", "aspect", text("updated_at DESC"), text("id DESC")),
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    evidence_event_id: Mapped[int] = mapped_column(ForeignKey("life_events.id", ondelete="CASCADE"))
+    aspect: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(String(400))
+    outlook: Mapped[str] = mapped_column(String(180))
+
+
 class LifeEventSearchIndex(SearchIndexRow):
     __tablename__ = "life_event_search_index"
     __table_args__ = search_index_constraints(__tablename__)
@@ -291,3 +306,4 @@ class PursuitEvidence(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     pursuit_id: Mapped[int] = mapped_column(ForeignKey("life_pursuits.id", ondelete="CASCADE"), index=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("life_events.id", ondelete="CASCADE"), index=True)
+    used_for_completion: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))

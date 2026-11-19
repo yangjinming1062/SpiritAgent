@@ -39,6 +39,7 @@ class CompanionIntentView(BaseModel):
 
     id: ResourceId
     source_kind: str | None = Field(default=None, exclude=True)
+    life_event_id: ResourceId | None = Field(default=None, exclude=True)
     intent: str = Field(min_length=1)
     status: CompanionIntentStatus
     not_before_at: datetime

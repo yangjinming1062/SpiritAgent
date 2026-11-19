@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
+from infrastructure.library_visibility import all_asset_references
 from sqlalchemy.ext.asyncio import AsyncSession
 
 type References = Callable[[AsyncSession, int], Awaitable[set[str]]]
@@ -38,23 +39,26 @@ def asset_contributions() -> tuple[AssetContribution, ...]:
 
 
 async def cleanup_obsolete_references(db: AsyncSession, user_id: int) -> set[str]:
-    released: set[str] = set()
-    for contribution in asset_contributions():
-        if contribution.cleanup is not None:
-            released |= await contribution.cleanup(db, user_id)
-    return released
+    with all_asset_references(db):
+        released: set[str] = set()
+        for contribution in asset_contributions():
+            if contribution.cleanup is not None:
+                released |= await contribution.cleanup(db, user_id)
+        return released
 
 
 async def protected_asset_paths(db: AsyncSession, user_id: int) -> dict[str, datetime]:
-    protected: dict[str, datetime] = {}
-    for contribution in asset_contributions():
-        if contribution.protection is not None:
-            for path, until in (await contribution.protection(db, user_id)).items():
-                protected[path] = max(until, protected.get(path, until))
-    return protected
+    with all_asset_references(db):
+        protected: dict[str, datetime] = {}
+        for contribution in asset_contributions():
+            if contribution.protection is not None:
+                for path, until in (await contribution.protection(db, user_id)).items():
+                    protected[path] = max(until, protected.get(path, until))
+        return protected
 
 
 async def forget_deleted_references(db: AsyncSession, user_id: int, paths: Sequence[str]) -> None:
-    for contribution in asset_contributions():
-        if contribution.forget is not None:
-            await contribution.forget(db, user_id, paths)
+    with all_asset_references(db):
+        for contribution in asset_contributions():
+            if contribution.forget is not None:
+                await contribution.forget(db, user_id, paths)

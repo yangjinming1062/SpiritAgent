@@ -1,4 +1,4 @@
-import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
+import { isSpriteOverlayVisible, speakProactive } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/features/character'
 import {
@@ -41,7 +41,17 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       findConversationRuntime(payload.session_id)?.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
 
       if (displayText && $effectiveTier.get() !== 'still' && isSpriteOverlayVisible()) {
-        showMediaHint(displayText, payload.session_id)
+        if (payload.gesture_at) {
+          if (Date.now() - Date.parse(payload.gesture_at) < 15_000 && !$screenLocked.get()) {
+            if (payload.read_aloud) {
+              void speakProactive(displayText)
+            } else {
+              showMediaHint(displayText, payload.session_id)
+            }
+          }
+        } else {
+          showMediaHint(displayText, payload.session_id)
+        }
       }
 
       break

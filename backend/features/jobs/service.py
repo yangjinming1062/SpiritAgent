@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
 from infrastructure.job_models import JobRecord
 from infrastructure.text import utc_now
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import Select, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import CTE
@@ -205,14 +205,10 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
     return paths
 
 
-async def settled_job_ids(db: AsyncSession) -> set[int]:
-    return set(
-        await db.scalars(
-            select(JobRecord.id).where(
-                JobRecord.state.in_(("succeeded", "failed", "cancelled")), JobRecord.cleanup_pending.is_(False)
-            )
-        )
-    )
+def settled_job_ids() -> Select[tuple[int]]:
+    """内部保留期按物理任务的终态判定，涵盖未公开作品。"""
+    jobs = JobRecord.__table__.c
+    return select(jobs.id).where(jobs.state.in_(("succeeded", "failed", "cancelled")), jobs.cleanup_pending.is_(False))
 
 
 async def owned_job_kind(db: AsyncSession, user_id: int, job_id: int) -> str | None:

@@ -146,6 +146,9 @@ flowchart LR
     life_steps --> life_pursuits
     life_event_search_index --> life_events
     life_events --> life_steps
+    life_growth --> life_events
+    companion_intents --> life_events
+    life_steps --> library_works
     pursuit_evidence --> life_pursuits
     pursuit_evidence --> life_events
     nightly_activity_actions --> nightly_activity_logs

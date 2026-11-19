@@ -27,6 +27,7 @@ from infrastructure.assets.asset_store import (
 from infrastructure.assets.references import asset_paths
 from infrastructure.async_io import cancel_and_wait, cancel_tasks, run_blocking
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, centered_crop_box, crop_fraction
 from infrastructure.text import resolve_language, utc_now
@@ -2450,122 +2451,127 @@ async def resume_visual_jobs(user_id: int | None = None) -> None:
         query = select(VisualJob).where(VisualJob.state.in_(("queued", "running", "unknown", "paused")))
         if user_id is not None:
             query = query.where(VisualJob.user_id == user_id)
-        rows = list(await db.scalars(query))
+        rows = list(await db.scalars(query.execution_options(discover_private_works=True)))
     for row in rows:
-        progress = visual_progress(row)
-        if row.state == "paused":
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, row.user_id, row.id, lock=True)
-                if current.state == "paused":
-                    await settle_visual_steps(db, row.user_id, current)
-                    await db.commit()
-            continue
-        if row.state == "queued" and row.stage in {RESUME_WAITING, RECOVERY_WAITING}:
-            schedule_visual_job(row.user_id, row.id, allow_model_steps=row.stage == RESUME_WAITING)
-            continue
-        if progress is not None and await reattach_visual_video_attempt(row.user_id, row.id, progress):
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, row.user_id, row.id, lock=True)
-                saved = visual_progress(current)
-                if (
-                    current.state not in {"queued", "running", "unknown"}
-                    or saved is None
-                    or saved.generation_id != progress.generation_id
-                    or saved.paused_by_user
-                    or current.revision != row.revision
-                ):
-                    continue
-                current.checkpoint = progress.model_dump(mode="json")
-                if await restart_visual_steps(db, row.user_id, current):
-                    current.state, current.stage, current.error = "running", "video", None
-                else:
-                    current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
-                    await settle_visual_steps(db, row.user_id, current)
-                await notify_visuals_updated(db, row.user_id)
-                await db.commit()
-            schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
-            continue
-        if row.stage in {"review", "reviewing", "checking"}:
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, row.user_id, row.id, lock=True)
-                if current.state not in {"queued", "running", "unknown"} or current.revision != row.revision:
-                    continue
-                current.state, current.stage = "paused", "review_pending"
+        with library_work(row.library_work_id):
+            await _resume_stored_visual_job(row)
+
+
+async def _resume_stored_visual_job(row: VisualJob) -> None:
+    progress = visual_progress(row)
+    if row.state == "paused":
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, row.user_id, row.id, lock=True)
+            if current.state == "paused":
                 await settle_visual_steps(db, row.user_id, current)
-                await notify_visuals_updated(db, row.user_id)
                 await db.commit()
-            continue
-        if progress is not None and progress.paused_by_user:
-            continue
-        if row.state == "unknown":
+        return
+    if row.state == "queued" and row.stage in {RESUME_WAITING, RECOVERY_WAITING}:
+        schedule_visual_job(row.user_id, row.id, allow_model_steps=row.stage == RESUME_WAITING)
+        return
+    if progress is not None and await reattach_visual_video_attempt(row.user_id, row.id, progress):
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, row.user_id, row.id, lock=True)
+            saved = visual_progress(current)
             if (
-                progress is None
-                or progress.failure_reason != "result_download_failed"
-                or not visual_progress_has_video_work(progress)
+                current.state not in {"queued", "running", "unknown"}
+                or saved is None
+                or saved.generation_id != progress.generation_id
+                or saved.paused_by_user
+                or current.revision != row.revision
             ):
-                continue
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, row.user_id, row.id, lock=True)
-                saved = visual_progress(current)
-                if (
-                    current.state != "unknown"
-                    or saved is None
-                    or saved.generation_id != progress.generation_id
-                    or saved.failure_reason != "result_download_failed"
-                ):
-                    continue
-                resume_known_result(saved)
-                current.checkpoint = saved.model_dump(mode="json")
-                if await restart_visual_steps(db, row.user_id, current):
-                    current.state, current.stage, current.error = "running", "download", None
-                else:
-                    current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
-                    await settle_visual_steps(db, row.user_id, current)
-                await notify_visuals_updated(db, row.user_id)
-                await db.commit()
-            schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
-            continue
-        safe_resume = (
-            progress is not None
-            and not visual_progress_has_unknown_submission(progress)
-            and visual_progress_has_video_work(progress)
-        )
-        if safe_resume:
-            schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
-        elif progress is not None and visual_progress_can_resume(progress):
-            if progress.candidate is not None and progress.review_result is not None:
-                schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
+                return
+            current.checkpoint = progress.model_dump(mode="json")
+            if await restart_visual_steps(db, row.user_id, current):
+                current.state, current.stage, current.error = "running", "video", None
             else:
-                await _pause_visual_job(row.user_id, row.id, progress.generation_id)
-        else:
-            async with SESSION_LOCAL() as db:
-                current = await visual_job_row(db, row.user_id, row.id, lock=True)
-                saved = visual_progress(current)
-                if current.state not in {"queued", "running"} or (saved.generation_id if saved else None) != (
-                    progress.generation_id if progress else None
-                ):
-                    continue
-                progress = saved
-                current.state = (
-                    "unknown" if progress is not None and visual_progress_has_unknown_submission(progress) else "failed"
-                )
-                if progress is not None:
-                    progress.failure_reason = (
-                        "result_unknown"
-                        if visual_progress_has_unknown_submission(progress)
-                        else "temporary"
-                        if visual_progress_can_resume(progress)
-                        else "failed"
-                    )
-                    current.checkpoint = progress.model_dump(mode="json")
-                current.error = (
-                    "制作已中断，请手动继续"
-                    if not progress or not progress.submission_unknown
-                    else _unknown_submission_message(progress)
-                )
+                current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
                 await settle_visual_steps(db, row.user_id, current)
-                await notify_visuals_updated(db, row.user_id)
-                await db.commit()
+            await notify_visuals_updated(db, row.user_id)
+            await db.commit()
+        schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
+        return
+    if row.stage in {"review", "reviewing", "checking"}:
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, row.user_id, row.id, lock=True)
+            if current.state not in {"queued", "running", "unknown"} or current.revision != row.revision:
+                return
+            current.state, current.stage = "paused", "review_pending"
+            await settle_visual_steps(db, row.user_id, current)
+            await notify_visuals_updated(db, row.user_id)
+            await db.commit()
+        return
+    if progress is not None and progress.paused_by_user:
+        return
+    if row.state == "unknown":
+        if (
+            progress is None
+            or progress.failure_reason != "result_download_failed"
+            or not visual_progress_has_video_work(progress)
+        ):
+            return
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, row.user_id, row.id, lock=True)
+            saved = visual_progress(current)
+            if (
+                current.state != "unknown"
+                or saved is None
+                or saved.generation_id != progress.generation_id
+                or saved.failure_reason != "result_download_failed"
+            ):
+                return
+            resume_known_result(saved)
+            current.checkpoint = saved.model_dump(mode="json")
+            if await restart_visual_steps(db, row.user_id, current):
+                current.state, current.stage, current.error = "running", "download", None
+            else:
+                current.state, current.stage, current.error = "queued", RECOVERY_WAITING, None
+                await settle_visual_steps(db, row.user_id, current)
+            await notify_visuals_updated(db, row.user_id)
+            await db.commit()
+        schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
+        return
+    safe_resume = (
+        progress is not None
+        and not visual_progress_has_unknown_submission(progress)
+        and visual_progress_has_video_work(progress)
+    )
+    if safe_resume:
+        schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
+    elif progress is not None and visual_progress_can_resume(progress):
+        if progress.candidate is not None and progress.review_result is not None:
+            schedule_visual_job(row.user_id, row.id, allow_model_steps=False)
+        else:
+            await _pause_visual_job(row.user_id, row.id, progress.generation_id)
+    else:
+        async with SESSION_LOCAL() as db:
+            current = await visual_job_row(db, row.user_id, row.id, lock=True)
+            saved = visual_progress(current)
+            if current.state not in {"queued", "running"} or (saved.generation_id if saved else None) != (
+                progress.generation_id if progress else None
+            ):
+                return
+            progress = saved
+            current.state = (
+                "unknown" if progress is not None and visual_progress_has_unknown_submission(progress) else "failed"
+            )
+            if progress is not None:
+                progress.failure_reason = (
+                    "result_unknown"
+                    if visual_progress_has_unknown_submission(progress)
+                    else "temporary"
+                    if visual_progress_can_resume(progress)
+                    else "failed"
+                )
+                current.checkpoint = progress.model_dump(mode="json")
+            current.error = (
+                "制作已中断，请手动继续"
+                if not progress or not progress.submission_unknown
+                else _unknown_submission_message(progress)
+            )
+            await settle_visual_steps(db, row.user_id, current)
+            await notify_visuals_updated(db, row.user_id)
+            await db.commit()
 
 
 async def drain() -> None:

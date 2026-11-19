@@ -5,7 +5,7 @@ from typing import Any
 LIFE_FACT_GUIDANCE = {
     "zh": (
         "生活资料中的 activity_kind 与事件 fact_type 区分：intent 是意向，virtual_activity 是虚拟生活情景，"
-        "execution 是实际执行过程，result 是已确认的成果。按主体、发生时间和结果范围理解记录；意向、虚拟情景、"
+        "execution 是实际执行过程，result 是已确认的成果。occurred_at 只标记记录发生的时刻。持续多久、反复几次和具体细节都需要另外的依据。personal_outlook 与 own_activity_type 供你判断此刻的兴趣、注意力和分寸。previously_told 的 delivered_bubbles 是对方实际收到的内容。只有气泡里表达过的部分才算告诉过对方。复述自己做过什么时回到原记录；聊天中提过的猜测、设计备选和愿望保留当时的性质。具体经历只从本渠道可用的记录中选。按主体、发生时间和结果范围理解记录；意向、虚拟情景、"
         "受理、失败或未知结果均不能当作完成经历。作品完成不证明经历过画中活动；阅读只涵盖已提供的正文、摘要或摘录，"
         "保留来源和范围，不扩写为读完整篇或整本书。阅读笔记中的个人理解与未解问题可承接后续选择、交流或日记，"
         "仍需区分来源观点和自己的看法；是否分享取决于当前情境，不必复述每次阅读。事项暂停或放弃不等于完成。"
@@ -17,7 +17,7 @@ LIFE_FACT_GUIDANCE = {
     ),
     "en": (
         "In life data, activity_kind and event fact_type distinguish intent, virtual_activity (a simulated life scene), "
-        "execution (actual execution status), and result (a confirmed outcome). Preserve subject, occurrence time and "
+        "execution (actual execution status), and result (a confirmed outcome). An occurred_at establishes a point in time; duration, repetition and specific details need separate evidence. Use personal_outlook and own_activity_type to decide where your attention, interests and boundaries lie. In previously_told, delivered_bubbles shows what the other person actually received. Only details expressed in those bubbles were told. Ground retellings in the original record; earlier guesses, design options and wishes keep their original status. Select any concrete experiences to tell from material available for this channel. Preserve subject, occurrence time and "
         "result scope. Intent, simulated scenes, acceptance, failure and unknown outcomes are not completed experiences. "
         "Making artwork does not establish experiencing its depicted activity. Reading covers only the supplied text, "
         "summary or excerpt: retain sources and scope without claiming to have read a whole article or book. Personal "

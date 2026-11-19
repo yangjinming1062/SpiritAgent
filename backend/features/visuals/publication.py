@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from infrastructure.assets.asset_store import normalize_asset_reference, resolve_asset_reference
+from infrastructure.library_visibility import record_work_outputs, visible_library_work
 from infrastructure.text import utc_now
 from pydantic import ConfigDict
 from sqlalchemy import (
@@ -181,10 +182,26 @@ def _publish_entity(
         payload = {
             "id": allocation.c.item_id,
             "user_id": job.user_id,
+            "library_work_id": job.library_work_id if isinstance(job, VisualJob) else None,
             "media_kind": asset.media_kind,
             "title": job.title if isinstance(job, PublicationTarget) else "",
             **summary,
         }
+        if asset.media_kind == "image" and payload["library_work_id"] is None:
+            # 已分享的个人作品保留原件身份；公开制作不能通过同哈希发现尚未分享的作品。
+            known = items.alias("visible_" + prefix)
+            payload["library_work_id"] = (
+                select(known.c.library_work_id)
+                .where(
+                    known.c.user_id == job.user_id,
+                    known.c.media_kind == "image",
+                    known.c.content_hash == media.content_hash,
+                    visible_library_work(known.c.library_work_id),
+                )
+                .order_by(known.c.library_work_id.is_not(None), known.c.id)
+                .limit(1)
+                .scalar_subquery()
+            )
         item_write = insert(items).from_select(
             list(payload),
             select(*(_literal(items, name, value) for name, value in payload.items())),
@@ -192,7 +209,7 @@ def _publish_entity(
         )
         if asset.media_kind == "image":
             item_write = item_write.on_conflict_do_update(
-                index_elements=[items.c.user_id, items.c.content_hash],
+                index_elements=[items.c.user_id, items.c.content_hash, items.c.library_work_id],
                 index_where=text("media_kind = 'image'"),
                 set_={"content_hash": item_write.excluded.content_hash},
             )
@@ -202,6 +219,7 @@ def _publish_entity(
     payload = {
         "id": item.c.current_version_id,
         "visual_id": item.c.id,
+        "library_work_id": item.c.library_work_id,
         "user_id": job.user_id,
         "number": job.expected_version + 1 if regenerate else 1,
         "description": asset.visual_description,
@@ -413,6 +431,16 @@ async def _publish(
     published = PublishedVisual.model_validate(payload)
     if resolve_asset_reference(published.media_path) is None:
         raise VisualStateError("同内容影像的原文件缺失，本次结果未采纳")
+    await record_work_outputs(
+        db,
+        user_id,
+        job.library_work_id,
+        {
+            path
+            for role, path in roles.items()
+            if role in {"media", "poster", "input", "mask", "first_frame", "last_frame"}
+        },
+    )
     return VisualPublication(published, image_id, image_version_id, completion)
 
 

@@ -18,7 +18,7 @@ interface PendingGesture {
   at: number
   stageEpoch: number
   isCurrent: () => boolean
-  speak?: (text: string) => Promise<void>
+  conversationId?: string
 }
 
 let pending: PendingGesture | null = null
@@ -41,8 +41,7 @@ function eligible(gesture: PendingGesture): boolean {
   return (
     gesture.isCurrent() &&
     $gatewayState.get() === 'open' &&
-    stage.stageVisible &&
-    stage.stageEpoch === gesture.stageEpoch &&
+    (gesture.kind === 'chat_opened' || (stage.stageVisible && stage.stageEpoch === gesture.stageEpoch)) &&
     Date.now() - gesture.at < GESTURE_TTL_MS
   )
 }
@@ -58,6 +57,7 @@ async function dispatchGesture(gesture: PendingGesture): Promise<void> {
     body: {
       request_id: requestId,
       kind: gesture.kind,
+      conversation_id: gesture.conversationId,
       occurred_at: new Date(gesture.at).toISOString(),
       count: gesture.count
     }
@@ -70,14 +70,10 @@ async function dispatchGesture(gesture: PendingGesture): Promise<void> {
   if (result.value?.visual) {
     enqueueInteraction(result.value.visual, requestId, gesture.at)
   }
-
-  if (result.value?.text) {
-    await gesture.speak?.(result.value.text)
-  }
 }
 
 /** 合并一次连续手势；换账号或换舞台后丢弃迟到的表现。 */
-export function enqueueGesture(kind: Gesture, speak?: (text: string) => Promise<void>): void {
+export function enqueueGesture(kind: Gesture, conversationId?: string): void {
   const isCurrent = captureAuthScope()
 
   if (!isCurrent) {
@@ -87,7 +83,14 @@ export function enqueueGesture(kind: Gesture, speak?: (text: string) => Promise<
   const stage = $presentation.get()
   const previous = pending
   const count = previous?.kind === kind && previous.stageEpoch === stage.stageEpoch ? previous.count + 1 : 1
-  pending = { at: Date.now(), count: Math.min(10, count), isCurrent, kind, speak, stageEpoch: stage.stageEpoch }
+  pending = {
+    at: Date.now(),
+    count: Math.min(10, count),
+    isCurrent,
+    kind,
+    conversationId,
+    stageEpoch: stage.stageEpoch
+  }
 
   if (timer === null) {
     timer = setTimeout(() => {

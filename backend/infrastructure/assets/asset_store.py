@@ -25,6 +25,7 @@ from infrastructure.assets.write_protection import (
 from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
+from infrastructure.library_visibility import current_library_work
 from infrastructure.logger import get_logger
 from infrastructure.temp_files import get_file_path
 
@@ -213,7 +214,9 @@ def dated_asset_directory(created_at: datetime, timezone: str) -> str:
 
 
 def _relative_path(directory: str, filename: str) -> str:
-    return f"{directory}/{filename}" if directory else filename
+    path = f"{directory}/{filename}" if directory else filename
+    work_id = current_library_work()
+    return f"private-work/{work_id}/{path}" if work_id is not None else path
 
 
 def _asset_path(user_id: int, directory: str, filename: str) -> str:

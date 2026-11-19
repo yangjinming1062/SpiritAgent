@@ -152,7 +152,7 @@ class NextAction(ActionInput):
     action: LifeAction
     add_to_user_library: StrictBool = Field(
         default=False,
-        description="自主制作造型、环境、动作或影像时，明确选择把成品加入用户可见素材库",
+        description="true 直接入用户可见素材库；false 将本次真实制作保存在自己手中，日后可以选择公开同一件成品",
     )
     not_before: AwareDatetime | None = Field(
         default=None, description="最早执行时刻，须包含时区；省略表示当前条件允许即可执行"

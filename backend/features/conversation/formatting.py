@@ -148,7 +148,7 @@ def visible_bubble_count(
     )
 
 
-def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
+def companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
     delivery, source = CompanionReply.load_saved_snapshot(message.reply_json or {}, message.content or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
     links = {b.topic_id: b for b in delivery.bubbles if isinstance(b, LinkBubble)}
@@ -163,7 +163,7 @@ def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_onl
 
 
 def companion_context_content(message: Message | MessageSnapshot, *, dialogue_only: bool = False) -> str:
-    return json.dumps(_companion_context_items(message, dialogue_only=dialogue_only), ensure_ascii=False)
+    return json.dumps(companion_context_items(message, dialogue_only=dialogue_only), ensure_ascii=False)
 
 
 def message_text(m: Message | MessageSnapshot) -> str:
@@ -189,7 +189,9 @@ def message_text(m: Message | MessageSnapshot) -> str:
     return raw
 
 
-def format_messages_compact(msgs: list[Message], *, user_local_tz: str | None = None) -> str:
+def format_messages_compact(
+    msgs: list[Message], *, user_local_tz: str | None = None, max_content_chars: int | None = None
+) -> str:
     """保留会话与消息来源、发言归属、时间和工具关联；正文换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:
@@ -197,7 +199,7 @@ def format_messages_compact(msgs: list[Message], *, user_local_tz: str | None = 
         if msg.content_type == "companion_reply":
             if not (msg.content or "").strip() and not msg.tool_calls:
                 continue
-            content = _companion_context_items(msg, dialogue_only=True)
+            content = companion_context_items(msg, dialogue_only=True)
         else:
             content = message_text(msg)
             if not content and not msg.tool_calls:
@@ -213,6 +215,15 @@ def format_messages_compact(msgs: list[Message], *, user_local_tz: str | None = 
             else None,
             "content": content,
         }
+        if max_content_chars is not None:
+            rendered = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+            if len(rendered) > max_content_chars:
+                split = max_content_chars // 2
+                record["content"] = {
+                    "opening": rendered[:split],
+                    "ending": rendered[len(rendered) - max_content_chars + split :],
+                    "excerpted": True,
+                }
         if msg.subtype:
             record["subtype"] = msg.subtype
         if msg.tool_calls:

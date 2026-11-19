@@ -18,7 +18,7 @@ from features.posts.schemas import PostCommentResponse, PostResponse
 from features.topics.schemas import TopicFeedbackSnapshot
 from features.visuals.schemas import PlaybackReceiptKind, PlaybackStatus, VisualPlayCommand
 from infrastructure.api_ids import ResourceId
-from pydantic import BaseModel, JsonValue
+from pydantic import AwareDatetime, BaseModel, JsonValue
 
 from entrypoints.desktop.contracts import EmptyResult
 
@@ -178,6 +178,8 @@ class SystemNotificationEvent(BaseModel):
 
 
 class CompanionMessageEvent(BaseModel):
+    read_aloud: bool = False
+    gesture_at: AwareDatetime | None = None
     is_main: bool = True
     session_id: str
     message_id: ResourceId

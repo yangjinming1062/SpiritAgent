@@ -12,6 +12,7 @@ from infrastructure.assets.asset_store import build_data_uri, outfit_asset_direc
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
+from infrastructure.library_visibility import record_work_outputs
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language
 from infrastructure.video_processing.ffmpeg import VideoProcessError
@@ -724,6 +725,7 @@ async def confirm_outfit(
                     db, user_id, f"outfit:{creation.source_key}:continue", {"outfit_id": str(outfit.id)}
                 )
             outfit.status = "ready"
+            await record_work_outputs(db, user_id, outfit.library_work_id, {outfit.fullbody_url})
             emit_ws_event(
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
             )
@@ -926,6 +928,7 @@ async def recover_outfit_descriptions() -> None:
             update(CompanionOutfit)
             .where(CompanionOutfit.status == "ready", CompanionOutfit.description_status.in_(("pending", "processing")))
             .values(description_status="failed", description_error="外观描述已中断，请重试补全")
+            .execution_options(discover_private_works=True)
         )
         await db.commit()
 

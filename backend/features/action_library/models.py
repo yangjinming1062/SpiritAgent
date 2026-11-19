@@ -7,13 +7,14 @@
 from typing import Any
 from uuid import uuid4
 
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class ActionDefinition(ModelBase, TimestampMixin):
+class ActionDefinition(LibraryMaterial, ModelBase, TimestampMixin):
     __tablename__ = "action_definitions"
     __table_args__ = (
         UniqueConstraint("user_id", "preset_key", name="uq_action_definitions_preset"),

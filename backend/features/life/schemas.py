@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_serializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_serializer, model_validator
 
 from features.media.visual_semantics import ActivityType, SceneTags
 
@@ -71,7 +71,9 @@ class LifeResultView(BaseModel):
         return _wire_result(value)
 
     def prompt_payload(self) -> dict[str, Any]:
-        payload = self.model_dump(mode="json", exclude={"event_key", "idempotency_key", "business_ref", "action"})
+        payload = self.model_dump(
+            mode="json", exclude={"event_key", "idempotency_key", "business_ref", "action", "library_work_id"}
+        )
         # 技术诊断只留在任务与日志边界；生活判断模型只接收稳定的失败类别。
         payload.pop("error", None)
         payload.pop("wait_reason", None)
@@ -117,13 +119,16 @@ class LifeNarrativePatch(BaseModel):
 
 
 GrowthAspect = Literal["interest", "view", "habit", "boundary"]
-LifeShareChannel = Literal["life", "post", "diary"]
+LifeShareChannel = Literal["life", "post", "diary", "chat"]
 
 
 class PersonalGrowth(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(from_attributes=True)
 
-    text: str = Field(min_length=1, max_length=400)
+    id: ResourceId
+    aspect: GrowthAspect
+    text: str
+    outlook: str
     evidence_event_id: ResourceId
     updated_at: AwareDatetime
 
@@ -131,9 +136,19 @@ class PersonalGrowth(BaseModel):
 class PersonalGrowthChange(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    growth_id: ResourceId | None = Field(description="延续或撤回某一条认识时用它的 id，独立的新认识填 null")
     aspect: GrowthAspect
     text: str | None = Field(min_length=1, max_length=400)
+    outlook: str | None = Field(
+        min_length=1, max_length=180, description="可影响任何交流的性格倾向，省去人物、私事及来源细节"
+    )
     evidence_event_id: ResourceId | None = None
+
+    @model_validator(mode="after")
+    def validate_change(self) -> "PersonalGrowthChange":
+        if (self.text is None) != (self.outlook is None) or (self.text is None and self.growth_id is None):
+            raise ValueError("新增或修订认识需要内容和相处倾向；撤回需要已有 id")
+        return self
 
 
 class LifeStateView(BaseModel):
@@ -148,7 +163,6 @@ class LifeStateView(BaseModel):
     activity_started_at: datetime | None = None
     activity_step_id: ResourceId | None = None
     activity_shared_with_user: bool = False
-    personal_growth: dict[GrowthAspect, PersonalGrowth] = Field(default_factory=dict)
     presentation_revision: int = 0
     current_scene: dict
     mood: str | None
@@ -236,6 +250,7 @@ class LifePursuitPublicView(LifeResultView):
 
 
 class LifeStepView(LifeResultView):
+    library_work_id: ResourceId | None = None
     model_config = ConfigDict(from_attributes=True)
 
     id: ResourceId
@@ -308,6 +323,10 @@ class LifeEventView(LifeResultView):
         return payload
 
 
+class PersonalWorkView(LifeEventView):
+    creation_brief: dict[str, Any]
+
+
 class LifeEventPublicView(LifeResultView):
     """用户生活接口的事件投影；事实细节只进入内部模型上下文。"""
 
@@ -337,6 +356,9 @@ class LifeContext(BaseModel):
     paused_pursuits: list[LifePursuitView] = Field(default_factory=list)
     recent_events: list[LifeEventView] = Field(default_factory=list)
     topic_heads: list[LifeEventView] = Field(default_factory=list)
+    private_works: list[PersonalWorkView] = Field(default_factory=list)
+    shared_completion_results: dict[int, dict] = Field(default_factory=dict, exclude=True)
+    personal_growth: list[PersonalGrowth] = Field(default_factory=list)
 
     def prompt_payload(self, *, shared_only: bool = False, for_publication: bool = False) -> dict[str, Any]:
         state = self.state.model_dump(
@@ -344,7 +366,6 @@ class LifeContext(BaseModel):
             exclude={
                 "user_id",
                 "activity_step_id",
-                "personal_growth",
                 "next_review_at",
                 "revision",
                 "scene_revision",
@@ -363,17 +384,27 @@ class LifeContext(BaseModel):
                     state["active_pursuit_id"] = None
         return {
             "state": state,
-            "personal_growth": {
-                aspect: value.model_dump(mode="json") for aspect, value in self.state.personal_growth.items()
-            }
-            if not shared_only
-            else {},
+            **(
+                {
+                    "personal_outlook": [item.outlook for item in self.personal_growth],
+                    "own_activity_type": self.state.activity_type,
+                }
+                if shared_only
+                else {
+                    "personal_growth": [item.model_dump(mode="json") for item in self.personal_growth],
+                    "private_works": [work.prompt_payload() for work in self.private_works],
+                }
+            ),
             "active_pursuits": [item.prompt_payload() for item in active],
             "paused_pursuits": [
                 item.prompt_payload() for item in self.paused_pursuits if not shared_only or item.shared_with_user
             ],
             "recent_events": [
-                item.trajectory_payload()
+                item.model_copy(
+                    update={"result_ref": self.shared_completion_results.get(item.pursuit_id, {})}
+                ).trajectory_payload()
+                if shared_only and item.kind == "life.pursuit.completed"
+                else item.trajectory_payload()
                 for item in self.recent_events
                 if (not shared_only or item.shared_with_user) and (not for_publication or item.source != "life_share")
             ],
@@ -535,18 +566,34 @@ class PrivateLifeEpisode(LifeSceneChange):
     activity_type: ActivityType = Field(description="虚拟情境内当前活动的类别")
 
 
+class LifeContactWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    after_minutes: int = Field(ge=0, le=10080, description="多久后适合联系，0 表示此刻")
+    window_minutes: int = Field(ge=1, le=1440, description="从那时起这件事还值得提起的分钟数")
+
+
 class LifeShare(BaseModel):
     """伙伴选择公开到生活页的一段表达。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     event_id: ResourceId | None = Field(description="要分享的已有经历。仅分享本轮新生成的独处片段时填 null。")
-    channel: LifeShareChannel = Field(
-        default="life", description="仅允许在 life 生活页、post 动态或 diary 日记之一分享"
-    )
+    channel: LifeShareChannel = Field(default="life", description="选择生活页、动态、日记或一次直接交流")
     title: str = Field(min_length=1, max_length=120, description="愿意公开的标题")
     narrative: str = Field(min_length=1, max_length=600, description="愿意公开的第一人称片段")
+    release_work: StrictBool = Field(
+        default=False, description="同时公开这项已完成的私下作品及其素材；只分享感想时保持 false"
+    )
     show_activity: StrictBool = Field(default=False, description="分享本轮独处片段时是否也向用户呈现当前活动类别和环境")
+    contact: LifeContactWindow | None = None
+
+    @model_validator(mode="after")
+    def check_channel(self) -> "LifeShare":
+        if self.release_work and (self.channel != "life" or self.event_id is None):
+            raise ValueError("公开完整作品需要从已有成果选择生活页")
+        if (self.contact is not None) != (self.channel == "chat"):
+            raise ValueError("只有直接交流需要选择联系时间和有效期")
+        return self
 
 
 class LifePursuitDetail(LifePursuitView):

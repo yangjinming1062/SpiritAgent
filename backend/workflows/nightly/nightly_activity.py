@@ -115,7 +115,19 @@ def _clean_messages(messages: Sequence[OriginalMessageSnapshot], tz_str: str) ->
 def _persona_brief(persona: PersonaPlanningSnapshot | None) -> dict[str, str]:
     definition = persona.definition if persona is not None else {}
     return {
-        key: definition[key] for key in ("name", "personality", "speaking_style", "relationship") if definition.get(key)
+        key: definition[key]
+        for key in (
+            "name",
+            "biological_type",
+            "age",
+            "gender",
+            "occupation",
+            "background",
+            "personality",
+            "speaking_style",
+            "relationship",
+        )
+        if definition.get(key)
     }
 
 

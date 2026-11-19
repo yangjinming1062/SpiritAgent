@@ -19,6 +19,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
+from infrastructure.library_visibility import library_work, record_work_outputs
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language, utc_now
 from runtime.background import TaskScope
@@ -47,7 +48,7 @@ from features.scenes.generation_state import SceneGenerationState, scene_chain_p
 from features.scenes.models import CompanionScene, SceneJob, SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.prompt_assembly import build_scene_prompt
 from features.scenes.prompts import SCENE_DESCRIBE_SYSTEM
-from features.scenes.queries import can_retry_scene_generation, get_pending_scene_task, get_scene, scene_view
+from features.scenes.queries import account_has_pending_scene_task, can_retry_scene_generation, get_scene, scene_view
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneDescriptionRequest, SceneImageSize, SceneReviewSnapshot
 from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
@@ -113,6 +114,8 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
         scene = await get_scene(db, user_id, scene_id)
         if scene is not None:
             await sync_scene_assets(db, scene)
+            if scene.status == "ready":
+                await record_work_outputs(db, user_id, scene.library_work_id, {scene.media_path})
             job = scene.initial_job
             if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
                 receiving = (
@@ -188,7 +191,7 @@ async def _new_scene(
         await require_step_submission(db, user_id, life_step)
         persona = await _persona(db, user_id)
         await _check_policy(db, persona, origin)
-        if await get_pending_scene_task(db, user_id) is not None:
+        if await account_has_pending_scene_task(db, user_id):
             raise SceneBusyError("已有场景正在准备，请等待完成或取消该任务")
         if origin == SceneOrigin.ONBOARDING.value and await db.scalar(
             select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)
@@ -261,7 +264,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
     regeneration_task_id: str | None = None
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await _require_scene(db, user_id, scene_id)
-        if await get_pending_scene_task(db, user_id) is not None:
+        if await account_has_pending_scene_task(db, user_id):
             raise SceneStateError("已有场景任务正在准备，请等待完成或取消后重试")
         if row.status == SceneStatus.FAILED.value and row.source == SceneSource.GENERATED.value:
             if not can_retry_scene_generation(row):
@@ -435,7 +438,7 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
     regeneration_task_id: str | None = None
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await _require_scene(db, user_id, scene_id)
-        if await get_pending_scene_task(db, user_id) is not None:
+        if await account_has_pending_scene_task(db, user_id):
             raise SceneStateError("已有场景正在准备")
         if (
             row.initial_job
@@ -995,9 +998,12 @@ async def resume_scene_jobs(user_id: int | None = None) -> None:
         ]
         if user_id is not None:
             conditions.append(CompanionScene.user_id == user_id)
-        rows = (await db.scalars(select(CompanionScene).where(*conditions))).all()
+        rows = (
+            await db.scalars(select(CompanionScene).where(*conditions).execution_options(discover_private_works=True))
+        ).all()
     for row in rows:
-        await _resume_scene_row(row)
+        with library_work(row.library_work_id):
+            await _resume_scene_row(row)
 
 
 async def _scene_paid_boundary(user_id: int) -> None:

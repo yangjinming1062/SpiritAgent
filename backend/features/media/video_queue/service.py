@@ -906,24 +906,20 @@ async def drain_video_queue() -> None:
 async def cleanup_video_queue() -> None:
     """按批清理已确认且业务已结算的尝试，活动及未知占用持续保留。"""
     async with SESSION_LOCAL() as db:
-        settled = await settled_job_ids(db)
-        released = ProviderAttempt.job_id.is_(None)
-        if settled:
-            released = released | ProviderAttempt.job_id.in_(settled)
+        settled = ProviderAttempt.job_id.in_(settled_job_ids())
         await db.execute(
             delete(ProviderAttempt).where(
-                released,
+                ProviderAttempt.job_id.is_(None) | settled,
                 ProviderAttempt.capability == "video",
                 ProviderAttempt.state.in_(_TERMINAL),
                 ProviderAttempt.consumed_at < utc_now() - timedelta(days=7),
             )
         )
-        if settled:
-            await db.execute(
-                delete(ProviderAttempt).where(
-                    ProviderAttempt.job_id.in_(settled),
-                    ProviderAttempt.capability == "image",
-                    ProviderAttempt.enqueued_at < utc_now() - timedelta(days=90),
-                )
+        await db.execute(
+            delete(ProviderAttempt).where(
+                settled,
+                ProviderAttempt.capability == "image",
+                ProviderAttempt.enqueued_at < utc_now() - timedelta(days=90),
             )
+        )
         await db.commit()

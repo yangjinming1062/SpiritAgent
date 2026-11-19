@@ -1,15 +1,17 @@
 """只读查询；调用方不直接读取 Life ORM。"""
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from datetime import datetime
 
+from infrastructure.library_visibility import visible_library_work
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import utc_now
 from sqlalchemy import CompoundSelect, case, func, or_, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .actions import ReadingResult
-from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep
+from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
+from .prompts import life_content_payload
 from .schemas import (
     EVIDENCE_EVENT_KINDS,
     EVIDENCE_EVENTS_PER_PURSUIT,
@@ -22,6 +24,7 @@ from .schemas import (
     LifePursuitView,
     LifeStateView,
     LifeStepView,
+    PersonalWorkView,
 )
 
 
@@ -48,7 +51,6 @@ def state_view(row: LifeState) -> LifeStateView:
         activity_started_at=row.activity_started_at,
         activity_step_id=row.activity_step_id,
         activity_shared_with_user=row.activity_shared_with_user,
-        personal_growth=row.personal_growth_json,
         presentation_revision=row.presentation_revision,
         current_scene=row.current_scene_json,
         mood=row.mood,
@@ -73,6 +75,47 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
         )
         or ""
     )
+
+
+async def completed_personal_works(
+    db: AsyncSession, user_id: int, *, event_id: int | None = None, limit: int = 8
+) -> list[PersonalWorkView]:
+    """直接分享按原事件核对，日常选择只拿仍在自己手中的作品。"""
+    query = (
+        select(LifeEvent, LifeStep)
+        .join(LifeStep, LifeStep.id == LifeEvent.step_id)
+        .where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.kind == "life.step.completed",
+            LifeStep.user_id == user_id,
+            LifeStep.state == "completed",
+            LifeStep.is_creation.is_(True),
+            LifeStep.library_work_id.is_not(None),
+            or_(
+                LifeEvent.result_visual_id.is_not(None) & LifeEvent.result_visual_version_id.is_not(None),
+                LifeEvent.result_outfit_id.is_not(None),
+                LifeEvent.result_scene_id.is_not(None),
+                LifeEvent.result_action_id.is_not(None),
+            ),
+        )
+    )
+    query = (
+        query.where(LifeEvent.id == event_id)
+        if event_id is not None
+        else query.where(~visible_library_work(LifeStep.library_work_id))
+    )
+    rows = await db.execute(query.order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit))
+    return [
+        PersonalWorkView(
+            **event_view(event).model_dump(),
+            creation_brief={
+                "kind": step.kind,
+                "purpose": step.description,
+                "requested": life_content_payload(step.action_json or {}),
+            },
+        )
+        for event, step in rows
+    ]
 
 
 async def steps_by_id(db: AsyncSession, user_id: int, identifiers: Collection[int]) -> dict[int, LifeStepView]:
@@ -108,6 +151,44 @@ def result_reference(row: LifeStep | LifeEvent) -> dict:
     return result
 
 
+async def visible_completion_results(db: AsyncSession, user_id: int, pursuit_ids: Collection[int]) -> dict[int, dict]:
+    """结项只展示当次采用且现在可见的原始成果，保留删除和后续公开的语义。"""
+    grouped: dict[int, list[dict]] = {key: [] for key in pursuit_ids}
+    if grouped:
+        records = await db.execute(
+            select(PursuitEvidence.pursuit_id, LifeEvent)
+            .join(LifeEvent, LifeEvent.id == PursuitEvidence.event_id)
+            .outerjoin(LifeStep, LifeStep.id == LifeEvent.step_id)
+            .where(
+                PursuitEvidence.user_id == user_id,
+                LifeEvent.user_id == user_id,
+                PursuitEvidence.pursuit_id.in_(pursuit_ids),
+                PursuitEvidence.used_for_completion.is_(True),
+                or_(LifeEvent.kind != "life.step.completed", LifeStep.user_id == user_id),
+                visible_library_work(LifeStep.library_work_id),
+            )
+            .order_by(LifeEvent.id)
+        )
+        for pursuit_id, event in records:
+            if reference := result_reference(event):
+                grouped[pursuit_id].append(reference)
+    return {key: {"evidence_count": len(results), "results": results} for key, results in grouped.items()}
+
+
+async def project_public_completions(
+    db: AsyncSession, user_id: int, views: Sequence[LifePursuitView | LifeEventView]
+) -> None:
+    targets = []
+    for item in views:
+        if isinstance(item, LifePursuitView) and item.status == "completed":
+            targets.append((item, item.id))
+        elif isinstance(item, LifeEventView) and item.kind == "life.pursuit.completed":
+            targets.append((item, item.pursuit_id))
+    visible = await visible_completion_results(db, user_id, {key for _, key in targets if key is not None})
+    for item, key in targets:
+        item.result_ref = visible[key] if key is not None else {"evidence_count": 0, "results": []}
+
+
 def pursuit_view(row: LifePursuit) -> LifePursuitView:
     return LifePursuitView(
         id=row.id,
@@ -133,6 +214,7 @@ def pursuit_view(row: LifePursuit) -> LifePursuitView:
 
 def step_view(row: LifeStep) -> LifeStepView:
     return LifeStepView(
+        library_work_id=row.library_work_id,
         id=row.id,
         pursuit_id=row.pursuit_id,
         idempotency_key=row.idempotency_key,
@@ -303,6 +385,7 @@ async def list_pursuits(
     rows = rows[:limit]
     items = [pursuit_view(row) for row in rows]
     if shared_only:
+        await project_public_completions(db, user_id, items)
         visible_previous = await shared_pursuit_ids(
             db, user_id, {item.previous_pursuit_id for item in items if item.previous_pursuit_id is not None}
         )
@@ -339,8 +422,11 @@ async def list_events(
     )
     more = len(rows) > limit
     rows = rows[:limit]
+    items = [event_view(row) for row in rows]
+    if shared_only:
+        await project_public_completions(db, user_id, items)
     return LifeEventListResponse(
-        items=[event_view(row) for row in rows],
+        items=items,
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
     )

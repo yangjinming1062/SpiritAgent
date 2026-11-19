@@ -6,9 +6,8 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from uuid import NAMESPACE_URL, uuid5
 from weakref import WeakValueDictionary
 
@@ -97,21 +96,6 @@ logger = get_logger(__name__)
 _TASKS = TaskScope("visuals.import")
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 _IMPORT_CANDIDATE_LIMIT = 24
-
-
-@dataclass(frozen=True, slots=True)
-class _ReleasePlan:
-    material: ImportCreatedMaterial
-    preserved: bool
-    adopt: Callable[[AsyncSession], Awaitable[None]] | None
-
-    @property
-    def note(self) -> str:
-        return (
-            "；本次导入先前创建的素材仍被其它内容使用，已保留"
-            if self.preserved
-            else "；本次导入先前创建的素材已自动撤销"
-        )
 
 
 def schedule_import_analysis(user_id: int, job_id: int) -> None:
@@ -443,7 +427,9 @@ def _mark_reference(work: ImportWork, component: ImportComponent, material_id: i
     component.extraction_key = owned.extraction_key if owned is not None else ""
 
 
-async def _material_is_referenced(work: ImportWork, component: ImportComponent, material_id: int) -> bool:
+async def _material_is_referenced(
+    db: AsyncSession, work: ImportWork, component: ImportComponent, material_id: int
+) -> bool:
     """检查当前任务之外的正式引用，并补上同一任务其它条目的共享引用。"""
 
     if work.result is not None and any(
@@ -454,83 +440,57 @@ async def _material_is_referenced(work: ImportWork, component: ImportComponent, 
         for other in work.result.components
     ):
         return True
-    async with SESSION_LOCAL() as db:
-        visual = await material_has_external_references(
-            db,
-            work.user_id,
-            component.observation.kind,
-            material_id,
-            exclude_import_job_id=work.id,
-            exclude_visual_id=work.visual_id,
-        )
-        life = await material_has_references(db, work.user_id, component.observation.kind, material_id)
-        await db.commit()
-    return visual or life
+    return await material_has_external_references(
+        db,
+        work.user_id,
+        component.observation.kind,
+        material_id,
+        exclude_import_job_id=work.id,
+        exclude_visual_id=work.visual_id,
+    ) or await material_has_references(db, work.user_id, component.observation.kind, material_id)
 
 
-async def _release_plan(work: ImportWork, component: ImportComponent, material: ImportCreatedMaterial) -> _ReleasePlan:
-    preserved = await _material_is_referenced(work, component, material.material_id)
-    if preserved:
-        return _ReleasePlan(material=material, preserved=True, adopt=None)
+async def _release_material(
+    db: AsyncSession, work: ImportWork, component: ImportComponent, material: ImportCreatedMaterial
+) -> str:
     handler = {"outfit": undo_imported_outfit, "scene": undo_imported_scene, "action": undo_imported_action}[
         component.observation.kind
     ]
-
-    async def adopt(db: AsyncSession) -> None:
-        await handler(db, work.user_id, material.material_id, material.extraction_key)
-
-    return _ReleasePlan(material=material, preserved=False, adopt=adopt)
-
-
-def _apply_release_plan(work: ImportWork, plan: _ReleasePlan) -> None:
-    plan.material.state = "retained" if plan.preserved else "released"
+    preserved = await handler(
+        db,
+        work.user_id,
+        material.material_id,
+        material.extraction_key,
+        lambda: _material_is_referenced(db, work, component, material.material_id),
+    )
+    material.state = "retained" if preserved else "released"
     work.context.selected_materials = [
         entry
         for entry in work.context.selected_materials
-        if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
+        if (entry.kind, entry.material_id) != (material.kind, material.material_id)
     ]
-    if not plan.preserved:
-        work.candidates = [
-            entry
-            for entry in work.candidates
-            if (entry.kind, entry.material_id) != (plan.material.kind, plan.material.material_id)
-        ]
+    if preserved:
+        return "本次导入先前创建的素材仍被其它内容使用，已保留"
+    work.candidates = [
+        entry for entry in work.candidates if (entry.kind, entry.material_id) != (material.kind, material.material_id)
+    ]
+    return "本次导入先前创建的素材已自动撤销"
 
 
-def _release_adoption(
-    plans: Sequence[_ReleasePlan], apply: Callable[[], None]
+def _change_reference(
+    work: ImportWork, component: ImportComponent, material_id: int, *, previous: ImportCreatedMaterial | None = None
 ) -> Callable[[AsyncSession], Awaitable[None]] | None:
-    """把待撤销素材并入同一次保存事务；无需撤销时立即应用条目变更。"""
-    pending = [plan for plan in plans if plan.adopt is not None]
-    if not pending:
-        apply()
+    old = previous or _current_owned_material(work, component)
+    if old is None or old.material_id == material_id:
+        _mark_reference(work, component, material_id)
         return None
 
     async def adopt(db: AsyncSession) -> None:
-        for plan in pending:
-            assert plan.adopt is not None
-            await plan.adopt(db)
-        apply()
+        note = await _release_material(db, work, component, old)
+        component.reason += "；" + note
+        _mark_reference(work, component, material_id)
 
     return adopt
-
-
-async def _change_reference(
-    work: ImportWork, component: ImportComponent, material_id: int, *, previous: ImportCreatedMaterial | None = None
-) -> tuple[Callable[[AsyncSession], Awaitable[None]] | None, str]:
-    """切换当前关联，并准备在同一保存事务中清理不再使用的旧素材。"""
-
-    old = previous or _current_owned_material(work, component)
-    if old is not None and old.material_id != material_id:
-        plan = await _release_plan(work, component, old)
-
-        def apply() -> None:
-            _apply_release_plan(work, plan)
-            _mark_reference(work, component, material_id)
-
-        return _release_adoption([plan], apply), plan.note
-    _mark_reference(work, component, material_id)
-    return None, ""
 
 
 async def _restore_previous_reference(
@@ -541,18 +501,17 @@ async def _restore_previous_reference(
     current = (
         _owned_material(work, component, component.material_id) if component.created and component.material_id else None
     )
-    plans = [await _release_plan(work, component, current)] if current is not None else []
 
-    def restore() -> None:
-        for plan in plans:
-            _apply_release_plan(work, plan)
+    async def restore(db: AsyncSession) -> None:
+        if current is not None:
+            await _release_material(db, work, component, current)
         component.material_id = previous.material_id
         component.created = True
         component.extraction_key = previous.extraction_key
         component.status = "created"
         component.reason += "；新素材评审未完成，已保留原关联"
 
-    await save_import_progress(work, "organize", adopt=_release_adoption(plans, restore))
+    await save_import_progress(work, "organize", adopt=restore)
 
 
 async def _cleanup_inactive_created_materials(work: ImportWork, component: ImportComponent) -> None:
@@ -578,15 +537,12 @@ async def _cleanup_inactive_created_materials(work: ImportWork, component: Impor
             seen.add(key)
     if not stale:
         return
-    plans = [await _release_plan(work, component, entry) for entry in stale]
-    notes = "；".join(plan.note.removeprefix("；") for plan in plans)
 
-    def apply() -> None:
-        for plan in plans:
-            _apply_release_plan(work, plan)
-        component.reason = f"{component.reason}；{notes}" if component.reason else notes
+    async def release(db: AsyncSession) -> None:
+        notes = [await _release_material(db, work, component, entry) for entry in stale]
+        component.reason = "；".join(filter(None, [component.reason, *notes]))
 
-    await save_import_progress(work, "organize", adopt=_release_adoption(plans, apply))
+    await save_import_progress(work, "organize", adopt=release)
 
 
 async def _adopt_existing(work: ImportWork, component: ImportComponent, material_id: int) -> None:
@@ -600,8 +556,8 @@ async def _adopt_existing_locked(work: ImportWork, component: ImportComponent, m
     component.matches = [entry for entry in component.matches if entry.material_id != material_id] + result.matches
     component.status = "reused"
     component.reason = result.matches[0].evidence if result.matches else "用户选择已有素材"
-    adopt, note = await _change_reference(work, component, material_id)
-    component.reason += note
+    adopt = _change_reference(work, component, material_id)
+
     work.candidates = [
         entry for entry in work.candidates if (entry.kind, entry.material_id) != (selected.kind, selected.material_id)
     ] + [selected]
@@ -632,8 +588,8 @@ async def _recheck_existing_material(work: ImportWork, component: ImportComponen
         await _read_selected(work, component.observation.kind, result.selected_id)
         component.status = "reused"
         component.reason = next(entry.evidence for entry in result.matches if entry.material_id == result.selected_id)
-        adopt, note = await _change_reference(work, component, result.selected_id)
-        component.reason += note
+        adopt = _change_reference(work, component, result.selected_id)
+
         await save_import_progress(work, "organize", adopt=adopt)
         return True
     if result.decision == "uncertain" and not explicit:
@@ -836,8 +792,8 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
             component.reason += "\n动作尚未入库，可在动作库中调整后重新评审。"
         if component.status in {"created", "reused"}:
             if previous is not None and previous.material_id != component.material_id:
-                adopt, note = await _change_reference(work, component, component.material_id, previous=previous)
-                component.reason += note
+                adopt = _change_reference(work, component, component.material_id, previous=previous)
+
                 await save_import_progress(work, "organize", adopt=adopt)
             await _remember_candidate(work, component)
         elif previous is not None and component.material_id != previous.material_id:
@@ -957,8 +913,8 @@ async def _extract_locked(work: ImportWork, component: ImportComponent, *, expli
 
     await save_import_progress(work, "organize", adopt=adopt)
     if previous is not None and previous.material_id != component.material_id:
-        adopt, note = await _change_reference(work, component, component.material_id, previous=previous)
-        component.reason += note
+        adopt = _change_reference(work, component, component.material_id, previous=previous)
+
         await save_import_progress(work, "organize", adopt=adopt)
     # 当前任务新建的素材立即回到候选集，后续条目可以复用它，避免同一上传
     # 在多个片段中重复创建近似素材。
@@ -974,21 +930,20 @@ async def _undo(work: ImportWork, component: ImportComponent, *, status: str = "
     owned = _owned_material(work, component, component.material_id)
     if owned is None:
         raise ValueError("这条素材的创建来源已丢失，请重新分析后再撤销")
-    plan = await _release_plan(work, component, owned)
 
-    def detach() -> None:
-        _apply_release_plan(work, plan)
+    async def detach(db: AsyncSession) -> None:
+        await _release_material(db, work, component, owned)
         component.material_id, component.created, component.extraction_key = None, False, ""
         component.status = status
         component.reason = (
             "本次关联已解除；素材仍被其它内容使用，已保留"
-            if plan.preserved
+            if owned.state == "retained"
             else "已撤销入库，原始影像仍保留"
             if status == "undone"
             else "已跳过这条素材关联"
         )
 
-    await save_import_progress(work, "organize", adopt=_release_adoption([plan], detach))
+    await save_import_progress(work, "organize", adopt=detach)
 
 
 async def _organize_component(work: ImportWork, component: ImportComponent) -> None:
@@ -1065,8 +1020,8 @@ async def _organize_component(work: ImportWork, component: ImportComponent) -> N
             component.status = "reused" if len(exact) == 1 else "ambiguous"
             if len(exact) == 1:
                 async with _material_adoption_lock(work, component.observation.kind):
-                    adopt, note = await _change_reference(work, component, exact[0].material_id)
-                    component.reason = "复用内容完全一致的已有素材" + note
+                    adopt = _change_reference(work, component, exact[0].material_id)
+                    component.reason = "复用内容完全一致的已有素材"
                     await save_import_progress(work, "organize", adopt=adopt)
             else:
                 component.material_id = None

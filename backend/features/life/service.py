@@ -301,7 +301,11 @@ async def _evidence_events(
 ) -> list[LifeEvent]:
     if not event_ids:
         return []
-    events = list(await db.scalars(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(event_ids))))
+    events = list(
+        await db.scalars(
+            select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(event_ids)).order_by(LifeEvent.id)
+        )
+    )
     if len(events) != len(event_ids):
         raise LifeInputError("生活结果证据不存在或不属于当前账户")
     for event in events:
@@ -403,15 +407,16 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
     else:
         state.active_pursuit_id = pursuit.id
     if evidence_ids:
+        references = insert(PursuitEvidence).values(
+            [
+                {"user_id": user_id, "pursuit_id": pursuit.id, "event_id": event_id, "used_for_completion": completing}
+                for event_id in sorted(evidence_ids)
+            ]
+        )
         await db.execute(
-            insert(PursuitEvidence)
-            .values(
-                [
-                    {"user_id": user_id, "pursuit_id": pursuit.id, "event_id": event_id}
-                    for event_id in sorted(evidence_ids)
-                ]
-            )
-            .on_conflict_do_nothing(constraint="uq_pursuit_evidence_event")
+            references.on_conflict_do_update(constraint="uq_pursuit_evidence_event", set_={"used_for_completion": True})
+            if completing
+            else references.on_conflict_do_nothing(constraint="uq_pursuit_evidence_event")
         )
     milestone = completing or plan_changed or progress_changed
     await db.flush()

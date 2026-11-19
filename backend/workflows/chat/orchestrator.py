@@ -77,7 +77,7 @@ from workflows.chat.turn_inputs import (
     resolve_inference_settings,
     user_text_item,
 )
-from workflows.chat.types import TerminalReplyDelivery, TrackTask
+from workflows.chat.types import LifeContactEvidence, TerminalReplyDelivery, TrackTask
 from workflows.companion_actions import build_action_view
 from workflows.companion_rhythm import open_rhythm_message
 from workflows.tool_availability import unavailable_action_tool_names
@@ -172,6 +172,7 @@ async def run_chat_turn(
     submission_request_id: str | None = None,
     rhythm_contact_id: str | None = None,
     ephemeral: bool = False,
+    contact_evidence: LifeContactEvidence | None = None,
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
@@ -199,6 +200,7 @@ async def run_chat_turn(
                 submission_request_id=submission_request_id,
                 rhythm_contact_id=rhythm_contact_id,
                 ephemeral=ephemeral,
+                contact_evidence=contact_evidence,
                 headless=headless,
                 has_viewer=has_viewer,
                 excluded_tool_names=excluded_tool_names,
@@ -432,6 +434,8 @@ async def _prepare_turn(
         current_max_chars=inputs.ctx_length // 4,
         current_message_id=persisted_message_id if setup.final_reply_only else None,
     )
+    if "personal_evidence" in inputs.context:
+        current_context["personal_evidence"] = inputs.context["personal_evidence"]
     # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
     current_context["input"] = await inline_video_parts(
         current_context["input"], expected_session_id=str(setup.conv.id)
@@ -592,6 +596,7 @@ async def _run_chat_turn(
     submission_request_id: str | None = None,
     rhythm_contact_id: str | None = None,
     ephemeral: bool = False,
+    contact_evidence: LifeContactEvidence | None = None,
     headless: bool = False,
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
@@ -636,6 +641,11 @@ async def _run_chat_turn(
         if turn is None:
             return
         inputs, current_context = turn.inputs, turn.current_context
+        if ephemeral or not current_context["user_input_indices"]:
+            # 主动轮的启动资料没有用户消息身份，只使用这次唤醒后实际读取的外部资料。
+            current_context["turn_tool_start"] = len(current_context["input"])
+        if contact_evidence is not None:
+            current_context["contact_evidence"] = contact_evidence
         dispatch_ctx, active_tool_names = turn.dispatch_ctx, turn.active_tool_names
         if rhythm_contact_id is not None:
             contact_opened = False

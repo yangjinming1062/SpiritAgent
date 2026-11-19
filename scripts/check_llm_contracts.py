@@ -6,6 +6,7 @@ import importlib
 import os
 import re
 import sys
+from itertools import product
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -81,16 +82,36 @@ def inspect_file(path: Path, backend: Path) -> tuple[int, list[str]]:
             module_name = ".".join(path.relative_to(backend).with_suffix("").parts)
             module = importlib.import_module(module_name)
             if "response_model" in keywords:
-                schema = resolve(keywords["response_model"], module).model_json_schema()
+                schemas = [resolve(keywords["response_model"], module).model_json_schema()]
             else:
                 expression = keywords["schema"]
-                if not isinstance(expression, ast.Call) or expression.args or expression.keywords:
+                if not isinstance(expression, ast.Call):
                     raise ValueError("无法解析 schema 构造器")
-                schema = resolve(expression.func, module)()
+                builder = resolve(expression.func, module)
+                if (
+                    path == backend / "workflows/life_decisions.py"
+                    and ast.unparse(expression.func) == "_decision_schema"
+                    and len(expression.args) == 4
+                    and not expression.keywords
+                ):
+                    from features.life.actions import LIFE_CAPABILITIES
+
+                    names = tuple(LIFE_CAPABILITIES)
+                    schemas = (
+                        builder(dict(zip(names, mask, strict=True)), evidence_ids, active, paused)
+                        for mask in product((False, True), repeat=len(names))
+                        for evidence_ids in ([], ["1"])
+                        for active, paused in product((False, True), repeat=2)
+                    )
+                elif not expression.args and not expression.keywords:
+                    schemas = [builder()]
+                else:
+                    raise ValueError("无法解析 schema 构造器")
             from infrastructure.ai.structured_contracts import validate_preserved_choices
 
             label = ast.literal_eval(keywords["schema_name"])
-            validate_preserved_choices(schema, fields, schema_name=label)
+            for schema in schemas:
+                validate_preserved_choices(schema, fields, schema_name=label)
             count += 1
         except Exception as exc:
             errors.append(f"{path}:{node.lineno}: {type(exc).__name__}: {exc}")

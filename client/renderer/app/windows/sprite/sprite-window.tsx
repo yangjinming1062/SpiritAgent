@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react'
 
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
-import { speakProactive } from '@/app/workflows/proactive-delivery'
 import { useWindowPresentation } from '@/app/workflows/window-presentation'
 import {
   $companionLifecycle,
@@ -43,11 +42,11 @@ import { ProactiveBubble } from './proactive-bubble'
 import { toggleWhisper, WhisperOverlay } from './whisper'
 
 function reportTap(): void {
-  enqueueGesture('tap', speakProactive)
+  enqueueGesture('tap')
 }
 
 function reportDragReleased(): void {
-  enqueueGesture('drag_released', speakProactive)
+  enqueueGesture('drag_released')
 }
 
 export function SpriteWindow(): React.JSX.Element {

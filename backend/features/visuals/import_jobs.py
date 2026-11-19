@@ -527,6 +527,7 @@ async def save_import_progress(
         work.active_operation.stage = "save_material" if adopt is not None else stage
     previous = component.model_copy(deep=True) if component is not None else None
     previous_context = work.context.model_copy(deep=True) if adopt is not None or finish else None
+    previous_candidates = list(work.candidates) if adopt is not None else None
     try:
         async with SESSION_LOCAL() as db:
             job = await db.scalar(
@@ -548,6 +549,8 @@ async def save_import_progress(
             await notify_visuals_updated(db, work.user_id)
             await db.commit()
     except BaseException:
+        if previous_candidates is not None:
+            work.candidates = previous_candidates
         if previous_context is not None:
             work.context = previous_context
         if component is not None and previous is not None:

@@ -17,7 +17,8 @@ from features.companion.models import Persona
 from features.companion.persona_service import build_system_prompt_extras
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
-from features.life.context import read_life_context_in_session
+from features.conversation.context_window import delivered_life_excerpts
+from features.life.context import contact_excerpt_sources, read_life_context_in_session
 from features.life.schemas import LifeContext
 from features.memory.memory_bootstrap import build_user_profile_extras
 from features.memory.memory_format import (
@@ -26,9 +27,29 @@ from features.memory.memory_format import (
     format_memories_block,
     format_proactive_memory_block,
 )
-from features.memory.memory_retrieval import retrieve_proactive_memories
+from features.memory.memory_retrieval import embed_memory_text, retrieve_proactive_memories
 
 logger = get_logger(__name__)
+
+
+class DeliveredLifeHistory(NamedTuple):
+    deliveries: list[dict[str, Any]]
+    source_excerpts: dict[int, dict[str, str]]
+
+
+async def delivered_life_history(db: AsyncSession, user_id: int, conversation_id: int | None) -> DeliveredLifeHistory:
+    messages = await delivered_life_excerpts(db, user_id, conversation_id)
+    sources = await contact_excerpt_sources(db, user_id, {message.excerpt_id for message in messages})
+    deliveries = [
+        {
+            "delivered_at": message.delivered_at.isoformat(),
+            "delivered_bubbles": message.bubbles,
+            "source_excerpt_id": str(message.excerpt_id),
+        }
+        for message in messages
+        if message.excerpt_id in sources
+    ]
+    return DeliveredLifeHistory(deliveries, sources)
 
 
 class CompanionMemoryContext(BaseModel):
@@ -73,7 +94,6 @@ class CompanionPromptContext(BaseModel):
     current_time: str
     persona_extras: str
     current_mood: str
-    memories_block: str
     memory: CompanionMemoryContext = CompanionMemoryContext()
     life_context: LifeContext
     # 宿主模式不进入角色提示词，实际画面由对话流程按需装配。
@@ -95,17 +115,22 @@ async def load_companion_prompt_context(
         if persona is None or not persona.is_complete:
             return None
         language = resolve_language(await get_user_setting(db, user_id, "language"))
-        life_context = await read_life_context_in_session(db, user_id, include_topic_heads=include_life_topics)
+        life_context = await read_life_context_in_session(
+            db, user_id, growth_query=memory_query, include_topic_heads=include_life_topics
+        )
         query = memory_query or " ".join(
             [life_context.state.current_activity, *(p.title for p in life_context.active_pursuits)]
         )
-        memory = await get_companion_memory_context(db, user_id, language, query=query)
+        local_time = format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or ""
+        definition = build_system_prompt_extras(persona, language=language)
+    embedding = await embed_memory_text(user_id, query) if len(query.strip()) > 1 else None
+    async with SESSION_LOCAL() as db:
+        memory = await get_companion_memory_context(db, user_id, language, query=query, query_embedding=embedding)
         return CompanionPromptContext(
             language=language,
-            current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
-            persona_extras=build_system_prompt_extras(persona, language=language),
+            current_time=local_time,
+            persona_extras=definition,
             current_mood=life_context.state.mood or "",
-            memories_block=memory.recalled,
             memory=memory,
             life_context=life_context,
         )

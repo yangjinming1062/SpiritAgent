@@ -7,7 +7,7 @@ from runtime.events.emit import emit_ws_event
 
 from features.companion.prompt_runtime import load_companion_prompt_context, run_prompt_json
 from features.companion.prompts import MOOD_INSTRUCTIONS
-from features.conversation.context_window import load_recent_context_window
+from features.conversation.context_window import load_recent_companion_exchange
 from features.life.schemas import LifeEventInput
 from features.life.service import set_mood
 from features.life.use_cases import accept_event_in_session
@@ -46,14 +46,16 @@ async def _save_mood(user_id: int, mood: str) -> None:
         await db.commit()
 
 
-async def update_mood_from_companion_turn(user_id: int, user_message: str, assistant_bubbles: list[str]) -> str | None:
+async def update_mood_from_companion_turn(
+    user_id: int, conversation_id: int, user_message: str, assistant_bubbles: list[str]
+) -> str | None:
     """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
-    ctx = await load_companion_prompt_context(user_id)
+    ctx = await load_companion_prompt_context(user_id, memory_query=user_message[-2000:])
     if ctx is None:
         return None
 
     async with SESSION_LOCAL() as db:
-        recent_context = await load_recent_context_window(db, user_id) or ""
+        recent_context = await load_recent_companion_exchange(db, user_id, conversation_id=conversation_id) or ""
 
     remaining = 2000
     recent_bubbles: list[str] = []
@@ -74,7 +76,8 @@ async def update_mood_from_companion_turn(user_id: int, user_message: str, assis
             "assistant_bubbles": recent_bubbles,
             "user_message_truncated": len(user_message) > 2000,
             "assistant_bubbles_truncated": sum(len(text) for text in assistant_bubbles) > 2000,
-            **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
+            "memory": ctx.memory.model_dump(mode="json"),
+            "personal_outlook": [item.outlook for item in ctx.life_context.personal_growth],
             **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },

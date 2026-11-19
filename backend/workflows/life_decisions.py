@@ -2,18 +2,20 @@
 
 import asyncio
 import json
+from datetime import timedelta
 from typing import Any, Literal
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
+from features.companion.intents import enqueue_companion_intent, recent_life_contacts
 from features.companion.narrative_quality import review_narrative
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.companion.rhythm import BedtimeChange, read_rhythm, rhythm_prompt_context, set_bedtime_change
 from features.conversation.context_window import load_recent_companion_exchange
-from features.life.actions import LIFE_ACTION, NextAction
+from features.life.actions import LIFE_ACTION, NextAction, ReadingAction
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
-from features.life.queries import pursuit_evidence
+from features.life.queries import completed_personal_works, pursuit_evidence
 from features.life.schemas import (
     LifeContext,
     LifeDecisionRequest,
@@ -35,14 +37,18 @@ from features.life.use_cases import (
     share_life_event_in_session,
     update_personal_growth_in_session,
 )
-from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
+from features.visuals.repository import notify_visuals_updated
+from infrastructure.ai.error_classifier import LLMRuntimeError
+from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
+from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.life_capabilities import life_capability_context
 from workflows.life_execution import run_life_execution
@@ -71,9 +77,21 @@ class LifeDecision(BaseModel):
     episode: PrivateLifeEpisode | None = None
     pursuit: PursuitChange | None = None
     bedtime_change: BedtimeChange | None = None
-    review_after_minutes: int | None = Field(default=None, ge=20, le=720, description="本次决定的顶层复查间隔（分钟）")
+    review_after_minutes: int | None = Field(
+        default=None,
+        ge=20,
+        le=7 * 24 * 60,
+        description="下次考虑整段日常的间隔，20 至 10080 分钟；单项暂停用 resume_after",
+    )
     growth: PersonalGrowthChange | None = None
-    share: LifeShare | None = None
+    share: LifeShare | None = Field(
+        description="独立决定是否想分享这段或早先的经历。想保留或此刻没有想说的填 null，想分享时选择部分内容和渠道。"
+    )
+
+    def pursuit_request(self, revision: int) -> LifeDecisionRequest | None:
+        if self.pursuit is None:
+            return None
+        return LifeDecisionRequest(**self.pursuit.model_dump(), operation=self.choice, expected_revision=revision)
 
     @model_validator(mode="after")
     def check_choice(self) -> "LifeDecision":
@@ -94,6 +112,47 @@ class LifeDecision(BaseModel):
         ):
             raise ValueError("仅可呈现本轮在生活页分享的新活动")
         return self
+
+
+def _decision_schema(
+    capabilities: dict[str, bool], evidence_ids: list[str], has_active: bool, has_paused: bool
+) -> dict[str, Any]:
+    schema = LifeDecision.model_json_schema()
+    definitions = schema["$defs"]
+    choices = schema["properties"]["choice"]["enum"]
+    if not has_active:
+        choices[:] = [
+            choice for choice in choices if choice not in ("advance_pursuit", "complete_pursuit", "pause_pursuit")
+        ]
+    if not has_paused:
+        choices.remove("resume_pursuit")
+    if not (has_active or has_paused):
+        choices.remove("abandon_pursuit")
+        choices.remove("redirect_pursuit")
+    pursuit = definitions["PursuitChange"]["properties"]
+    evidence = pursuit["evidence_event_ids"]
+    if evidence_ids:
+        evidence["items"]["enum"] = evidence_ids
+    else:
+        evidence["maxItems"] = 0
+        pursuit["progress"] = {"type": "null", "description": "没有属于此事项的成果时，仅可调整打算。"}
+        if "complete_pursuit" in choices:
+            choices.remove("complete_pursuit")
+    selection = definitions["PursuitNextAction"]["properties"]["action"]
+    mapping = selection["discriminator"]["mapping"]
+    for name, ref in tuple(mapping.items()):
+        if not capabilities.get(name):
+            del mapping[name], definitions[ref.rsplit("/", 1)[-1]]
+    if mapping:
+        selection["oneOf"] = [item for item in selection["oneOf"] if item["$ref"] in mapping.values()]
+    else:
+        definitions["PursuitChange"]["properties"]["next_action"] = {"type": "null"}
+        del definitions["PursuitNextAction"]
+        choices.remove("start_pursuit")
+        if not (has_active or has_paused):
+            schema["properties"]["pursuit"] = {"type": "null"}
+            del definitions["PursuitChange"], definitions["PursuitChangeNarrative"]
+    return schema
 
 
 def _restore_next_action(original: object, revision: object) -> object:
@@ -145,48 +204,41 @@ def _keep_original_action(original: dict[str, Any] | None, repaired: dict[str, A
 
 
 _INSTRUCTIONS = {
-    "zh": """你的任务是选择怎么继续自己的生活。结合 persona、人设所处情境和已有经历，找出一件此刻有具体缘由的事。可以留意自己喜欢的东西、积累一个小习惯、换一种做法、调整真实事项，也可以安静地继续过日子。
-life_context.recent_events 从新到旧提供经过记录的经历，topic_heads 给出每个主题的最近片段。沿兴趣、问题和实际结果接续，留意事情如何影响下一次选择。不要把当前时间或重复观察原状态当作新的变化。
+    "zh": """以 persona 描述的身份决定此刻想怎样过。生活可以继续原样。结合正在做的事、自己形成的认识和已经发生的经历，选择一个真的想作出的决定。相处资料帮助你理解对方，不能代替自己的动机或双方的约定。
+life_context 是当前状态、事项和近期经历；topic_heads 是每个主题的最近片段。recent_exchange 中新的明确安排优先于较早的用户记忆，只影响涉及的事。execution 给出此刻的真实能力与素材。
 {life_facts}
 {life_narrative}
-调整事项时，pursuit.narrative.pursuit 用我的口吻写这件事的现状与下一步，pursuit.narrative.event 写本轮实际作出的决定；计划制作不等于已经交付。
-决定开始一项尚未登记且可执行的制作时，用 pursuit.next_action 登记具体行动及其目的；next_step 只描述想法，不会启动制作。已有同一任务则等待其结果。
 
-rhythm 是你自己的作息。只有今天的生活有具体缘由时才填写 bedtime_change，描述缘由并给出相对平时入睡时间的偏移分钟（负数提前，正数推迟，最多两小时）；否则留空。作息调整本身无需写成已发生的经历。
-memory 是关于对方的资料。优先尊重 recent_exchange 中用户最近明确的更正、请求或约定，人设、推测和偏好本身不给出授权。选择 review_after_minutes 时根据你下一步的活动和预计等待时间，明确需要多久后再考虑。新结果会提前唤醒判断。
-你可以改变自己的兴趣、观点、习惯或关系边界。只有某段真实成果或明确的独处经历带来具体变化时，填写 growth，引用提供的经历 id。选择本轮新独处经历作为来源时填 null。写自己的变化，保留用户设定的核心身份，避免在此沉淀用户信息和关系推测。text 为 null 表示撤回这一方面的旧理解。
-独处经历和自主事项默认留给自己。只有你愿意让用户知道的一部分才填写 share，选一条已有经历或本轮新独处片段，以自己的话写要公开的标题和片段，保留事实性质。channel=life 放入生活页，post 或 diary 将该摘选留给之后的动态或日记创作。show_activity 明确允许用此刻的活动类别及环境做舞台呈现，仅用于本轮在 life 分享的新片段。自主制作的成品会进入用户素材库，仅在愿意公开成品时选择制作，并将 next_action.add_to_user_library 设为 true。
+choice 决定自己的生活，share 单独决定有没有哪段经历想让对方知道。两项可以独立选择。保留时填写 null，愿意联系时考虑双方此刻的心境和原先说过的话。
+• keep：继续原来的事，episode 和 pursuit 留空。重复的观察、等待或时间流逝无需写成新经历。
+• private_episode：仅在允许独处日常时，写此刻虚拟情境中一次具体观察、选择或变化。继续原主题用其最新 previous_episode_id。用简短标题和一到三句第一人称叙述，标明 activity_type。只有自己参与；有关用户的事实来自真实交流。换环境时保留仍成立的条件，current_scene.title 使用目录中该地点的准确名称，scene_tags 给出完整条件。
+• 真实事项：选对应操作并填写 pursuit。新目标需要动机和可核验的成果，start_pursuit 还需要可执行的 next_action；episode_origin_id 可承接个人主题。next_step 是设想，实际受理依赖 next_action。narrative.pursuit 写现状与下一步，narrative.event 写本次变化，行动的打算和缘由只写在 next_action.narrative。已登记或结果未知的步骤沿原任务核对，可以同时关注其他主题。更新进度时，evidence_event_ids 只从 pursuit_evidence.events 选属于本事项的结果或支持目标的独立发表作品。启发立项的旧经历留作背景。只改打算时 progress 留空。完成整个目标须有充分成果且没有未解决步骤。暂停、恢复或放下由具体缘由决定，用户暂停须由用户要求恢复，遵守 resume_after。旧事项保留迟到成果。真实事项不改写当前环境和活动。
 
-choice=keep 只表示继续原有生活，episode 与 pursuit 均留空。例行等待、无新发现、时间变化、检查到相同结果都适合 keep。
-choice=private_episode 仅在 private_episode_allowed 时选择，填写 episode。写伙伴独自在已有虚拟情境内的观察、选择、习惯或感受。它只有伙伴自己这一位参与者，不能编排与用户见面、替用户准备物品、观察用户行为或等用户回应；只可将已有证据的真实阅读或作品作为动机，本段新发生的变化仍是独处虚拟日常。继续主题时用 topic_heads 的最近片段 id，另一个真正的兴趣才开启新主题。title 是这次片段的短标题，narrative 用一到三句第一人称说清具体变化和它的缘由，activity_type 描述此刻的虚拟活动。情境或可用物品有变化时，用 current_scene 和 scene_tags 给出有依据的当前环境和完整条件。
-选择在 execution.scenes 已有的地点活动时，用该条目的准确名称填写 current_scene.title；描述当前地点和已知条件，保留其他仍成立的环境信息。
-处理真实事项时，用 choice 指定具体操作，pursuit 填写该操作的内容。考虑多个已有主题；一件事在等结果时可选择独立的主题，不因阻碍重复登记原任务。start_pursuit 需要具体动机、可核验目标和确有用途的 next_action，title 用短标题表达。可以用 episode_origin_id 将真实行动接到 topic_heads 提供的一个个人主题。用户相关事项只可承接已有真实约定，不能由人设、偏好、虚拟情境或沉默补出约定。advance_pursuit 用于添加有意义的下一步或根据新结果改变方向，complete_pursuit 需要确凿成果且无未解决步骤。暂停、恢复、放下和转向要有实际理由；用户暂停须由用户要求恢复，resume_after 未到继续等待。转向时保留旧结果归属。
-pursuit_evidence.steps 提供真实步骤及其阶段。原步骤 planned、running（含 waiting）或 unknown 时，沿原请求等待核对。能力和技术状态只用来判断可行性；用自然话写动机、真实变化或打算，省去重复等待和技术过程。登记行动时只在 next_action.narrative 写一次我准备怎样做和目的。当前场景和活动不通过 pursuit 修改。
-execution 是真实能力和素材目录。visual.generate、scene.create、outfit.create 和 action.design 各自会制作真实素材；只在需要该成果时使用。content.read 只读已存资讯、公开资料或一次搜索得到的最多三份来源。next_action 是计划。改变 progress 或完成事项须引用提供的 evidence_event_ids，引用与目标有关的已确认成果。pursuit_evidence.events 中未绑定事项的发布记录，只有内容确实支持此目标时才能引用。已保存的一件作品不一定足以完成整个目标。只用中文输出符合 schema 的 JSON。""",
-    "en": """Decide how to continue your own life. Use the persona, the established setting and past experiences to find something you have a concrete reason to do now. Notice something you enjoy, develop a habit, try a different approach, advance a real pursuit, or quietly carry on.
-life_context.recent_events gives recorded experiences from newest to oldest. topic_heads gives the latest entry in each thread. Follow interests, questions and actual results, and show how one experience changes a later choice. A new time or another look at the same state is not a new development.
+决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，最多提前或推迟两小时。
+growth 只记录自己因有依据的独处经历或成果而产生的变化。引用来源 id；本次新片段的来源填 null。新兴趣或独立认识可以并存，修订或撤回某一条用它的 growth_id。outlook 概括今后选择上的倾向，省去来源细节和用户私事。撤回时 text、outlook 都填 null。核心身份与基本性格是起点。
+私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活页，post、diary 留给对应创作。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
+自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可读取至多三份现有资讯或真实来源，保留实际阅读范围。用中文输出符合 schema 的决定。""",
+    "en": """Decide how you want to spend this moment as the person described by persona. Carrying on is a complete choice. Consider your current activity, personal outlook and recorded experience. Knowing the other person informs how you relate; it supplies neither your motivation nor a mutual agreement.
+Life_context gives your state, pursuits and recent experiences. Topic_heads gives the latest episode in each thread. A new explicit arrangement in recent_exchange overrides an older user memory only on that point. Execution lists actual capabilities and materials.
 {life_facts}
 {life_narrative}
-For a pursuit change, write its current state and next step in pursuit.narrative.pursuit, and the decision actually made this turn in pursuit.narrative.event, both in your own voice. Planning to create something does not establish delivery.
-When you decide to begin a feasible creation that is not already registered, put the action and its purpose in pursuit.next_action. A next_step describes an idea; it does not start production. Wait for an existing attempt at the same work.
 
-rhythm describes your own routine. Only for a concrete reason in today's life, give bedtime_change with the reason and the offset in minutes from the usual bedtime (negative for earlier, positive for later, up to two hours); otherwise leave it null. The change in schedule itself does not establish a past experience.
-Use memory to understand the other person and recent_exchange for their latest explicit correction, request, or agreement. A persona, preference or inference does not authorize an action. Set review_after_minutes according to the time needed for your own next activity or wait. A new result may bring that review forward.
-Use growth when an established accomplishment or a concrete solo experience changes an interest, view, habit or boundary. Cite a supplied experience id, or use null for this turn's new solo episode. Keep the user's core identity settings intact. Record your own change rather than information or conjecture about the user. A null text withdraws the previous understanding for that aspect.
-Your solo experiences and independent pursuits are private. Use share only for the part you wish to tell the user. Pick a supplied experience or the new solo episode, and write the title and excerpt in your voice with its original factual status. Set channel to life for the life page, post for a future post, or diary for a future diary. Use show_activity to permit the stage to show the current activity type and setting only for a new episode shared on the life page. Creative assets go to the user's library. Select creative production only if you want the artifact visible and set next_action.add_to_user_library to true.
+Use choice for your own life. Decide separately in share whether you want the other person to know about an experience. Use null to keep it to yourself. If you feel like reaching out, consider both your current inclination and what the other person has told you.
+• keep: carry on; leave episode and pursuit null. A routine wait, repeated observation or change of clock needs no new episode.
+• private_episode: when private episodes are available, describe one concrete observation, choice or change in the established virtual setting, by yourself. Continue a thread using its latest previous_episode_id. Give a short title, one to three first-person sentences and an activity_type. User-related facts come from actual exchanges. When changing setting, use the exact listed place name in current_scene.title and the full remaining conditions in scene_tags.
+• A real pursuit: choose its operation and supply pursuit. For a new goal, give your motivation and a verifiable result; start_pursuit also requires a feasible next_action. An episode_origin_id can connect a personal thread. Next_step is an idea; next_action registers work. Use narrative.pursuit for the present state and next step, narrative.event for today's change, and next_action.narrative for the plan and its reason just once. Wait for existing or uncertain work on its original request; another matter can still proceed. When updating progress, cite only matching results or applicable independent publications from pursuit_evidence.events. Earlier inspiration is background. Leave progress null for a change of plan alone. Completion requires sufficient results for the whole goal and no unresolved steps. Pause, resume or abandon for a reason. A user pause needs their request to resume; honor resume_after. Later results remain with their original pursuit. Pursuit changes do not change current setting or activity.
 
-choice=keep means carry on with no record. Leave episode and pursuit null. Use it for routine waiting, no discovery, time passing or the same status.
-choice=private_episode is available only when private_episode_allowed. Fill episode for a new observation, choice, habit or feeling within the companion's established virtual setting, alone. Do not stage a meeting with the user, prepare something for them, observe their actions or wait for them. You may refer to existing evidence of actual reading or works as motivation. The new development described here remains solo and virtual. For an existing thread use its latest id from topic_heads; start a new thread only for a distinct interest. title is a short label, narrative one to three first-person sentences with the concrete change and why it matters, and activity_type the present activity within the virtual setting. When the setting or available objects change, use current_scene and scene_tags for the supported setting and its full current conditions.
-When the activity takes place in an existing location from execution.scenes, use that entry's exact title in current_scene.title. Describe the present setting and known conditions, retaining relevant details that still apply.
-For a real pursuit, set choice to the specific operation and put its details in pursuit. Consider multiple threads. Pending work leaves room for other interests but must not be resubmitted. start_pursuit needs a specific motivation, a verifiable goal, and a useful next_action, with a short pursuit_title. episode_origin_id may connect the action to a personal thread from topic_heads. Continue a user-related matter only from an actual recorded agreement. Persona, preferences, virtual scenes and silence cannot supply an agreement. Use advance_pursuit for a meaningful next action or change based on a new result, and complete_pursuit only with sufficient evidence and no unresolved steps. Give a real reason for pausing, resuming, setting aside or redirecting. A user pause requires the user's request to resume, and respect resume_after. Keep old results on the original pursuit.
-pursuit_evidence.steps describes actual attempts. When a step is planned, running (including waiting) or unknown, retain the original request and wait for resolution. Capabilities and technical status establish feasibility. Describe motivation, real changes or intention naturally. For a new action, write what you intend to do and why once in next_action.narrative. Do not use pursuit to change the current scene or activity.
-execution lists available capabilities and real materials. visual.generate, scene.create, outfit.create and action.design produce real assets; use them when their deliverable is useful. content.read reads saved items, public sources, or up to three sources from one search. next_action is a plan. Changing progress or completing requires evidence_event_ids for relevant confirmed results. An unassigned publication in pursuit_evidence.events may be cited only when its content supports this goal. One saved artifact does not necessarily fulfill the goal. Output schema JSON in English only.""",
+Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, within two hours of your usual bedtime.
+Use growth for a change in yourself grounded in a solo episode or confirmed result. Cite the event id, or null for this turn's new solo episode. Distinct interests and understandings coexist. Only revise or withdraw a particular one by growth_id. Outlook describes how you now tend to act without disclosing the source or user details. To withdraw it, give null text and outlook. Keep your core identity and temperament.
+Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page, post or diary for later writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
+You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read up to three actual sources; keep their scope. Return your decision in English using the schema.""",
 }
 
+
 _CANDIDATE_REVIEW = {
-    "zh": """本轮审阅的是生活选择。source.fact_type=virtual_activity 按结构化契约说明整段正在写成一段新的虚拟独处经历。虚拟日常里的新行动、观察和结果是本次创作内容，符合提供的人设及情境即可，无需证据表明同一细节过去已经发生。只有草稿把内容说成现实活动、已完成的工具行动或外部作品时，才对该项寻找现实证据。逐段核对参与者与行为指向，拒绝虚构用户参与、替用户安排、观察用户行为或等待用户，也拒绝与已知虚拟情境的明确冲突。draft.publication_intent 的 JSON 是舞台候选描述，允许符合当前片段的虚拟道具和状态，保留素材准确名称及枚举。根据 topic_heads 和 recent_events 核对有没有新的变化。继续已有主题时，改用新方法或认识足以构成新变化，原样等待或换一个说法才是重复。
+    "zh": """本轮审阅的是生活选择。source.fact_type=virtual_activity 按结构化契约说明整段正在写成一段新的虚拟独处经历。虚拟日常里的新行动、观察和结果是本次创作内容，符合提供的人设及情境即可，无需证据表明同一细节过去已经发生。只有草稿把内容说成现实活动、已完成的工具行动或外部作品时，才对该项寻找现实证据。逐段核对参与者与行为指向，拒绝虚构用户参与、替用户安排、观察用户行为或等待用户，也拒绝与已知虚拟情境的明确冲突。draft.publication_intent 的 JSON 是舞台候选描述，允许符合当前片段的虚拟道具和状态，保留素材准确名称及枚举。当片段涉及可辨认的外部资料，核对伙伴实际取得的是文字、图像还是摘要。可以想象原型或画自己的草图；把草图的材质、尺寸或年代说成原件的观察和测量，需要原资料支持。根据 topic_heads 和 recent_events 核对有没有新的变化。继续已有主题时，改用新方法或认识足以构成新变化，原样等待或换一个说法才是重复。
 source.mode 为 pursuit 时，draft.publication_intent 是拟议行动，JSON 字段名和资源 id 是参数。available_materials 是本次可选素材，不代表所有历史资产。伙伴可以当下选择创作方法、给自己的尝试命名或表达动机，不需过去有同一句话；已产出的作品、实际经历与用户约定则必须有依据。用户相关安排必须来自真实交流，不能用模拟情境或偏好补写约定。记录实际转折、结果或下一步目的；技术状态及重复等待不构成转折。""",
-    "en": """Review a life choice. The structured source.fact_type=virtual_activity frames the entire draft as a newly authored solo episode in a virtual setting. Newly imagined solo actions, observations and outcomes can originate in this episode when consistent with the persona and setting. They do not require records showing the same details happened previously. Require real-world evidence for claims presented as actual actions, completed tools or external works. Check the actor and whom the activity is directed at. Flag invented user involvement, arranging something for the user, observing their behavior, waiting for them, or directly contradicting the established virtual setting. The JSON in draft.publication_intent describes stage candidates, and can specify virtual props consistent with this episode. Preserve exact material names and enum values. A different approach or new understanding is meaningful continuation, while pure rewording, elapsed time, or continued waiting alone repeats an earlier state.
+    "en": """Review a life choice. The structured source.fact_type=virtual_activity frames the entire draft as a newly authored solo episode in a virtual setting. Newly imagined solo actions, observations and outcomes can originate in this episode when consistent with the persona and setting. They do not require records showing the same details happened previously. Require real-world evidence for claims presented as actual actions, completed tools or external works. Check the actor and whom the activity is directed at. Flag invented user involvement, arranging something for the user, observing their behavior, waiting for them, or directly contradicting the established virtual setting. The JSON in draft.publication_intent describes stage candidates, and can specify virtual props consistent with this episode. Preserve exact material names and enum values. For an identifiable external source, check which text, image or summary was actually obtained. An invented sketch is legitimate; attributes, dates or measurements asserted about the original require evidence from that source. A different approach or new understanding is meaningful continuation, while pure rewording, elapsed time, or continued waiting alone repeats an earlier state.
 When source.mode is pursuit, draft.publication_intent encodes the proposed action; its field names and resource ids are parameters. available_materials lists selectable assets, not the entire historical inventory. A present creative choice, personal name for an attempt, or motive need not have been worded the same way in the past. Actual results, real experiences and user agreements do need evidence. Ground user-related arrangements in real exchanges, not simulations or preferences. Record genuine turning points, results or purposes rather than technical status or repeated waiting.""",
 }
 
@@ -196,16 +248,48 @@ logger = get_logger(__name__)
 _DISCLOSURE_REVIEW = {
     "zh": (
         "share_source 只给出本次选择的经历。核对 draft.title、body 是否保留来源时间、人物、事实性质和执行结果，"
-        "是否额外公布了没有选择的经历或用户私事。draft.text 是拟长期保存的个人认识，核对 growth_source "
-        "是否支持伙伴自身具体变化，是否误写用户喜好、虚构共同经历或改写核心人设。"
+        "是否额外公布了没有选择的经历或用户私事。creation_brief 说明当时为什么制作及设计内容，已完成的制作说明有成品，预期效果仍按实际结果表达。此刻愿意分享是当前决定。draft.text 是拟长期保存的个人认识，核对 growth_source "
+        "是否支持伙伴自身具体变化，是否误写用户喜好、虚构共同经历或改写核心人设。outlook 只保留可以影响相处的倾向，不能透露具体私事与来源。"
+        "有 contact_context 时，publication_intent 表示在选定时段主动发起这次交流。结合对方的原话、日期和适用范围，若与仍有效的明确免打扰要求或由对方先开启该话题的约定冲突，标记 publication_intent。无需事先获邀，普通安静偏好只按其情境理解。交流资料只能帮助判断联系是否合适，不可补作经历的依据。"
     ),
     "en": (
         "Check whether draft.title and body stay within share_source and preserve who did what, when, and its factual status. "
-        "Flag disclosures about an unselected experience or private user information. Draft.text is a candidate personal "
+        "Creation_brief supports the original purpose and design; completion establishes an artifact, not every intended visual detail. A present willingness to share is a current choice. Flag disclosures about an unselected experience or private user information. Draft.text is a candidate personal "
         "change. Check that growth_source supports a change in the companion itself, without claims about a user's "
-        "preferences, invented shared experiences, or a change to the configured identity."
+        "preferences, invented shared experiences, or a change to the configured identity. Outlook must express only a tendency, without revealing private specifics or sources."
+        " When contact_context is supplied, publication_intent means initiating this particular conversation in the chosen window. Flag publication_intent if it conflicts with a still-applicable explicit request for quiet or to let the other person raise that topic. Respect the person's actual wording, dates and scope. A prior invitation is optional and an ordinary preference for quiet is contextual. The exchange informs contact suitability, not the facts of the experience."
     ),
 }
+
+
+async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> bool:
+    saved = await share_life_event_in_session(db, user_id, share, source.id)
+    if saved and share.release_work and "visual_id" in source.result_ref:
+        await notify_visuals_updated(db, user_id)
+    return saved
+
+
+async def share_finished_work(user_id: int, share: LifeShare, config: UserLlmConfig, language: str) -> None:
+    if not share.release_work or share.event_id is None:
+        raise ValueError("需要选择一件已完成的私下作品")
+    async with SESSION_LOCAL() as db:
+        sources = await completed_personal_works(db, user_id, event_id=share.event_id)
+    if not sources:
+        raise ValueError("找不到这件已完成的个人作品")
+    review = await review_narrative(
+        config,
+        {"share_source": sources[0].prompt_payload()},
+        {"title": share.title, "body": share.narrative},
+        language,
+        requirements=resolve_prompt_text(_DISCLOSURE_REVIEW, language),
+    )
+    if review.issues:
+        raise ValueError(
+            "摘选需要按原经历调整：" + "；".join(f"{issue.excerpt}（{issue.reason}）" for issue in review.issues)
+        )
+    async with SESSION_LOCAL() as db:
+        await _save_share(db, user_id, share, sources[0])
+        await db.commit()
 
 
 async def adjust_life(user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
@@ -234,8 +318,18 @@ def _validate_pursuit(decision: LifeDecisionRequest, life: LifeContext, evidence
         current = next((item for item in life.active_pursuits if item.id == decision.pursuit_id), None)
         if current is None:
             raise LifeInputError("只能推进本次快照中的进行中事项")
-        if not set(decision.evidence_event_ids) <= {item.id for item in [*life.recent_events, *evidence.events]}:
-            raise LifeInputError("只能引用本次快照提供的生活结果证据")
+        pending = any(step.pursuit_id == current.id for step in evidence.steps)
+        if pending and (decision.next_action is not None or decision.operation == "complete_pursuit"):
+            raise LlmJsonValidationError("pursuit_has_unresolved_step", fields=("pursuit_id", "next_action"))
+        eligible = {item.id for item in evidence.events if item.pursuit_id in (None, current.id)}
+        if not set(decision.evidence_event_ids) <= eligible:
+            raise LlmJsonValidationError("unrelated_pursuit_evidence", fields=("evidence_event_ids", "pursuit_id"))
+        if not decision.evidence_event_ids and (
+            decision.operation == "complete_pursuit" or decision.progress not in (None, current.progress)
+        ):
+            raise LlmJsonValidationError(
+                "progress_requires_pursuit_evidence", fields=("evidence_event_ids", "progress")
+            )
         if (
             decision.operation == "advance_pursuit"
             and decision.next_action is None
@@ -305,7 +399,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         evidence = await pursuit_evidence(
             db, user_id, [item.id for item in life.active_pursuits], include_publications=True
         )
-        recent_exchange = await load_recent_companion_exchange(db, user_id)
+        recent_exchange = await load_recent_companion_exchange(db, user_id, current_interaction=False)
+        recent_contacts = await recent_life_contacts(db, user_id)
     execution = await life_capability_context(user_id)
     instructions = (
         resolve_prompt_text(_INSTRUCTIONS, context.language)
@@ -320,18 +415,25 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         "life_context": life.prompt_payload(),
         "memory": context.memory.model_dump(mode="json"),
         "recent_exchange": recent_exchange,
+        "recent_contact_choices": recent_contacts,
     }
     evidence_payload = evidence.prompt_payload()
     attempts: list[LlmAttemptDiagnostic] = []
     original_decision: dict[str, Any] | None = None
-    original_share_scope: tuple[object, object, object] | None = None
+    original_share_scope: tuple[object, ...] | None = None
 
     def parse_decision(value: Any) -> LifeDecision:
         nonlocal original_decision, original_share_scope
         if isinstance(value, dict):
             raw_share = value.get("share")
             share_scope = (
-                (raw_share["event_id"], raw_share.get("channel", "life"), raw_share.get("show_activity", False))
+                (
+                    raw_share["event_id"],
+                    raw_share.get("channel", "life"),
+                    raw_share.get("show_activity", False),
+                    raw_share.get("contact"),
+                    raw_share.get("release_work", False),
+                )
                 if isinstance(raw_share, dict) and "event_id" in raw_share
                 else None
             )
@@ -346,11 +448,51 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                     )
                 ):
                     value = {**value, "share": None}
+                if value.get("growth") != (original_decision or {}).get("growth"):
+                    value = {**value, "growth": None}
             else:
                 original_decision = value
                 original_share_scope = share_scope
-        return LifeDecision.model_validate(value)
+        decision = LifeDecision.model_validate(value)
+        if proposal := decision.pursuit_request(life.state.revision):
+            _validate_pursuit(proposal, life, evidence)
+            action = proposal.next_action.action if proposal.next_action else None
+            if isinstance(action, ReadingAction):
+                topics = {str(item["id"]) for item in execution["topics"]}
+                routes = execution["reading_sources"]
+                if not (action.query or action.urls or action.topic_ids) or (
+                    action.urls
+                    and not routes["public_urls"]
+                    or action.query
+                    and not action.urls
+                    and not routes["web_search"]
+                    or any(str(topic_id) not in topics for topic_id in action.topic_ids)
+                ):
+                    raise LlmJsonValidationError("reading_source_unavailable", fields=("query", "urls", "topic_ids"))
+        if (
+            decision.pursuit
+            and decision.pursuit.next_action
+            and not execution["capabilities"].get(decision.pursuit.next_action.action.capability)
+        ):
+            raise ValueError("请选择目前可执行的下一步；暂不能执行的想法可以保留到之后")
+        if (
+            decision.growth
+            and decision.growth.growth_id is not None
+            and not any(
+                item.id == decision.growth.growth_id and item.aspect == decision.growth.aspect
+                for item in life.personal_growth
+            )
+        ):
+            raise ValueError("只能更新提供的同一条个人认识")
+        if (
+            decision.share
+            and decision.share.release_work
+            and decision.share.event_id not in {item.id for item in life.private_works}
+        ):
+            raise ValueError("公开原件需要从 private_works 选择一件仍在手里的作品")
+        return decision
 
+    evidence_ids = [str(item.id) for item in evidence.events]
     decision = await call_llm_json(
         config,
         instructions,
@@ -362,18 +504,24 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             "pursuit_evidence": evidence_payload,
             "execution": execution,
         },
-        schema=LifeDecision.model_json_schema(),
+        schema=_decision_schema(
+            execution["capabilities"], evidence_ids, bool(life.active_pursuits), bool(life.paused_pursuits)
+        ),
         schema_name="companion_life_decision",
+        reasoning_effort="none",
         parse_output=parse_decision,
         repair_prompt=(
             "Keep the original pursuit id, next_action, timing and library choice. Repair structure, not the plan. "
-            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable."
+            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable. "
+            "For progress or completion, only cite matching results from pursuit_evidence.events. If only the plan "
+            "changed, leave progress null and evidence_event_ids empty. A pursuit with a step still outstanding "
+            "cannot register another step or finish."
         ),
         preserve_choices=("choice",),
         diagnostics=attempts,
     )
     episode = decision.episode
-    pursuit = None
+    pursuit = decision.pursuit_request(life.state.revision)
     draft = {}
     if episode is not None:
         if episode.previous_episode_id is not None and episode.previous_episode_id not in {
@@ -394,11 +542,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             "topic_heads": personal["topic_heads"],
             "recent_events": personal["life_context"]["recent_events"],
         }
-    elif decision.pursuit is not None:
-        pursuit = LifeDecisionRequest(
-            **decision.pursuit.model_dump(), operation=decision.choice, expected_revision=life.state.revision
-        )
-        _validate_pursuit(pursuit, life, evidence)
+    elif pursuit is not None:
         draft = _pursuit_draft(pursuit)
         review_source = {
             "mode": "pursuit",
@@ -417,7 +561,9 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         if review.issues:
             return {"status": "discarded", "choice": decision.choice}
 
-    candidates = {item.id: item for item in [*life.recent_events, *life.topic_heads, *evidence.events]}
+    candidates = {
+        item.id: item for item in [*life.recent_events, *life.topic_heads, *evidence.events, *life.private_works]
+    }
     share_evidence = candidates.get(decision.share.event_id) if decision.share is not None else None
     growth_evidence = candidates.get(decision.growth.evidence_event_id) if decision.growth is not None else None
     disclosure_draft = {}
@@ -430,11 +576,18 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         source = (
             new_episode_payload
             if share.event_id is None
-            else (share_evidence.trajectory_payload() if share_evidence is not None else None)
+            else (share_evidence.prompt_payload() if share_evidence is not None else None)
         )
         if source is not None:
             disclosure_source["share_source"] = source
             disclosure_draft.update(title=share.title, body=share.narrative)
+            if share.contact is not None:
+                disclosure_source["contact_context"] = {
+                    "local_time": context.current_time,
+                    "recent_exchange": recent_exchange,
+                    "memory": personal["memory"],
+                }
+                disclosure_draft["publication_intent"] = share.contact.model_dump_json()
         else:
             share = None
     if growth is not None and growth.text is not None:
@@ -448,20 +601,30 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         if source is not None:
             disclosure_source["growth_source"] = source
             disclosure_draft["text"] = growth.text
+            disclosure_draft["outlook"] = growth.outlook
         else:
             growth = None
+    disclosure_unavailable = False
     if disclosure_draft:
-        review = await review_narrative(
-            config,
-            disclosure_source,
-            disclosure_draft,
-            context.language,
-            requirements=resolve_prompt_text(_DISCLOSURE_REVIEW, context.language),
-        )
-        if any(issue.field in ("title", "body") for issue in review.issues):
+        try:
+            review = await review_narrative(
+                config,
+                disclosure_source,
+                disclosure_draft,
+                context.language,
+                requirements=resolve_prompt_text(_DISCLOSURE_REVIEW, context.language),
+            )
+        except (IncompleteLlmResponseError, LLMRuntimeError, TimeoutError):
+            logger.warning("Life disclosure review unavailable", extra={"user_id": user_id}, exc_info=True)
+            disclosure_unavailable = True
             share = None
-        if any(issue.field == "text" for issue in review.issues):
-            growth = None
+            if growth is not None and growth.text is not None:
+                growth = None
+        else:
+            if any(issue.field in ("title", "body", "publication_intent") for issue in review.issues):
+                share = None
+            if any(issue.field in ("text", "outlook") for issue in review.issues):
+                growth = None
     async with SESSION_LOCAL() as db:
         if (
             is_user_in_maintenance(user_id)
@@ -499,7 +662,22 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 source = share_evidence or new_episode
                 if source is None:
                     raise LifeInputError("分享需要已保存的经历")
-                await share_life_event_in_session(db, user_id, share, source.id)
+                async with db.begin_nested() as sharing:
+                    saved = await _save_share(db, user_id, share, source)
+                    if saved and share.contact is not None:
+                        due = utc_now() + timedelta(minutes=share.contact.after_minutes)
+                        accepted = await enqueue_companion_intent(
+                            db,
+                            user_id,
+                            share.title,
+                            source_kind="life",
+                            life_event_id=source.id,
+                            not_before=due,
+                            expires_at=due + timedelta(minutes=share.contact.window_minutes),
+                        )
+                        if not accepted:
+                            await sharing.rollback()
+                            share = None
             if decision.bedtime_change is not None:
                 await set_bedtime_change(db, user_id, decision.bedtime_change, proposed_at=proposed_at)
         except LifeStateConflictError:
@@ -508,4 +686,9 @@ async def _consider_life(user_id: int) -> dict[str, object]:
     if pursuit is not None and pursuit.next_action is not None:
         await run_life_execution(user_id)
     changed = decision.choice != "keep" or any((share, growth, decision.bedtime_change))
-    return {"status": "updated" if changed else "kept", "choice": decision.choice}
+    result = {"status": "updated" if changed else "kept", "choice": decision.choice}
+    if disclosure_unavailable:
+        result["disclosure_review"] = "unavailable"
+        if not changed:
+            result["status"] = "review_unavailable"
+    return result

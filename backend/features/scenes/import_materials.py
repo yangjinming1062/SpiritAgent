@@ -1,5 +1,7 @@
 """将已检查的影像提取或补全结果采纳为环境素材。"""
 
+from collections.abc import Awaitable, Callable
+
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.domain_locks import lock_domain
@@ -71,17 +73,25 @@ async def accept_imported_scene(
     return scene_view(row)
 
 
-async def undo_imported_scene(db: AsyncSession, user_id: int, material_id: int, source_key: str) -> None:
+async def undo_imported_scene(
+    db: AsyncSession, user_id: int, material_id: int, source_key: str, still_referenced: Callable[[], Awaitable[bool]]
+) -> bool:
+    """在来源素材锁内核对引用，返回是否因仍被使用而保留。"""
+    await lock_domain(db, user_id, "scenes")
     row = await db.scalar(
-        select(CompanionScene).where(CompanionScene.user_id == user_id, CompanionScene.id == material_id)
+        select(CompanionScene)
+        .where(CompanionScene.user_id == user_id, CompanionScene.id == material_id)
+        .with_for_update(of=CompanionScene)
     )
     if row is None:
-        return
+        return False
     if row.source_key != source_key:
         raise ValueError("不能撤销并非由这次影像提取创建的环境")
-    await lock_domain(db, user_id, "scenes")
+    if await still_referenced():
+        return True
     if await invalidate_scene_presentation(db, user_id, material_id, row.media_path):
         emit_ws_event(db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True})
     await db.delete(row)
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": material_id})
+    return False

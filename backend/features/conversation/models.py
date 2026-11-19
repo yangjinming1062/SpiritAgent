@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
 from infrastructure.api_ids import parse_resource_id
 from infrastructure.constants import DEFAULT_SESSION_TITLE
@@ -110,6 +111,8 @@ class Conversation(ModelBase, TimestampMixin):
 
 class Message(ModelBase):
     __tablename__ = "messages"
+    gesture_request_id: Mapped[UUID | None] = mapped_column()
+    life_excerpt_id: Mapped[int | None] = mapped_column(ForeignKey("life_events.id", ondelete="SET NULL"))
     __table_args__ = (
         UniqueConstraint("user_id", "id", name="uq_messages_user_id"),
         UniqueConstraint("user_id", "conversation_id", "id", name="uq_messages_owned_id"),
@@ -131,6 +134,13 @@ class Message(ModelBase):
             ["conversations.user_id", "conversations.id"],
             name="fk_messages_owned_conversation",
             ondelete="CASCADE",
+        ),
+        Index(
+            "uq_messages_gesture",
+            "user_id",
+            "gesture_request_id",
+            unique=True,
+            postgresql_where=text("gesture_request_id IS NOT NULL"),
         ),
         Index("ix_messages_conversation_order", "conversation_id", "id"),
         Index(

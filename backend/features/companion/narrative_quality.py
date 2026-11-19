@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
+from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text
@@ -17,7 +18,7 @@ logger = get_logger(__name__)
 class NarrativeIssue(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    field: Literal["publication_intent", "title", "body", "text", "narration"]
+    field: Literal["publication_intent", "title", "body", "text", "outlook", "narration"]
     kind: Literal["unfinished_text", "unsupported_claim", "contradiction"]
     excerpt: str = Field(min_length=1)
     reason: str = Field(min_length=1)
@@ -57,15 +58,24 @@ async def review_narrative(
             raise LlmJsonValidationError("invalid_review_excerpt", fields=("issues",))
         return review
 
-    return await call_llm_json(
-        llm_cfg,
-        resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language) + (f"\n\n{requirements}" if requirements else ""),
-        {"output_language": language, "draft": draft, "source": source},
-        schema=NarrativeReview.model_json_schema(),
-        schema_name="narrative_review",
-        parse_output=parse_output,
-        repair_prompt=resolve_prompt_text(NARRATIVE_REVIEW_REPAIR_TEXTS, language),
-        reasoning_effort="medium",
-        before_call=before_call,
-        diagnostics=diagnostics,
-    )
+    async def review(effort: str) -> NarrativeReview:
+        return await call_llm_json(
+            llm_cfg,
+            resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language) + (f"\n\n{requirements}" if requirements else ""),
+            {"output_language": language, "draft": draft, "source": source},
+            schema=NarrativeReview.model_json_schema(),
+            schema_name="narrative_review",
+            parse_output=parse_output,
+            repair_prompt=resolve_prompt_text(NARRATIVE_REVIEW_REPAIR_TEXTS, language),
+            reasoning_effort=effort,
+            before_call=before_call,
+            diagnostics=diagnostics,
+        )
+
+    try:
+        return await review("medium")
+    except IncompleteLlmResponseError as exc:
+        if exc.reason != "max_output_tokens":
+            raise
+    # 审阅尚无结果。沿用原稿和同一证据，给实际审阅结论留出输出空间。
+    return await review("none")

@@ -11,10 +11,10 @@ from infrastructure.database import session_scope
 from infrastructure.domain_locks import lock_domain
 from infrastructure.text import utc_now
 from runtime.desktop.connection import MANAGER
-from runtime.events.contracts import COMPANION_TURN_EVENT, DEFERRED_REPLY_EVENT
+from runtime.events.contracts import COMPANION_TURN_EVENT, DEFERRED_REPLY_EVENT, LIFE_CONTACT_EVENT
 from runtime.events.emit import emit_ws_event
 from runtime.user_maintenance import user_request_scope
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.disturbance import get_disturbance_tier
@@ -38,6 +38,7 @@ from features.conversation.formatting import message_text
 from features.conversation.proactive_messages import append_companion_message
 from features.conversation.replies import CompanionReply
 from features.conversation.turn_access import turn_conversation, turn_message
+from features.life.context import read_contact_excerpt
 
 # 待处理意图与回合间隔走 SETTINGS 动态配置；队列认领租约独立于模型等待。
 _QUEUE_LEASE_SECONDS: int = 180
@@ -139,7 +140,7 @@ def contact_recipients(user_id: int) -> tuple[bool, bool]:
 async def _proactive_turn_allowed(db: AsyncSession, user_id: int, source_kind: str | None) -> bool:
     desktop, remote = contact_recipients(user_id)
     return (
-        (desktop or remote and (source_kind or "").startswith("reply:"))
+        (desktop or remote and (source_kind == "life" or (source_kind or "").startswith("reply:")))
         and await get_disturbance_tier(user_id, db=db) != "still"
         and (await read_rhythm(db, user_id)).state == "awake"
     )
@@ -152,42 +153,56 @@ async def enqueue_companion_intent(
     *,
     source_kind: str,
     cron_job_id: int | None = None,
+    life_event_id: int | None = None,
+    not_before: datetime | None = None,
     expires_at: datetime | None = None,
-) -> None:
+) -> bool:
     """在生产者事务中保存触发意图；同来源尚未完成时合并，不重复堆积。"""
     if not source_kind or (source_kind == "cron") != (cron_job_id is not None):
         raise ValueError("Cron intents require their source schedule")
+    if (source_kind == "life") != (life_event_id is not None):
+        raise ValueError("Life contact requires its source experience")
     if not intent.strip():
-        return
+        return False
     await lock_domain(db, user_id, "companion_intents")
     now = utc_now()
     if expires_at is not None and expires_at <= now:
-        return
-    existing = (
-        await db.execute(
-            select(CompanionIntent.id).where(
-                CompanionIntent.user_id == user_id,
-                CompanionIntent.source_kind == source_kind,
-                CompanionIntent.cron_job_id == cron_job_id,
-                CompanionIntent.status.in_(_ACTIVE_STATUSES),
-                CompanionIntent.expires_at > now,
-            )
+        return False
+    scope = CompanionIntent.user_id == user_id
+    active = (CompanionIntent.status.in_(_ACTIVE_STATUSES), CompanionIntent.expires_at > now)
+    if life_event_id is not None:
+        if await db.scalar(select(CompanionIntent.id).where(scope, CompanionIntent.life_event_id == life_event_id)):
+            return False
+        if (
+            await db.scalar(select(func.count()).select_from(CompanionIntent).where(scope, *active))
+            >= SETTINGS.companion_max_pending_intents
+        ):
+            return False
+    elif await db.scalar(
+        select(CompanionIntent.id)
+        .where(
+            scope,
+            CompanionIntent.source_kind == source_kind,
+            CompanionIntent.cron_job_id == cron_job_id,
+            *active,
         )
-    ).first()
-    if existing is not None:
-        return
+        .limit(1)
+    ):
+        return False
     db.add(
         CompanionIntent(
             user_id=user_id,
             intent=intent,
             source_kind=source_kind,
             cron_job_id=cron_job_id,
-            not_before_at=now,
-            wake_at=now,
+            life_event_id=life_event_id,
+            not_before_at=not_before or now,
+            wake_at=not_before or now,
             expires_at=expires_at or now + timedelta(days=1),
         )
     )
     await db.flush()
+    return True
 
 
 def _apply_wait(row: CompanionIntent, request: CompanionWaitRequest, now: datetime) -> None:
@@ -279,6 +294,18 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
         cancelled = result.scalar_one_or_none() is not None
         await db.commit()
         return cancelled
+
+
+async def recent_life_contacts(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    rows = await db.execute(
+        select(CompanionIntent.life_event_id, CompanionIntent.status, CompanionIntent.not_before_at)
+        .where(CompanionIntent.user_id == user_id, CompanionIntent.source_kind == "life")
+        .order_by(CompanionIntent.id.desc())
+        .limit(12)
+    )
+    return [
+        {"event_id": str(source), "status": status, "consider_at": when.isoformat()} for source, status, when in rows
+    ]
 
 
 async def list_companion_intents(db: AsyncSession, user_id: int) -> list[CompanionIntentView]:
@@ -409,13 +436,19 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                 select(CompanionIntent)
                 .where(
                     scope,
-                    True if desktop else CompanionIntent.source_kind.startswith("reply:"),
+                    True
+                    if desktop
+                    else or_(CompanionIntent.source_kind == "life", CompanionIntent.source_kind.startswith("reply:")),
                     CompanionIntent.status == "waiting",
                     CompanionIntent.expires_at > now,
                     CompanionIntent.not_before_at <= now,
                     or_(CompanionIntent.wake_at <= now, CompanionIntent.event_received_at.is_not(None)),
                 )
-                .order_by(CompanionIntent.not_before_at, CompanionIntent.id)
+                .order_by(
+                    case((CompanionIntent.source_kind == "checkin", 1), else_=0),
+                    CompanionIntent.not_before_at,
+                    CompanionIntent.id,
+                )
                 .limit(1)
             )
         ).scalar_one_or_none()
@@ -430,7 +463,13 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         emit_ws_event(
             db,
             user_id=user_id,
-            event_type=DEFERRED_REPLY_EVENT if (row.source_kind or "").startswith("reply:") else COMPANION_TURN_EVENT,
+            event_type=(
+                LIFE_CONTACT_EVENT
+                if row.source_kind == "life"
+                else DEFERRED_REPLY_EVENT
+                if (row.source_kind or "").startswith("reply:")
+                else COMPANION_TURN_EVENT
+            ),
             payload=CompanionTurnRequest(intent_id=row.id, lease_token=lease_token).model_dump(mode="json"),
         )
         await db.commit()
@@ -513,7 +552,7 @@ async def finish_companion_intent(
         context_changed = (
             get_user_proactive_record(user_id).contact_revision != contact_revision
             or await latest_user_message_id(db, user_id) != user_message_id
-            or not (desktop or remote and is_deferred_reply)
+            or not (desktop or remote and (is_deferred_reply or row.source_kind == "life"))
             or tier == "still"
             or (await read_rhythm(db, user_id, now=now)).state == "asleep"
             or is_deferred_reply
@@ -546,10 +585,16 @@ async def finish_companion_intent(
                 )
         else:
             if reply:
+                excerpt = await read_contact_excerpt(db, user_id, row.life_event_id) if row.life_event_id else None
                 if reply_content is None:
                     raise ValueError("Companion reply requires original content")
                 await append_companion_message(
-                    db, user_id, reply, reply_content, conversation_id=source.conversation_id if source else None
+                    db,
+                    user_id,
+                    reply,
+                    reply_content,
+                    conversation_id=source.conversation_id if source else None,
+                    life_excerpt_id=int(excerpt["id"]) if excerpt else None,
                 )
                 delivered = True
             if followup is None:

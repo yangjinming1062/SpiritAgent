@@ -12,6 +12,7 @@ class IncompleteResponseError(RuntimeError):
     """终态不完整（空正文、内容过滤、流内失败）；可否重试与是否只缺最终回复都由构造参数决定。"""
 
     def __init__(self, reason: str, *, text_emitted: bool, final_reply: bool = False, retryable: bool = True) -> None:
+        self.reason = reason
         self.retryable = retryable and not text_emitted and reason != "content_filter"
         self.final_reply = final_reply or reason == "empty_output"
         super().__init__(f"LLM response incomplete: {reason}")

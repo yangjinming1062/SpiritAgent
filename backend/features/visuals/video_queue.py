@@ -3,6 +3,7 @@
 from typing import Literal
 
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import library_work
 from runtime.paid_work import GenerationWorkPaused
 
 from features.media.chain import MediaChainState
@@ -16,7 +17,7 @@ async def inspect_visual_video_owner(
     owner: VideoQueueOwner, before_submit: bool = True, request_id: str | None = None
 ) -> Literal["ready", "pending", "paused", "gone"]:
     async with SESSION_LOCAL() as db:
-        job = await db.get(VisualJob, owner.job_id)
+        job = await db.get(VisualJob, owner.job_id, execution_options={"discover_private_works": True})
         if (
             job is None
             or job.user_id != owner.user_id
@@ -43,7 +44,8 @@ async def inspect_visual_video_owner(
     if not before_submit:
         return "ready"
     try:
-        await _require_active_job(owner.user_id, owner.job_id, chain.generation_id)
+        with library_work(job.library_work_id):
+            await _require_active_job(owner.user_id, owner.job_id, chain.generation_id)
     except GenerationWorkPaused:
         return "paused"
     return "ready"

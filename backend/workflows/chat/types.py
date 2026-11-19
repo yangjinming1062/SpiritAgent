@@ -1,11 +1,16 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
 from features.conversation.replies import CompanionReply
 
 TrackTask = Callable[[asyncio.Task], None]
 ReplyBubbleSink = Callable[[int, dict[str, Any]], Awaitable[asyncio.Future[None]]]
+
+
+class LifeContactEvidence(TypedDict):
+    selected_experience: dict[str, str]
+    recent_dialogue: str
 
 
 class TerminalReplyDelivery(Protocol):

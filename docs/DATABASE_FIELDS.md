@@ -28,7 +28,7 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生。通话记录与通话发言也是同一表的行，`call_record_id` 表达归属，`call_last_seen_at` 与 `call_duration_ms` 是结算依据 |
+| 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生。`gesture_request_id` 对一次手势产生的发言去重。生活联系实际送达时，`life_excerpt_id` 将发言关联到当次选定的摘选。通话记录与通话发言也是同一表的行，`call_record_id` 表达归属，`call_last_seen_at` 与 `call_duration_ms` 是结算依据 |
 | 受理账本：[submission_models.py](../backend/features/conversation/submission_models.py) | 请求标识和内容指纹决定重放资格，结果/替换回复是实体关系；批量输入经有序关联与请求一次提交；`is_realtime_call` 区分通话受理与普通提交 |
 | 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期与完成情况，来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
 
@@ -38,6 +38,7 @@
 |---|---|
 | 任务请求和资产引用：[jobs/models.py](../backend/features/jobs/models.py) | 请求与制作身份的分离见 [DATABASE](DATABASE.md#任务供应商尝试与资产)；检查点清理不删除幂等身份。普通引用随终态保留期释放，保留角色随业务资料精确替换或任务删除释放 |
 | 远端名额与尝试：[video_queue/models.py](../backend/features/media/video_queue/models.py) | lane 按供应商凭据分组保存名额和冷却，attempt 保存提交、句柄、结果和未知事实；本地任务删除不能结束远端占用 |
+| 作品可见范围：[library_visibility.py](../backend/infrastructure/library_visibility.py) | `library_works.released_at` 记录伙伴选择公开成品的时刻。制作任务、素材、版本及续行事件携带原作品归属。文件开放范围由已采用成品及其必要派生文件确定。 |
 | 文件库存：[assets/models.py](../backend/features/assets/models.py) | 账户路径、内容哈希、媒体属性和回收待办；最后活引用释放后才可回收 |
 | 异步通知：[events/models.py](../backend/runtime/events/models.py) | outbox 载荷、认领和投递状态与业务事务协作；数据库通知只唤醒，不承担恢复身份 |
 
@@ -72,11 +73,12 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；完成证据经关联表连接。 |
+| 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；`pursuit_evidence.used_for_completion` 标记结项实际采用的证据，公开结果按证据所指作品的当前可见性读取。 |
 | 生活轨迹与检索：同一[模型文件](../backend/features/life/models.py) | `life_events.trajectory_kind` 标记入轨迹的经历，主题与前序用账户联合外键绑定，同一账户内每个事项按成果键去重，共用成果保留各事项的事件。日常判断时段以 `life_states.review_slot` 持久去重。`life_event_search_index` 引用本账户事件，索引受控事实、叙事及阅读所得，按内容指纹、模型和实际维度核对向量 |
+| 伙伴成长：同一[生活模型](../backend/features/life/models.py) | `life_growth` 按具体认识保存类型、内在变化、相处倾向和同账户来源经历，分别修订或撤回。 |
 | 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，不能从事项历史重新计数 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期保存阶段摘要、计划输入和动作身份；计划项唯一关联本账户生活步骤，只保存未受理项的跳过或阻断原因，执行状态与成果读取步骤；账本计划不证明执行完成 |
-| 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 与 `cron_job_id` 表示触发来源 |
+| 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 区分来源，`cron_job_id` 与 `life_event_id` 分别关联计划和伙伴选择的生活经历 |
 
 事实、额度、来源权限与恢复规则见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
 

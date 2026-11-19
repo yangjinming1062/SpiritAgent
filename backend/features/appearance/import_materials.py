@@ -1,6 +1,7 @@
 """衣柜对用户影像提取结果的受控入库；调用方持有采纳事务。"""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import resolve_asset_reference
@@ -66,14 +67,23 @@ async def accept_imported_outfit(
     return OutfitSnapshot.model_validate(row)
 
 
-async def undo_imported_outfit(db: AsyncSession, user_id: int, material_id: int, source_key: str) -> None:
+async def undo_imported_outfit(
+    db: AsyncSession, user_id: int, material_id: int, source_key: str, still_referenced: Callable[[], Awaitable[bool]]
+) -> bool:
+    """在来源素材锁内核对引用，返回是否因仍被使用而保留。"""
+    await lock_domain(db, user_id, "appearance")
     row = await db.scalar(
-        select(CompanionOutfit).where(CompanionOutfit.user_id == user_id, CompanionOutfit.id == material_id)
+        select(CompanionOutfit)
+        .where(CompanionOutfit.user_id == user_id, CompanionOutfit.id == material_id)
+        .with_for_update(of=CompanionOutfit)
     )
-    if row is not None:
-        if row.source_key != source_key:
-            raise ValueError("不能撤销并非由这次影像提取创建的着装")
-        await lock_domain(db, user_id, "appearance")
-        await db.delete(row)
-        await db.flush()
-        emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": material_id})
+    if row is None:
+        return False
+    if row.source_key != source_key:
+        raise ValueError("不能撤销并非由这次影像提取创建的着装")
+    if await still_referenced():
+        return True
+    await db.delete(row)
+    await db.flush()
+    emit_ws_event(db, user_id=user_id, event_type="companion.outfit.updated", payload={"outfit_id": material_id})
+    return False

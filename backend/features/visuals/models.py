@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from infrastructure.job_models import JobRecord
+from infrastructure.library_visibility import LibraryMaterial
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import (
     BigInteger,
@@ -27,7 +28,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 
-class VisualItem(ModelBase, TimestampMixin):
+class VisualItem(LibraryMaterial, ModelBase, TimestampMixin):
     """稳定的影像身份和查询摘要；文件及冻结输入归不可变版本。"""
 
     __tablename__ = "visual_items"
@@ -46,7 +47,9 @@ class VisualItem(ModelBase, TimestampMixin):
             "uq_visual_items_image_content",
             "user_id",
             "content_hash",
+            "library_work_id",
             unique=True,
+            postgresql_nulls_not_distinct=True,
             postgresql_where=text("media_kind = 'image'"),
         ),
         Index("ix_visual_items_catalog", "user_id", "status", "media_kind", "asset_kind", "id"),
@@ -149,7 +152,7 @@ class VisualItem(ModelBase, TimestampMixin):
         return self.current_version.input_image_hash
 
 
-class VisualVersion(ModelBase):
+class VisualVersion(LibraryMaterial, ModelBase):
     """已发布版本只追加；当前呈现和播放账本直接保留版本引用。"""
 
     __tablename__ = "visual_versions"

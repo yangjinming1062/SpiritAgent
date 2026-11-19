@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from infrastructure.config import SETTINGS
 from infrastructure.domain_locks import lock_domain
+from infrastructure.library_visibility import current_library_work, library_work
 from infrastructure.text import ensure_utc
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
@@ -94,13 +95,14 @@ async def create_action(
     await require_step_submission(db, user_id, life_step)
     if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         raise ValueError("伙伴自主新增动作已关闭")
-    existing = await db.scalars(
-        select(ActionDefinition).where(
-            ActionDefinition.user_id == user_id,
-            ActionDefinition.source != "preset",
-            ActionDefinition.normalized_name == normalize_action_name(design.name),
-        )
+    matching = select(ActionDefinition).where(
+        ActionDefinition.user_id == user_id,
+        ActionDefinition.source != "preset",
+        ActionDefinition.normalized_name == normalize_action_name(design.name),
     )
+    if (work_id := current_library_work()) is not None:
+        matching = matching.where(ActionDefinition.library_work_id == work_id)
+    existing = await db.scalars(matching.order_by(ActionDefinition.id))
     for item in existing:
         if _design_fields_match(item, design):
             if life_step is not None:
@@ -358,13 +360,14 @@ async def recover_interrupted_reviews(db: AsyncSession, user_id: int | None = No
     statement = select(ActionDefinition).where(ActionDefinition.status.in_(("pending", "reviewing")))
     if user_id is not None:
         statement = statement.where(ActionDefinition.user_id == user_id)
-    result = await db.execute(statement)
+    result = await db.execute(statement.execution_options(discover_private_works=True))
     count = 0
     for row in result.scalars():
         row.status = "failed"
         row.review_reason = "评审中断，请手动重试"
-        await settle_action_steps(db, row)
-        emit_ws_event(db, user_id=row.user_id, event_type="companion.action.updated", payload={})
+        with library_work(row.library_work_id):
+            await settle_action_steps(db, row)
+            emit_ws_event(db, user_id=row.user_id, event_type="companion.action.updated", payload={})
         count += 1
     if count:
         await db.flush()

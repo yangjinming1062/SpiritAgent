@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -11,12 +11,17 @@ class CompanionIntent(ModelBase, TimestampMixin):
     __tablename__ = "companion_intents"
     __table_args__ = (
         CheckConstraint("cron_job_id IS NULL OR source_kind IS NOT DISTINCT FROM 'cron'", name="intent_cron_source"),
+        CheckConstraint(
+            "(source_kind IS NOT DISTINCT FROM 'life') = (life_event_id IS NOT NULL)", name="intent_life_source"
+        ),
+        UniqueConstraint("user_id", "life_event_id", name="uq_companion_intents_life_event"),
         Index("ix_companion_intents_source", "user_id", "source_kind", "cron_job_id", "status"),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     intent: Mapped[str] = mapped_column(Text)
     source_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    life_event_id: Mapped[int | None] = mapped_column(ForeignKey("life_events.id", ondelete="CASCADE"))
     cron_job_id: Mapped[int | None] = mapped_column(ForeignKey("cron_jobs.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="waiting", server_default=text("'waiting'"), index=True)
     not_before_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

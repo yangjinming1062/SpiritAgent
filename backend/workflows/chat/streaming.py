@@ -23,6 +23,7 @@ from infrastructure.ai.response_validation import (
 from infrastructure.ai.responses import build_responses_kwargs
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.ai.token_budget import request_output_budget
+from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.constants import TOOL_CALL_ID_HEX_PREFIX_LEN
 from infrastructure.correlation import new_request_id
 from infrastructure.logger import get_logger
@@ -32,6 +33,7 @@ from openai.types.responses import Response
 from workflows.chat.bubble import BubbleEvent, BubbleSplitter
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.message_sanitization import replace_media_parts, truncate_responses_context
+from workflows.chat.personal_recollection import consulted_personal_archive, ground_recollection, recollection_evidence
 from workflows.chat.prompts import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
     COMPANION_REPLY_CLOSING_GUIDANCES,
@@ -83,12 +85,12 @@ class _ReplyBubbleExtractor:
     def feed(self, text: str) -> list[tuple[int, dict[str, Any]]]:
         self._buffer += text
         if self.kind is None:
-            kind = re.search(r'(?:^|[,{])\s*"kind"\s*:\s*"(dialogue|written)"', self._buffer)
+            kind = re.search(r'(?:^|[,{])\s*"kind"\s*:\s*"(dialogue|written|recollection)"', self._buffer)
             if kind is not None:
                 self.kind = kind.group(1)
         if self.kind is None:
             return []
-        if self.kind == "written":
+        if self.kind in {"written", "recollection"}:
             return []
         if self._array_start is None:
             marker = re.search(r'(?:^|[,{])\s*"bubbles"\s*:\s*\[', self._buffer[self._search_from :])
@@ -239,7 +241,7 @@ def _misdirected_reply(tool_calls: list[dict[str, Any]], active_schemas: list[di
         return None
     if (
         isinstance(parsed, dict)
-        and parsed.get("kind") in {"dialogue", "written"}
+        and parsed.get("kind") in {"dialogue", "written", "recollection"}
         and isinstance(parsed.get("bubbles"), list)
     ):
         return arguments
@@ -471,7 +473,9 @@ async def _generate_llm_response(
     incremental_receipts: list[tuple[dict[str, Any], asyncio.Future[None]]] = []
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
     incremental_index = 0
-    incremental_blocked = False
+    archive_turn = "personal_evidence" in context and consulted_personal_archive(context)
+    selected_contact = "contact_evidence" in context
+    incremental_blocked = archive_turn or selected_contact
 
     bubbles = BubbleSplitter()
 
@@ -591,7 +595,7 @@ async def _generate_llm_response(
             return
         references = ReplyReferences.from_texts(reference_texts)
         extracted = reply_extractor.feed(text)
-        if reply_extractor.kind == "written":
+        if reply_extractor.kind in {"written", "recollection"}:
             incremental_blocked = True
             return
         for _, bubble in extracted:
@@ -845,6 +849,22 @@ async def _generate_llm_response(
                 )
             if resolved is not None:
                 text, reply = resolved.text, resolved.reply
+                if (
+                    reply is not None
+                    and (
+                        selected_contact
+                        or resolved.source_kind == "recollection"
+                        or (archive_turn and resolved.source_kind == "dialogue")
+                    )
+                    and not partial_bubbles
+                    and ("personal_evidence" in context or selected_contact)
+                ):
+                    text, reply = await ground_recollection(
+                        UserLlmConfig(provider.config, user_id=media_turn.user_id),
+                        recollection_evidence(context),
+                        text,
+                        reply,
+                    )
                 decision, followup = resolved.decision, resolved.followup
                 pending_text = [text]
         else:

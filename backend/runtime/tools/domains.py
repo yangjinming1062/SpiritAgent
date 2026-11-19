@@ -26,7 +26,7 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         description_zh="伙伴的持续事项、生活历史、阅读所得与日记",
         description_en="Companion pursuits, life history, reading notes and diaries",
         aliases=("life", "diary", "生活", "经历", "事项", "计划", "暂停", "放弃", "日记"),
-        extra_tools=("life_inspect", "life_adjust", "life_recall", "diary_recall"),
+        extra_tools=("life_inspect", "life_adjust", "life_share_work", "life_recall", "diary_recall"),
     ),
     ToolDomain(
         id="browser",

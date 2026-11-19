@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.library_visibility import create_private_work
 from infrastructure.text import ensure_utc, utc_now
 from infrastructure.timezone import parse_timezone
 from runtime.events.emit import emit_ws_event
@@ -34,7 +35,11 @@ _RETRY_DELAY = timedelta(minutes=15)
 
 
 async def notify_shared_step(db: AsyncSession, user_id: int, step: LifeStep) -> None:
-    if step.pursuit_id is not None and await shared_pursuit_ids(db, user_id, {step.pursuit_id}):
+    if (
+        not step.library_work_id
+        and step.pursuit_id is not None
+        and await shared_pursuit_ids(db, user_id, {step.pursuit_id})
+    ):
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step.id})
 
 
@@ -49,12 +54,6 @@ async def enqueue_action(
 ) -> LifeStepView:
     if not action.narrative or not action.narrative.strip():
         raise LifeInputError("登记生活行动必须提供伙伴叙事")
-    if (
-        action.action.capability in CREATION_CAPABILITIES
-        and not action.add_to_user_library
-        and not (pursuit_id is not None and await shared_pursuit_ids(db, user_id, {pursuit_id}))
-    ):
-        raise LifeInputError("自主素材制作会进入用户素材库，需要伙伴明确选择公开成品")
     row = await create_step(
         db,
         user_id,
@@ -65,7 +64,8 @@ async def enqueue_action(
         pursuit_id=pursuit_id,
     )
     payload = action.action.model_dump(mode="json")
-    if row.action_json is not None and row.action_json != payload:
+    private = action.action.capability in CREATION_CAPABILITIES and not action.add_to_user_library
+    if row.action_json is not None and (row.action_json != payload or (row.library_work_id is not None) != private):
         raise LifeInputError("同一执行请求不能改用不同参数")
     if row.action_json is None:
         if pursuit_id is not None and await db.scalar(
@@ -79,6 +79,8 @@ async def enqueue_action(
             .limit(1)
         ):
             raise LifeInputError("事项已有未解决步骤，不能重复登记下一步")
+        if private:
+            row.library_work_id = await create_private_work(db, user_id)
         row.action_json, row.source = payload, source
         if source == "nightly":
             timezone = parse_timezone(await get_user_setting(db, user_id, "timezone"))
@@ -268,7 +270,11 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
         row.failure_code = None
         row.attempts += 1
-        shared = row.pursuit_id is not None and bool(await shared_pursuit_ids(db, user_id, {row.pursuit_id}))
+        shared = (
+            not row.library_work_id
+            and row.pursuit_id is not None
+            and bool(await shared_pursuit_ids(db, user_id, {row.pursuit_id}))
+        )
         set_step_activity(db, state, row, now, shared_with_user=shared)
         state.revision += 1
         await record_event(
