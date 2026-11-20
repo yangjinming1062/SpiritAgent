@@ -753,7 +753,7 @@ async def list_jobs(
             VisualJob.target_kind,
             VisualJob.asset_kind,
             func.coalesce(VisualJob.snapshot_json["source"]["action"]["name"].astext, "").label("action_name"),
-            func.coalesce(VisualJob.checkpoint["source"].as_string() == "base_preparation", False).label("preparation"),
+            VisualJob.checkpoint["source"].as_string().label("request_source"),
             VisualJob.target_visual_id,
             VisualJob.state,
             VisualJob.stage,
