@@ -377,8 +377,7 @@ bool same_value(xaml::DependencyProperty const& property, Inspectable const& fir
     if (!first || !second) return false;
     if (first == xaml::DependencyProperty::UnsetValue() || second == xaml::DependencyProperty::UnsetValue()) return false;
     if (property == xaml::FrameworkElement::WidthProperty() || property == xaml::FrameworkElement::HeightProperty() ||
-        property == xaml::FrameworkElement::MinHeightProperty() ||
-        property == xaml::Controls::StackPanel::SpacingProperty()) {
+        property == xaml::FrameworkElement::MinHeightProperty()) {
         return winrt::unbox_value<double>(first) == winrt::unbox_value<double>(second);
     }
     if (property == xaml::Controls::Grid::CornerRadiusProperty()) {
@@ -393,9 +392,8 @@ bool same_value(xaml::DependencyProperty const& property, Inspectable const& fir
     if (property == xaml::FrameworkElement::RequestedThemeProperty()) {
         return winrt::unbox_value<xaml::ElementTheme>(first) == winrt::unbox_value<xaml::ElementTheme>(second);
     }
-    if (property == xaml::Controls::StackPanel::OrientationProperty()) {
-        return winrt::unbox_value<xaml::Controls::Orientation>(first) ==
-            winrt::unbox_value<xaml::Controls::Orientation>(second);
+    if (property == xaml::UIElement::VisibilityProperty()) {
+        return winrt::unbox_value<xaml::Visibility>(first) == winrt::unbox_value<xaml::Visibility>(second);
     }
     if (property == xaml::UIElement::RenderTransformProperty()) {
         auto left = first.try_as<media::TranslateTransform>();
@@ -404,6 +402,8 @@ bool same_value(xaml::DependencyProperty const& property, Inspectable const& fir
     }
     return false;
 }
+
+enum class PropertyRole { Style, BackgroundFill, TrayLayout };
 
 struct Property : std::enable_shared_from_this<Property> {
     xaml::DependencyObject element{nullptr};
@@ -414,13 +414,13 @@ struct Property : std::enable_shared_from_this<Property> {
     std::int64_t token = 0;
     bool writing = false;
     bool enabled = true;
-    bool fill = false;
+    PropertyRole role;
     std::uint64_t seen = 0;
     std::weak_ptr<Session> owner;
 
     Property(xaml::DependencyObject const& target, xaml::DependencyProperty const& dp, Inspectable const& value,
-        bool is_fill, std::shared_ptr<Session> const& lease)
-        : element(target), property(dp), applied(value), fill(is_fill), owner(lease) { remember(); }
+        PropertyRole role, std::shared_ptr<Session> const& lease)
+        : element(target), property(dp), applied(value), role(role), owner(lease) { remember(); }
 
     void remember() {
         original = saved_value(element, property);
@@ -432,13 +432,13 @@ struct Property : std::enable_shared_from_this<Property> {
         }
     }
 
-    void write() {
+    bool write() {
         auto lease = owner.lock();
         if (!lease || !lease->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
         // Publish ownership before checking active again, so restoration cannot race a first write.
         InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&lease->state->fill_count), 1, 0);
         if (!lease->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
-        if (same_value(property, element.GetValue(property), applied)) return;
+        if (same_value(property, element.GetValue(property), applied)) return false;
         writing = true;
         try {
             element.SetValue(property, applied);
@@ -447,6 +447,7 @@ struct Property : std::enable_shared_from_this<Property> {
             writing = false;
             throw;
         }
+        return true;
     }
 
     void observe() {
@@ -483,6 +484,29 @@ struct TrayRows {
     xaml::FrameworkElement button;
     xaml::FrameworkElement content;
     xaml::Controls::StackPanel text;
+    xaml::Controls::TextBlock time;
+    xaml::Controls::TextBlock date;
+};
+
+enum class TrayItemKind { Icons, Input, QuickSettings, Volume, Power, Clock, ShowDesktop };
+
+TrayItemKind tray_item_kind(xaml::FrameworkElement const& item) {
+    auto name = item.Name();
+    auto type = winrt::get_class_name(item);
+    if (name == L"NonActivatableStack" || type == L"SystemTray.InputIndicatorButton" ||
+        type == L"SystemTray.IMEButton") return TrayItemKind::Input;
+    if (name == L"ControlCenterButton" || type == L"SystemTray.NetworkButton") return TrayItemKind::QuickSettings;
+    if (type == L"SystemTray.VolumeButton") return TrayItemKind::Volume;
+    if (type == L"SystemTray.PowerButton") return TrayItemKind::Power;
+    if (name == L"ShowDesktopStack" || type == L"SystemTray.ShowDesktopButton") return TrayItemKind::ShowDesktop;
+    return TrayItemKind::Icons;
+}
+
+struct TrayItem {
+    xaml::FrameworkElement element;
+    TrayItemKind kind;
+    double left = 0;
+    double width = 0;
 };
 
 struct View : std::enable_shared_from_this<View> {
@@ -490,17 +514,17 @@ struct View : std::enable_shared_from_this<View> {
     std::vector<std::shared_ptr<Property>> properties;
     std::shared_ptr<Session> owner;
     xaml::DispatcherTimer timer{nullptr};
-    std::optional<TrayRows> tray_rows;
+    std::vector<TrayRows> tray_rows;
     media::SolidColorBrush transparent{nullptr};
     media::SolidColorBrush bitmap_background{nullptr};
     winrt::event_token tick_token{};
     bool dirty = true;
     bool stopped = false;
     bool claimed = false;
-    bool clock_rows_active = false;
     bool target_seen = false;
     LONG dark = -1;
     std::uint64_t generation = 0;
+    std::uint64_t layout_generation = 0;
     std::uint64_t source_revision = 0;
     ULONGLONG missing_since = 0;
     std::atomic<bool> retired{false};
@@ -526,23 +550,39 @@ struct View : std::enable_shared_from_this<View> {
         timer.Start();
     }
 
-    void add(xaml::DependencyObject const& target, xaml::DependencyProperty const& dp, Inspectable const& value, bool fill) {
+    bool add(xaml::DependencyObject const& target, xaml::DependencyProperty const& dp, Inspectable const& value,
+        PropertyRole role = PropertyRole::Style) {
+        const auto seen = role == PropertyRole::TrayLayout ? layout_generation : generation;
         for (auto const& property : properties) {
             if (property->element == target && property->property == dp) {
-                property->seen = generation;
+                property->seen = seen;
                 if (!same_value(dp, property->applied, value)) {
                     property->applied = value;
-                    property->write();
+                    return property->write();
                 }
-                return;
+                return false;
             }
         }
-        auto property = std::make_shared<Property>(target, dp, value, fill, owner);
-        property->seen = generation;
+        auto property = std::make_shared<Property>(target, dp, value, role, owner);
+        property->seen = seen;
         property->observe();
         properties.push_back(property);
         claimed = true;
-        property->write();
+        return property->write();
+    }
+
+    void restore_unused(bool layout, bool keep_current) {
+        const auto seen = layout ? layout_generation : generation;
+        for (auto it = properties.begin(); it != properties.end();) {
+            auto const& property = *it;
+            if ((property->role == PropertyRole::TrayLayout) != layout || (keep_current && property->seen == seen)) {
+                ++it;
+                continue;
+            }
+            try { property->restore(); }
+            catch (winrt::hresult_error const& error) { if (error.code() != RO_E_CLOSED) throw; }
+            it = properties.erase(it);
+        }
     }
 
     void restore(bool publish) {
@@ -560,8 +600,7 @@ struct View : std::enable_shared_from_this<View> {
         }
         std::reverse(remaining.begin(), remaining.end());
         properties = std::move(remaining);
-        tray_rows.reset();
-        clock_rows_active = false;
+        tray_rows.clear();
         if (FAILED(error)) {
             if (owner) owner->publish(-1, error, 1);
             winrt::throw_hresult(error);
@@ -608,20 +647,16 @@ struct View : std::enable_shared_from_this<View> {
         }
         if (!notification || !tray) return;
         // App bitmaps do not follow RequestedTheme; retain their pixels and give them a bounded neutral surface.
-        add(grid, xaml::Controls::Panel::BackgroundProperty(), background, false);
-        add(grid, xaml::Controls::Grid::CornerRadiusProperty(), winrt::box_value(xaml::CornerRadius{6, 6, 6, 6}), false);
-        add(grid, xaml::FrameworkElement::WidthProperty(), winrt::box_value(24.0), false);
-        add(grid, xaml::FrameworkElement::HeightProperty(), winrt::box_value(24.0), false);
-        add(grid, xaml::FrameworkElement::HorizontalAlignmentProperty(), winrt::box_value(xaml::HorizontalAlignment::Center), false);
-        add(grid, xaml::FrameworkElement::VerticalAlignmentProperty(), winrt::box_value(xaml::VerticalAlignment::Center), false);
+        add(grid, xaml::Controls::Panel::BackgroundProperty(), background);
+        add(grid, xaml::Controls::Grid::CornerRadiusProperty(), winrt::box_value(xaml::CornerRadius{6, 6, 6, 6}));
+        add(grid, xaml::FrameworkElement::WidthProperty(), winrt::box_value(24.0));
+        add(grid, xaml::FrameworkElement::HeightProperty(), winrt::box_value(24.0));
+        add(grid, xaml::FrameworkElement::HorizontalAlignmentProperty(), winrt::box_value(xaml::HorizontalAlignment::Center));
+        add(grid, xaml::FrameworkElement::VerticalAlignmentProperty(), winrt::box_value(xaml::VerticalAlignment::Center));
     }
 
     void find_clock_row(xaml::FrameworkElement const& tray, xaml::FrameworkElement const& date_time) {
-        tray_rows.reset();
-        if (!tray || !date_time || tray.FlowDirection() != xaml::FlowDirection::LeftToRight) return;
-        auto stack = tray.try_as<xaml::Controls::StackPanel>();
-        if (stack ? stack.Orientation() != xaml::Controls::Orientation::Horizontal
-                  : !tray.try_as<xaml::Controls::Grid>()) return;
+        if (!tray || !date_time) return;
         auto branch = xaml::DependencyObject{date_time};
         for (int depth = 0; branch && depth < 64; ++depth) {
             auto parent = media::VisualTreeHelper::GetParent(branch);
@@ -632,84 +667,138 @@ struct View : std::enable_shared_from_this<View> {
         auto clock = branch.try_as<xaml::FrameworkElement>();
         if (!clock) return;
         auto name = clock.Name();
-        // A branch containing other status groups must stay in the icon row.
         if (clock != date_time && name != L"NotificationCenterButton" && name != L"ClockButton" &&
-            name != L"SecondaryClockStack") return;
+            name != L"SecondaryClockStack" && winrt::get_class_name(clock) != L"SystemTray.ClockButton") return;
         for (int index = 0; index < media::VisualTreeHelper::GetChildrenCount(date_time); ++index) {
             auto container = media::VisualTreeHelper::GetChild(date_time, index).try_as<xaml::Controls::Grid>();
             if (!container || container.Name() != L"ContainerGrid") continue;
             for (int inner = 0; inner < media::VisualTreeHelper::GetChildrenCount(container); ++inner) {
-                auto child = media::VisualTreeHelper::GetChild(container, inner);
-                if (auto text = child.try_as<xaml::Controls::StackPanel>()) {
-                    tray_rows = TrayRows{tray, clock, date_time, text};
-                    return;
+                auto text = media::VisualTreeHelper::GetChild(container, inner).try_as<xaml::Controls::StackPanel>();
+                if (!text) continue;
+                xaml::Controls::TextBlock time{nullptr}, date{nullptr};
+                bool recognized = true;
+                for (int i = 0; i < media::VisualTreeHelper::GetChildrenCount(text); ++i) {
+                    auto label = media::VisualTreeHelper::GetChild(text, i).try_as<xaml::Controls::TextBlock>();
+                    if (label && label.Name() == L"TimeInnerTextBlock" && !time) time = label;
+                    else if (label && label.Name() == L"DateInnerTextBlock" && !date) date = label;
+                    else { recognized = false; break; }
                 }
+                if (!recognized || !time) continue;
+                tray_rows.push_back({tray, clock, date_time, text, time, date});
+                return;
             }
         }
     }
 
-    void translate_row_item(xaml::FrameworkElement const& item, double x) {
-        auto transform = media::TranslateTransform();
-        transform.X(std::round(x * 64) / 64);
-        add(item, xaml::UIElement::RenderTransformProperty(), transform, false);
+    void position_row(std::vector<TrayItem> const& items, double right, double width) {
+        constexpr double max_gap = 4;
+        const double gaps = static_cast<double>(items.size() - 1);
+        const double gap = gaps ? std::min(max_gap, std::max(0.0, right - width) / gaps) : 0;
+        double left = right - width - gap * gaps;
+        for (auto const& item : items) {
+            auto transform = media::TranslateTransform();
+            transform.X(std::round((left - item.left) * 64) / 64);
+            add(item.element, xaml::UIElement::RenderTransformProperty(), transform, PropertyRole::TrayLayout);
+            left += item.width + gap;
+        }
     }
 
     bool layout_tray_rows() {
-        if (!tray_rows) return false;
-        const auto& [tray_row, clock_button, clock_content, clock_text] = *tray_rows;
-        if (clock_button.Visibility() != xaml::Visibility::Visible ||
-            clock_content.Visibility() != xaml::Visibility::Visible ||
-            clock_text.Visibility() != xaml::Visibility::Visible ||
-            clock_text.ActualWidth() <= 0 || clock_text.ActualHeight() <= 0) return false;
+        const TrayRows* visible_clock = nullptr;
+        for (auto const& rows : tray_rows) {
+            if (rows.button.Visibility() != xaml::Visibility::Visible ||
+                rows.content.Visibility() != xaml::Visibility::Visible ||
+                rows.text.Visibility() != xaml::Visibility::Visible ||
+                rows.time.Visibility() != xaml::Visibility::Visible ||
+                rows.time.ActualWidth() <= 0 || rows.time.ActualHeight() <= 0) continue;
+            if (visible_clock) return false;
+            visible_clock = &rows;
+        }
+        if (!visible_clock) return false;
+        auto const& tray_row = visible_clock->tray;
+        auto const& clock_button = visible_clock->button;
+        auto const& date = visible_clock->date;
+        auto stack = tray_row.try_as<xaml::Controls::StackPanel>();
+        if (tray_row.FlowDirection() != xaml::FlowDirection::LeftToRight ||
+            (stack ? stack.Orientation() != xaml::Controls::Orientation::Horizontal
+                   : !tray_row.try_as<xaml::Controls::Grid>())) return false;
 
         RECT rectangle{};
         auto dpi = GetDpiForWindow(owner->taskbar);
         if (!dpi || !GetClientRect(owner->taskbar, &rectangle)) return false;
         const double height = (rectangle.bottom - rectangle.top) * 96.0 / dpi;
-        constexpr double clock_height = 22;
-        if (height < clock_height + 24 || tray_row.ActualHeight() <= 0) return false;
+        constexpr double min_icon_height = 24;
+        const double status_height = std::min(24.0, height - min_icon_height);
+        if (status_height < 22 || tray_row.ActualHeight() <= 0) return false;
 
-        const auto left_of = [&](xaml::FrameworkElement const& item) -> double {
-            auto translation = item.RenderTransform().try_as<media::TranslateTransform>();
-            return item.TransformToVisual(tray_row).TransformPoint({0, 0}).X -
-                (translation ? translation.X() : 0);
-        };
-        const double clock_left = left_of(clock_button);
-        const double clock_width = clock_button.ActualWidth();
-        const double tray_width = tray_row.ActualWidth();
-        if (clock_width <= 0 || clock_width > tray_width) return false;
-
-        add(tray_row, xaml::FrameworkElement::HeightProperty(), winrt::box_value(height), false);
-        add(clock_button, xaml::FrameworkElement::MinHeightProperty(), winrt::box_value(0.0), false);
-        add(clock_button, xaml::FrameworkElement::HeightProperty(), winrt::box_value(clock_height), false);
-        add(clock_button, xaml::FrameworkElement::VerticalAlignmentProperty(), winrt::box_value(xaml::VerticalAlignment::Bottom), false);
-        add(clock_text, xaml::Controls::StackPanel::OrientationProperty(), winrt::box_value(xaml::Controls::Orientation::Horizontal), false);
-        add(clock_text, xaml::Controls::StackPanel::SpacingProperty(), winrt::box_value(6.0), false);
-
-        std::optional<double> first_icon;
-        double last_icon = 0;
-        auto count = media::VisualTreeHelper::GetChildrenCount(tray_row);
+        std::vector<TrayItem> upper, lower;
+        xaml::FrameworkElement show_desktop{nullptr};
+        const auto count = media::VisualTreeHelper::GetChildrenCount(tray_row);
         for (int index = 0; index < count; ++index) {
             auto item = media::VisualTreeHelper::GetChild(tray_row, index).try_as<xaml::FrameworkElement>();
-            if (!item || item == clock_button || item.Visibility() != xaml::Visibility::Visible ||
+            if (!item || item.Visibility() != xaml::Visibility::Visible ||
                 item.ActualWidth() <= 0 || item.ActualHeight() <= 0) continue;
-            double left = left_of(item);
-            // The clock keeps its native layout slot. Move any trailing buttons across the vacated space.
-            if (left >= clock_left + clock_width - 1) {
-                translate_row_item(item, -clock_width);
-                left -= clock_width;
+            const auto kind = item == clock_button ? TrayItemKind::Clock : tray_item_kind(item);
+            if (kind == TrayItemKind::ShowDesktop) {
+                if (show_desktop) return false;
+                show_desktop = item;
+                continue;
             }
-            first_icon = first_icon ? std::min(*first_icon, left) : left;
-            last_icon = std::max(last_icon, left + item.ActualWidth());
-            add(item, xaml::FrameworkElement::MinHeightProperty(), winrt::box_value(0.0), false);
-            add(item, xaml::FrameworkElement::HeightProperty(), winrt::box_value(height - clock_height), false);
-            add(item, xaml::FrameworkElement::VerticalAlignmentProperty(), winrt::box_value(xaml::VerticalAlignment::Top), false);
+            (kind == TrayItemKind::Icons ? upper : lower).push_back({item, kind});
+        }
+        if (std::none_of(lower.begin(), lower.end(), [](auto const& item) { return item.kind == TrayItemKind::Clock; })) {
+            return false;
         }
 
-        const double center = first_icon ? (*first_icon + last_icon) / 2 : clock_left + clock_width / 2;
-        const double x = std::clamp(center - clock_width / 2, 0.0, tray_width - clock_width);
-        translate_row_item(clock_button, x - clock_left);
+        auto measure = add(tray_row, xaml::FrameworkElement::HeightProperty(), winrt::box_value(height), PropertyRole::TrayLayout);
+        if (date) {
+            measure |= add(date, xaml::UIElement::VisibilityProperty(),
+                winrt::box_value(xaml::Visibility::Collapsed), PropertyRole::TrayLayout);
+        }
+        const auto size_item = [&](xaml::FrameworkElement const& item, double row_height, xaml::VerticalAlignment alignment) {
+            measure |= add(item, xaml::FrameworkElement::MinHeightProperty(), winrt::box_value(0.0), PropertyRole::TrayLayout);
+            measure |= add(item, xaml::FrameworkElement::HeightProperty(), winrt::box_value(row_height), PropertyRole::TrayLayout);
+            measure |= add(item, xaml::FrameworkElement::VerticalAlignmentProperty(), winrt::box_value(alignment), PropertyRole::TrayLayout);
+        };
+        for (auto const& item : upper) size_item(item.element, height - status_height, xaml::VerticalAlignment::Top);
+        for (auto const& item : lower) size_item(item.element, status_height, xaml::VerticalAlignment::Bottom);
+        if (show_desktop) size_item(show_desktop, height - status_height, xaml::VerticalAlignment::Top);
+        // The clock's width must come from the layout pass after collapsing the date.
+        if (measure) tray_row.UpdateLayout();
+
+        const auto left_of = [&](xaml::FrameworkElement const& element) {
+            const auto translation = element.RenderTransform().try_as<media::TranslateTransform>();
+            return element.TransformToVisual(tray_row).TransformPoint({0, 0}).X -
+                (translation ? translation.X() : 0);
+        };
+        double right = tray_row.ActualWidth();
+        // Keep the native Show Desktop strip at the edge, outside both rows.
+        if (show_desktop) right = std::min(right, left_of(show_desktop));
+        if (!std::isfinite(right) || right <= 0) return false;
+        const auto measure_row = [&](std::vector<TrayItem>& items) {
+            double width = 0;
+            for (auto& item : items) {
+                item.left = left_of(item.element);
+                item.width = item.element.ActualWidth();
+                if (!std::isfinite(item.left) || !std::isfinite(item.width) || item.width <= 0) return -1.0;
+                width += item.width;
+            }
+            std::stable_sort(items.begin(), items.end(), [](TrayItem const& first, TrayItem const& second) {
+                return first.kind == second.kind ? first.left < second.left : first.kind < second.kind;
+            });
+            return width;
+        };
+        const double upper_width = measure_row(upper);
+        const double lower_width = measure_row(lower);
+        if (upper_width < 0 || lower_width <= 0 || std::max(upper_width, lower_width) > right) return false;
+        if (!upper.empty()) position_row(upper, right, upper_width);
+        position_row(lower, right, lower_width);
         return true;
+    }
+
+    void update_tray_layout() {
+        ++layout_generation;
+        restore_unused(true, layout_tray_rows());
     }
 
     void apply() {
@@ -717,7 +806,7 @@ struct View : std::enable_shared_from_this<View> {
         std::vector<xaml::DependencyObject> pending;
         bool found_frame = false;
         xaml::FrameworkElement tray{nullptr};
-        xaml::FrameworkElement date_time{nullptr};
+        std::vector<xaml::FrameworkElement> date_times;
         xaml::FrameworkElement frame{nullptr};
         for (auto const& [handle, source] : sources) {
             try {
@@ -745,7 +834,7 @@ struct View : std::enable_shared_from_this<View> {
                 found_frame = true;
             }
             if (control && control.Name() == L"SystemTrayFrameGrid") tray = control;
-            if (type == L"SystemTray.DateTimeIconContent") date_time = control;
+            if (control && type == L"SystemTray.DateTimeIconContent") date_times.push_back(control);
             if (found_frame && control && type == L"Windows.UI.Xaml.Shapes.Rectangle" &&
                 (control.Name() == L"BackgroundFill" || control.Name() == L"BackgroundStroke")) {
                 // Require a TaskbarFrame ancestor, excluding thumbnails and popups.
@@ -755,7 +844,8 @@ struct View : std::enable_shared_from_this<View> {
                     if (ancestor == frame) { belongs = true; break; }
                     ancestor = media::VisualTreeHelper::GetParent(ancestor);
                 }
-                if (belongs) add(element, xaml::Shapes::Shape::FillProperty(), transparent, control.Name() == L"BackgroundFill");
+                if (belongs) add(element, xaml::Shapes::Shape::FillProperty(), transparent,
+                    control.Name() == L"BackgroundFill" ? PropertyRole::BackgroundFill : PropertyRole::Style);
             }
             auto count = media::VisualTreeHelper::GetChildrenCount(element);
             for (int index = 0; index < count; ++index) pending.push_back(media::VisualTreeHelper::GetChild(element, index));
@@ -769,17 +859,15 @@ struct View : std::enable_shared_from_this<View> {
         auto wanted = InterlockedCompareExchange(&owner->state->dark, 0, 0);
         if (wanted != 0 && wanted != 1) winrt::throw_hresult(E_INVALIDARG);
         auto theme = wanted ? xaml::ElementTheme::Dark : xaml::ElementTheme::Light;
-        add(theme_target, xaml::FrameworkElement::RequestedThemeProperty(), winrt::box_value(theme), false);
-        find_clock_row(tray, date_time);
-        clock_rows_active = layout_tray_rows();
+        add(theme_target, xaml::FrameworkElement::RequestedThemeProperty(), winrt::box_value(theme));
+        restore_unused(false, true);
+        tray_rows.clear();
+        for (auto const& date_time : date_times) find_clock_row(tray, date_time);
+        update_tray_layout();
         dark = wanted;
-        for (auto it = properties.begin(); it != properties.end();) {
-            if ((*it)->seen == generation) { ++it; continue; }
-            try { (*it)->restore(); }
-            catch (winrt::hresult_error const& error) { if (error.code() != RO_E_CLOSED) throw; }
-            it = properties.erase(it);
-        }
-        auto fills = std::count_if(properties.begin(), properties.end(), [](auto const& property) { return property->fill; });
+        auto fills = std::count_if(properties.begin(), properties.end(), [](auto const& property) {
+            return property->role == PropertyRole::BackgroundFill;
+        });
         if (!fills) { wait_for_target(); return; }
         missing_since = 0;
         if (!owner->active()) return;
@@ -818,11 +906,7 @@ struct View : std::enable_shared_from_this<View> {
             if (stopped) return;
             if (dark != InterlockedCompareExchange(&owner->state->dark, 0, 0)) dirty = true;
             if (dirty) apply();
-            else {
-                const auto was_active = clock_rows_active;
-                clock_rows_active = layout_tray_rows();
-                if (was_active && !clock_rows_active) apply();
-            }
+            else update_tray_layout();
         } catch (...) {
             HRESULT error = winrt::to_hresult();
             bool restored = false;
