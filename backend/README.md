@@ -52,7 +52,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-[完整基线](alembic/versions/0001_baseline.py) 的修订号为 `baseline`。首次启动使用空数据库，已有旧修订记录的安装需切换到新空库，即使业务表已清空。启动执行 `alembic upgrade head`，后续结构变化在基线上追加迁移。基线冻结表、约束、索引和触发器。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
+[完整基线](alembic/versions/0001_baseline.py) 的修订号为 `baseline`。首次启动使用空数据库，已有旧修订记录的安装需切换到新空库，即使业务表已清空。启动执行 `alembic upgrade head`。同样标为 `baseline` 的既有库会跳过基线建表，仍有旧生活额度列的库需单独更新结构或使用新空库。后续增量迁移在基线上追加。基线冻结表、约束、索引和触发器。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
 
 ### 装配与启停
 

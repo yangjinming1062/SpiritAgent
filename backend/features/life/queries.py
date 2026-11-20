@@ -9,7 +9,7 @@ from infrastructure.text import utc_now
 from sqlalchemy import CompoundSelect, case, func, or_, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .actions import ReadingResult
+from .actions import CREATION_CAPABILITIES, ReadingResult
 from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
 from .prompts import life_content_payload
 from .schemas import (
@@ -90,7 +90,7 @@ async def completed_personal_works(
             LifeEvent.kind == "life.step.completed",
             LifeStep.user_id == user_id,
             LifeStep.state == "completed",
-            LifeStep.is_creation.is_(True),
+            LifeStep.kind.in_(CREATION_CAPABILITIES),
             LifeStep.library_work_id.is_not(None),
             or_(
                 LifeEvent.result_visual_id.is_not(None) & LifeEvent.result_visual_version_id.is_not(None),

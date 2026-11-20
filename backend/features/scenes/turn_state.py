@@ -1,12 +1,8 @@
-"""由真实回合创建、工具循环共享的场景操作预算。"""
+"""同一回合的场景工具共用查库状态。"""
 
-import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
 class SceneTurnState:
     inspected: bool = False
-    # 创建每回合限一次。
-    create_claimed: bool = False
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)

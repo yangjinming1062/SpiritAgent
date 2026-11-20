@@ -1641,7 +1641,7 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
-        title: '陪伴交互与主动行为', hint: '桌面互动节流、LLM 成本冷却、主动回合预算与动作制作额度',
+        title: '陪伴交互与主动行为', hint: '桌面互动节流、主动回合与动作制作开关',
         blocks: [
             ['sub', '互动节流与成本冷却'],
             ['grid', [
@@ -1705,7 +1705,7 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
-        title: '接口限流与安全防护', hint: '频控、生成配额与附件空间',
+        title: '接口限流与安全防护', hint: '接口频控、媒体处理与附件空间',
         blocks: [
             ['field', bool('rate_limit_enabled', '开启接口速率限制 (Rate Limiting)')],
             ['grid', [
@@ -1715,13 +1715,9 @@ const SETTINGS_SECTIONS = [
                 num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)', 1, { min: 1 }),
                 num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)', 1, { min: 1 }),
             ]],
-            ['sub', '场景、动态与安全配额'],
+            ['sub', '媒体处理与附件限制'],
             ['grid', [
-                num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
-                num('life_actions_per_day', '每账户每日自主执行上限（白天与夜间共用）', 1, { min: 0, max: 100 }),
-                num('life_creations_per_day', '其中每日自主创作上限', 1, { min: 0, max: 100 }),
                 num('scene_store_max_attempts', '场景图片转存最大重试次数', 1, { min: 1 }),
-                num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)', 1, { min: 0 }),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
             ]],

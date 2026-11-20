@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
 
+from .actions import CREATION_CAPABILITIES
 from .execution import enqueue_action, notify_shared_step
 from .lifecycle import transition_pursuit
 from .models import LifeEvent, LifeGrowth, LifeState, LifeStep
@@ -340,7 +341,7 @@ async def share_life_event_in_session(db: AsyncSession, user_id: int, share: Lif
             work_id is None
             or step is None
             or step.state != "completed"
-            or not step.is_creation
+            or step.kind not in CREATION_CAPABILITIES
             or original.kind != "life.step.completed"
             or not result
             or ("visual_id" in result and "visual_version_id" not in result)

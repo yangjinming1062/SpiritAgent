@@ -28,6 +28,6 @@ async def request_autonomous_post(user_id: int) -> None:
     try:
         await request_publication(user_id)
     except PostBlockedError:
-        logger.info("Autonomous post skipped by policy or quota", extra={"user_id": user_id})
+        logger.info("Autonomous post skipped by policy", extra={"user_id": user_id})
     except Exception:
         logger.warning("Autonomous post decision failed", extra={"user_id": user_id}, exc_info=True)

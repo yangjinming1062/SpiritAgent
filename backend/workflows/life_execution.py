@@ -28,7 +28,7 @@ from features.life.execution import (
 )
 from features.life.schemas import LifeStepRequest, LifeStepView
 from features.life.use_cases import read_step, require_step_submission, update_business_steps_in_session
-from features.scenes.service import SceneBusyError, SceneLockedError, SceneQuotaExceededError
+from features.scenes.service import SceneBusyError, SceneLockedError
 from features.scenes.snapshots import schedule_scene_snapshot
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import library_work
@@ -193,13 +193,13 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
                 ):
                     await finish_step(user_id, step.id, state="cancelled", error="原夜间窗口已结束，未提交的步骤不补跑")
                     return
-            claimed = await claim_step(user_id, step.id, timezone)
+            claimed = await claim_step(user_id, step.id)
             if claimed is None:
                 return
             try:
                 with library_work(claimed.library_work_id):
                     await _execute(user_id, claimed)
-            except (SceneBusyError, SceneLockedError, SceneQuotaExceededError) as exc:
+            except (SceneBusyError, SceneLockedError) as exc:
                 await defer_step(
                     user_id,
                     step.id,

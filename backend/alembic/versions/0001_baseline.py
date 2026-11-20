@@ -384,8 +384,6 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("request_id", sa.String(length=160), nullable=False),
         sa.Column("capability", sa.String(length=32), nullable=False),
-        sa.Column("budget_date", sa.Date(), nullable=False),
-        sa.Column("is_creation", sa.Boolean(), nullable=False),
         sa.Column("submitted", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("admitted_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
@@ -396,7 +394,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("user_id", "id", name="uq_life_action_admissions_owner_id"),
         sa.UniqueConstraint("user_id", "request_id", name="uq_life_admission_request"),
     )
-    op.create_index("ix_life_admission_budget", "life_action_admissions", ["user_id", "budget_date"], unique=False)
     op.create_table(
         "life_pursuits",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -1396,8 +1393,6 @@ def upgrade() -> None:
         sa.Column("disposition", sa.String(length=24), server_default="ready", nullable=False),
         sa.Column("wait_reason", sa.Text(), server_default="", nullable=False),
         sa.Column("not_before", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("budget_date", sa.Date(), nullable=True),
-        sa.Column("is_creation", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("source", sa.String(length=24), server_default="life", nullable=False),
         sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
         sa.Column("business_action_id", sa.BigInteger(), nullable=True),
@@ -1517,7 +1512,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("user_id", "id", name="uq_life_steps_owner_id"),
         sa.UniqueConstraint("user_id", "idempotency_key", name="uq_life_steps_user_idempotency"),
     )
-    op.create_index("ix_life_steps_budget", "life_steps", ["user_id", "budget_date"], unique=False)
     op.create_index("ix_life_steps_due", "life_steps", ["state", "not_before", "user_id"], unique=False)
     op.create_index(op.f("ix_life_steps_job_id"), "life_steps", ["job_id"], unique=False)
     op.create_index(op.f("ix_life_steps_pursuit_id"), "life_steps", ["pursuit_id"], unique=False)
@@ -2492,7 +2486,6 @@ def upgrade() -> None:
         "post_publications",
         sa.Column("id", sa.BigInteger(), nullable=False),
         sa.Column("owner_id", sa.BigInteger(), nullable=False),
-        sa.Column("reserved_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("activity_date", sa.Date(), nullable=False),
         sa.Column("outcome", sa.String(length=24), nullable=True),
         sa.Column("request_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
@@ -2523,7 +2516,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("post_publications_pkey")),
         sa.UniqueConstraint("owner_id", "id", name="uq_post_publications_owner_id"),
     )
-    op.create_index(op.f("ix_post_publications_reserved_at"), "post_publications", ["reserved_at"], unique=False)
     op.create_index(op.f("ix_post_publications_video_job_id"), "post_publications", ["video_job_id"], unique=False)
     op.create_table(
         "submission_messages",

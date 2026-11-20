@@ -33,8 +33,9 @@ async def schedule_scene_snapshot(
     notes: str | None = None,
     reference_image: bytes | None = None,
     life_step: LifeStepRequest | None = None,
+    request_id: str | None = None,
 ) -> SceneSnapshot:
     row = await schedule_scene_generation(
-        user_id, origin=origin, notes=notes, reference_image=reference_image, life_step=life_step
+        user_id, origin=origin, notes=notes, reference_image=reference_image, life_step=life_step, request_id=request_id
     )
     return scene_view(row)

@@ -180,19 +180,6 @@ async def has_unread_entries(db: AsyncSession, user_id: int, kind: Literal["post
     )
 
 
-async def count_posts_since(db: AsyncSession, user_id: int, since: datetime) -> int:
-    return int(
-        await db.scalar(
-            select(func.count())
-            .select_from(CompanionEntry)
-            .where(
-                CompanionEntry.user_id == user_id, CompanionEntry.kind == "post", CompanionEntry.published_at >= since
-            )
-        )
-        or 0
-    )
-
-
 async def recent_posts(
     db: AsyncSession,
     user_id: int,

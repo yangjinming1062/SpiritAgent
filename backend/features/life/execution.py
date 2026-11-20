@@ -1,9 +1,8 @@
-"""生活步骤的持久认领、共享额度和执行检查点。外部调用始终在事务外。"""
+"""生活步骤的持久认领、提交事实与执行检查点。外部调用始终在事务外。"""
 
 from copy import deepcopy
 from datetime import datetime, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -32,6 +31,10 @@ from .service import (
 from .settlement import settle_business_steps
 
 _RETRY_DELAY = timedelta(minutes=15)
+
+
+class UnresolvedPursuitStepError(LifeInputError):
+    """同一事项须先核对或完成已有步骤，计划可在后续扫描继续。"""
 
 
 async def notify_shared_step(db: AsyncSession, user_id: int, step: LifeStep) -> None:
@@ -78,7 +81,7 @@ async def enqueue_action(
             )
             .limit(1)
         ):
-            raise LifeInputError("事项已有未解决步骤，不能重复登记下一步")
+            raise UnresolvedPursuitStepError("事项已有未解决步骤，不能重复登记下一步")
         if private:
             row.library_work_id = await create_private_work(db, user_id)
         row.action_json, row.source = payload, source
@@ -105,7 +108,6 @@ async def enqueue_action(
             ):
                 row.not_before = retry_at
                 row.disposition, row.wait_reason, row.failure_code = "waiting", "上次执行失败，稍后再试", "retry_wait"
-        row.is_creation = row.kind in CREATION_CAPABILITIES
         await db.flush()
     return step_view(row)
 
@@ -196,7 +198,7 @@ async def defer_step(
         await db.commit()
 
 
-async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStepView | None:
+async def claim_step(user_id: int, step_id: int) -> LifeStepView | None:
     async with SESSION_LOCAL() as db:
         state = await get_or_create_state(db, user_id, lock=True)
         row = await db.scalar(select(LifeStep).where(LifeStep.user_id == user_id, LifeStep.id == step_id))
@@ -224,8 +226,6 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
             action = LIFE_ACTION.validate_python(row.action_json)
             if action.capability != row.kind:
                 raise LifeInputError("步骤与执行能力不一致")
-        row.is_creation = row.kind in CREATION_CAPABILITIES
-        day = now.astimezone(timezone).date()
         admission = await db.scalar(
             select(LifeActionAdmission).where(
                 LifeActionAdmission.user_id == user_id, LifeActionAdmission.request_id == row.idempotency_key
@@ -236,37 +236,11 @@ async def claim_step(user_id: int, step_id: int, timezone: ZoneInfo) -> LifeStep
         if admission is not None and admission.submitted:
             row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
             row.failure_code = "unknown_submission"
-            row.budget_date, row.started_at = admission.budget_date, admission.admitted_at
+            row.started_at = admission.admitted_at
             await db.commit()
             return None
         if admission is None:
-            count, creations = (
-                await db.execute(
-                    select(func.count(), func.count().filter(LifeActionAdmission.is_creation.is_(True)))
-                    .select_from(LifeActionAdmission)
-                    .where(LifeActionAdmission.user_id == user_id, LifeActionAdmission.budget_date == day)
-                )
-            ).one()
-            if count >= SETTINGS.life_actions_per_day or (
-                row.is_creation and creations >= SETTINGS.life_creations_per_day
-            ):
-                row.disposition, row.wait_reason, row.failure_code = (
-                    "waiting",
-                    "今日自主执行额度已用完",
-                    "quota_exhausted",
-                )
-                row.not_before = datetime.combine(day + timedelta(days=1), time.min, timezone)
-                await db.commit()
-                return None
-            admission = LifeActionAdmission(
-                user_id=user_id,
-                request_id=row.idempotency_key,
-                capability=row.kind,
-                budget_date=day,
-                is_creation=row.is_creation,
-            )
-            db.add(admission)
-        row.budget_date = admission.budget_date
+            db.add(LifeActionAdmission(user_id=user_id, request_id=row.idempotency_key, capability=row.kind))
         row.state, row.started_at, row.disposition, row.wait_reason = "running", row.started_at or now, "executing", ""
         row.failure_code = None
         row.attempts += 1
@@ -312,7 +286,7 @@ async def mark_step_submitted(user_id: int, step_id: int) -> None:
             )
         )
         if admission is None:
-            raise LifeInputError("步骤未取得执行额度")
+            raise LifeInputError("步骤尚未受理")
         admission.submitted = True
         await db.commit()
 
@@ -337,7 +311,7 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
             ):
                 row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
                 row.failure_code = "unknown_submission"
-                row.budget_date, row.started_at = admission.budget_date, admission.admitted_at
+                row.started_at = admission.admitted_at
             elif (
                 row.state in {"running", "unknown"}
                 and not admission.submitted

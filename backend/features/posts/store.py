@@ -3,15 +3,14 @@
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from infrastructure.assets.asset_store import signed_companion_asset_url
 from infrastructure.assets.paths import parse_companion_asset_path
-from infrastructure.config import SETTINGS
 from infrastructure.domain_locks import lock_domain
-from infrastructure.text import ensure_utc, format_local_iso, utc_now
+from infrastructure.text import ensure_utc, format_local_iso
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
@@ -38,7 +37,7 @@ class PostNotFoundError(PostError):
 
 
 class PostBlockedError(PostError):
-    """动态创作开关或发布额度阻止了本次发布。"""
+    """当前发布政策或交付条件阻止了本次发布。"""
 
 
 @dataclass(frozen=True)
@@ -99,42 +98,31 @@ async def posts_policy_ok(db: AsyncSession, user_id: int) -> bool:
     )
 
 
-async def reserve_publication(db: AsyncSession, user_id: int, *, activity_date: date) -> PostPublication:
-    await lock_domain(db, user_id, "entries")
-    if not await user_is_active(db, user_id):
-        raise PostError("账户不可用")
-    if await publication_quota_remaining(db, user_id) <= 0:
-        raise PostBlockedError("最近24小时的动态发布额度已用完")
-    row = PostPublication(
-        user_id=user_id, activity_date=activity_date, request_json={}, checkpoint={}, state="queued", stage="planning"
-    )
-    db.add(row)
-    await db.flush()
-    await db.commit()
-    return row
-
-
-async def publication_quota_remaining(
-    db: AsyncSession, user_id: int, *, exclude_publication_id: int | None = None
-) -> int:
-    """已发布、在途及24小时内待核对的任务共同占用账户滚动额度。"""
-    since = utc_now() - timedelta(hours=24)
-    posted = await entries_queries.count_posts_since(db, user_id, since)
-    reservations = (
-        select(func.count())
-        .select_from(PostPublication)
+async def get_or_create_planning_publication(db: AsyncSession, user_id: int, *, activity_date: date) -> PostPublication:
+    await lock_domain(db, user_id, "post_planning")
+    if not await posts_policy_ok(db, user_id):
+        raise PostBlockedError("动态自主发布已关闭或账户不可用")
+    row = await db.scalar(
+        select(PostPublication)
         .where(
             PostPublication.user_id == user_id,
-            or_(
-                PostPublication.state.in_(("queued", "running", "paused")),
-                (PostPublication.state == "unknown") & (PostPublication.reserved_at >= since),
-            ),
+            PostPublication.stage == "planning",
+            PostPublication.state.in_(("queued", "running")),
         )
+        .limit(1)
     )
-    if exclude_publication_id is not None:
-        reservations = reservations.where(PostPublication.id != exclude_publication_id)
-    reserved = await db.scalar(reservations)
-    return max(0, SETTINGS.post_autonomous_per_day - posted - (reserved or 0))
+    if row is None:
+        row = PostPublication(
+            user_id=user_id,
+            activity_date=activity_date,
+            request_json={},
+            checkpoint={},
+            state="queued",
+            stage="planning",
+        )
+        db.add(row)
+    await db.commit()
+    return row
 
 
 async def commit_publication(
@@ -164,11 +152,7 @@ async def commit_publication(
         await notify_post_published(db, row)
         await db.commit()
         return row
-    if (
-        task.state in {"failed", "cancelled"}
-        or not await posts_policy_ok(db, task.user_id)
-        or await publication_quota_remaining(db, task.user_id, exclude_publication_id=task.id) <= 0
-    ):
+    if task.state in {"failed", "cancelled"} or not await posts_policy_ok(db, task.user_id):
         raise PostBlockedError("发布条件已变化")
     progress = task.checkpoint or {}
     depicts_self = bool((task.plan_json or {}).get("depicts_self"))

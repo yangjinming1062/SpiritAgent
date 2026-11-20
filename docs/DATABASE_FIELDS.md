@@ -76,11 +76,11 @@
 | 状态、事项、步骤与事件：[life/models.py](../backend/features/life/models.py) | 生活状态行串行化写入，`activity_type` 与 `scene_tags_json` 保存当前活动类别及有依据的环境、物品条件供视觉投影；状态、事项、步骤和事件分别保存模型生成的用户叙事，事项保存目标/进展和调整来源，步骤保存可执行动作、永久阅读成果及结构化 `failure_code`，原始错误留在任务边界；事件保留事实性质、主体、叙事和结果；`pursuit_evidence.used_for_completion` 标记结项实际采用的证据，公开结果按证据所指作品的当前可见性读取。 |
 | 生活轨迹与检索：同一[模型文件](../backend/features/life/models.py) | `life_events.trajectory_kind` 标记入轨迹的经历，主题与前序用账户联合外键绑定，同一账户内每个事项按成果键去重，共用成果保留各事项的事件。日常判断时段以 `life_states.review_slot` 持久去重。`life_event_search_index` 引用本账户事件，索引受控事实、叙事及阅读所得，按内容指纹、模型和实际维度核对向量 |
 | 伙伴成长：同一[生活模型](../backend/features/life/models.py) | `life_growth` 按具体认识保存类型、内在变化、相处倾向和同账户来源经历，分别修订或撤回。 |
-| 请求额度与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存额度归属和已提交事实，不能从事项历史重新计数 |
+| 执行请求与提交：同一[模型文件](../backend/features/life/models.py) | `life_action_admissions` 独立保存请求身份、能力、受理时间和提交状态，供重启与恢复核对 |
 | 夜间账本：[nightly/models.py](../backend/workflows/nightly/models.py) | 按账户/本地日期保存阶段摘要、计划输入和动作身份；计划项唯一关联本账户生活步骤，只保存未受理项的跳过或阻断原因，执行状态与成果读取步骤；账本计划不证明执行完成 |
 | 自动化与等待：[automation/models.py](../backend/features/automation/models.py)、[intent_models.py](../backend/features/companion/intent_models.py) | Cron 保存计划和任务会话，陪伴意图保存等待条件、租约和终态；`source_kind` 区分来源，`cron_job_id` 与 `life_event_id` 分别关联计划和伙伴选择的生活经历 |
 
-事实、额度、来源权限与恢复规则见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
+事实、受理、来源权限与恢复规则见 [生活契约](PROTOCOL.md#生活状态与生活事件)和[调度契约](PROTOCOL.md#调度)。
 
 ## 记忆与证据
 

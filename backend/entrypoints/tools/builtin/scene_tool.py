@@ -59,20 +59,20 @@ async def scene_get_tool(scene_id: ResourceId, user_id: ResourceId, **_: Any) ->
     return _result(scene=_asset(row))
 
 
-async def scene_create_tool(notes: str, user_id: ResourceId, scene_turn: SceneTurnState, **_: Any) -> str:
-    async with scene_turn.lock:
-        if not scene_turn.inspected:
-            return tool_error("请先用 scene_list 查看已有环境图片，合适就复用")
-        if scene_turn.create_claimed:
-            return tool_error("本回合已创建过一张环境图片，请查询结果，不要重复创建")
-        if not notes.strip():
-            return tool_error("请提供具体的环境设计")
-        try:
-            row = await schedule_scene_snapshot(user_id, origin=SceneOrigin.LLM.value, notes=notes)
-        except SceneError as exc:
-            return tool_error(str(exc))
-        scene_turn.create_claimed = True
-        return _result(accepted=True, scene=_asset(row), message="环境图片正在准备，完成后会保存到列表中")
+async def scene_create_tool(
+    notes: str, user_id: ResourceId, scene_turn: SceneTurnState, parent_session_id: str, tool_call_id: str, **_: Any
+) -> str:
+    if not scene_turn.inspected:
+        return tool_error("请先用 scene_list 查看已有环境图片，合适就复用")
+    if not notes.strip():
+        return tool_error("请提供具体的环境设计")
+    try:
+        row = await schedule_scene_snapshot(
+            user_id, origin=SceneOrigin.LLM.value, notes=notes, request_id=f"scene:{parent_session_id}:{tool_call_id}"
+        )
+    except (SceneError, ValueError) as exc:
+        return tool_error(str(exc))
+    return _result(accepted=True, scene=_asset(row))
 
 
 def register(registry: ToolsRegistry) -> None:

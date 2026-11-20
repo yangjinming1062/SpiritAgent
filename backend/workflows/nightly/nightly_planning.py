@@ -1,19 +1,19 @@
 """夜间自主规划、持久化动作账本与顺序执行。"""
 
 import json
-import re
 from datetime import date, datetime, time, timedelta
 from functools import partial
-from typing import Any, Literal, TypeGuard
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from features.accounts.queries import nightly_account
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.appearance.nightly import list_outfits
 from features.appearance.observations import load_visual_observation
 from features.companion.planning_queries import PersonaPlanningSnapshot
 from features.entries.queries import post_summaries
 from features.life.actions import CREATION_CAPABILITIES, LIFE_ACTION, LIFE_CAPABILITIES, NextAction, OutreachAction
-from features.life.execution import enqueue_action
+from features.life.execution import UnresolvedPursuitStepError, enqueue_action
 from features.life.queries import pursuit_evidence, steps_by_id
 from features.life.schemas import LifeStepView
 from features.media.identity_rendering import render_character_appearance
@@ -23,7 +23,6 @@ from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValid
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId, parse_resource_id
-from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -46,7 +45,6 @@ PlanItemStatus = Literal["pending", "skipped", "blocked", "failed"]
 ActionStatus = Literal[
     "pending", "running", "succeeded", "skipped", "blocked", "failed", "interrupted", "result_unknown"
 ]
-_ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 class NightlyCapability(BaseModel):
@@ -56,8 +54,6 @@ class NightlyCapability(BaseModel):
     phase: int
     description: str
     arguments: dict[str, Any]
-    exclusive_group: str | None = None
-    paid: bool = False
 
 
 class DateContext(BaseModel):
@@ -247,16 +243,10 @@ def _nightly_capability(name: str) -> NightlyCapability:
         phase=_NIGHTLY_PHASES[name],
         description=definition.description,
         arguments=schema,
-        exclusive_group=name.split(".", maxsplit=1)[0],
-        paid=name in CREATION_CAPABILITIES,
     )
 
 
 _CAPABILITY_BY_NAME = {name: _nightly_capability(name) for name in _NIGHTLY_PHASES}
-
-
-def _is_action_id(value: Any) -> TypeGuard[str]:
-    return isinstance(value, str) and 0 < len(value) <= 48 and not _ACTION_ID_PATTERN.search(value)
 
 
 async def _collect_context(
@@ -348,47 +338,36 @@ async def _collect_context(
 
 def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     raw_plan = NightlyPlanOutput.model_validate(parsed)
-    seen_ids: set[str] = set()
-    for action in raw_plan.actions:
-        if action.id in seen_ids:
-            raise LlmJsonValidationError("duplicate_action_id", fields=("id",))
-        seen_ids.add(action.id)
+    action_positions = {action.id: index for index, action in enumerate(raw_plan.actions)}
+    if len(action_positions) != len(raw_plan.actions):
+        raise LlmJsonValidationError("duplicate_action_id", fields=("id",))
     available_names = {item.name for item in context.available_capabilities}
     active_pursuits = {parse_resource_id(item["id"]) for item in context.life_context.get("active_pursuits", [])}
-    seen_groups: set[str] = set()
-    paid_count = 0
     actions: list[PlannedAction] = []
-    for action in raw_plan.actions:
-        if len(actions) >= SETTINGS.life_actions_per_day:
-            break
+    for index, action in enumerate(raw_plan.actions):
         capability_name = action.capability.strip()
         spec = _CAPABILITY_BY_NAME.get(capability_name)
         if spec is None or capability_name not in available_names:
-            continue
-        if spec.exclusive_group and spec.exclusive_group in seen_groups:
-            continue
-        if spec.paid and paid_count >= SETTINGS.life_creations_per_day:
             continue
         if action.pursuit_id is not None and action.pursuit_id not in active_pursuits:
             raise LlmJsonValidationError("unknown_pursuit", fields=("pursuit_id",))
         if capability_name in CREATION_CAPABILITIES and type(action.arguments.get("add_to_user_library")) is not bool:
             raise LlmJsonValidationError("missing_library_choice", fields=("add_to_user_library",))
-        # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
-        # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
-        dependencies = action.depends_on
-        if not all(_is_action_id(dep) for dep in dependencies):
-            continue
-        if spec.paid:
-            paid_count += 1
-        if spec.exclusive_group:
-            seen_groups.add(spec.exclusive_group)
+        # 前置项被过滤时仍保留引用，执行端据此跳过依赖它的动作。
+        for dependency in action.depends_on:
+            dependency_index = action_positions.get(dependency)
+            if dependency_index is None or dependency_index >= index:
+                raise LlmJsonValidationError("dependency_must_reference_earlier_action", fields=("depends_on",))
+            dependency_phase = _NIGHTLY_PHASES.get(raw_plan.actions[dependency_index].capability.strip())
+            if dependency_phase is not None and dependency_phase > spec.phase:
+                raise LlmJsonValidationError("dependency_phase_too_late", fields=("depends_on",))
         actions.append(
             PlannedAction(
                 id=action.id,
                 capability=capability_name,
                 phase=spec.phase,
                 pursuit_id=action.pursuit_id,
-                depends_on=dependencies,
+                depends_on=action.depends_on,
                 arguments={
                     **action.arguments,
                     **(
@@ -576,15 +555,19 @@ async def _link_action_step(row: NightlyActivityAction, user_id: int, action: Ne
         return current.life_step_id
 
 
-def _blocked_plan_outcome(
-    arguments: dict[str, Any], dependencies: list[ActionExecutionResult | None], date_context: DateContext
+async def _blocked_plan_outcome(
+    user_id: int, arguments: dict[str, Any], dependencies: list[ActionExecutionResult | None], date_context: DateContext
 ) -> tuple[PlanItemStatus, str] | None:
-    if arguments.get("illegal_outfit_deps"):
-        return "failed", "环境与造型相互独立，环境动作不能依赖造型动作"
-    if any(result is None or result.status != "succeeded" for result in dependencies):
-        return "skipped", "dependency not completed"
     if not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
         return "blocked", "nightly window ended"
+    async with SESSION_LOCAL() as db:
+        account = await nightly_account(db, user_id)
+    if account is None or not account.is_active or not account.nightly_activity_enabled:
+        return "blocked", "夜间自主活动已关闭或账户不可用"
+    if arguments.get("illegal_outfit_deps"):
+        return "failed", "环境与造型相互独立，环境动作不能依赖造型动作"
+    if any(result is None or result.status not in {"succeeded", "pending", "running"} for result in dependencies):
+        return "skipped", "dependency not completed"
     return None
 
 
@@ -599,11 +582,11 @@ async def _execute_persisted_actions(
                 continue
             arguments = row.arguments or {}
             dependencies = [results.get(key) for key in arguments.get("depends_on", [])]
-            if any(result is not None and result.status in {"pending", "running"} for result in dependencies):
-                continue
-            if outcome := _blocked_plan_outcome(arguments, dependencies, date_context):
+            if outcome := await _blocked_plan_outcome(user_id, arguments, dependencies, date_context):
                 await _record_plan_outcome(row, *outcome)
                 results[row.action_key] = _action_result(row, {})
+                continue
+            if any(result is not None and result.status != "succeeded" for result in dependencies):
                 continue
             try:
                 facts = [result.fact for result in results.values() if result.status == "succeeded" and result.fact]
@@ -611,6 +594,8 @@ async def _execute_persisted_actions(
                     row, language=language, plan_theme=plan_theme, date_context=date_context, facts=facts
                 )
                 row.life_step_id = await _link_action_step(row, user_id, action)
+            except UnresolvedPursuitStepError:
+                continue
             except Exception as exc:
                 logger.exception(
                     "nightly action admission failed", extra={"user_id": user_id, "action": row.action_key}
@@ -655,10 +640,6 @@ async def run_nightly_planning(
             user_id, timezone, life_context=life_context, persona=persona, language=language
         )
         payload = {
-            "plan_limits": {
-                "max_actions": SETTINGS.life_actions_per_day,
-                "max_paid_actions": SETTINGS.life_creations_per_day,
-            },
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,
             "user_profile": user_profile,

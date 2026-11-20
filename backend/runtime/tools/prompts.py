@@ -107,7 +107,7 @@ VIDEO_STATUS_PARAM_DESCS = {"task_id": "The task_id returned by video_generate."
 SCENE_TOOL_DESCRIPTIONS = {
     "scene_list": "分页查询已就绪的环境图片，query 匹配标题和描述；同时返回 policy，表示能否自行新增。先看已有图片，合适就复用；明确需要新的或已有不合适再创建。",
     "scene_get": "查询一张环境图片的详情和任务状态。生成、描述分析或失败都不表示就绪；已有图片不表示当前画面。",
-    "scene_create": "按当前情景设计新的环境图片并保存到列表。notes 描述地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风，不描绘你本人；其他人物、动物、肖像和雕像可以按环境需要出现。先用 scene_list 查看已有图片。接受任务仅表示正在准备，受 policy 与每回合创建次数限制。",
+    "scene_create": "按当前情景设计新的环境图片并保存到列表。notes 描述地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风，不描绘你本人；其他人物、动物、肖像和雕像可以按环境需要出现。先用 scene_list 查看已有图片。已有任务正在制作时等待其完成；接受任务后通过 scene_get 查询状态。",
 }
 
 WEB_SEARCH_DESC = (

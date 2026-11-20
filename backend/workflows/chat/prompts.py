@@ -1276,7 +1276,7 @@ SCENE_TOOL_GUIDANCES: dict[str, str] = {
         "这些工具管理环境图片，以工具结果确认图片状态；已有图片不表示当前画面，完整的环境视频仍以自身确认的画面为准。"
         "按当前情景判断是否需要新的环境图片，先用 scene_list 查找可以复用的；都不合适时才用 scene_create 新建。"
         "描述地点、陈设、光线与氛围，按真实拍摄的环境照片呈现，不写画风，不描绘你本人；其他人物、动物、肖像或雕像可按需要出现。"
-        "每回合最多创建一次。policy 为 locked 时不自行新增。"
+        "policy 为 locked 时不自行新增。"
     ),
     "en": (
         "These tools manage environment pictures; the tool result confirms a picture's state. An existing picture does "
@@ -1284,7 +1284,7 @@ SCENE_TOOL_GUIDANCES: dict[str, str] = {
         "from the current situation whether you need a new environment picture; search with scene_list and reuse one that "
         "fits, and call scene_create only when none fits. Describe location, furnishings, lighting and atmosphere without "
         "depicting yourself; such pictures always look like real photographs, so do not name a visual style. Other people, "
-        "animals, portraits and statues may appear as needed. Create at most one per turn. When policy is locked, do not "
+        "animals, portraits and statues may appear as needed. When policy is locked, do not "
         "add one on your own."
     ),
 }

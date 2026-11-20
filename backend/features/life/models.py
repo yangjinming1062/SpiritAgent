@@ -3,7 +3,7 @@
 生活状态是当前生活的唯一权威；事件保存改变它的事实依据，业务任务仍由各自模块拥有。
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
@@ -12,7 +12,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -107,18 +106,13 @@ class LifePursuit(ModelBase, TimestampMixin):
 
 
 class LifeActionAdmission(ModelBase):
-    """按请求保留已消耗额度和提交事实，覆盖恢复不删除此执行记录。"""
+    """按请求保留受理和提交事实，供步骤恢复核对。"""
 
     __tablename__ = "life_action_admissions"
-    __table_args__ = (
-        UniqueConstraint("user_id", "request_id", name="uq_life_admission_request"),
-        Index("ix_life_admission_budget", "user_id", "budget_date"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_life_admission_request"),)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     request_id: Mapped[str] = mapped_column(String(160))
     capability: Mapped[str] = mapped_column(String(32))
-    budget_date: Mapped[date] = mapped_column(Date)
-    is_creation: Mapped[bool] = mapped_column(Boolean)
     submitted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     admitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
 
@@ -146,7 +140,6 @@ class LifeStep(ModelBase, TimestampMixin):
         CheckConstraint("reading_result_json IS NULL OR kind = 'content.read'", name="reading_result_kind"),
         Index("ix_life_steps_user_state", "user_id", "state"),
         Index("ix_life_steps_due", "state", "not_before", "user_id"),
-        Index("ix_life_steps_budget", "user_id", "budget_date"),
         UniqueConstraint("user_id", "idempotency_key", name="uq_life_steps_user_idempotency"),
     )
 
@@ -166,8 +159,6 @@ class LifeStep(ModelBase, TimestampMixin):
     disposition: Mapped[str] = mapped_column(String(24), default="ready", server_default="ready")
     wait_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
     not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    budget_date: Mapped[date | None] = mapped_column(Date)
-    is_creation: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     source: Mapped[str] = mapped_column(String(24), default="life", server_default="life")
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     business_action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))

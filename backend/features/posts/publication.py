@@ -68,8 +68,8 @@ from features.posts.store import (
     PostBlockedError,
     PostError,
     commit_publication,
+    get_or_create_planning_publication,
     posts_policy_ok,
-    reserve_publication,
     response_for_publication,
 )
 from features.scenes.queries import get_scene_state, scene_environment
@@ -253,10 +253,8 @@ async def request_publication(user_id: int) -> PostPublicationResult:
     if is_user_in_maintenance(user_id):
         raise PostError("账户正在维护，暂不能发布")
     async with SESSION_LOCAL() as db:
-        if not await posts_policy_ok(db, user_id):
-            raise PostBlockedError("动态自主发布已关闭")
         timezone = await resolve_user_timezone(db, user_id)
-        row = await reserve_publication(db, user_id, activity_date=local_date(utc_now(), timezone))
+        row = await get_or_create_planning_publication(db, user_id, activity_date=local_date(utc_now(), timezone))
     schedule_publication(row.id, user_id)
     return response_for_publication(row)
 

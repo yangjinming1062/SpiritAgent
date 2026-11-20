@@ -1,9 +1,7 @@
 """场景素材生成与分析；供应商等待不持有数据库会话。"""
 
 import asyncio
-import hashlib
 import json
-from datetime import timedelta
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
@@ -19,6 +17,7 @@ from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
+from infrastructure.hashing import sha256_hex
 from infrastructure.library_visibility import library_work, record_work_outputs
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language, utc_now
@@ -40,7 +39,6 @@ from features.life.schemas import LifeStepRequest
 from features.life.use_cases import bind_step_in_session, require_step_submission, update_business_steps_in_session
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
-from features.media.provider_attempts import count_scene_submissions, record_scene_submission
 from features.media.review_contracts import review_passes
 from features.media.review_evidence import asset_file_hash, review_media_intact
 from features.scenes.asset_references import sync_scene_assets
@@ -77,10 +75,6 @@ class SceneBusyError(SceneStateError):
 
 
 class SceneLockedError(SceneError):
-    pass
-
-
-class SceneQuotaExceededError(SceneError):
     pass
 
 
@@ -157,15 +151,6 @@ async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> Scene
     return ScenePolicy(policy)
 
 
-async def _consume_llm_quota(db: AsyncSession, user_id: int) -> None:
-    limit = int(SETTINGS.scene_llm_create_per_24h)
-    if limit <= 0:
-        return
-    count = await count_scene_submissions(db, user_id, utc_now() - timedelta(days=1))
-    if int(count or 0) >= limit:
-        raise SceneQuotaExceededError("今天的自主场景新增额度已用完，可以复用已有场景")
-
-
 async def _new_scene(
     user_id: int,
     *,
@@ -174,11 +159,14 @@ async def _new_scene(
     source: str,
     reference_image: str | None = None,
     life_step: LifeStepRequest | None = None,
+    request_id: str | None = None,
 ) -> CompanionScene:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
-        fingerprint = hashlib.sha256(notes.encode()).hexdigest()
         if life_step is not None:
-            job_id = await requested_job_id(db, user_id, life_step.idempotency_key, fingerprint)
+            request_id = life_step.idempotency_key
+        if request_id is not None:
+            fingerprint = sha256_hex(f"{notes}\0{reference_image}" if reference_image else notes)
+            job_id = await requested_job_id(db, user_id, request_id, fingerprint)
             if job_id is not None:
                 existing = await db.scalar(
                     select(CompanionScene).where(
@@ -197,8 +185,6 @@ async def _new_scene(
             select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)
         ):
             raise SceneStateError("初始场景已准备，不重复创建")
-        if origin == SceneOrigin.LLM.value:
-            await _consume_llm_quota(db, user_id)
         row = CompanionScene(
             user_id=user_id,
             status=SceneStatus.PENDING.value,
@@ -223,11 +209,14 @@ async def _new_scene(
                 max_bytes=SCENE_DOWNLOAD_MAX_BYTES,
             )
             row.reference_image = references["ref"]
+        if request_id is not None:
+            await bind_job_request(db, user_id, row.initial_job.id, request_id, fingerprint)
         if life_step is not None:
-            await bind_job_request(db, user_id, row.initial_job.id, life_step.idempotency_key, fingerprint)
             await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
         await _event(db, persona.user_id, "companion.scene.updated", row.id)
         await db.commit()
+        if source == SceneSource.GENERATED.value:
+            _launch_task(row.id, user_id)
         # 响应出口在会话外读取初始与重做任务，新建行需先取回关系，否则脱离会话后无法补查。
         await db.refresh(row)
         return row
@@ -240,17 +229,17 @@ async def schedule_scene_generation(
     notes: str | None = None,
     reference_image: bytes | None = None,
     life_step: LifeStepRequest | None = None,
+    request_id: str | None = None,
 ) -> CompanionScene:
-    row = await _new_scene(
+    return await _new_scene(
         user_id,
         origin=origin,
         notes=notes or "",
         source=SceneSource.GENERATED.value,
         reference_image=await _prepare_reference_image(reference_image) if reference_image is not None else None,
         life_step=life_step,
+        request_id=request_id,
     )
-    _launch_task(row.id, user_id)
-    return row
 
 
 async def schedule_scene_prompt(user_id: int, *, notes: str | None = None) -> CompanionScene:
@@ -830,17 +819,6 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                 or previous.image_chain.active_index != progress.active_index
             ):
                 await _check_policy(db, await _persona(db, user_id), fresh.origin)
-                if fresh.origin == SceneOrigin.LLM.value:
-                    if fresh.initial_job.attempt_count == 0:
-                        await _consume_llm_quota(db, user_id)
-                    await record_scene_submission(
-                        db,
-                        user_id,
-                        fresh.initial_job.id,
-                        fresh.initial_job.token,
-                        fresh.initial_job.attempt_count,
-                        progress.providers[progress.active_index or 0],
-                    )
                 fresh.initial_job.attempt_count += 1
             frozen.image_chain = progress
             fresh.initial_job.checkpoint = frozen.model_dump(mode="json")
