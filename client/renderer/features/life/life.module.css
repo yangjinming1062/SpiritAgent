@@ -2,21 +2,9 @@
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 28px clamp(20px, 4vw, 44px) 36px;
+  padding: 8px 4px 36px;
   color: var(--ui-text-body);
   background: var(--ui-app-bg);
-}
-.pageHeading { margin-bottom: 28px; }
-.pageHeading h1 {
-  color: var(--ui-text-strong);
-  font-size: 24px;
-  font-weight: 650;
-  letter-spacing: -.04em;
-}
-.pageHeading p {
-  margin-top: 8px;
-  color: var(--ui-text-muted);
-  font-size: 13px;
 }
 .overview {
   display: flex;
@@ -54,16 +42,15 @@
   cursor: pointer;
 }
 .pursuitLink:hover { color: var(--ui-accent); }
-.pursuitLink:focus-visible, .pursuit:focus-visible {
+.pursuitLink:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 3px;
 }
-.quiet, .empty {
+.quiet {
   color: var(--ui-text-muted);
   font-size: 13px;
   line-height: 1.7;
 }
-.empty { padding: 18px 0; }
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -71,110 +58,6 @@
   align-items: center;
 }
 .overview > .actions { margin-top: 6px; }
-.featured {
-  display: grid;
-  gap: 12px;
-  padding: clamp(16px, 3vw, 28px);
-  background: var(--ui-fill-faint);
-  border: 1px solid var(--ui-line-hairline);
-  border-radius: 16px;
-}
-.featured h2 {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.trajectoryLayout {
-  display: grid;
-  align-items: start;
-  column-gap: clamp(24px, 4vw, 56px);
-}
-@media (min-width: 980px) {
-  .trajectoryLayout { grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr); }
-}
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  margin-top: 30px;
-}
-.section h2 {
-  color: var(--ui-text-strong);
-  font-size: 17px;
-  font-weight: 600;
-}
-.section > button { align-self: flex-start; }
-.pursuits {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 14px;
-}
-.pursuit {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 20px;
-  text-align: left;
-  border: 1px solid var(--ui-line-hairline);
-  border-radius: 16px;
-  background: var(--ui-fill-faint);
-  cursor: pointer;
-}
-.pursuit:hover {
-  background: var(--ui-fill-hover);
-  border-color: var(--ui-accent-line);
-}
-.pursuit strong {
-  font-size: 15px;
-  color: var(--ui-text-strong);
-}
-.pursuit p {
-  color: var(--ui-text-muted);
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.pursuit time, .detail time {
-  color: var(--ui-text-faint);
-  font-size: 11px;
-}
-.detail {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-}
-.detailField { margin-top: 8px; }
-.detailField h3 {
-  font-size: 12px;
-  color: var(--ui-text-muted);
-  margin-bottom: 8px;
-}
-.detailField p {
-  font-size: 14px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.timeline {
-  display: grid;
-  gap: 22px;
-}
-.episodeDay h3 {
-  color: var(--ui-text-strong);
-  font-size: 13px;
-  font-weight: 600;
-}
-.episodeDay ol {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 0;
-}
-.episodeDay li {
-  padding: 14px 0;
-  border-top: 1px solid var(--ui-line-hairline);
-}
 .episodeMeta {
   display: flex;
   flex-wrap: wrap;
@@ -195,22 +78,6 @@
   overflow-wrap: anywhere;
 }
 .eventBody .activity { font-size: 19px; }
-.reading {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.reading summary { cursor: pointer; }
-.reading a {
-  color: var(--ui-accent);
-  text-decoration: underline;
-}
-.pagination {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: var(--ui-text-muted);
-}
 .lifeArea {
   display: flex;
   flex-direction: column;

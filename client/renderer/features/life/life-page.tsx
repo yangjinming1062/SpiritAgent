@@ -50,7 +50,6 @@ export function LifePage({ containerRef, foreground, mediaViewId, visible }: App
         id,
         icon,
         label: id === 'now' ? t.now : strings.living.rail[id],
-        hint: t.sectionHints[id],
         unread: id === 'posts' ? postsUnread : id === 'diary' ? diaryUnread : false
       }))}
       onSelect={next => void openLife(next)}

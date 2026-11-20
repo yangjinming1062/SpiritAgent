@@ -1,0 +1,318 @@
+.life-reader {
+  --life-ink: var(--ui-text-strong, var(--text-strong));
+  --life-body: var(--ui-text-body, var(--text-body));
+  --life-muted: var(--ui-text-muted, var(--text-muted));
+  --life-accent: var(--ui-accent, var(--accent));
+  --life-line: var(--ui-line-standard, var(--line-strong));
+  --life-rule: var(--ui-line-hairline, var(--line));
+  --life-fill: var(--ui-fill-faint, var(--surface-card));
+  --life-hover: var(--ui-fill-hover, var(--surface-sunken));
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+  max-width: 720px;
+  margin-inline: auto;
+  color: var(--life-body);
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.7;
+}
+.life-reader :where(h1, h2, h3, p, ol, ul) {
+  margin: 0;
+}
+.life-reader h1 {
+  color: var(--life-ink);
+  font-size: clamp(22px, 4cqi, 28px);
+  font-weight: 650;
+  line-height: 1.35;
+}
+.life-reader-header,
+.life-actions,
+.life-error,
+.life-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.life-reader-header {
+  justify-content: space-between;
+  gap: 10px 20px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--life-rule);
+}
+.life-reader-header > h2 {
+  color: var(--life-ink);
+  font-size: 17px;
+  font-weight: 600;
+}
+.life-reader .life-actions:empty {
+  display: none;
+}
+.life-reader :is(.life-tool, .life-more, .archive-search-form button, .life-select) {
+  width: auto;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--life-line);
+  border-radius: 8px;
+  background: var(--life-fill);
+  color: var(--life-body);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.life-reader :is(.life-tool, .life-more, .archive-search-form button, .life-pursuit-row):hover {
+  background: var(--life-hover);
+}
+.life-reader :is(.life-back, .life-link) {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--life-accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.life-reader .life-back {
+  margin-bottom: 12px;
+}
+.life-back::before {
+  display: inline-block;
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-inline: 3px 6px;
+  border: solid currentColor;
+  border-width: 0 0 1.5px 1.5px;
+  transform: rotate(45deg);
+}
+.life-reader :is(.life-link, .life-back):hover {
+  text-decoration: underline;
+}
+.life-reader :where(button, summary, select, input, a):focus-visible {
+  outline: 2px solid var(--life-accent);
+  outline-offset: 2px;
+}
+.life-empty,
+.life-loading,
+.life-feedback {
+  color: var(--life-muted);
+}
+.life-reader .life-empty {
+  margin: 12px 0;
+  padding: clamp(24px, 6cqi, 44px) 20px;
+  border: 1px solid var(--life-rule);
+  border-radius: 12px;
+  background: var(--life-fill);
+  text-align: center;
+}
+.life-reader .life-error {
+  margin-block: 12px;
+  gap: 12px;
+}
+.life-days {
+  display: grid;
+  gap: 26px;
+}
+.life-day h2 {
+  color: var(--life-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.life-day > ol {
+  margin: 10px 0 0 4px;
+  padding: 0 0 0 20px;
+  border-inline-start: 1px solid var(--life-rule);
+  list-style: none;
+}
+.life-day > ol > li {
+  position: relative;
+  padding-bottom: 18px;
+}
+.life-day > ol > li:last-child {
+  padding-bottom: 0;
+}
+.life-day > ol > li::before {
+  position: absolute;
+  inset: 8px auto auto -24px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--life-accent);
+  content: '';
+}
+.life-day article,
+.life-pursuit-detail {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.life-entry-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.life-reader h3 {
+  color: var(--life-ink);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+.life-day article > p,
+.life-pursuit-detail p,
+.life-notes p {
+  white-space: pre-wrap;
+}
+.life-kind,
+.life-status,
+.life-metadata {
+  color: var(--life-muted);
+  font-size: 12px;
+}
+.life-metadata {
+  gap: 10px;
+}
+.life-notes summary {
+  color: var(--life-accent);
+  cursor: pointer;
+  font-size: 14px;
+}
+.life-notes ul,
+.life-notes ol {
+  padding-inline-start: 20px;
+}
+.life-notes li {
+  margin-top: 6px;
+}
+.life-notes a {
+  color: var(--life-accent);
+  text-decoration: underline;
+}
+.life-notes[open] > summary {
+  margin-bottom: 6px;
+}
+.life-reader .life-more {
+  margin-top: 18px;
+}
+.life-reader .life-pursuit-list {
+  list-style: none;
+  padding: 0;
+}
+.life-reader .life-pursuit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 12px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--life-rule);
+  border-radius: 0;
+  background: transparent;
+  color: var(--life-ink);
+  text-align: start;
+  cursor: pointer;
+}
+.life-pursuit-row > span:first-child {
+  min-width: 0;
+}
+.life-status {
+  flex: none;
+}
+.life-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin-top: 4px;
+  color: var(--life-muted);
+  font-size: 14px;
+}
+.life-pursuit-detail {
+  margin-bottom: 22px;
+  gap: 10px;
+}
+.life-reader .archive-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 0 0 20px;
+}
+.life-reader .archive-search-form label {
+  display: grid;
+  flex: 1 1 132px;
+  min-width: 0;
+  gap: 4px;
+  color: var(--life-muted);
+  font-size: 13px;
+}
+.life-reader .archive-search-form .archive-search-query {
+  flex-basis: 100%;
+}
+.life-reader .archive-search-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--life-line);
+  border-radius: 8px;
+  background: var(--life-fill);
+  color: var(--life-ink);
+  font: inherit;
+}
+.life-reader .archive-search-form .row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+}
+.life-feedback {
+  font-size: 13px;
+}
+.life-feedback:not(:empty) {
+  margin-block: 12px;
+}
+.life-reader-header > .life-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+.life-actions > .life-notes[open] {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.life-notes :is(img, video) {
+  max-width: 100%;
+  height: auto;
+}
+@container (max-width: 420px) {
+  .life-reader-header {
+    align-items: flex-start;
+  }
+}
+
+@media (pointer: coarse), (max-width: 480px) {
+  .life-reader
+    :is(
+      .life-tool,
+      .life-more,
+      .life-select,
+      .life-back,
+      .life-link,
+      .archive-search-form button,
+      .archive-search-form input
+    ) {
+    min-height: 44px;
+  }
+  .life-reader .life-notes summary {
+    padding-block: 10px;
+  }
+}

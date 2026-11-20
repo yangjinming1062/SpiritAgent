@@ -1,14 +1,11 @@
-import { atom, computed } from 'nanostores'
+import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
-import { createQueryResource } from '@/shared/lib/query-resource'
 import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-import type { LifeEpisode } from '../../../../shared/life-trajectory'
-
-import type { LifePursuit, LifePursuitDetail, LifeState } from './types'
+import type { LifePursuit, LifeState } from './types'
 
 export const $lifeRevision = atom(0)
 export const $lifeState = atom<LifeState | null>(null)
@@ -16,41 +13,6 @@ export const $lifeFocusedPursuit = atom<LifePursuit | null>(null)
 export const $lifeLoading = atom(false)
 export const $lifeError = atom(false)
 
-interface LifePageData<T> {
-  items: T[]
-  has_more: boolean
-  next_cursor: string | null
-}
-interface LifeEventPage extends LifePageData<LifeEpisode> {
-  page: number
-  revision: number
-}
-const pursuits = createQueryResource<LifePageData<LifePursuit>>({ items: [], has_more: false, next_cursor: null })
-
-const events = createQueryResource<LifeEventPage>({
-  items: [],
-  has_more: false,
-  next_cursor: null,
-  page: -1,
-  revision: -1
-})
-
-const detail = createQueryResource<LifePursuitDetail | null>(null)
-
-export const $lifePursuits = computed(pursuits.$data, value => value.items)
-export const $lifePursuitsHasMore = computed(pursuits.$data, value => value.has_more)
-export const $lifePursuitsNextCursor = computed(pursuits.$data, value => value.next_cursor)
-export const $lifePursuitsLoading = pursuits.$loading
-export const $lifePursuitsError = pursuits.$error
-export const $lifeEvents = computed(events.$data, value => value.items)
-export const $lifeEventsHasMore = computed(events.$data, value => value.has_more)
-export const $lifeEventsLoading = events.$loading
-export const $lifeEventsError = events.$error
-export const $lifeDetail = detail.$data
-export const $lifeDetailLoading = detail.$loading
-export const $lifeDetailError = detail.$error
-
-const LIFE_PAGE_SIZE = 20
 let refreshQueued = false
 let refreshRevision = -1
 let refreshRequest: Promise<void> | null = null
@@ -127,69 +89,6 @@ export function refreshLife(): Promise<void> {
   refreshRequest = request
 
   return request
-}
-
-export function loadLifePursuits(status: 'all' | LifePursuit['status'], cursor: string | null): Promise<void> {
-  return pursuits.load(`pursuits:${status}:${cursor ?? ''}`, () =>
-    requestResource('companion_life.get_life_pursuits', {
-      query: { status: status === 'all' ? undefined : status, cursor, limit: LIFE_PAGE_SIZE }
-    })
-  )
-}
-
-export function loadLifeEvents(page: number, pursuitId?: string, topicId?: string): Promise<void> {
-  return events.load(`trajectory:${pursuitId ?? ''}:${topicId ?? ''}`, async current => {
-    const cached = events.$data.get()
-    const revision = $lifeRevision.get()
-    let items = cached.items
-    let nextCursor = cached.next_cursor
-    let hasMore = cached.has_more
-    let loadedPage = cached.page
-
-    if (loadedPage < 0 || cached.revision !== revision) {
-      const response = await requestResource('companion_life.get_life_trajectory', {
-        query: { pursuit_id: pursuitId, topic_id: topicId, limit: LIFE_PAGE_SIZE }
-      })
-
-      const existing = new Set(items.map(item => item.id))
-      const overlaps = response.items.some(item => existing.has(item.id))
-
-      if (!response.has_more || !overlaps) {
-        items = response.items
-        nextCursor = response.next_cursor
-        hasMore = response.has_more
-        loadedPage = 0
-      } else {
-        // 事件为事实记录；刷新补齐头页，已展开的较早范围继续沿原游标读取。
-        items = [...new Map([...cached.items, ...response.items].map(item => [item.id, item])).values()]
-      }
-    }
-
-    while (loadedPage < page && hasMore && nextCursor && current()) {
-      const response = await requestResource('companion_life.get_life_trajectory', {
-        query: { pursuit_id: pursuitId, topic_id: topicId, cursor: nextCursor, limit: LIFE_PAGE_SIZE }
-      })
-
-      items = [...new Map([...items, ...response.items].map(item => [item.id, item])).values()]
-      nextCursor = response.next_cursor
-      hasMore = response.has_more
-      loadedPage++
-    }
-
-    return { items, next_cursor: nextCursor, has_more: hasMore, page: loadedPage, revision }
-  })
-}
-
-export function loadLifeDetail(pursuitId: string | null): Promise<void> {
-  if (pursuitId === null) {
-    detail.clear()
-
-    return Promise.resolve()
-  }
-
-  return detail.load(`pursuit:${pursuitId}`, () =>
-    requestResource('companion_life.get_life_pursuit', { path: { pursuit_id: pursuitId } })
-  )
 }
 
 registerStorageClearHandler(() => {

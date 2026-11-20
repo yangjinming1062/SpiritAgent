@@ -551,50 +551,6 @@ dd {
   color: var(--accent);
   font-size: 24px;
 }
-.companion-life-card {
-  display: grid;
-  gap: var(--sp-3);
-  overflow-wrap: anywhere;
-}
-.companion-life-card article,
-.companion-life-card section {
-  display: grid;
-  gap: var(--sp-3);
-}
-.companion-life-card > strong {
-  color: var(--text-strong);
-  font-size: var(--fs-body-sm);
-  font-weight: 600;
-}
-.companion-life-card summary {
-  padding-block: var(--sp-1);
-  color: var(--accent);
-  cursor: pointer;
-  font-size: var(--fs-body-sm);
-}
-.companion-life-card ul {
-  display: grid;
-  gap: var(--sp-2);
-  margin: var(--sp-2) 0 0;
-  padding: 0;
-  list-style: none;
-}
-.companion-life-card li button {
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 44px;
-  padding: var(--sp-2) var(--sp-3);
-  color: var(--text-body);
-  background: var(--surface-sunken);
-  border: 0;
-  border-radius: var(--radius-md);
-  font-size: var(--fs-body-sm);
-  text-align: left;
-}
-.companion-life-card small {
-  color: var(--text-faint);
-  font-size: var(--fs-meta-xs);
-}
 .topic-link {
   display: grid;
   gap: var(--sp-2);
@@ -1087,8 +1043,7 @@ dd {
   margin-top: -12px;
 }
 .memory-tabs,
-.memory-status-tabs,
-.life-filter-tabs {
+.memory-status-tabs {
   flex-wrap: wrap;
   overflow: visible;
 }
@@ -1942,42 +1897,6 @@ dd {
 .archive-search-form button {
   min-height: 44px;
 }
-.archive-life-results {
-  display: grid;
-  gap: 12px;
-  padding: 0;
-  list-style: none;
-}
-.archive-life-results > li {
-  padding: 12px 0;
-  border-top: 1px solid var(--line);
-}
-.archive-life-results p,
-.life-featured p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.life-featured {
-  padding-block-end: var(--sp-4);
-  border-bottom: 1px solid var(--line);
-}
-.life-featured h2,
-.life-episode-meta {
-  color: var(--text-muted);
-  font-size: var(--fs-body-sm);
-}
-.life-episode-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
-}
-.life-result a {
-  text-decoration: underline;
-}
-.companion-life-card .life-episode .row-actions button {
-  width: auto;
-}
-
 .status-row {
   display: flex;
   flex-wrap: wrap;

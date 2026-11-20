@@ -202,6 +202,7 @@ class LifeTrajectoryEntry(LifeResultView):
     fact_type: FactType
     title: str | None
     topic_title: str | None
+    has_related_episodes: bool
     narrative: str | None
     occurred_at: datetime
     local_date: date

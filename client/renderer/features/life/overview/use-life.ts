@@ -6,7 +6,7 @@ import { $gatewayState } from '@/shared/store/gateway'
 
 import { $lifeRevision, refreshLife } from '../store'
 
-export function useLife(visible = true): string {
+export function useLife(visible = true): void {
   const revision = useStore($lifeRevision)
   const auth = useStore($auth)
   const gateway = useStore($gatewayState)
@@ -16,6 +16,4 @@ export function useLife(visible = true): string {
       void refreshLife()
     }
   }, [visible, auth, gateway, revision])
-
-  return `${auth.kind === 'authenticated' ? auth.snapshot.sessionId : auth.kind}:${gateway}:${revision}`
 }

@@ -1,39 +1,37 @@
 import { useStore } from '@nanostores/react'
-import type React from 'react'
 
+import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import { ErrorBanner, LoadingBlock } from '@/ui'
 
+import { formatLifeDay, lifeEpisodeLabel } from '../../../../../shared/life-trajectory'
 import styles from '../life.module.css'
 import { $lifeError, $lifeLoading, $lifeState, refreshLife } from '../store'
 
-import { LifeEpisodeBody } from './life-trajectory'
-
-/** 近况叙事只展示后端叙事与中性状态；加载失败保留旧内容并可重试。 */
-export function LifeNarrative({
-  onTopic,
-  onPursuit
-}: {
-  onTopic?: (id: string) => void
-  onPursuit?: (id: string) => void
-}): React.JSX.Element {
+export function LifeNarrative() {
   const state = useStore($lifeState)
   const loading = useStore($lifeLoading)
   const failed = useStore($lifeError)
+  const locale = useStore($locale)
   const strings = useStrings()
   const t = strings.life
+  const entry = state?.latest_episode
 
   return (
     <>
-      {!state && loading ? (
+      {entry ? (
+        <article className={styles.eventBody}>
+          <div className={styles.episodeMeta}>
+            <span>{t.episodeLabels[lifeEpisodeLabel(entry)]}</span>
+            <time dateTime={entry.occurred_at}>{formatLifeDay(entry.local_date, locale)}</time>
+          </div>
+          {entry.title && <h3>{entry.title}</h3>}
+          {entry.narrative && <p className={styles.activity}>{entry.narrative}</p>}
+        </article>
+      ) : !state && loading ? (
         <LoadingBlock label={t.loading} />
-      ) : state?.latest_episode ? (
-        <div className={onTopic ? styles.featured : undefined}>
-          {onTopic && <h2>{t.latest}</h2>}
-          <LifeEpisodeBody entry={state.latest_episode} featured onPursuit={onPursuit} onTopic={onTopic} />
-        </div>
       ) : (
-        <p className={styles.quiet}>{t.unavailable}</p>
+        !failed && <p className={styles.quiet}>{t.unavailable}</p>
       )}
       {failed && (
         <ErrorBanner message={t.failed} onRetry={() => void refreshLife()} retryLabel={strings.common.retry} />

@@ -48,15 +48,33 @@ def trajectory_scope(
 async def trajectory_entries(db: AsyncSession, user_id: int, events: Sequence[LifeEvent]) -> list[LifeTrajectoryEntry]:
     if not events:
         return []
-    roots = {row.topic_id for row in events if row.topic_id is not None}
-    titles = (
-        {
-            row.id: row.fact_json.get("title")
-            for row in await db.scalars(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(roots)))
-        }
-        if roots
-        else {}
+    topic = func.coalesce(LifeEvent.topic_id, LifeEvent.id)
+    # 主题页合并重复成果，其余公开经历各算一条。搜索日期和当前分页不限制主题范围。
+    size = func.count(func.distinct(LifeEvent.trajectory_result_key)) + func.count().filter(
+        LifeEvent.trajectory_result_key.is_(None)
     )
+    topics = (
+        select(topic.label("id"), (size > 1).label("has_related"))
+        .where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.shared_with_user.is_(True),
+            LifeEvent.trajectory_kind.is_not(None),
+            topic.in_({row.topic_id or row.id for row in events}),
+        )
+        .group_by(topic)
+        .subquery()
+    )
+    topic_info = {
+        topic_id: (title, related)
+        for topic_id, title, related in await db.execute(
+            select(topics.c.id, LifeEvent.fact_json["title"].as_string(), topics.c.has_related)
+            .select_from(topics)
+            .outerjoin(
+                LifeEvent,
+                and_(LifeEvent.id == topics.c.id, LifeEvent.user_id == user_id, LifeEvent.shared_with_user.is_(True)),
+            )
+        )
+    }
     steps = {row.step_id for row in events if row.step_id is not None}
     readings = (
         {
@@ -71,25 +89,31 @@ async def trajectory_entries(db: AsyncSession, user_id: int, events: Sequence[Li
         else {}
     )
     zone = ZoneInfo(await resolve_user_timezone(db, user_id) or "UTC")
-    return [
-        LifeTrajectoryEntry(
-            id=row.id,
-            kind=row.trajectory_kind,
-            fact_type=row.fact_type,
-            title=row.fact_json.get("title"),
-            topic_title=titles.get(row.topic_id, row.fact_json.get("title")),
-            narrative=row.narrative,
-            occurred_at=row.occurred_at,
-            local_date=row.occurred_at.astimezone(zone).date(),
-            topic_id=row.topic_id or row.id,
-            previous_episode_id=row.previous_episode_id,
-            pursuit_id=row.pursuit_id,
-            reading_result=readings.get(row.step_id),
-            result_ref=public_result_reference(row),
+    entries = []
+    for row in events:
+        if row.trajectory_kind is None:
+            continue
+        topic_id = row.topic_id or row.id
+        title, related = topic_info.get(topic_id, (None, False))
+        entries.append(
+            LifeTrajectoryEntry(
+                id=row.id,
+                kind=row.trajectory_kind,
+                fact_type=row.fact_type,
+                title=row.fact_json.get("title"),
+                topic_title=title or row.fact_json.get("title"),
+                has_related_episodes=related,
+                narrative=row.narrative,
+                occurred_at=row.occurred_at,
+                local_date=row.occurred_at.astimezone(zone).date(),
+                topic_id=topic_id,
+                previous_episode_id=row.previous_episode_id,
+                pursuit_id=row.pursuit_id,
+                reading_result=readings.get(row.step_id),
+                result_ref=public_result_reference(row),
+            )
         )
-        for row in events
-        if row.trajectory_kind is not None
-    ]
+    return entries
 
 
 async def list_trajectory(

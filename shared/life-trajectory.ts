@@ -1,4 +1,5 @@
 import type { ApiSchemas } from './api.generated'
+import { isRecord } from './is-record'
 import { compareResourceIds, isResourceId } from './resource-id'
 
 export type LifeEpisode = ApiSchemas['LifeTrajectoryEntry']
@@ -6,11 +7,24 @@ type LifeStep = ApiSchemas['LifeStepPublicView']
 type MaterialKind = 'outfit' | 'scene' | 'action'
 type LifeResult = { id: string; kind: MaterialKind } | { id: string; kind: 'visual'; versionId: string }
 
+type EpisodePosition = Pick<LifeEpisode, 'id' | 'occurred_at'>
+
+// PostgreSQL 时间戳保留微秒，Date.parse 只保留到毫秒。
+function submillis(timestamp: string): number {
+  return Number((timestamp.match(/\.(\d+)/)?.[1] ?? '').padEnd(6, '0').slice(3, 6))
+}
+
+export function compareLifeEpisodes(a: EpisodePosition, b: EpisodePosition): number {
+  return (
+    Date.parse(b.occurred_at) - Date.parse(a.occurred_at) ||
+    submillis(b.occurred_at) - submillis(a.occurred_at) ||
+    compareResourceIds(b.id, a.id)
+  )
+}
+
 export function groupLifeEpisodes(episodes: readonly LifeEpisode[]): Array<{ date: string; entries: LifeEpisode[] }> {
   const days = new Map<string, LifeEpisode[]>()
-  const sorted = [...episodes].sort(
-    (a, b) => Date.parse(b.occurred_at) - Date.parse(a.occurred_at) || compareResourceIds(b.id, a.id)
-  )
+  const sorted = [...episodes].sort(compareLifeEpisodes)
 
   for (const episode of sorted) {
     const entries = days.get(episode.local_date)
@@ -59,21 +73,23 @@ export function lifeStepStatus(
   return step.state
 }
 
+export function lifeResultKey(item: LifeResult): string {
+  return item.kind === 'visual' ? 'visual/' + item.id + '/' + item.versionId : item.kind + '/' + item.id
+}
+
 export function lifeResults(reference: LifeEpisode['result_ref']): LifeResult[] {
   const results: LifeResult[] = []
-  if (isResourceId(reference.visual_id) && isResourceId(reference.visual_version_id)) {
-    results.push({ id: reference.visual_id, kind: 'visual', versionId: reference.visual_version_id })
-  }
-  const candidates: Array<[MaterialKind, unknown]> = [
-    ['outfit', reference.outfit_id],
-    ['scene', reference.scene_id],
-    ['action', reference.action_id]
-  ]
-
-  for (const [kind, id] of candidates) {
-    if (isResourceId(id)) {
-      results.push({ id, kind })
+  const references = Array.isArray(reference.results) ? [reference, ...reference.results.filter(isRecord)] : [reference]
+  for (const ref of references) {
+    if (isResourceId(ref.visual_id) && isResourceId(ref.visual_version_id)) {
+      results.push({ id: ref.visual_id, kind: 'visual', versionId: ref.visual_version_id })
+    }
+    for (const kind of ['outfit', 'scene', 'action'] as const) {
+      const id = ref[kind + '_id']
+      if (isResourceId(id)) {
+        results.push({ id, kind })
+      }
     }
   }
-  return results
+  return [...new Map(results.map(item => [lifeResultKey(item), item])).values()]
 }

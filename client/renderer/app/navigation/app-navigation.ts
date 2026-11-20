@@ -137,6 +137,16 @@ export function openLife(
   return applyAppNavigation({ location: { page: 'life', section }, focus: { page: 'life', ...focus } })
 }
 
+/** 事项直达只消费一次，当前阅读路径随生活页交接。 */
+export function consumeLifePursuitFocus(): void {
+  const target = getAppNavigation()
+
+  if (target.focus.page === 'life' && target.focus.pursuitId) {
+    pageFocus.set({ page: 'life' })
+    writeHash(getAppNavigation())
+  }
+}
+
 export function openCreation(
   section: CreationSection = DEFAULT_SECTION.creation,
   focus: Omit<Extract<PageFocus, { page: 'creation' }>, 'page'> = {}

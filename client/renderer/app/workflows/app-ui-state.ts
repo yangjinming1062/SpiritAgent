@@ -89,7 +89,7 @@ export function installAppUiStateSync(): () => void {
     snapshot: MainUiStateSnapshot,
     identity: string,
     token: number,
-    target = snapshot.navigation,
+    explicitTarget?: MainUiStateSnapshot['navigation'],
     selectedSessionId = snapshot.conversation.selectedSessionId
   ): Promise<void> {
     assertLive(identity, token)
@@ -105,7 +105,6 @@ export function installAppUiStateSync(): () => void {
     }
 
     conversationUiHandoff.apply(snapshot.conversation)
-    lifeUiHandoff.apply(snapshot.life)
     diaryUiHandoff.apply(snapshot.diary)
     visualsUiHandoff.apply(snapshot.visuals)
     actionsUiHandoff.apply(snapshot.actions)
@@ -121,8 +120,11 @@ export function installAppUiStateSync(): () => void {
     }
 
     assertLive(identity, token)
-    await applyAppNavigation(target)
+    const navigation = applyAppNavigation(explicitTarget ?? snapshot.navigation)
+    const restoredNavigation = explicitTarget ? undefined : $appNavigationRevision.get()
+    await navigation
     assertLive(identity, token)
+    lifeUiHandoff.apply(snapshot.life, restoredNavigation)
     appliedRevision = snapshot.revision
   }
 
@@ -183,7 +185,7 @@ export function installAppUiStateSync(): () => void {
             snapshot,
             identity,
             token,
-            explicitTarget ?? snapshot.navigation,
+            explicitTarget ?? undefined,
             explicitSession ?? snapshot.conversation.selectedSessionId
           )
         } else if (explicitTarget) {

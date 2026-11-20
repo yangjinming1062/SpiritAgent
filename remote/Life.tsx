@@ -9,7 +9,7 @@ import { PageHeader, SectionNav } from './ui'
 type Section = 'diary' | 'now' | 'posts'
 
 const ITEMS = [
-  { id: 'now', title: '近况', subtitle: '伙伴自己的日常、在意的事与真实成果' },
+  { id: 'now', title: '近况' },
   { id: 'posts', title: '动态', subtitle: '伙伴分享的文字、图片与视频' },
   { id: 'diary', title: '日记', subtitle: '按日期留下的记录与感受' }
 ] as const
@@ -41,7 +41,7 @@ export function Life({
         selected={section}
         unread={{ posts: unread.feed, diary: unread.diary }}
       />
-      <PageHeader subtitle={active.subtitle} title={active.title} />
+      {active.id !== 'now' && <PageHeader subtitle={active.subtitle} title={active.title} />}
       {section === 'now' ? (
         <LifeSummary api={api} refresh={refresh} />
       ) : section === 'posts' ? (

@@ -1,10 +1,11 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
 import { isRecord } from '../../../shared/is-record'
+import { isLifeReaderState, type LifeReaderState } from '../../../shared/life-reader-state'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
 import type { MotionPlanInputs } from '../../../shared/visuals'
 
-export interface LifeUiSnapshot {
+interface LegacyLifeUiSnapshot {
   search: ArchiveSearchState
   status: 'all' | 'active' | 'paused' | 'completed' | 'abandoned'
   pursuitPage: number
@@ -14,7 +15,13 @@ export interface LifeUiSnapshot {
   scrollTop: number
 }
 
+export type LifeUiSnapshot = LifeReaderState | LegacyLifeUiSnapshot
+
 export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
+  if (isLifeReaderState(value)) {
+    return true
+  }
+
   return (
     isRecord(value) &&
     isArchiveSearchState(value.search) &&
