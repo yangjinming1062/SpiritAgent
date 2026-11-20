@@ -76,6 +76,14 @@ export async function loadVisualMaterials(reader: {
   }
 }
 
+export function showVisualJobActivity(job: Pick<ApiSchemas['VisualJobView'], 'state' | 'request_source'>): boolean {
+  return (
+    job.state !== 'succeeded' &&
+    job.state !== 'cancelled' &&
+    ((job.state !== 'failed' && job.state !== 'unknown') || job.request_source === 'user_requested')
+  )
+}
+
 /** 两端共用工作项的状态操作；具体失败原因仍由服务端校验。 */
 export function visualJobCommands(state: VisualJobState, failureReason?: string | null): VisualJobCommand[] {
   switch (state) {

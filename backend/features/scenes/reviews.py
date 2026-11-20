@@ -21,7 +21,7 @@ from features.media.review_views import (
 )
 
 from .generation_state import scene_generation_state
-from .models import SceneJob
+from .models import SceneJob, SceneOrigin
 from .queries import get_scene
 from .service import _launch_task
 
@@ -36,7 +36,8 @@ async def scene_review_view(user_id: int, job_id: int) -> MediaJobView:
         if job is None:
             raise RequestError(status_code=404, message="找不到环境检查任务")
         chain = _chain(job)
-        candidate = chain.best() or next(iter(chain.candidates), None)
+        eligible = chain.optional_candidates() if job.stage == "review_pending" else []
+        candidate = next(iter(eligible), None)
         report = candidate.review if candidate else None
         key = candidate_review_key(chain.generation_id)
         basis = review_basis(report, candidate.evidence if candidate else None, key if candidate else None)
@@ -48,9 +49,9 @@ async def scene_review_view(user_id: int, job_id: int) -> MediaJobView:
             candidate_key=key,
             preview_url=client_asset_url(candidate.path) if candidate else None,
             can_review=job.stage == "review_pending" and candidate is not None and needs_review(report),
-            candidates=await manual_candidate_views(chain.candidates),
+            candidates=await manual_candidate_views(eligible),
             error=job.error,
-            can_regenerate=chain.inputs is not None and job.state in {"paused", "failed"},
+            can_regenerate=bool(eligible),
         )
 
 
@@ -61,10 +62,14 @@ async def manually_review_scene(
     scene = await get_scene(db, user_id, job.scene_id) if job.scene_id else None
     if request.slot != 0 or scene is None or job_id not in {scene.initial_job_id, scene.replacement_job_id}:
         raise RequestError(status_code=409, message="原环境任务已失效")
+    if job.stage != "review_pending" or (job.purpose != "replace" and scene.origin != SceneOrigin.USER_REQUEST.value):
+        raise RequestError(status_code=409, message="这次环境制作没有可选候选")
     chain = _chain(job)
     if request.action == "approve":
         await approve_image_chain(user_id, chain, request, db=db)
     else:
+        if not chain.optional_candidates():
+            raise RequestError(status_code=409, message="这次环境制作没有可选候选")
         chain = regenerate_image_chain(chain)
     frozen = scene_generation_state(job)
     frozen.image_chain = chain

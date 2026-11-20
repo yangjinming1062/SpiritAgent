@@ -1,5 +1,6 @@
 """媒体质量链的无凭据快照、尝试游标和候选选择。"""
 
+import hashlib
 from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
@@ -13,7 +14,13 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from features.media.review_contracts import ReviewEvidence, VisualReview
+from features.media.review_contracts import (
+    MediaSelection,
+    ObservedVideoHold,
+    ReviewEvidence,
+    VisualReview,
+    optional_quality_choice,
+)
 
 logger = get_logger(__name__)
 
@@ -98,6 +105,7 @@ class MediaCandidate(BaseModel):
     evidence: ReviewEvidence | None = None
     review: VisualReview | None = None
     evaluated: bool = False
+    review_retried: bool = False
     excluded: bool = False
     artifacts: list[str] = Field(default_factory=list)
     result_json: str | None = None
@@ -110,12 +118,36 @@ class MediaCandidate(BaseModel):
             return None
         return self.review is None or self.review.verdict == "pass"
 
+    @property
+    def can_correct_pose(self) -> bool:
+        review = self.review
+        return bool(
+            self.evaluated
+            and not self.excluded
+            and review
+            and review.status == "complete"
+            and review.evidence
+            and not review.human_approval
+            and review.identity
+            and review.identity.verdict == "pass"
+            and review.goal
+            and (
+                review.goal.verdict != "pass"
+                or (review.motion and review.motion.verdict == "fail")
+                or (review.opening and review.opening.verdict != "pass")
+            )
+        )
+
 
 class LocalQualityCorrection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     attempt: int = Field(ge=1)
     reason: str = Field(min_length=1)
+    instructions: dict[int, str] = Field(default_factory=dict)
+    opening_frame_instruction: str | None = Field(default=None, max_length=400)
+    fixed_ambient_scene: bool = False
+    observed_hold: ObservedVideoHold | None = None
 
 
 class MediaChainState(BaseModel):
@@ -135,6 +167,38 @@ class MediaChainState(BaseModel):
     queue_request_id: str | None = None
     receive_only: bool = False
     local_correction: LocalQualityCorrection | None = None
+    selections: dict[int, MediaSelection] = Field(default_factory=dict)
+    review_retried: bool = False
+
+    def local_seed(self, attempt: int, slot: int = 0) -> int:
+        identity = f"{self.generation_id}:{attempt}:{slot}".encode()
+        return int.from_bytes(hashlib.sha256(identity).digest()[:8], "big") % (2**63)
+
+    def optional_candidates(self) -> list[MediaCandidate]:
+        if (
+            self.unknown_submission()
+            or self.stop_reason in {"content_policy_blocked", "goal_review_blocked"}
+            or any(candidate.review and candidate.review.status == "blocked" for candidate in self.candidates)
+        ):
+            return []
+        return [
+            candidate
+            for candidate in self.candidates
+            if not candidate.excluded and optional_quality_choice(candidate.review)
+        ]
+
+    def delivery_candidate(self, slot: int, required: tuple[str, ...]) -> MediaCandidate | None:
+        choice = self.selections.get(slot)
+        if choice is None:
+            return None
+        return next(
+            (
+                item
+                for item in self.candidates
+                if item.slot == slot and item.evaluated and not item.excluded and choice.permits(item.review, required)
+            ),
+            None,
+        )
 
     def resume_download(self) -> None:
         """只接收原尝试的成品，检查结果不能触发补做或供应商回退。"""
@@ -152,10 +216,18 @@ class MediaChainState(BaseModel):
     def is_correction_attempt(self, index: int | None) -> bool:
         return self.local_correction is not None and self.local_correction.attempt == index
 
-    def generation_prompt(self, index: int, original: str) -> str:
+    def needs_pose_correction(self, index: int, slot: int = 0) -> bool:
+        """本槽已有可核实的同一角色，但前一版没有完成目标。"""
+        return self.is_correction_attempt(index) and any(
+            c.attempt < index and c.slot == slot and c.can_correct_pose for c in self.candidates
+        )
+
+    def generation_prompt(self, index: int, original: str, *, slot: int = 0) -> str:
         correction = self.local_correction
         if correction is None or correction.attempt != index:
             return original
+        if instruction := correction.instructions.get(slot):
+            return f"{original}\n\n本次画面应具体呈现：{instruction}"
         return (
             f"{original}\n保持原参考、身份和创作目标。以下是上一候选的可见问题，"
             f"请在这一版中修正对应部位或让关键动作清楚可见：{correction.reason}"
@@ -173,21 +245,39 @@ class MediaChainState(BaseModel):
             )
         )
 
-    def plan_local_correction(self, reason: str) -> bool:
+    def can_plan_local_correction(self) -> bool:
         index = self.active_index
-        if (
-            not reason
-            or self.receive_only
-            or self.stop_reason
-            or self.unknown_submission()
-            or index is None
-            or not 0 <= index < len(self.providers)
-            or self.next_index != index + 1
-            or self.providers[index].provider != "local"
-            or self.local_correction is not None
-        ):
+        return (
+            not self.receive_only
+            and not self.stop_reason
+            and not self.unknown_submission()
+            and index is not None
+            and 0 <= index < len(self.providers)
+            and self.next_index == index + 1
+            and self.providers[index].provider == "local"
+            and self.local_correction is None
+        )
+
+    def plan_local_correction(
+        self,
+        reason: str,
+        *,
+        instructions: dict[int, str] | None = None,
+        opening_frame_instruction: str | None = None,
+        fixed_ambient_scene: bool = False,
+        observed_hold: ObservedVideoHold | None = None,
+    ) -> bool:
+        index = self.active_index
+        if not reason or not self.can_plan_local_correction():
             return False
-        self.local_correction = LocalQualityCorrection(attempt=self.next_index, reason=reason)
+        self.local_correction = LocalQualityCorrection(
+            attempt=self.next_index,
+            reason=reason,
+            instructions=instructions or {},
+            opening_frame_instruction=opening_frame_instruction or None,
+            fixed_ambient_scene=fixed_ambient_scene,
+            observed_hold=observed_hold,
+        )
         self.providers.insert(self.next_index, self.providers[index].model_copy())
         return True
 
@@ -261,6 +351,8 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     classified = classify_api_error(exc)
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
+    if classified.reason == FailoverReason.content_policy_blocked:
+        return classified.reason.value, False
     if getattr(exc, "can_fallback", None) is False:
         return getattr(exc, "reason", classified.reason.value), False
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

@@ -10,7 +10,6 @@ from features.assets.references import scanned_asset_paths
 from features.assets.service import asset_paths_for_ids
 from features.configuration.settings.values import get_user_setting
 
-from .character_images import ImageChainState
 from .models import ImageGenJob, MediaManualOperation, VideoGenJob
 from .voice_models import CustomVoice
 from .voice_queries import custom_voice_tokens
@@ -25,19 +24,13 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             MediaManualOperation.user_id == user_id, MediaManualOperation.created_at >= utc_now() - timedelta(days=90)
         ),
     )
-    for result, state in await db.execute(
-        select(ImageGenJob.result_json, ImageGenJob.state).where(
+    referenced |= await scanned_asset_paths(
+        db,
+        user_id,
+        select(ImageGenJob.result_json).where(
             ImageGenJob.user_id == user_id, ImageGenJob.cleanup_requested_at.is_(None)
-        )
-    ):
-        if state == "succeeded":
-            chain = ImageChainState.model_validate(result.get("chain") or {})
-            for slot in {candidate.slot for candidate in chain.candidates}:
-                candidate = chain.best(slot)
-                if candidate is not None:
-                    referenced |= asset_paths(candidate.model_dump(mode="json"), user_id)
-        else:
-            referenced |= asset_paths(result, user_id)
+        ),
+    )
     referenced |= await scanned_asset_paths(
         db,
         user_id,

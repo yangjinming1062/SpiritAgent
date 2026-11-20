@@ -486,7 +486,7 @@ def _job_view(job: VisualJob, queue_info: VideoQueueInfo | None = None) -> Visua
         target_kind=job.target_kind,
         asset_kind=job.asset_kind,
         action_name=_job_action_name(job.snapshot_json),
-        preparation=progress is not None and progress.source == "base_preparation",
+        request_source=progress.source if progress else None,
         target_visual_id=job.target_visual_id,
         state=job.state,  # type: ignore[arg-type]
         stage=job.stage,

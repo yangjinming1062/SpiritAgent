@@ -109,9 +109,5 @@ function activityStateText(item: CreationActivityItem, strings: ReturnType<typeo
       : strings.living.scene.pendingOverlay
   }
 
-  if (item.state === 'review_pending') {
-    return strings.living.posts.mediaRecoveryStatuses.review_pending
-  }
-
   return strings.visuals.jobState[item.state] ?? item.state
 }

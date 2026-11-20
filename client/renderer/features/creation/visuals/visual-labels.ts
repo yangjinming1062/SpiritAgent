@@ -23,7 +23,7 @@ export function formatDuration(
 
 /** 准备任务优先标注动作名称，其余按动作与目标媒体类型。 */
 export function visualJobLabel(job: VisualJob, t: VisualsCopy): string {
-  if (job.preparation) {
+  if (job.request_source === 'base_preparation') {
     return job.action_name ? `${t.preparationJob} · ${job.action_name}` : t.preparationJob
   }
 

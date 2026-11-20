@@ -40,7 +40,6 @@ export const chat: Pick<Dictionary, 'chat' | 'conversation'> = {
       generating: 'Creating media…',
       generationFailed: 'Generation failed',
       resultUnknown: 'Generation result is not yet confirmed',
-      reviewPending: 'Choose a candidate',
       imageLoading: 'Loading image…',
       loadFailed: "Couldn't load media"
     },

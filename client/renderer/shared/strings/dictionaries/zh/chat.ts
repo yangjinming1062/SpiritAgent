@@ -39,7 +39,6 @@ export const chat = {
       generating: '正在制作…',
       generationFailed: '生成失败',
       resultUnknown: '生成结果尚未确认',
-      reviewPending: '等待选择候选',
       imageLoading: '图片加载中…',
       loadFailed: '媒体加载失败'
     },

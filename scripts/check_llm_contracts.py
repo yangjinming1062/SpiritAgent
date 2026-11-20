@@ -87,8 +87,32 @@ def inspect_file(path: Path, backend: Path) -> tuple[int, list[str]]:
                 expression = keywords["schema"]
                 if not isinstance(expression, ast.Call):
                     raise ValueError("无法解析 schema 构造器")
-                builder = resolve(expression.func, module)
                 if (
+                    isinstance(expression.func, ast.Attribute)
+                    and expression.func.attr == "model_json_schema"
+                    and isinstance(model := expression.func.value, ast.Name)
+                    and not hasattr(module, model.id)
+                    and not expression.args
+                    and not expression.keywords
+                ):
+                    owner = next(f for f in tree.body if isinstance(f, ast.AsyncFunctionDef) and node in ast.walk(f))
+                    assignments = [
+                        item.value
+                        for item in ast.walk(owner)
+                        if isinstance(item, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == model.id for t in item.targets)
+                    ]
+                    if len(assignments) != 1:
+                        raise ValueError("条件契约的输出模型须在调用处唯一确定")
+                    pending = assignments
+                    schemas = []
+                    while pending:
+                        branch = pending.pop()
+                        if isinstance(branch, ast.IfExp):
+                            pending.extend((branch.body, branch.orelse))
+                        else:
+                            schemas.append(resolve(branch, module).model_json_schema())
+                elif (
                     path == backend / "workflows/life_decisions.py"
                     and ast.unparse(expression.func) == "_decision_schema"
                     and len(expression.args) == 4
@@ -96,6 +120,7 @@ def inspect_file(path: Path, backend: Path) -> tuple[int, list[str]]:
                 ):
                     from features.life.actions import LIFE_CAPABILITIES
 
+                    builder = resolve(expression.func, module)
                     names = tuple(LIFE_CAPABILITIES)
                     schemas = (
                         builder(dict(zip(names, mask, strict=True)), evidence_ids, active, paused)
@@ -103,8 +128,16 @@ def inspect_file(path: Path, backend: Path) -> tuple[int, list[str]]:
                         for evidence_ids in ([], ["1"])
                         for active, paused in product((False, True), repeat=2)
                     )
+                elif (
+                    path == backend / "features/media/selection.py"
+                    and ast.unparse(expression.func) in {"_choice_schema", "_hold_schema"}
+                    and len(expression.args) == 1
+                    and not expression.keywords
+                ):
+                    builder = resolve(expression.func, module)
+                    schemas = (builder(options) for options in (("C1",), ("C1", "C2", "C3")))
                 elif not expression.args and not expression.keywords:
-                    schemas = [builder()]
+                    schemas = [resolve(expression.func, module)()]
                 else:
                     raise ValueError("无法解析 schema 构造器")
             from infrastructure.ai.structured_contracts import validate_preserved_choices

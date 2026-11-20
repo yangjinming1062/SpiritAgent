@@ -16,8 +16,8 @@ NATURAL_VIDEO_MOTION = (
     "头发、衣物和配饰随实际身体动作或环境作用产生相应变化，在作用停止后自然安定。"
 )
 REAL_VIDEO_LOOK = (
-    "画面具有真实摄影质感（photorealistic live-action footage），主体与环境的材质和光影协调，跨帧外观连续稳定。"
-    + NATURAL_VIDEO_MOTION
+    "画面具有真实摄影质感。镜头围绕创作要求中的主体取景，主体与环境的材质和光影协调。"
+    "让指定的动作或变化清晰可见，静止的部分保持安定，机位与场景在时间上连续。"
 )
 
 _CHARACTER_PROPORTIONS = (
@@ -39,17 +39,12 @@ PLAIN_IMAGE_TEMPLATE = "{prompt}\n\n" + REAL_PHOTO_LOOK + REAL_PHOTO_FRAMING
 PLAIN_VIDEO_TEMPLATE = "{prompt}\n\n" + REAL_VIDEO_LOOK
 
 SELF_IMAGE_REFERENCE_TEMPLATE = (
-    (
-        "为图 1 中的角色创作一张新画面。"
-        "{reference_roles}"
-        "按场景要求重新安排镜头、身体朝向与姿态；身份参考图的背景与待机姿态不限制新构图。"
-        "表现活动中一个明确瞬间，涉及持物或倚靠时，让接触部位、物体位置、承重与遮挡关系符合实际动作；"
-        "身体姿态改变时，衣物褶皱与受光随之协调变化，保留选定造型的设计。"
-        "场景要求只安排环境、姿势、动作与构图，不覆盖固定身份和本次造型。{outfit}\n\n场景要求：{prompt}"
-    )
-    + "\n\n"
-    + CHARACTER_VISUAL_STYLE
-    + REAL_PHOTO_FRAMING
+    "绘制这一瞬间：{prompt}\n"
+    "依照这个动作和机位安排取景。身体朝向体现在肩、胯和脚的轮廓，头部转动与视线可独立于躯干。"
+    "让人物的眼睛看向当下活动中实际关注的对象，按需要转动或俯仰头部；面部特征在这一角度可辨。"
+    "涉及持物或倚靠时，手与物的接触、重心和支撑要在画面中成立。\n"
+    "{reference_roles}{outfit}把参考中的同一角色画进这个瞬间，随姿势重画可见的侧面、衣褶、遮挡与光影。"
+    "保留参考中的五官关系、头身与肢体比例、穿戴细节和画风。人物与现场共用光源与透视。"
 )
 SELF_IMAGE_OUTFIT_DESCRIPTION = "本次造型：{outfit}。服装、配色、发型发色、妆容、鞋履与配饰以此为准。"
 SELF_IMAGE_CURRENT_OUTFIT = "本次造型沿用身份参考图中可见的服装、配色、发型发色、妆容、鞋履与配饰。"
@@ -102,13 +97,20 @@ CHARACTER_MEDIA_REVIEW_RULES = (
     _CHARACTER_MEDIA_IDENTITY_RULES
     + "只返回符合 schema 的 JSON，verdict 取 pass、review 或 fail，reason 用简短中文说明可见依据。"
 )
+QUALITY_CORRECTION_INSTRUCTION = (
+    "correction_instruction 是下一版可直接使用的一句正向画面要求。需要修正时，按原目标具体描述应画出的朝向、"
+    "动作、接触或场景关系；原图的问题只写在 reason 中。全部通过时该字段为空字符串。"
+)
 CHARACTER_IMAGE_GOAL_REVIEW = (
     "独立检查最后一张候选的身份、制作目标及自然度。此前图片的职责：{reference_roles}\n"
     + _CHARACTER_MEDIA_IDENTITY_RULES
     + "goal_verdict 核对 generation_prompt 的明确画面要求，包括本次造型、动作、构图及环境。可见符合为 pass，明确偏差为 fail，关键条件无法核对为 review。未要求展示的部位在画外不单独构成问题。"
+    "参考职责指定的本次穿戴也属于目标。按要求保留或更换造型，比较可见的服装、发型和标志性配饰；未要求换装却换成另一套穿戴时，目标不合格。"
+    "通过姿态、接触和视线判断所要求的活动。持有道具只能证明持有；活动需要注视道具时，核对目光的实际落点。面部可辨认不要求面向镜头。"
     "quality_verdict 核对脸部结构、身体连接、支撑接触、重心、遮挡、尺度与画风连续性。五官局部熔合、漂移、肢体拉伸或无要求地更换渲染风格都为 fail，即使仍认得是谁。充分自然为 pass，只在影响本任务判断的可见依据不足时给 review。"
     "三个维度独立，身份一致不能抵消目标或质量缺陷。saved_decisions 中的 pass/fail 是同一依据下的有效结论，原样保留，并使用 saved_reasons 中已有依据；对其余维度重新读取图片给出判断。"
-    "只返回 identity_verdict、identity_reason、goal_verdict、goal_reason、quality_verdict、quality_reason 六个字段；verdict 均为 pass、review 或 fail，三个 reason 分别用不超过 400 字符的非空中文说明依据。"
+    "按结构返回三个 verdict、各自对应的 reason 和 correction_instruction。verdict 均为 pass、review 或 fail，三个 reason 分别用不超过 400 字符的非空中文说明依据。"
+    + QUALITY_CORRECTION_INSTRUCTION
 )
 CHARACTER_IMAGE_GOAL_REVIEW_REPAIR = "只整理原返回的 JSON 结构和已有依据，保留合法的身份、目标、质量决定，不重新判断图像，不改变结论，不补造缺失判断或视觉事实。"
 FULLBODY_CANDIDATE_IDENTITY_REVIEW = (

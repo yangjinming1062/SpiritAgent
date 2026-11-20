@@ -200,14 +200,17 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                         or chain.get("stop_reason") == "result_unknown"
                     )
                     pending_review = (
-                        chain.get("stop_reason")
-                        in {"review_pending", "goal_review_unavailable", "goal_review_invalid", "goal_review_blocked"}
-                        or bool(chain.get("candidates"))
+                        row.request_source == "manual"
                         and not unknown
+                        and bool(ImageChainState.model_validate(chain).optional_candidates())
                     )
                     row.state, row.error = (
                         ("paused" if pending_review else "unknown" if unknown else "failed"),
-                        "候选已保留，等待检查" if pending_review else "制作中断，须核对原结果" if unknown else str(exc),
+                        "可在造型详情中查看候选"
+                        if pending_review
+                        else "制作中断，须核对原结果"
+                        if unknown
+                        else str(exc),
                     )
                     if pending_review:
                         row.stage = "review_pending"
@@ -218,19 +221,14 @@ async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
                             owner_job_id=job_id,
                             dependency_job_id=job_id,
                             operation_id=f"outfit:{row.source_key}:continue",
-                            automatic=row.request_source == "autonomous",
+                            automatic=False,
                             context={"source": row.request_source},
                         )
                     if download_failed:
                         row.checkpoint = {**(row.checkpoint or {}), "failure_code": "result_download_failed"}
                         row.not_before = utc_now() + timedelta(minutes=15)
                         row.error = str(exc)
-                    if pending_review:
-                        if row.request_source == "autonomous":
-                            await wait_business_media_in_session(
-                                db, user_id, "outfit.create", job_id, row.error, code="review_pending"
-                            )
-                    else:
+                    if not pending_review:
                         await update_business_steps_in_session(
                             db,
                             user_id,

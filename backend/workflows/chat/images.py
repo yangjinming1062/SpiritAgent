@@ -57,7 +57,7 @@ class InspectionResult(BaseModel):
 
 @dataclass(frozen=True)
 class ImageSlotResult:
-    status: Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
+    status: Literal["pending", "ready", "failed", "result_unknown"]
     url: str | None = None
     identity_verdict: str | None = None
     error: str | None = None
@@ -70,6 +70,7 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
         return ImagePlan(
             request=request.model_dump_json(),
             prompt=build_plain_image_prompt(request.prompt),
+            goal=request.prompt,
             size=request.aspect_ratio,
         )
     presentation = await prompt_presentation_snapshot(user_id)
@@ -78,6 +79,7 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     return ImagePlan(
         request=request.model_dump_json(),
         prompt=inputs.prompt,
+        goal="\n".join(filter(None, (request.prompt, request.outfit_override))),
         size=request.aspect_ratio,
         subject="self",
         reference_image=inputs.reference_image,
@@ -152,6 +154,7 @@ async def _produce(
                 1,
                 turn=state,
                 media_ids=[artifact.media_id],
+                parent_media_id=parent_media_id,
             )
         )[0]
         if result.media_id and result.media_id != artifact.media_id:
@@ -180,8 +183,8 @@ def _delivery_hint(state: MediaTurnState) -> str:
     """图片就绪后的下一步：交付由最终回复完成，模型不必再调用工具。"""
     if state.structured_reply:
         return (
-            "Ready images are delivered in your final reply: put each media_id in an image bubble, including retained jobs awaiting review as waiting cards. "
-            "The reply is not a tool call, so no further tool call is needed."
+            "Put each ready image in its own final-reply bubble. A pending image with a task_id can have one "
+            "waiting bubble that updates automatically. Select one version per goal."
         )
     return "Ready images are attached to your reply automatically; describe the result briefly."
 
@@ -202,10 +205,8 @@ def _call_result(state: MediaTurnState, media_ids: list[str], *, reused: bool = 
         payload["reused"] = True
     if ready:
         payload["next"] = _delivery_hint(state)
-    elif any(item["status"] in {"pending", "review_pending"} for item in media):
-        payload["next"] = (
-            "Media candidates are retained. Deliver their waiting cards; do not regenerate or retry checks automatically."
-        )
+    elif any(item["status"] == "pending" for item in media):
+        payload["next"] = "The accepted images are still being prepared. Their waiting bubbles update automatically."
     else:
         payload["error"] = next((item["error"] for item in media if item.get("error")), "图片生成失败")
     return json.dumps(payload, ensure_ascii=False)
@@ -285,14 +286,16 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             if result.media_id and result.media_id != artifact.media_id:
                 state.artifacts.pop(artifact.media_id, None)
                 state.current_versions.pop(artifact.goal_id, None)
+                state.plans.pop(artifact.goal_id, None)
                 artifact.media_id = artifact.goal_id = result.media_id
                 state.artifacts[artifact.media_id] = artifact
+                state.plans[artifact.goal_id] = plan
                 state.current_versions[artifact.goal_id] = artifact.media_id
                 media_ids[index] = artifact.media_id
                 state.image_requests[key] = media_ids
             if result.status != "ready" or result.url is None:
                 artifact.status, artifact.error = result.status, result.error
-                if result.status in {"pending", "review_pending"}:
+                if result.status == "pending":
                     state.required_goals.add(artifact.goal_id)
                 continue
             artifact.url, artifact.identity_verdict = result.url, result.identity_verdict
@@ -300,7 +303,7 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             state.required_goals.add(artifact.goal_id)
     finally:
         for artifact in artifacts:
-            if artifact.status == "pending":
+            if artifact.status == "pending" and artifact.job_id is None:
                 artifact.status, artifact.error = "failed", "生成已中断，此项未执行"
     return _call_result(state, media_ids)
 
@@ -308,8 +311,8 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
 def _inspection_result(inspection: MediaInspection, state: MediaTurnState) -> str:
     if inspection.verdict == "unavailable":
         next_step = (
-            "The check did not produce a usable conclusion. It does not confirm the image is defect-free or authorize "
-            "a redraw. An already ready image can still be delivered, with the check's limitation stated accurately."
+            "The inspection has no usable visual findings. Share an already ready image and describe only "
+            "details supported by the available evidence."
         )
     elif inspection.verdict == "pass":
         next_step = "This check found no concrete defects. The ready image can be delivered as is."

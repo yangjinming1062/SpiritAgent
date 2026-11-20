@@ -31,21 +31,6 @@ class PostPublicationResult(BaseModel):
     error: str | None
 
 
-class PostPublicationRecovery(PostPublicationResult):
-    title: str
-    media_kind: Literal["image", "video"]
-    media_status: Literal["pending", "review_pending", "ready", "failed", "unknown", "discarded"]
-    media_job_id: ResourceId | None = None
-    can_publish: bool = False
-    media_url: str | None
-    can_discard: bool
-
-
-class PostPublicationRecoveryList(BaseModel):
-    items: list[PostPublicationRecovery]
-    next_cursor: str | None
-
-
 class PostContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
     publication_intent: str = ""

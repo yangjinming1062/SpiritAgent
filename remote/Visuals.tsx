@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { VisualDetail, VisualItem, VisualJob, VisualJobCommand, VisualJobState, VisualMediaKind } from '@protocol'
 
 import { visualAnalysisControls, visualMaterialCopy } from '../shared/visual-materials'
-import { visualJobCommands } from '../shared/visuals'
+import { showVisualJobActivity, visualJobCommands } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
@@ -400,7 +400,7 @@ export function Visuals({
         )
         setHasMore(list.has_more)
         nextCursor.current = list.next_cursor
-        setJobs(jobList.jobs)
+        setJobs(jobList.jobs.filter(showVisualJobActivity))
         setCurrentVisualId(presentation.current_visual?.id ?? null)
         setLoaded(true)
         setSelected(previous => (previous?.id === selectedId ? detail : previous))

@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react'
 
-import { MediaReviewButton } from '@/features/media-review'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { ArrowBackUp, ChevronDown, Copy, GitFork, Pencil, RefreshCw, Search } from '@/shared/lib/icons'
@@ -425,18 +424,7 @@ function MessageBubbleWithBody({
                 : body.replyMedia.error ||
                   (body.replyMedia.status === 'result_unknown'
                     ? dict.chat.media.resultUnknown
-                    : body.replyMedia.status === 'review_pending'
-                      ? dict.chat.media.reviewPending
-                      : dict.chat.media.generationFailed)}
-              {(body.replyMedia.status === 'review_pending' || body.replyMedia.status === 'failed') &&
-              body.replyMedia.job_id ? (
-                <MediaReviewButton jobId={body.replyMedia.job_id} mediaId={body.replyMedia.media_id} />
-              ) : null}
-              {body.replyMedia.status === 'result_unknown' &&
-              body.replyMedia.type === 'video' &&
-              body.replyMedia.job_id ? (
-                <MediaReviewButton jobId={body.replyMedia.job_id} mediaId={body.replyMedia.media_id} receiveResult />
-              ) : null}
+                    : dict.chat.media.generationFailed)}
             </div>
           ) : null}
           {body.media?.length ? (

@@ -31,7 +31,7 @@ from features.jobs.service import bind_job_assets, owned_job_control
 from .chain import MediaCandidate
 from .character_images import ImageChainState, ReviewedImageInput
 from .models import MediaManualOperation
-from .review_contracts import HumanReviewApproval, VisualReview, review_context
+from .review_contracts import HumanReviewApproval, VisualReview, optional_quality_choice, review_context
 from .review_evidence import asset_file_hash, freeze_review_evidence, review_media_intact
 from .review_views import MediaCandidateView, MediaJobView, MediaManualRequest
 
@@ -73,7 +73,7 @@ def manual_candidate_id(candidate: MediaCandidate) -> str:
 
 
 async def manual_candidate_views(
-    candidates: list[MediaCandidate], *, media_type: Literal["image", "video"] = "image"
+    candidates: list[MediaCandidate], *, media_type: Literal["image", "video"] = "image", identity_design: bool = False
 ) -> list[MediaCandidateView]:
     def build() -> list[MediaCandidateView]:
         return [
@@ -85,14 +85,32 @@ async def manual_candidate_views(
                 can_approve=asset_file_hash(candidate.path) is not None,
             )
             for candidate in candidates
+            if identity_design
+            or (
+                not candidate.excluded
+                and optional_quality_choice(candidate.review)
+                and review_media_intact(candidate.review.evidence, candidate.path)
+            )
         ]
 
     return await asyncio.to_thread(build)
 
 
 async def approve_candidate(
-    user_id: int, candidate: MediaCandidate, required: tuple[str, ...], request: MediaManualRequest, *, db: AsyncSession
+    user_id: int,
+    candidate: MediaCandidate,
+    required: tuple[str, ...],
+    request: MediaManualRequest,
+    *,
+    db: AsyncSession,
+    identity_design: bool = False,
 ) -> None:
+    if not identity_design and (
+        not optional_quality_choice(candidate.review)
+        or not set(required).issubset(candidate.review.required)
+        or not await asyncio.to_thread(review_media_intact, candidate.review.evidence, candidate.path)
+    ):
+        raise RequestError(status_code=409, message="这份候选不符合可选用条件")
     if await asyncio.to_thread(manual_candidate_id, candidate) != request.candidate_id:
         raise RequestError(status_code=409, message="候选内容已变化，请刷新后重新确认")
     expected_hash = await asyncio.to_thread(asset_file_hash, candidate.path)
@@ -153,7 +171,7 @@ async def approve_image_chain(
     selected = next(
         (
             candidate
-            for candidate in chain.candidates
+            for candidate in chain.optional_candidates()
             if candidate.slot == request.slot and manual_candidate_id(candidate) == request.candidate_id
         ),
         None,

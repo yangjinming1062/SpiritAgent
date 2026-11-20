@@ -53,9 +53,8 @@ async def freeze_review_evidence(
             directory="reviews",
         )
         entries.append(ReviewImage(path=path, sha256=digest, role=labels[index] if labels else f"image_{index + 1}"))
-    resolved = resolve_asset_reference(media_path) if media_path else None
-    if resolved is not None:
-        media_hash = await asyncio.to_thread(lambda: hashlib.sha256(resolved[0].read_bytes()).hexdigest())
+    if media_path:
+        media_hash = await asyncio.to_thread(asset_file_hash, media_path)
     else:
         media_hash = entries[-1].sha256 if entries else None
     return ReviewEvidence(
@@ -84,8 +83,8 @@ async def read_review_evidence(evidence: ReviewEvidence) -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=2048)
-def _file_hash(path: str, size: int, modified_ns: int) -> str:
-    with Path(path).open("rb") as stream:
+def _file_hash(path: Path, version: tuple[int, ...]) -> str:
+    with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
@@ -94,8 +93,9 @@ def asset_file_hash(reference: str) -> str | None:
         resolved = resolve_asset_reference(reference)
         if resolved is None:
             return None
-        stat = resolved[0].stat()
-        return _file_hash(str(resolved[0]), stat.st_size, stat.st_mtime_ns)
+        path = resolved[0]
+        stat = path.stat()
+        return _file_hash(path, (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
     except OSError:
         return None
 
@@ -103,29 +103,12 @@ def asset_file_hash(reference: str) -> str | None:
 def review_evidence_intact(evidence: ReviewEvidence) -> bool:
     if hashlib.sha256(evidence.policy_prompt.encode()).hexdigest() != evidence.policy_hash:
         return False
-    try:
-        for entry in evidence.images:
-            resolved = resolve_asset_reference(entry.path)
-            if resolved is None:
-                return False
-            path = resolved[0]
-            stat = path.stat()
-            if _file_hash(str(path), stat.st_size, stat.st_mtime_ns) != entry.sha256:
-                return False
-    except OSError:
-        return False
-    return True
+    return all(asset_file_hash(entry.path) == entry.sha256 for entry in evidence.images)
 
 
 def review_media_intact(evidence: ReviewEvidence, media_path: str) -> bool:
-    if not review_evidence_intact(evidence):
-        return False
-    try:
-        resolved = resolve_asset_reference(media_path)
-        if resolved is None:
-            return False
-        path = resolved[0]
-        stat = path.stat()
-        return evidence.media_hash == _file_hash(str(path), stat.st_size, stat.st_mtime_ns)
-    except OSError:
-        return False
+    return (
+        evidence.media_hash is not None
+        and review_evidence_intact(evidence)
+        and asset_file_hash(media_path) == evidence.media_hash
+    )

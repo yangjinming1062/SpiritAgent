@@ -7,16 +7,12 @@ from features.posts.schemas import (
     PostCommentListResponse,
     PostCommentResponse,
     PostListResponse,
-    PostPublicationRecovery,
-    PostPublicationRecoveryList,
-    PostPublicationResult,
     PostReadRequest,
     PostResponse,
     PostUnreadResponse,
 )
 from infrastructure.api_ids import ResourceId
 from infrastructure.database import DbSession
-from infrastructure.http_contracts import operation_policy
 
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
@@ -39,29 +35,6 @@ async def get_posts_unread(user: CurrentUser, db: DbSession) -> PostUnreadRespon
 @router.patch("/read-state", response_model=PostUnreadResponse)
 async def read_posts(user: CurrentUser, db: DbSession, body: PostReadRequest) -> PostUnreadResponse:
     return await _posts.read_posts(user_id=user.id, db=db, body=body)
-
-
-@router.get("/publications", response_model=PostPublicationRecoveryList)
-async def get_publication_recoveries(
-    user: CurrentUser, limit: int = Query(default=50, ge=1, le=100), cursor: str | None = None
-) -> PostPublicationRecoveryList:
-    return await _posts.get_publication_recoveries(user_id=user.id, limit=limit, cursor=cursor)
-
-
-@router.post(
-    "/publications/{publication_id}/query",
-    response_model=PostPublicationRecovery,
-    openapi_extra=operation_policy(wait_for_model=True),
-)
-async def query_publication_recovery(
-    user: CurrentUser, db: DbSession, publication_id: ResourceId
-) -> PostPublicationRecovery:
-    return await _posts.query_publication_recovery(user_id=user.id, db=db, publication_id=publication_id)
-
-
-@router.post("/publications/{publication_id}/discard", response_model=PostPublicationResult)
-async def discard_publication(user: CurrentUser, db: DbSession, publication_id: ResourceId) -> PostPublicationResult:
-    return await _posts.discard_publication_recovery(user_id=user.id, db=db, publication_id=publication_id)
 
 
 @router.get("/{post_id}", response_model=PostResponse)

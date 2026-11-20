@@ -189,6 +189,12 @@ class LocalVideoGenProvider(VideoGenProvider):
         if req.reference_videos and not native:
             raise ProviderError("参考视频需要 MiniMax H3 Ref2VA 和匹配的 Ref2V Turbo 权重", status_code=422)
         opening = qwen_image_weights(unets, clips, vaes) if references and not native else None
+        if not references and req.opening_frame_prompt and not (req.first_frame_image or req.last_frame_image):
+            try:
+                opening = qwen_image_weights(unets, clips, vaes)
+            except ProviderError:
+                # 纯文字视频的纠偏仍可由 H3 直接制作。
+                opening = None
         unet = _pick(unets, _REFERENCE_UNETS if native else _UNET_PREFIXES)
         clip, vae, audio_vae = (
             _pick(clips, _CLIP_PREFIXES),
@@ -225,6 +231,8 @@ class LocalVideoGenProvider(VideoGenProvider):
 
     def validate_request(self, req: VideoGenRequest) -> None:
         super().validate_request(req)
+        if req.noise_seed is not None and (type(req.noise_seed) is not int or not 0 <= req.noise_seed < 2**64):
+            raise ProviderError("local video_gen requires an unsigned 64-bit seed", status_code=400)
         if len(req.reference_images) > 9:
             raise ProviderError("local video_gen accepts at most nine reference images", status_code=400)
         if len(req.reference_videos) > 3:
@@ -298,12 +306,13 @@ class LocalVideoGenProvider(VideoGenProvider):
         reference_image_names: tuple[str, ...] = (),
         reference_video_names: tuple[str, ...] = (),
         opening_files: tuple[str, str, str] | None = None,
+        hold_names: tuple[str, str] | None = None,
         upscale: bool = False,
     ) -> dict[str, dict[str, Any]]:
         unet, clip, video_vae, audio_vae, lora, steps = files
         width, height = self.resolution_size(req.resolution, req.aspect_ratio or "16:9")
         length = _frames(req.duration)
-        seed = uuid4().int % (2**63)
+        seed = req.noise_seed if req.noise_seed is not None else uuid4().int % (2**63)
         nodes: dict[str, dict[str, Any]] = {
             "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet, "weight_dtype": "default"}},
             "2": {
@@ -386,15 +395,47 @@ class LocalVideoGenProvider(VideoGenProvider):
                 }
             )
         if opening_files is not None:
-            opening_nodes, output = qwen_opening_nodes(
-                req.prompt, opening_files, reference_image_names, width, height, seed
-            )
-            nodes.update(opening_nodes)
+            if hold_names:
+                for key, filename in zip(("hold_opening", "hold_resting"), hold_names, strict=True):
+                    nodes[key] = {"class_type": "LoadImage", "inputs": {"image": filename}}
+                output = ["hold_opening", 0]
+                nodes["6"]["inputs"]["last_frame"] = ["hold_resting", 0]
+                conditioning = ["6", 0]
+                for position, fraction in enumerate((0.42, 0.78)):
+                    key = f"hold_guide_{position}"
+                    nodes[key] = {
+                        "class_type": "MiniMaxH3AddGuide",
+                        "inputs": {
+                            "positive": conditioning,
+                            "latent": ["6", 1],
+                            "vae": ["4", 0],
+                            "frame_idx": round((length - 1) * fraction),
+                            "image": ["hold_resting", 0],
+                        },
+                    }
+                    conditioning = [key, 0]
+                nodes["7"]["inputs"]["conditioning"] = conditioning
+            else:
+                opening_nodes, output = qwen_opening_nodes(
+                    req.opening_frame_prompt or req.prompt,
+                    opening_files,
+                    reference_image_names,
+                    width,
+                    height,
+                    seed,
+                    composition_goal=req.opening_composition_goal,
+                )
+                nodes.update(opening_nodes)
             nodes["6"]["inputs"]["first_frame"] = output
-            nodes["6"]["inputs"]["prompt"] = (
-                "从首帧中的姿态开始，沿用其人物、造型、画风与环境，连续完成以下动作和镜头要求。\n"
-                + (req.first_frame_motion or req.prompt)
+            if req.fixed_ambient_scene and not (reference_image_names or first_frame_name or last_frame_name):
+                nodes["6"]["inputs"]["last_frame"] = output
+            continuity = (
+                "镜头已经在拍摄首帧中的现场。从这一刻直接延续动作，整段保持首帧中的脸、穿戴结构、背景布局和光线；"
+                "衣物和饰物随身体自然移动，环境随指定镜头运动连续显现。"
+                if reference_image_names
+                else "从首帧的现场接续所要求的变化，保持指定的机位、景别和物体与背景的空间关系。"
             )
+            nodes["6"]["inputs"]["prompt"] = f"{continuity}\n{req.first_frame_motion or req.prompt}"
         if first_frame_name:
             nodes["16"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
             nodes["6"]["inputs"]["first_frame"] = ["16", 0]
@@ -410,8 +451,21 @@ class LocalVideoGenProvider(VideoGenProvider):
         self.validate_request(req)
         files, opening = await self._resolve_model_files(req)
         upscale = _UPSCALE_MODEL in await self._loader_options("UpscaleModelLoader", "model_name")
+        hold_sources = None
+        if (
+            opening
+            and req.observed_hold_images
+            and req.reference_images
+            and not (req.first_frame_image or req.last_frame_image)
+        ):
+            try:
+                info = await self._client.get("/object_info/MiniMaxH3AddGuide")
+                if info.is_success and "MiniMaxH3AddGuide" in info.json():
+                    hold_sources = req.observed_hold_images
+            except (httpx.HTTPError, ValueError):
+                logger.info("Could not discover H3 motion guides, using the composed opening")
         uploaded: dict[str, str] = {}
-        for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images):
+        for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images, *(hold_sources or ())):
             if reference and reference not in uploaded:
                 uploaded[reference] = await self._upload_image(reference)
         first_frame_name = uploaded.get(req.first_frame_image or "")
@@ -433,6 +487,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                         reference_image_names=reference_image_names,
                         reference_video_names=tuple(reference_video_names),
                         opening_files=opening,
+                        hold_names=(uploaded[hold_sources[0]], uploaded[hold_sources[1]]) if hold_sources else None,
                         upscale=upscale,
                     ),
                     "prompt_id": prompt_id,

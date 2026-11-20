@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 from dataclasses import asdict
-from uuid import uuid4
 from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
@@ -11,122 +10,86 @@ from infrastructure.assets import asset_store
 from infrastructure.assets.image_references import freeze_image_references
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.domain_locks import lock_domain
+from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
+from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
+from runtime.paid_work import GenerationWorkPaused
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 
-from .chain import MediaCandidate
-from .character_images import ImageChainState, generate_reviewed_images, run_frozen_image_chain
-from .continuations import authorize_media_waits, wait_for_media
+from .character_images import ImageChainState, generate_reviewed_images
+from .continuations import wait_for_media
 from .delivery import deliver_image_result
 from .identity_contracts import VisualIdentitySnapshot
-from .image_generation import ImageGenerationError
-from .manual_reviews import ManualAction, approve_candidate, manual_candidate_id, manual_candidate_views
+from .image_generation import ImageGenerationError, ImageResultDownloadError
 from .models import ImageGenJob
 from .reference_reader import visual_identity_is_current
-from .review_contracts import ReviewPendingError, candidate_review_key, needs_review, review_basis, review_passes
+from .review_contracts import MediaSelection, ReviewPendingError
 from .review_evidence import review_media_intact
-from .review_views import (
-    ImageJobParams,
-    MediaJobView,
-    MediaManualRequest,
-    MediaSlotView,
-)
+from .review_views import ImageJobParams, MediaJobView, MediaSlotView
 from .turn_state import ImagePlan
 
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+logger = get_logger(__name__)
 
 
-def _qualified_candidate(state: ImageChainState, params: ImageJobParams, slot: int) -> MediaCandidate | None:
-    return next(
-        (
-            candidate
-            for candidate in state.candidates
-            if candidate.slot == slot
-            and candidate.evaluated
-            and candidate.accepted is not False
-            and review_passes(candidate.review, params.required_dimensions)
-        ),
-        None,
-    )
+class _ImageDeliveryEnded(Exception):
+    """身份在制作期间失效，已有槽位结算已提交。"""
+
+
+def _selected_results(state: ImageChainState, params: ImageJobParams) -> ImageChainState:
+    selected = [
+        candidate
+        for slot in range(len(params.media_ids))
+        if (candidate := state.delivery_candidate(slot, params.required_dimensions))
+    ]
+    return ImageChainState(generation_id=state.generation_id, candidates=selected, selections=state.selections)
 
 
 async def _snapshot(row: ImageGenJob) -> MediaJobView:
     state = ImageChainState.model_validate((row.checkpoint or {}).get("chain") or row.result_json.get("chain") or {})
     params = ImageJobParams.model_validate(row.params_json)
-    ids = params.media_ids
     slots: list[MediaSlotView] = []
-    for index, media_id in enumerate(ids):
-        candidates = [c for c in state.candidates if c.slot == index]
-        chosen = _qualified_candidate(state, params, index)
-        candidate = (
-            chosen or next((c for c in candidates if needs_review(c.review)), None) or next(iter(candidates), None)
-        )
-        review = candidate.review if candidate else None
-        candidate_key = candidate_review_key(
-            candidate.generation_id if candidate and candidate.generation_id else state.generation_id, index
-        )
-        basis = review_basis(
-            review,
-            candidate.evidence if candidate else None,
-            candidate_key if candidate or state.pending_urls else None,
-        )
-        status = (
-            "ready"
-            if chosen
-            else "review_pending"
-            if candidate and (review is None or review.status != "complete" or review.verdict == "review")
-            else "failed"
-            if candidate or row.state in {"failed", "cancelled"}
-            else "pending"
-        )
+    for index, media_id in enumerate(params.media_ids):
         delivered = media_id in row.result_json.get("delivered_slots", [])
-        if row.result_json.get("delivery_blocked") and not delivered:
-            status = "review_pending"
-        if row.cleanup_requested_at:
+        chosen = state.delivery_candidate(index, params.required_dimensions)
+        if (
+            row.cleanup_requested_at
+            or media_id in row.result_json.get("invalid_slots", [])
+            or (not delivered and row.result_json.get("delivery_blocked"))
+        ):
+            chosen = None
+        if chosen:
+            status = "ready"
+        elif row.state == "unknown":
+            status = "result_unknown"
+        elif (
+            row.state in {"succeeded", "failed", "cancelled"}
+            or row.cleanup_requested_at
+            or media_id in row.result_json.get("invalid_slots", [])
+            or (index in state.selections and state.selections[index].mode == "not_delivered")
+        ):
             status = "failed"
-        elif chosen is None and row.stage == "review_pending":
-            status = "review_pending"
-        manual = (row.checkpoint or {}).get("manual_generation")
-        if manual and manual["slot"] == index:
-            if row.state in {"queued", "running"}:
-                status = "pending"
-            elif row.state == "unknown":
-                status = "result_unknown"
+        else:
+            status = "pending"
         slots.append(
             MediaSlotView(
                 slot=index,
                 media_id=media_id,
                 status=status,
                 media_revision=row.revision,
-                url=asset_store.client_asset_url(chosen.path)
-                if chosen
-                and not row.cleanup_requested_at
-                and (delivered or not row.result_json.get("delivery_blocked"))
-                else None,
-                preview_url=asset_store.client_asset_url(candidate.path)
-                if candidate and not row.cleanup_requested_at
-                else None,
-                review=review,
-                basis_id=basis,
-                candidate_basis_id=candidate_key,
-                can_review=(status == "review_pending" or bool(state.pending_urls))
-                and basis is not None
-                and needs_review(review)
-                and not row.result_json.get("delivery_blocked"),
-                error=row.error,
-                candidates=await manual_candidate_views(candidates),
-                can_regenerate=status != "pending"
-                and row.state in {"paused", "failed"}
-                and media_id not in row.result_json.get("delivered_slots", [])
-                and not row.result_json.get("delivery_blocked"),
-                delivered=media_id in row.result_json.get("delivered_slots", []),
+                url=asset_store.client_asset_url(chosen.path) if chosen else None,
+                review=chosen.review if chosen else None,
+                delivered=delivered,
+                error="本次图片未完成" if status == "failed" else None,
             )
         )
     return MediaJobView(
@@ -136,9 +99,9 @@ async def _snapshot(row: ImageGenJob) -> MediaJobView:
         stage=row.stage,
         revision=row.revision,
         slots=slots,
-        required_slots=len(ids),
+        required_slots=len(params.media_ids),
         ready_slots=sum(slot.status == "ready" for slot in slots),
-        complete=row.state == "succeeded",
+        complete=row.state == "succeeded" and row.stage == "complete",
         image_request=params,
         user_id=row.user_id,
         session_id=str(row.conversation_id) if row.conversation_id else None,
@@ -171,6 +134,7 @@ async def produce_image_batch(
 ) -> MediaJobView:
     fingerprint = hashlib.sha256(repr((asdict(plan), len(media_ids))).encode()).hexdigest()
     async with SESSION_LOCAL() as db:
+        await lock_domain(db, user_id, f"media.image.request:{request_id}")
         previous = await requested_job_id(db, user_id, request_id, fingerprint)
         row = await db.get(ImageGenJob, previous) if previous else None
         if row is not None:
@@ -226,23 +190,34 @@ async def produce_image_batch(
 async def _block_stale_identity(db: AsyncSession, user_id: int, row: ImageGenJob) -> bool:
     """冻结身份已过期时不允许按当前身份交付，候选与检查证据保留。"""
 
-    if all(media_id in row.result_json.get("delivered_slots", []) for media_id in row.params_json["media_ids"]):
+    if row.result_json.get("delivery_blocked"):
+        return True
+    delivered = set(row.result_json.get("delivered_slots", []))
+    media_ids = row.params_json["media_ids"]
+    if delivered.issuperset(media_ids):
         return False
-    if not row.params_json.get("identity_json"):
-        if row.params_json.get("subject") == "self":
-            row.state, row.stage, row.error = (
-                "paused",
-                "confirmation",
-                "原任务缺少冻结身份版本，候选已保留，请另建制作请求",
-            )
-            row.result_json = {**row.result_json, "delivery_blocked": True}
-            return True
+    if frozen := row.params_json.get("identity_json"):
+        if await visual_identity_is_current(db, user_id, VisualIdentitySnapshot.model_validate_json(frozen)):
+            return False
+        reason = "原任务身份已失效"
+    elif row.params_json.get("subject") == "self":
+        reason = "原任务缺少冻结身份版本"
+    else:
         return False
-    identity = VisualIdentitySnapshot.model_validate_json(row.params_json["identity_json"])
-    if await visual_identity_is_current(db, user_id, identity):
-        return False
-    row.state, row.stage, row.error = "paused", "confirmation", "原任务身份已失效，候选已保留，不能按当前身份交付"
-    row.result_json = {**row.result_json, "delivery_blocked": True}
+    chain = ImageChainState.model_validate((row.checkpoint or {}).get("chain") or row.result_json.get("chain") or {})
+    for slot, media_id in enumerate(media_ids):
+        if media_id not in delivered:
+            chain.selections[slot] = MediaSelection(mode="not_delivered", reason=reason)
+    if row.checkpoint is not None:
+        row.checkpoint = {"chain": chain.model_dump(mode="json")}
+    params = ImageJobParams.model_validate(row.params_json)
+    retained = _selected_results(chain, params)
+    row.state, row.stage, row.error = "failed", "failed", reason
+    row.result_json = {
+        **row.result_json,
+        "chain": retained.model_dump(mode="json", exclude_defaults=True),
+        "delivery_blocked": True,
+    }
     return True
 
 
@@ -252,7 +227,13 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
             row = await db.scalar(
                 select(ImageGenJob).where(ImageGenJob.id == job_id, ImageGenJob.user_id == user_id).with_for_update()
             )
-            if row is None or row.cleanup_requested_at or row.state in {"cancelled", "succeeded"}:
+            if row is None or row.cleanup_requested_at or row.state not in {"queued", "running"}:
+                return
+            if await _block_stale_identity(db, user_id, row):
+                await db.flush()
+                await deliver_image_result(db, await _snapshot(row))
+                emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
+                await db.commit()
                 return
             input_params = ImageJobParams.model_validate(row.params_json)
             params = input_params.model_dump(mode="json")
@@ -265,9 +246,21 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
                 current = await db.get(ImageGenJob, job_id, with_for_update=True)
                 if current is None or current.cleanup_requested_at or current.state == "cancelled":
                     raise asyncio.CancelledError("discarded")
+                if current.result_json.get("delivery_blocked"):
+                    raise _ImageDeliveryEnded
+                previous_choices = ((current.checkpoint or {}).get("chain") or {}).get("selections", {})
+                new_choices = bool(set(map(str, value.selections)) - previous_choices.keys())
                 current.checkpoint = {"chain": value.model_dump(mode="json")}
-                await bind_job_assets(db, user_id, job_id, asset_paths(current.checkpoint, user_id), "generation")
+                await bind_job_assets(
+                    db, user_id, job_id, asset_paths(current.checkpoint, user_id) - {value.pending_path}, "generation"
+                )
+                if new_choices and current.bindings_json:
+                    await _block_stale_identity(db, user_id, current)
+                    await db.flush()
+                    await deliver_image_result(db, await _snapshot(current))
                 await db.commit()
+                if current.result_json.get("delivery_blocked"):
+                    raise _ImageDeliveryEnded
 
         error: str | None = None
         try:
@@ -286,230 +279,61 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
                 save_progress=save,
                 task=AiTaskKey(params["task"]),
                 goal_review="required",
+                delivery_goal=input_params.goal,
             )
+        except _ImageDeliveryEnded:
+            return
+        except ImageResultDownloadError:
+            # 原地址和槽位均已登记，后台只接收原结果。
+            chain.resume_download()
+            await save(chain)
+            await _queue_image_receive(user_id, job_id)
+            return
         except (ImageGenerationError, ReviewPendingError) as exc:
             error = str(exc)
-        except asyncio.CancelledError:
-            error = "制作已中断，原候选和提交状态已保留"
+        except (GenerationWorkPaused, SQLAlchemyError):
             raise
-        finally:
-            async with SESSION_LOCAL() as db:
-                current = await db.get(ImageGenJob, job_id, with_for_update=True)
-                if current and current.state != "cancelled" and not current.cleanup_requested_at:
-                    current.checkpoint = {"chain": chain.model_dump(mode="json")}
-                    current.result_json = {**current.result_json, "chain": chain.model_dump(mode="json")}
-                    pending = (
-                        bool(chain.pending_urls)
-                        or any(c.review and c.review.status == "blocked" for c in chain.candidates)
-                        or any(
-                            _qualified_candidate(chain, input_params, index) is None
-                            and any(c.slot == index and (needs_review(c.review)) for c in chain.candidates)
-                            for index in range(len(params["media_ids"]))
-                        )
-                    )
-                    qualified = sum(
-                        _qualified_candidate(chain, input_params, index) is not None
-                        for index in range(len(params["media_ids"]))
-                    )
-                    current.state, current.stage = (
-                        ("paused", "review_pending")
-                        if pending
-                        else ("paused", "confirmation")
-                        if qualified == len(params["media_ids"])
-                        else ("paused", "review_pending")
-                        if chain.candidates
-                        else ("failed", "failed")
-                    )
-                    if chain.phase == "submitting" and not chain.candidates:
-                        current.state, current.stage = "unknown", "result_unknown"
-                    current.error = error
-                    await _block_stale_identity(db, user_id, current)
-                    await db.flush()
-                    await deliver_image_result(db, await _snapshot(current))
-                    emit_ws_event(
-                        db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)}
-                    )
-                    await db.commit()
-
-
-async def manually_review_image(
-    db: AsyncSession, user_id: int, job_id: int, request: MediaManualRequest
-) -> ManualAction:
-    row = await db.get(ImageGenJob, job_id)
-    params = ImageJobParams.model_validate(row.params_json)
-    if (
-        row.cleanup_requested_at
-        or request.slot >= len(params.media_ids)
-        or await _block_stale_identity(db, user_id, row)
-    ):
-        raise RequestError(status_code=409, message="原任务已失效，候选已保留")
-    await authorize_media_waits(db, user_id, job_id, "chat.image")
-    chain = ImageChainState.model_validate((row.checkpoint or {}).get("chain") or row.result_json.get("chain") or {})
-    if params.media_ids[request.slot] in row.result_json.get("delivered_slots", []):
-        raise RequestError(status_code=409, message="这个槽位已经交付，不能覆盖已交付版本")
-    if request.action == "regenerate":
-        fresh = ImageChainState(
-            inputs=chain.inputs.model_copy(update={"n": 1}, deep=True) if chain.inputs and chain.providers else None,
-            providers=chain.configured_providers() if chain.inputs else [],
-            storage_directory=chain.storage_directory or params.directory,
-            generation_id=uuid4().hex,
-        )
-        for candidate in chain.candidates:
-            if candidate.slot == request.slot:
-                candidate.excluded = True
-        row.checkpoint = {
-            **(row.checkpoint or {}),
-            "chain": chain.model_dump(mode="json"),
-            "manual_generation": {
-                "slot": request.slot,
-                "request_id": request.request_id,
-                "chain": fresh.model_dump(mode="json"),
-            },
-        }
-        row.state, row.stage, row.error = "queued", "image", None
-        await db.flush()
-        await deliver_image_result(db, await _snapshot(row))
-        return ManualAction(restart_job_id=job_id, audit_context={"params_json": row.params_json})
-    selected = next(
-        (
-            candidate
-            for candidate in chain.candidates
-            if candidate.slot == request.slot and manual_candidate_id(candidate) == request.candidate_id
-        ),
-        None,
-    )
-    if selected is None:
-        raise RequestError(status_code=409, message="所选候选已变化，请刷新")
-    required = params.required_dimensions
-    await approve_candidate(user_id, selected, required, request, db=db)
-    for candidate in chain.candidates:
-        if candidate.slot == request.slot and candidate is not selected:
-            candidate.excluded = True
-    row.checkpoint = {"chain": chain.model_dump(mode="json")}
-    row.result_json = {**row.result_json, "chain": chain.model_dump(mode="json")}
-    row.state, row.stage, row.error = "paused", "confirmation", None
-    await bind_job_assets(db, user_id, job_id, asset_paths(row.checkpoint, user_id), "review")
-    return ManualAction(audit_context={"params_json": row.params_json})
-
-
-def _fold_manual_generation(row: ImageGenJob) -> None:
-    checkpoint = dict(row.checkpoint or {})
-    manual = checkpoint.get("manual_generation")
-    if not manual:
-        return
-    fresh = ImageChainState.model_validate(manual["chain"])
-    original = ImageChainState.model_validate(checkpoint.get("chain") or row.result_json.get("chain") or {})
-    if original.inputs is None and fresh.inputs is not None:
-        original.inputs = fresh.inputs.model_copy(update={"n": len(row.params_json["media_ids"])}, deep=True)
-    attempt_map: dict[int, int] = {}
-    for index, provider in enumerate(fresh.providers):
-        if provider not in original.providers:
-            original.providers.append(provider)
-        attempt_map[index] = original.providers.index(provider)
-    slot = manual["slot"]
-    original.candidates = [
-        candidate
-        for candidate in original.candidates
-        if candidate.slot != slot or candidate.generation_id != fresh.generation_id
-    ] + [
-        candidate.model_copy(
-            update={"slot": slot, "generation_id": fresh.generation_id, "attempt": attempt_map[candidate.attempt]}
-        )
-        for candidate in fresh.candidates
-    ]
-    retained = [
-        (url, pending_slot)
-        for url, pending_slot in zip(original.pending_urls, original.pending_slots, strict=True)
-        if pending_slot != slot
-    ]
-    original.pending_urls = [url for url, _ in retained] + fresh.pending_urls
-    original.pending_slots = [pending_slot for _, pending_slot in retained] + [slot] * len(fresh.pending_urls)
-    original.phase, original.stop_reason = fresh.phase, fresh.stop_reason
-    checkpoint["chain"] = original.model_dump(mode="json")
-    row.checkpoint = checkpoint
-    row.result_json = {**row.result_json, "chain": original.model_dump(mode="json")}
-
-
-async def run_manual_image_job(user_id: int, job_id: int) -> None:
-    async with _LOCKS.setdefault(job_id, asyncio.Lock()):
+        except Exception:
+            logger.exception("Image job stopped before delivery", extra={"user_id": user_id, "job_id": job_id})
+            error = "本次图片制作未完成"
         async with SESSION_LOCAL() as db:
-            row = await db.get(ImageGenJob, job_id, with_for_update=True)
-            if row is None or row.user_id != user_id or row.state != "queued" or row.cleanup_requested_at:
+            current = await db.get(ImageGenJob, job_id, with_for_update=True)
+            if (
+                not current
+                or current.state == "cancelled"
+                or current.cleanup_requested_at
+                or current.result_json.get("delivery_blocked")
+            ):
                 return
-            manual = (row.checkpoint or {}).get("manual_generation")
-            if not manual:
-                return
-            params = ImageJobParams.model_validate(row.params_json)
-            fresh = ImageChainState.model_validate(manual["chain"])
-            row.state, row.stage = "running", "image"
+            current.checkpoint = {"chain": chain.model_dump(mode="json")}
+            retained = _selected_results(chain, input_params)
+            current.result_json = {
+                **current.result_json,
+                "chain": retained.model_dump(mode="json", exclude_defaults=True),
+            }
+            if chain.unknown_submission():
+                current.state, current.stage = "unknown", "result_unknown"
+            elif retained.candidates:
+                current.state, current.stage = (
+                    "succeeded",
+                    "complete" if len(retained.candidates) == len(input_params.media_ids) else "partial",
+                )
+            else:
+                current.state, current.stage = "failed", "failed"
+            current.error = error
+            await _block_stale_identity(db, user_id, current)
+            await db.flush()
+            await deliver_image_result(db, await _snapshot(current))
+            emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
             await db.commit()
 
-        async def save(value: ImageChainState) -> None:
-            async with SESSION_LOCAL() as db:
-                current = await db.get(ImageGenJob, job_id, with_for_update=True)
-                if current is None or current.state != "running" or current.cleanup_requested_at:
-                    raise asyncio.CancelledError()
-                current.checkpoint = {
-                    **current.checkpoint,
-                    "manual_generation": {**manual, "chain": value.model_dump(mode="json")},
-                }
-                await bind_job_assets(db, user_id, job_id, asset_paths(current.checkpoint, user_id), "generation")
-                await db.commit()
 
-        error = None
-        try:
-            if fresh.inputs is not None:
-                await run_frozen_image_chain(user_id, fresh, task=params.task, save_progress=save)
-            else:
-                await generate_reviewed_images(
-                    params.prompt,
-                    user_id=user_id,
-                    task=params.task,
-                    storage_directory=params.directory,
-                    reference_image=params.reference_image or "",
-                    identity_reference=params.reference_image or "",
-                    secondary_reference_image=params.secondary_reference_image,
-                    identity_reference_mode=params.identity_reference_mode,
-                    identity_required=params.identity_required,
-                    size=params.size,
-                    n=1,
-                    state=fresh,
-                    save_progress=save,
-                )
-        except (ImageGenerationError, ReviewPendingError) as exc:
-            error = str(exc)
-        finally:
-            async with SESSION_LOCAL() as db:
-                current = await db.get(ImageGenJob, job_id, with_for_update=True)
-                if current and current.state == "running" and not current.cleanup_requested_at:
-                    current.checkpoint = {
-                        **current.checkpoint,
-                        "manual_generation": {**manual, "chain": fresh.model_dump(mode="json")},
-                    }
-                    _fold_manual_generation(current)
-                    combined = ImageChainState.model_validate(current.checkpoint["chain"])
-                    qualified = sum(
-                        _qualified_candidate(combined, params, index) is not None
-                        for index in range(len(params.media_ids))
-                    )
-                    pending = bool(combined.pending_urls) or bool(combined.candidates)
-                    current.state, current.stage = (
-                        ("unknown", "result_unknown")
-                        if fresh.phase == "submitting"
-                        else ("paused", "confirmation")
-                        if qualified == len(params.media_ids)
-                        else ("paused", "review_pending")
-                        if pending
-                        else ("failed", "failed")
-                    )
-                    current.error = error
-                    await _block_stale_identity(db, user_id, current)
-                    await db.flush()
-                    await deliver_image_result(db, await _snapshot(current))
-                    emit_ws_event(
-                        db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)}
-                    )
-                    await db.commit()
+async def _queue_image_receive(user_id: int, job_id: int) -> None:
+    async with SESSION_LOCAL() as db:
+        row = await db.get(ImageGenJob, job_id, with_for_update=True)
+        if row and not row.cleanup_requested_at and row.state == "running":
+            row.state, row.stage = "queued", "receiving"
+            await db.commit()
 
 
 async def bind_image_reply(
@@ -528,20 +352,19 @@ async def bind_image_reply(
         raise ValueError("图片已绑定其他消息")
     row.bindings_json = {**row.bindings_json, media_id: str(message_id)}
     chain = ImageChainState.model_validate((row.checkpoint or {}).get("chain") or row.result_json.get("chain") or {})
-    selected = _qualified_candidate(
-        chain, ImageJobParams.model_validate(row.params_json), row.params_json["media_ids"].index(media_id)
-    )
+    params = ImageJobParams.model_validate(row.params_json)
+    selected = chain.delivery_candidate(params.media_ids.index(media_id), params.required_dimensions)
     if selected is not None:
         if not await asyncio.to_thread(review_media_intact, selected.review.evidence, selected.path):
-            row.result_json = {**row.result_json, "delivery_blocked": True}
-            row.state, row.stage, row.error = "paused", "confirmation", "候选或检查证据已变化，结果已保留"
+            row.result_json = {
+                **row.result_json,
+                "invalid_slots": list(dict.fromkeys([*row.result_json.get("invalid_slots", []), media_id])),
+            }
         elif not row.result_json.get("delivery_blocked"):
             row.result_json = {
                 **row.result_json,
                 "delivered_slots": list(dict.fromkeys([*row.result_json.get("delivered_slots", []), media_id])),
             }
-            if all(value in row.result_json["delivered_slots"] for value in row.params_json["media_ids"]):
-                row.state, row.stage = "succeeded", "complete"
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
     return await _snapshot(row)
@@ -557,8 +380,6 @@ async def record_image_delivery(db: AsyncSession, user_id: int, job_id: int, med
         **row.result_json,
         "delivered_slots": list(dict.fromkeys([*row.result_json.get("delivered_slots", []), media_id])),
     }
-    if all(value in row.result_json["delivered_slots"] for value in row.params_json["media_ids"]):
-        row.state, row.stage = "succeeded", "complete"
     await db.flush()
     return row.revision
 
@@ -571,15 +392,20 @@ async def checked_image_result(db: AsyncSession, user_id: int, job_id: int) -> M
     )
     if row is None or row.cleanup_requested_at or row.state == "cancelled":
         return None
-    if await _block_stale_identity(db, user_id, row):
-        return None
+    await _block_stale_identity(db, user_id, row)
     chain = ImageChainState.model_validate((row.checkpoint or {}).get("chain") or row.result_json.get("chain") or {})
-    for index in range(len(row.params_json["media_ids"])):
-        chosen = _qualified_candidate(chain, ImageJobParams.model_validate(row.params_json), index)
-        if chosen and not await asyncio.to_thread(review_media_intact, chosen.review.evidence, chosen.path):
-            row.state, row.stage, row.error = "paused", "review_pending", "原候选或检查证据异常，结果已保留"
-            row.result_json = {**row.result_json, "delivery_blocked": True}
-            return None
+    params = ImageJobParams.model_validate(row.params_json)
+    for index, media_id in enumerate(params.media_ids):
+        chosen = chain.delivery_candidate(index, params.required_dimensions)
+        if (
+            chosen
+            and media_id not in row.result_json.get("invalid_slots", [])
+            and not await asyncio.to_thread(review_media_intact, chosen.review.evidence, chosen.path)
+        ):
+            row.result_json = {
+                **row.result_json,
+                "invalid_slots": [*row.result_json.get("invalid_slots", []), media_id],
+            }
     return await _snapshot(row)
 
 
@@ -616,20 +442,28 @@ async def transfer_image_bindings(db: AsyncSession, user_id: int, from_message_i
             }
 
 
-async def recover_image_jobs() -> None:
+_RECOVERY = TaskScope("media.image_recovery")
+
+
+async def recover_image_jobs(user_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
-        rows = await db.scalars(select(ImageGenJob).where(ImageGenJob.state.in_(("queued", "running"))))
-        for row in rows:
-            if (
-                row.state == "queued"
-                and (row.checkpoint or {}).get("manual_generation", {}).get("chain", {}).get("phase") == "ready"
-            ):
-                continue
-            _fold_manual_generation(row)
-            unknown = (row.checkpoint or {}).get("chain", {}).get("phase") == "submitting"
-            row.state, row.stage = ("unknown", "result_unknown") if unknown else ("paused", "review_pending")
-            row.error = "图片制作已中断，请核对原任务"
-        await db.commit()
+        query = select(ImageGenJob.id, ImageGenJob.user_id).where(
+            ImageGenJob.state.in_(("queued", "running")), ImageGenJob.cleanup_requested_at.is_(None)
+        )
+        if user_id is not None:
+            query = query.where(ImageGenJob.user_id == user_id)
+        jobs = list(await db.execute(query))
+    for job_id, owner in jobs:
+        _RECOVERY.spawn(
+            job_id,
+            lambda owner=owner, job_id=job_id: _run_image_job(owner, job_id),
+            name=f"image.recover.{job_id}",
+            user_id=owner,
+        )
+
+
+async def drain_image_jobs() -> None:
+    await _RECOVERY.drain()
 
 
 async def cleanup_user_image_jobs(user_id: int) -> None:

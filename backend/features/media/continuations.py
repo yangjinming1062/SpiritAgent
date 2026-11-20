@@ -158,9 +158,7 @@ async def media_review_updated(user_id: int, payload: dict) -> None:
     await reconcile_media_waits(user_id, int(payload["job_id"]))
 
 
-async def available_media_actions(
-    user_id: int, job_id: int
-) -> list[Literal["save_outfit", "publish_post", "deliver_message"]]:
+async def available_media_actions(user_id: int, job_id: int) -> list[Literal["save_outfit"]]:
     async with SESSION_LOCAL() as db:
         kinds = list(
             await db.scalars(
@@ -172,32 +170,20 @@ async def available_media_actions(
                 )
             )
         )
-    return list(
-        dict.fromkeys(
-            "deliver_message"
-            if kind in {"chat.image", "chat.video"}
-            else "save_outfit"
-            if kind == "outfit.create"
-            else "publish_post"
-            for kind in kinds
-            if kind in {"chat.image", "chat.video", "outfit.create", "post.publish"}
-        )
-    )
+    return ["save_outfit"] if "outfit.create" in kinds else []
 
 
 async def continue_owned_media_operation(user_id: int, job_id: int, action: str) -> None:
-    owner_kinds = {
-        "save_outfit": ("outfit.create",),
-        "publish_post": ("post.publish",),
-        "deliver_message": ("chat.image", "chat.video"),
-    }[action]
+    if action != "save_outfit":
+        raise ValueError("原任务没有授权这项业务操作")
     async with SESSION_LOCAL() as db:
         operations = list(
             await db.scalars(
                 select(MediaContinuation.operation_id).where(
                     MediaContinuation.user_id == user_id,
                     MediaContinuation.owner_job_id == job_id,
-                    MediaContinuation.owner_kind.in_(owner_kinds),
+                    MediaContinuation.owner_kind == "outfit.create",
+                    MediaContinuation.context_json["source"].as_string() == "manual",
                 )
             )
         )

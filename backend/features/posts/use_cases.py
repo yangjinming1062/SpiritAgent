@@ -6,16 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.entries.contracts import EntryError
 from features.entries.queries import list_comments
-from features.posts.publication import discard_publication_media, list_publication_recoveries, publication_recovery
 from features.posts.replies import schedule_companion_reply
 from features.posts.schemas import (
     PostCommentCreateRequest,
     PostCommentListResponse,
     PostCommentResponse,
     PostListResponse,
-    PostPublicationRecovery,
-    PostPublicationRecoveryList,
-    PostPublicationResult,
     PostReadRequest,
     PostResponse,
     PostUnreadResponse,
@@ -56,35 +52,6 @@ async def get_posts_unread(user_id: int, db: AsyncSession) -> PostUnreadResponse
 
 async def read_posts(user_id: int, db: AsyncSession, body: PostReadRequest) -> PostUnreadResponse:
     return PostUnreadResponse(has_unread=await mark_posts_read(db, user_id, body.post_ids))
-
-
-async def get_publication_recoveries(
-    user_id: int, limit: int = 50, cursor: str | None = None
-) -> PostPublicationRecoveryList:
-    try:
-        return await list_publication_recoveries(user_id, limit=limit, cursor=cursor)
-    except ValueError as exc:
-        raise RequestError(status_code=400, message="无效的任务分页位置") from exc
-
-
-async def query_publication_recovery(
-    user_id: int, db: AsyncSession, publication_id: ResourceId
-) -> PostPublicationRecovery:
-    await db.commit()
-    try:
-        return await publication_recovery(user_id, publication_id, query=True)
-    except PostError as exc:
-        raise _error(exc) from exc
-
-
-async def discard_publication_recovery(
-    user_id: int, db: AsyncSession, publication_id: ResourceId
-) -> PostPublicationResult:
-    await db.commit()
-    try:
-        return await discard_publication_media(user_id, publication_id)
-    except PostError as exc:
-        raise _error(exc) from exc
 
 
 async def get_post_detail(user_id: int, db: AsyncSession, post_id: ResourceId) -> PostResponse:

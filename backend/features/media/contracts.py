@@ -5,8 +5,14 @@ from datetime import datetime
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict
 
-from .review_contracts import VisualReview
+from .review_contracts import MediaSelection, VisualReview
 from .video_queue.contracts import VideoQueueInfo
+
+
+def video_delivery_error(status: str) -> str | None:
+    if status in {"unknown", "result_unknown"}:
+        return "视频制作结果尚未收到"
+    return "本次视频未完成" if status in {"failed", "discarded", "cancelled"} else None
 
 
 class VideoJobSnapshot(BaseModel):
@@ -23,12 +29,12 @@ class VideoJobSnapshot(BaseModel):
     reply_message_id: ResourceId | None
     status: str
     video_url: str | None
-    candidate_video_url: str | None
     error_reason: str | None
     error_message: str | None
     cleanup_requested_at: datetime | None
+    receive_only: bool = False
     review: VisualReview | None = None
-    candidate_ready: bool
+    selection: MediaSelection | None = None
     video_queue: VideoQueueInfo | None = None
 
 

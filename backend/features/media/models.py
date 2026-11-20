@@ -76,6 +76,7 @@ class VideoGenJob(JobRecord):
     prompt: Mapped[str] = mapped_column(Text)
     params_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     review_result_json: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    selection_json: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)

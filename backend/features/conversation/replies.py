@@ -83,7 +83,7 @@ class LinkBubble(LinkBubbleInput):
         return value
 
 
-MediaBubbleStatus = Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
+MediaBubbleStatus = Literal["pending", "ready", "failed", "result_unknown"]
 
 
 class MediaBubble(MediaBubbleInput):

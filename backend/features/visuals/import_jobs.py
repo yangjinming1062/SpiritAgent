@@ -15,7 +15,7 @@ from features.assets.lifecycle import enqueue_asset_cleanup
 from features.jobs.service import RETAINED_JOB_ASSET_ROLE, replace_job_assets
 from features.media.character_images import ImageChainState
 from features.media.identity_contracts import VisualIdentitySnapshot
-from features.media.review_contracts import VisualReview
+from features.media.review_contracts import VisualReview, optional_quality_choice
 
 from .import_operations import (
     ImportOperation,
@@ -97,6 +97,16 @@ class ImportContext(BaseModel):
     sample_duration_ms: int | None = None
     image_chains: dict[str, ImageChainState] = Field(default_factory=dict)
 
+    @property
+    def has_optional_actor_candidate(self) -> bool:
+        report = self.presentation_review
+        return (
+            self.actor_asset is not None
+            and report is not None
+            and "identity" in report.required
+            and optional_quality_choice(report)
+        )
+
 
 class ImportWork(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -135,14 +145,12 @@ def has_review_candidate(context: ImportContext, result: ImportAnalysisResult | 
 
     if result is None:
         return False
-    if context.actor_asset is not None and (
-        context.presentation_review is None or context.presentation_review.verdict == "review"
-    ):
+    if context.has_optional_actor_candidate:
         return True
     return any(
         not component.settled
         and (chain := context.image_chains.get(component.observation.key)) is not None
-        and chain.can_retry_goal_review()
+        and bool(chain.optional_candidates())
         for component in result.components
     )
 
@@ -555,9 +563,7 @@ async def fail_import_work(work: ImportWork, message: str, *, paused: bool = Fal
             and job.context_json.get("execution_key") == work.context.execution_key
         ):
             pause_import_operations(job)
-            pending_review = (
-                work.context.presentation_review is not None and work.context.presentation_review.verdict == "review"
-            )
+            pending_review = has_review_candidate(work.context, work.result)
             job.state, job.stage, job.error = (
                 "paused" if paused or pending_review else "failed",
                 "review_pending" if pending_review else "interrupted" if paused else job.stage,

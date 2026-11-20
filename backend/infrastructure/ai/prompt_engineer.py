@@ -237,6 +237,7 @@ async def call_llm_json[T](
     reasoning_effort: str | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
+    stop_on_content_policy: bool = False,
 ) -> T:
     """校验成功后才完成供应商调用；整条链共用一次格式修正预算。"""
     attempts = diagnostics if diagnostics is not None else []
@@ -443,7 +444,9 @@ async def call_llm_json[T](
             record(diagnostic)
             return result
 
-    return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
+    return await execute_with_fallback(
+        llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id, stop_on_content_policy=stop_on_content_policy
+    )
 
 
 async def _load_vision_config(user_id: int | None, task: AiTaskKey, reference_images: tuple[str, ...]) -> UserLlmConfig:

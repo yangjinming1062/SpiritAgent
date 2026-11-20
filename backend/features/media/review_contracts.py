@@ -5,10 +5,17 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from infrastructure.ai.error_classifier import FailoverReason, LlmCallBlockedError, classify_api_error
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReviewVerdict = Literal["pass", "review", "fail"]
 ReviewServiceStatus = Literal["complete", "unavailable", "invalid", "blocked"]
+
+
+def review_failure_status(exc: BaseException, response_seen: bool = False) -> ReviewServiceStatus:
+    if isinstance(exc, LlmCallBlockedError) or classify_api_error(exc).reason == FailoverReason.content_policy_blocked:
+        return "blocked"
+    return "invalid" if response_seen else "unavailable"
 
 
 class ReviewDecision(BaseModel):
@@ -18,12 +25,28 @@ class ReviewDecision(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class OpeningStateReview(ReviewDecision):
+    requirement: str = Field(max_length=240)
+    correction_instruction: str = Field(max_length=400)
+
+
 class ReviewImage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     path: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     role: str
+
+
+class ObservedVideoHold(BaseModel):
+    """原片中已经拍到的起始与到位姿势，供一次本地动作纠偏使用。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    opening: ReviewImage
+    resting: ReviewImage
+    requirement: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=600)
 
 
 class ReviewEvidence(BaseModel):
@@ -72,10 +95,17 @@ class VisualReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reference_basis: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    required: tuple[Literal["identity", "goal", "quality"], ...]
+    required: tuple[Literal["identity", "goal", "quality", "opening", "motion"], ...]
     identity: ReviewDecision | None = None
     goal: ReviewDecision | None = None
     quality: ReviewDecision | None = None
+    opening: OpeningStateReview | None = None
+    motion: ReviewDecision | None = None
+    steps_before_stop: int | None = Field(default=None, ge=1, strict=True)
+    step_requirement: str | None = Field(default=None, max_length=200)
+    correction_instruction: str = Field(default="", max_length=400)
+    opening_frame_instruction: str | None = Field(default=None, max_length=400)
+    fixed_ambient_scene: bool = False
     status: ReviewServiceStatus = "complete"
     evidence: ReviewEvidence | None = None
     human_approval: HumanReviewApproval | None = None
@@ -117,6 +147,57 @@ class VisualReview(BaseModel):
         return review_context(notes) if notes else ""
 
 
+class MediaSelection(BaseModel):
+    """一次性交付决定绑定原始检查内容；不会改变资产入库资格。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    basis_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    mode: Literal["passed", "best_available", "not_delivered"]
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_basis(self) -> "MediaSelection":
+        if (self.mode == "not_delivered") != (self.basis_id is None):
+            raise ValueError("选中版本必须绑定该候选的检查依据")
+        return self
+
+    def permits(self, review: VisualReview | None, required: tuple[str, ...]) -> bool:
+        if (
+            self.mode == "not_delivered"
+            or review is None
+            or review.evidence is None
+            or review.status != "complete"
+            or self.basis_id != review.evidence.content_basis_id
+            or not set(required).issubset(review.required)
+            or any(getattr(review, name) is None for name in required)
+            or review.human_approval is not None
+            or (review.motion is not None and review.motion.verdict != "pass")
+            or (review.opening is not None and review.opening.verdict != "pass")
+        ):
+            return False
+        if "identity" in required and review.identity.verdict != "pass":
+            return False
+        return self.mode == "best_available" or review.model_verdict == "pass"
+
+
+def optional_quality_choice(review: VisualReview | None) -> bool:
+    """仅质量存疑可在手动制作详情选择。身份、用途及检查服务均须明确合格。"""
+    return bool(
+        review
+        and review.evidence
+        and review.status == "complete"
+        and review.verdict == "review"
+        and {"goal", "quality"}.issubset(review.required)
+        and review.quality
+        and review.quality.verdict == "review"
+        and all(
+            getattr(review, name) and getattr(review, name).verdict == "pass"
+            for name in review.required
+            if name != "quality"
+        )
+    )
+
+
 def review_context(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -124,9 +205,7 @@ def review_context(value: object) -> str:
 class ReviewPendingError(Exception):
     """已知媒体必须保留；调用方持久等待并退出执行。"""
 
-    def __init__(
-        self, message: str = "图片或视频已保留，等待选择候选", *, status: ReviewServiceStatus = "complete"
-    ) -> None:
+    def __init__(self, message: str = "媒体尚未通过必要检查", *, status: ReviewServiceStatus = "complete") -> None:
         super().__init__(message)
         self.status = status
 

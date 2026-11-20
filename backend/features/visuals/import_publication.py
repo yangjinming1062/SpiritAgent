@@ -6,7 +6,7 @@ from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.media.review_contracts import review_dimension_passes, visual_reference_basis
+from features.media.review_contracts import review_dimension_passes, review_passes, visual_reference_basis
 
 from .import_jobs import (
     ImportCatalogCandidate,
@@ -150,11 +150,8 @@ async def complete_import_analysis(
     action = actions[0] if len({entry.action_id for entry in actions}) == 1 else None
     work.result.presentation_verdict = verdict
     work.result.blocking_reasons = import_playback_blocks(work, selected, verdict, reason)
-    approved = (
-        not work.result.blocking_reasons
-        and work.context.presentation_review is not None
-        and work.context.presentation_review.verdict == "pass"
-    )
+    required = ("goal", "quality") if understanding.asset_kind == "scene" else ("identity", "goal", "quality")
+    media_passed = review_passes(work.context.presentation_review, required)
     original = work.snapshot.source
     metadata = original.model_dump(
         include={
@@ -169,7 +166,7 @@ async def complete_import_analysis(
     common = {
         **metadata,
         "analysis_job_id": work.id,
-        "presentation_approved": approved,
+        "presentation_approved": media_passed and not work.result.blocking_reasons,
         "identity_reason": understanding.identity_reason,
     }
     identity_reference_role = getattr(original, "identity_reference_role", "fullbody")
@@ -291,7 +288,24 @@ async def complete_import_analysis(
         await sync_import_assets(db, work.user_id, job.id, work.context, work.result, work.media_path)
         # 用户上传原件通过基础校验后即可收藏。呈现审核可以取消自动演出资格，
         # 但不能把原件变成候选；素材歧义以及生成或处理后的候选仍走各自确认流程。
-        auto_publish = work.result.materials_complete and source.kind != "analysis" and work.context.actor_asset is None
+        if (
+            work.context.actor_asset is not None
+            and not media_passed
+            and not work.context.has_optional_actor_candidate
+            and work.result.materials_complete
+            and source.kind != "analysis"
+        ):
+            work.context.pending_application = None
+            job.context_json = work.context.model_dump(mode="json")
+            job.state, job.stage, job.error = "failed", "failed", reason
+            await notify_visuals_updated(db, work.user_id)
+            await db.commit()
+            return True
+        auto_publish = (
+            work.result.materials_complete
+            and source.kind != "analysis"
+            and (work.context.actor_asset is None or media_passed)
+        )
         if auto_publish:
             await _publish_pending_import(db, job, work.context, pending)
         else:
@@ -316,6 +330,10 @@ async def apply_import_result(user_id: int, visual_id: int, expected_revision: i
             raise VisualStateError("分析结果尚不能应用")
         if job.selections_json:
             raise VisualStateError("素材操作尚未完成")
+        if context.actor_asset is not None and not review_passes(
+            context.presentation_review, ("identity", "goal", "quality")
+        ):
+            raise VisualStateError("处理后的主体媒体尚未通过检查")
         await _publish_pending_import(db, job, context, pending)
         await notify_visuals_updated(db, user_id)
         await db.commit()

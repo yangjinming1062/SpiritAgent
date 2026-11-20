@@ -4,14 +4,14 @@ import asyncio
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
+from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from PIL import Image, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance.identity import visual_identity_is_current
-from features.media.chain import MediaCandidate, MediaChainState
+from features.media.chain import MediaChainState
 from features.media.character_images import ImageChainState
 from features.media.manual_reviews import (
     ManualAction,
@@ -20,49 +20,31 @@ from features.media.manual_reviews import (
     manual_candidate_views,
     regenerate_image_chain,
 )
-from features.media.review_contracts import candidate_review_key, needs_review, review_basis, visual_reference_basis
+from features.media.review_contracts import (
+    candidate_review_key,
+    optional_quality_choice,
+    review_basis,
+    visual_reference_basis,
+)
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
     single_slot_review_view,
 )
 
-from .creation import (
-    opening_image_hash,
-    opening_reference_hash,
-    opening_requirements_hash,
-    opening_visual_review,
-)
+from .creation import opening_image_hash, opening_reference_hash, opening_requirements_hash
 from .generation import (
     VisualCandidateResult,
     current_visual_candidate,
     restart_video_generation,
     schedule_visual_job,
+    visual_quality_candidates,
 )
 from .life import RECOVERY_WAITING, RESUME_WAITING, settle_visual_steps
 from .repository import notify_visuals_updated, visual_job_row, visual_progress, visual_snapshot
-from .schemas import OpeningReview, VisualAsset, VisualJobProgress, VisualMediaKind
+from .schemas import OpeningReview, VisualAsset
 
 _LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
-
-
-def _manual_candidates(progress: VisualJobProgress) -> tuple[VisualMediaKind, list[MediaCandidate]]:
-    chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-    if progress.candidate is not None:
-        return progress.candidate.media_kind, [*chain.candidates, current_visual_candidate(progress, chain)]
-    if chain.candidates:
-        return "video", chain.candidates
-    entries = ImageChainState.model_validate_json(progress.image_chain_json or "{}").candidates
-    if progress.pose_path and not any(entry.path == progress.pose_path for entry in entries):
-        entries = [
-            MediaCandidate(
-                path=progress.pose_path,
-                attempt=0,
-                review=opening_visual_review(progress.opening_review) if progress.opening_review else None,
-            ),
-            *entries,
-        ]
-    return "image", entries
 
 
 async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
@@ -71,31 +53,35 @@ async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:
         progress = visual_progress(row)
         if progress is None:
             raise RequestError(status_code=409, message="检查进度不可用")
-        review = progress.review_result
-        candidate_path = progress.candidate.media_path if progress.candidate else progress.pose_path
-        evidence = progress.video_evidence or progress.identity_evidence
-        media_type, candidates = _manual_candidates(progress)
-        if media_type == "video" and progress.candidate is None:
-            candidate = candidates[-1]
-            review, evidence, candidate_path = candidate.review, candidate.evidence, candidate.path
-        elif progress.image_chain_json and progress.candidate is None:
-            chain = ImageChainState.model_validate_json(progress.image_chain_json)
-            candidate = chain.best() or next(iter(chain.candidates), None)
-            if candidate:
-                review, evidence, candidate_path = candidate.review, candidate.evidence, candidate.path
+        if progress.source != "user_requested" or row.stage != "review_pending":
+            return MediaJobView(
+                id=row.id,
+                kind=row.kind,
+                state=row.state,
+                stage=row.stage,
+                revision=row.revision,
+                required_slots=1,
+                ready_slots=0,
+                complete=row.state == "succeeded",
+                slots=[],
+            )
+        media_type, candidates = visual_quality_candidates(progress)
+        options = await manual_candidate_views(candidates, media_type=media_type)
+        first = next(iter(options), None)
+        review = first.review if first else None
         candidate_key = candidate_review_key(progress.generation_id)
-        basis = review_basis(review, evidence, candidate_key if candidate_path else None)
+        basis = review_basis(review, None, candidate_key if first else None)
         return single_slot_review_view(
             row,
             media_id=str(row.id),
             review=review,
             basis_id=basis,
             candidate_key=candidate_key,
-            preview_url=client_asset_url(candidate_path) if candidate_path else None,
-            can_review=row.stage == "review_pending" and basis is not None and needs_review(review),
-            candidates=await manual_candidate_views(candidates, media_type=media_type),
+            preview_url=first.preview_url if first else None,
+            can_review=bool(first),
+            candidates=options,
             error=row.error,
-            can_regenerate=row.state in {"paused", "failed"},
+            can_regenerate=bool(options),
         )
 
 
@@ -105,12 +91,14 @@ async def manually_review_visual(
     row = await visual_job_row(db, user_id, job_id)
     progress = visual_progress(row)
     source = visual_snapshot(row).source
-    if progress is None or request.slot != 0:
+    if progress is None or progress.source != "user_requested" or row.stage != "review_pending" or request.slot != 0:
         raise RequestError(status_code=409, message="原制作进度已失效")
     if source.kind in {"actor", "cinematic"} and not await visual_identity_is_current(db, user_id, source.identity):
         raise RequestError(status_code=409, message="原任务身份已失效，不能按当前身份采纳")
-    media_type, candidates = _manual_candidates(progress)
+    media_type, candidates = visual_quality_candidates(progress)
     if request.action == "regenerate":
+        if not any(not entry.excluded and optional_quality_choice(entry.review) for entry in candidates):
+            raise RequestError(status_code=409, message="这次影像制作没有可选候选")
         if media_type == "video":
             await restart_video_generation(
                 user_id, "loop" if source.kind == "scene" else source.action.clip_kind, progress

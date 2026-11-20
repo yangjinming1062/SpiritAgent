@@ -2334,6 +2334,7 @@ def upgrade() -> None:
             server_default=sa.text("'{}'"),
             nullable=False,
         ),
+        sa.Column("selection_json", postgresql.JSONB(none_as_null=True), nullable=True),
         sa.Column("video_url", sa.Text(), nullable=True),
         sa.Column("candidate_video_url", sa.Text(), nullable=True),
         sa.Column("error_reason", sa.String(length=64), nullable=True),

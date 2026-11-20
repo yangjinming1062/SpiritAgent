@@ -19,7 +19,7 @@ from features.conversation.replies import CompanionReply, MediaBubble, MediaBubb
 from features.conversation.reply_audio import client_reply_bubbles
 from features.conversation.snapshots import ConversationSnapshot
 from features.media.continuations import MediaWait
-from features.media.contracts import VideoJobSnapshot
+from features.media.contracts import VideoJobSnapshot, video_delivery_error
 from features.media.image_jobs import (
     bind_image_reply,
     checked_image_result,
@@ -101,6 +101,7 @@ def _restore_image_artifacts(
                     state.plans[goal_id] = ImagePlan(
                         request=frozen.request,
                         prompt=frozen.prompt,
+                        goal=frozen.goal,
                         size=frozen.size,
                         subject=frozen.subject,
                         reference_image=frozen.reference_image,
@@ -110,7 +111,7 @@ def _restore_image_artifacts(
                     )
                 else:
                     state.regenerated_goals.add(goal_id)
-                if artifact.bound_message_id is None and artifact.status in {"ready", "pending", "review_pending"}:
+                if artifact.bound_message_id is None and artifact.status in {"ready", "pending"}:
                     state.required_goals.add(goal_id)
         if current_request and frozen.parent_media_id is None:
             state.image_requests[frozen.request] = frozen.media_ids
@@ -212,14 +213,13 @@ def apply_video_status(artifact: MediaArtifact, job: VideoJobSnapshot) -> None:
     artifact.status = {
         "succeeded": "ready",
         "failed": "failed",
+        "discarded": "failed",
         "result_unknown": "result_unknown",
-        "review_pending": "review_pending",
-        "confirmation": "review_pending",
     }.get(job.status, "pending")
     artifact.bound_message_id = job.reply_message_id
     artifact.media_revision = job.revision
     artifact.url = job.video_url if artifact.status == "ready" else None
-    artifact.error = job.error_message if artifact.status in {"failed", "result_unknown"} else None
+    artifact.error = None  # 用户界面按语言显示制作状态，供应商诊断留在任务内。
 
 
 async def refresh_video_media(db: AsyncSession, state: MediaTurnState) -> None:
@@ -244,7 +244,7 @@ def resolve_reply_media(state: MediaTurnState, media_id: str, media_type: str) -
     artifact = state.artifacts.get(media_id)
     if artifact is None or artifact.type != media_type:
         raise ValueError("Media reference is unknown or has the wrong type")
-    if artifact.status in {"pending", "review_pending"} and artifact.bound_message_id is not None:
+    if artifact.status == "pending" and artifact.bound_message_id is not None:
         raise ValueError("Pending video already has a delivery card; query its status without sending another")
     if artifact.type == "image" and artifact.status != "ready" and artifact.job_id is None:
         raise ValueError("Images require a completed, available asset")
@@ -290,9 +290,8 @@ async def bind_reply_videos(db: AsyncSession, message: Message, reply: Companion
             media_id=bubble.media_id,
             message_id=message.id,
         )
-        if job.status == "confirmation":
-            await accept_checked_video(db, user_id, job.id)
-            job = (await get_video_jobs(db, user_id, (job.id,)))[job.id]
+        if job.status == "succeeded" and not await accept_checked_video(db, user_id, job.id):
+            job = job.model_copy(update={"status": "failed", "video_url": None, "error_message": "本次视频未完成"})
         artifact = MediaArtifact(bubble.media_id, "video", bubble.goal_id, bubble.status, job_id=job.id)
         apply_video_status(artifact, job)
         _sync_bubble(bubble, artifact.status, artifact.url, artifact.error, artifact.media_revision)
@@ -318,10 +317,7 @@ async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
             or bubble.media_id != job.media_id
             or bubble.job_id != job.id
             or bubble.media_revision >= job.revision
-            or bubble.status not in {"pending", "review_pending", "result_unknown"}
-            and not (
-                bubble.status == "failed" and job.status == "succeeded" and job.review and job.review.human_approval
-            )
+            or bubble.status not in {"pending", "result_unknown"}
         ):
             continue
         artifact = MediaArtifact(bubble.media_id, "video", bubble.goal_id, "pending", job_id=job.id)
@@ -384,7 +380,7 @@ async def deliver_video_result(db: AsyncSession, job: VideoJobSnapshot) -> None:
                     conversation_id=conversation.id,
                     role="system",
                     subtype=MEDIA_FAILURE_SUBTYPE,
-                    content=f"[视频任务 {job.id} 未完成] {job.error_message}",
+                    content=video_delivery_error(job.status),
                 )
                 db.add(status_message)
                 await flush_conversation(db)
@@ -394,7 +390,7 @@ async def deliver_video_result(db: AsyncSession, job: VideoJobSnapshot) -> None:
             event_type="video_gen.failed",
             payload={
                 "task_id": str(job.id),
-                "error": job.error_message,
+                "error": video_delivery_error(job.status),
                 "session_id": job.session_id,
                 "status_message_id": status_message.id if status_message is not None else None,
                 "status_text": status_message.content if status_message is not None else None,
@@ -489,6 +485,9 @@ async def continue_chat_image(db: AsyncSession, wait: MediaWait) -> dict | None:
     if job is None:
         return None
     slot = job.slots[wait.context_json["slot"]]
+    if slot.status == "failed":
+        await deliver_image_job_result(db, job)
+        return {"status": "failed"}
     if slot.status != "ready" or slot.media_id not in job.bindings:
         return None
     await deliver_image_job_result(db, job)
@@ -498,7 +497,9 @@ async def continue_chat_image(db: AsyncSession, wait: MediaWait) -> dict | None:
 async def continue_chat_video(db: AsyncSession, wait: MediaWait) -> dict | None:
     jobs = await get_video_jobs(db, wait.user_id, (wait.owner_job_id,))
     current = jobs.get(wait.owner_job_id)
-    if current is None or current.structured_reply and current.reply_message_id is None:
+    if current is None or current.status in {"failed", "discarded"}:
+        return {"finished": True}
+    if current.structured_reply and current.reply_message_id is None:
         return None
     if not await accept_checked_video(db, wait.user_id, wait.owner_job_id):
         return None

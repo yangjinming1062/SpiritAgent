@@ -17,28 +17,6 @@ export const living: Pick<Dictionary, 'living'> = {
       expand: 'Read more',
       collapse: 'Show less',
       mediaPublish: 'Continue publishing',
-      mediaRecoveryHeading: 'Media posts awaiting review',
-      mediaRecoveryHint:
-        'Check the original task when its result is unknown. Publishing requires the original task to verify its permission separately.',
-      mediaRecoveryLoadFailed: 'Could not load media posts awaiting check. Refresh the posts page.',
-      mediaRecoveryStatuses: {
-        review_pending: 'Choose a candidate',
-        pending: 'The original media task is still pending',
-        ready: 'Checks passed; awaiting the original publication operation',
-        failed: 'The original media task failed',
-        unknown: 'The original media result is unconfirmed',
-        discarded: 'Discarded'
-      },
-      mediaQuery: 'Check original task',
-      mediaRefresh: 'Refresh',
-      mediaDiscard: 'Discard',
-      mediaCleanupPending: 'Publication was discarded. Some local assets still need cleanup.',
-      mediaRetryCleanup: 'Retry cleanup',
-      mediaQueryFailed: 'Could not check the original media task. Try again.',
-      mediaDiscardFailed: 'Discard did not complete. Try again.',
-      mediaDiscardTitle: 'Discard this media post?',
-      mediaDiscardDescription:
-        'This post will not be published. Its exclusive local media will be removed. The provider task may still be running, and costs already incurred will not be refunded.',
       replyPending: 'Replying…',
       replyRetry: 'Reply failed · Retry',
       replyRetryFailed: 'Retry failed. Try again.',

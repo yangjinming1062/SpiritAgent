@@ -476,12 +476,11 @@ COMPANION_MEDIA_REPLY_GUIDANCES: dict[str, str] = {
         '视频气泡写 {"type":"video","media_id":"工具返回的标识"}。发送图片或视频时通常配一句符合角色的话，用户只要媒体时也可以只发媒体气泡。'
         "媒体气泡只写 type 和 media_id；历史回复中的媒体气泡带有系统补入的 status，只记录当时的状态，"
         "新气泡不写 status、text、speech 或 URL。"
-        "标识必须来自 available_media，类型必须一致；图片只引用 ready 产物，同一 goal_id 只选一个版本。"
+        "标识必须来自 available_media，类型必须一致；同一 goal_id 自行选择一个版本交付。"
         "ready 只表示产物可交付，不表示用户要求的每个画面细节都已核实。inspection 仅在实际验图后提供结论和具体问题。"
-        "交付时，inspection 为 unavailable 须如实说明检查未完成，不把目标细节写成已确认事实；"
-        "为 revise 时按 issues 如实交代已知偏差。重做失败仍可选择已有 ready 版本，同时说明尚未满足的要求。"
-        "required_media_goals 中每个目标都需选一个气泡，pending 视频会先显示生成中的卡片并在完成后原位更新。"
-        "already_delivered 的 pending 视频已有等待卡片，只查询进度，不重复发送。"
+        "可以自然地分享 ready 作品。存在影响对方请求的缺额时简短说明，避免把未核实的画面细节写成事实。"
+        "required_media_goals 中每个目标都需选一个气泡。引用 pending 图片或视频的 media_id 会显示制作中的卡片，完成后自动原位更新。等待期间的台词只说正在做的事，成品细节留到就绪后。"
+        "already_delivered 的 pending 媒体已有等待卡片，只查询进度，不重复发送。"
         "媒体状态由工具决定，pending 不代表已生成成功；最终气泡只交付已有产物，不触发重新生成。"
     ),
     "en": (
@@ -492,14 +491,13 @@ COMPANION_MEDIA_REPLY_GUIDANCES: dict[str, str] = {
         "the character's voice; a media-only reply is also valid when the user wants only the media. "
         "Media bubbles contain only type and media_id. Media bubbles in earlier replies carry a system-added status "
         "recording their state at the time; never write status, text, speech or URL in a new bubble. "
-        "Use matching IDs and types from available_media; images must be ready. Select one version per goal_id. "
+        "Use matching IDs and types from available_media. Choose one version per goal_id yourself. "
         "ready means the output can be delivered, not that every requested visual detail has been verified. "
-        "An inspection entry supplies the verdict and concrete issues from an actual check. When delivering an image "
-        "with an unavailable inspection, state that the check did not complete instead of presenting target details "
-        "as confirmed facts. With revise, accurately explain the known issues. If a redraw fails, an existing ready "
-        "version may still be delivered while explaining which requirements remain unmet. Include every "
-        "required_media_goals entry. Pending videos display a waiting card and update in place; pending is not "
-        "generation success. Already-delivered pending videos have an existing card: query progress without sending another. "
+        "An inspection entry supplies concrete findings from an actual check. Share ready work naturally. "
+        "Briefly mention a known shortfall when it affects the request, and describe only verified visual details. "
+        "Include every required_media_goals entry. The media_id of a pending image or video creates a waiting card that "
+        "updates in place. While it is pending, describe the work as in progress. Save details of the finished piece for delivery. "
+        "Query the existing card for progress on already-delivered pending media. "
         "Final media bubbles reference existing outputs and never generate them again."
     ),
 }

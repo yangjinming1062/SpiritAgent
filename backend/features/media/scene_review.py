@@ -5,7 +5,6 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -21,7 +20,13 @@ from runtime.paid_work import GenerationWorkPaused
 from features.media.image_generation import ImageReviewUnavailableError
 from features.media.prompts import SCENE_IMAGE_REVIEW_SYSTEM
 from features.media.reference_reader import confirmed_media_reference_paths
-from features.media.review_contracts import ReviewDecision, ReviewEvidence, ReviewVerdict, VisualReview
+from features.media.review_contracts import (
+    ReviewDecision,
+    ReviewEvidence,
+    ReviewVerdict,
+    VisualReview,
+    review_failure_status,
+)
 from features.media.review_evidence import freeze_review_evidence, read_review_evidence
 
 logger = get_logger(__name__)
@@ -94,6 +99,7 @@ async def review_scene_image(
             json.loads(evidence.context_json),
             schema=SceneImageReview.model_json_schema(),
             schema_name="scene_image_review",
+            stop_on_content_policy=True,
             parse_output=parse,
             repair_prompt="只整理原返回格式及已有依据，保留 decision、goal_verdict、quality_verdict，不重新判断或补造视觉事实。",
             reference_images=await read_review_evidence(evidence),
@@ -126,5 +132,5 @@ async def review_scene_image(
             goal=previous.goal if previous else None,
             quality=previous.quality if previous else None,
             evidence=evidence,
-            status="blocked" if isinstance(exc, LlmCallBlockedError) else "invalid" if seen else "unavailable",
+            status=review_failure_status(exc, seen),
         )

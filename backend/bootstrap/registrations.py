@@ -38,21 +38,15 @@ from features.conversation.reply_media import (
 )
 from features.media.continuations import configure_continuation_handler, media_review_updated
 from features.media.delivery import set_image_result_handler, set_video_result_handler
-from features.media.image_jobs import image_job_view, manually_review_image, run_manual_image_job
+from features.media.image_jobs import image_job_view
 from features.media.manual_reviews import configure_manual_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.media.review_operations import configure_review_handler
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
-from features.media.video_jobs import manually_review_video, submit_video_job, video_review_view
+from features.media.video_jobs import video_review_view
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.posts.ports import set_post_published_handler
-from features.posts.publication import (
-    manually_review_post,
-    post_review_view,
-    publication_continue_requested,
-    resume_post_media,
-    run_manual_post_job,
-)
+from features.posts.publication import publication_continue_requested, resume_post_media
 from features.scenes.queries import scene_exists
 from features.scenes.reviews import manually_review_scene, run_manual_scene_job, scene_review_view
 from features.scenes.service import schedule_initial_scene
@@ -188,11 +182,8 @@ def register_all() -> None:
     set_video_result_handler(deliver_video_result)
     set_image_result_handler(deliver_image_job_result)
     configure_review_handler("media.image", image_job_view)
-    configure_manual_handler("media.image", image_job_view, manually_review_image, run_manual_image_job)
-    configure_manual_handler("media.video", video_review_view, manually_review_video, submit_video_job)
     configure_manual_handler("outfit.create", outfit_review_view, manually_review_outfit, run_manual_outfit_job)
     configure_manual_handler("scene.generate", scene_review_view, manually_review_scene, run_manual_scene_job)
-    configure_manual_handler("post.publish", post_review_view, manually_review_post, run_manual_post_job)
     configure_manual_handler("visual.generate", visual_review_view, manually_review_visual, run_manual_visual_job)
     configure_manual_handler(
         "appearance.fullbody_review", fullbody_review_view, manually_review_fullbody, run_manual_fullbody_job
@@ -202,7 +193,6 @@ def register_all() -> None:
     configure_review_handler("visual.generate", visual_review_view)
     configure_review_handler("visual.import", import_review_view)
     configure_review_handler("scene.generate", scene_review_view)
-    configure_review_handler("post.publish", post_review_view)
     configure_review_handler("outfit.create", outfit_review_view)
     configure_review_handler("appearance.fullbody_review", fullbody_review_view)
     configure_continuation_handler("outfit.create", continue_outfit_creation)

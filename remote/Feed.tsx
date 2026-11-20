@@ -13,8 +13,7 @@ import { isRecord } from '../shared/gateway'
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
-import { MediaReviewButton } from './MediaReviewButton'
-import type { Diary, Post, Recovery } from './types'
+import type { Diary, Post } from './types'
 import { Empty, Media, Notice, timestamp, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 // 没有游标与 has_more：整页返回表示可能还有更早的日记。
@@ -52,12 +51,10 @@ export function Posts({
   const { run, runLatest, busy, error } = useTask()
   const [posts, setPosts] = useState<Post[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
-  const [recoveries, setRecoveries] = useState<Recovery[]>([])
-  const [recoveryCursor, setRecoveryCursor] = useState<string | null>(null)
   const revision = useRef(0)
   const initialized = useRef(false)
   const postReads = useRef(new Map<string, number>())
-  const pendingRefresh = useRef({ posts: new Set<string>(), head: false, recovery: false })
+  const pendingRefresh = useRef({ posts: new Set<string>(), head: false })
   const postsRef = useRef(posts)
   postsRef.current = posts
   const onReadRef = useRef(onRead)
@@ -101,27 +98,6 @@ export function Posts({
     [api, alive]
   )
 
-  const loadRecovery = useCallback(
-    async (nextCursor?: string) => {
-      const result = await api.invoke('companion_posts.get_publication_recoveries', {
-        query: { cursor: nextCursor }
-      })
-
-      if (alive()) {
-        setRecoveries(previous =>
-          nextCursor === undefined
-            ? result.items
-            : [
-                ...previous,
-                ...result.items.filter(item => !previous.some(old => old.publication_id === item.publication_id))
-              ]
-        )
-        setRecoveryCursor(result.next_cursor)
-      }
-    },
-    [alive, api]
-  )
-
   const refreshPost = useCallback(
     async (id: string) => {
       revision.current++
@@ -154,23 +130,18 @@ export function Posts({
     if (pending.head) {
       tasks.push(() => load())
     }
-    if (pending.recovery) {
-      tasks.push(() => loadRecovery())
-    }
     pending.posts.clear()
     pending.head = false
-    pending.recovery = false
     const results = await Promise.allSettled(tasks.map(task => task()))
     const failed = results.find(result => result.status === 'rejected')
 
     if (failed?.status === 'rejected') {
       throw failed.reason
     }
-  }, [load, loadRecovery, refreshPost])
+  }, [load, refreshPost])
 
   useEffect(() => {
     pendingRefresh.current.head = true
-    pendingRefresh.current.recovery = true
     void runLatest(reconcile)
   }, [refresh, reconcile, runLatest])
 
@@ -187,12 +158,6 @@ export function Posts({
         }
         revision.current++
         pendingRefresh.current.posts.add(id)
-      } else if (
-        event.type === 'video_gen.completed' ||
-        event.type === 'video_gen.failed' ||
-        event.type === 'media.review.updated'
-      ) {
-        pendingRefresh.current.recovery = true
       } else {
         return
       }
@@ -225,113 +190,6 @@ export function Posts({
         </button>
       </div>
       {error ? <Notice>{error}</Notice> : null}
-      {recoveries.length > 0 ? (
-        <details className="card recovery">
-          <summary>待处理的媒体动态 · {recoveries.length}</summary>
-          {recoveries.map(item => (
-            <section className="recovery-item" key={item.publication_id}>
-              <strong>{item.title || '媒体动态'}</strong>
-              <span className="pill">
-                {item.media_status === 'review_pending'
-                  ? '等待选择候选'
-                  : item.media_status === 'pending'
-                    ? '制作中'
-                    : item.media_status === 'unknown'
-                      ? '结果待核对'
-                      : item.media_status === 'ready'
-                        ? '已就绪'
-                        : '制作失败'}
-              </span>
-              {item.media_url ? (
-                <Media
-                  refresh={() => {
-                    void run(() => loadRecovery())
-                  }}
-                  type={item.media_kind}
-                  url={item.media_url}
-                />
-              ) : null}
-              {item.error ? <Notice>{item.error}</Notice> : null}
-              {(item.media_status === 'review_pending' || item.media_status === 'failed') && item.media_job_id ? (
-                <MediaReviewButton api={api} jobId={item.media_job_id} onChanged={() => loadRecovery()} />
-              ) : null}
-              {item.can_publish ? (
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      const job = await api.invoke('media.get_media_job', { path: { job_id: item.publication_id } })
-                      await api.invoke('media.continue_media_business', {
-                        path: { job_id: item.publication_id },
-                        body: { action: 'publish_post', expected_revision: job.revision }
-                      })
-                      await loadRecovery()
-                      await load()
-                    })
-                  }
-                  type="button"
-                >
-                  继续发布
-                </button>
-              ) : null}
-              <div className="button-row">
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    run(async () => {
-                      const next = await api.invoke('companion_posts.query_publication_recovery', {
-                        path: { publication_id: item.publication_id }
-                      })
-
-                      if (alive()) {
-                        const closed = ['published', 'partial', 'failed', 'blocked'].includes(next.status)
-                        setRecoveries(previous =>
-                          previous.flatMap(old =>
-                            old.publication_id === next.publication_id ? (closed ? [] : [next]) : [old]
-                          )
-                        )
-                        if (['published', 'partial'].includes(next.status)) {
-                          await load()
-                        }
-                      }
-                    })
-                  }
-                  type="button"
-                >
-                  查看最新进度
-                </button>
-                {item.can_discard ? (
-                  <button
-                    className="danger"
-                    disabled={busy}
-                    onClick={() =>
-                      run(async () => {
-                        await api.invoke('companion_posts.discard_publication', {
-                          path: { publication_id: item.publication_id }
-                        })
-                        await loadRecovery()
-                      })
-                    }
-                    type="button"
-                  >
-                    放弃
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          ))}
-          {recoveryCursor !== null ? (
-            <button
-              className="load-more"
-              disabled={busy}
-              onClick={() => run(() => loadRecovery(recoveryCursor))}
-              type="button"
-            >
-              更多制作记录
-            </button>
-          ) : null}
-        </details>
-      ) : null}
       {posts.map(post => (
         <PostCard api={api} key={post.id} post={post} refresh={() => refreshPost(post.id)} />
       ))}

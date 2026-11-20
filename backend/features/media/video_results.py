@@ -40,7 +40,8 @@ async def receive_video_attempt(
             raise
     else:
         if status.status == "failed":
-            reason, can_fallback = video_provider_failure_reason(status.error), True
+            reason = video_provider_failure_reason(status.error)
+            can_fallback = reason != "content_policy_blocked"
         elif status.status == "succeeded" and status.download_url:
             chain.result_url = status.download_url
         else:

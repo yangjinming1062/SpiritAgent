@@ -15,11 +15,14 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
+from features.appearance.identity import visual_identity_is_current
+from features.configuration.settings.values import get_user_setting_bool
 from features.entries import queries as entries_queries
 from features.entries import service as entries_service
 from features.entries.contracts import CommentView, EntryError, EntryNotFoundError, EntryView, PostContentType
 from features.media.continuations import finish_media_operation
-from features.media.review_contracts import VisualReview, review_passes
+from features.media.identity_contracts import VisualIdentitySnapshot
+from features.media.review_contracts import MediaSelection, VisualReview
 from features.media.review_evidence import review_media_intact
 from features.posts.ports import notify_post_published
 from features.posts.publication_models import PostPublication
@@ -90,6 +93,12 @@ async def list_posts(
         raise PostError(str(exc)) from exc
 
 
+async def posts_policy_ok(db: AsyncSession, user_id: int) -> bool:
+    return await user_is_active(db, user_id) and await get_user_setting_bool(
+        db, user_id, "companion.posts_enabled", default=True
+    )
+
+
 async def reserve_publication(db: AsyncSession, user_id: int, *, activity_date: date) -> PostPublication:
     await lock_domain(db, user_id, "entries")
     if not await user_is_active(db, user_id):
@@ -139,7 +148,6 @@ async def commit_publication(
     audio_url: str | None,
     context: PostContext,
     partial: bool,
-    media_review: VisualReview | None = None,
 ) -> EntryView:
     task = await db.scalar(
         select(PostPublication)
@@ -156,6 +164,21 @@ async def commit_publication(
         await notify_post_published(db, row)
         await db.commit()
         return row
+    if (
+        task.state in {"failed", "cancelled"}
+        or not await posts_policy_ok(db, task.user_id)
+        or await publication_quota_remaining(db, task.user_id, exclude_publication_id=task.id) <= 0
+    ):
+        raise PostBlockedError("发布条件已变化")
+    progress = task.checkpoint or {}
+    depicts_self = bool((task.plan_json or {}).get("depicts_self"))
+    identity = progress.get("identity")
+    if depicts_self and content_type in {PostContentType.IMAGE, PostContentType.VIDEO} and not identity:
+        raise PostBlockedError("缺少本次出镜身份")
+    if identity and not await visual_identity_is_current(
+        db, task.user_id, VisualIdentitySnapshot.model_validate(identity)
+    ):
+        raise PostBlockedError("发布时角色身份已变化")
     if content_type != PostContentType.TEXT and not media_url:
         raise PostError("主媒体尚未完成，不能发布动态")
     if content_type == PostContentType.TEXT and (media_url or audio_url):
@@ -166,14 +189,22 @@ async def commit_publication(
         if path is not None and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != task.user_id):
             raise PostError("动态只能引用本账户的正式媒体资产")
     if content_type in {PostContentType.IMAGE, PostContentType.VIDEO}:
-        required = (
-            ("identity", "goal", "quality") if (task.plan_json or {}).get("depicts_self") else ("goal", "quality")
-        )
-        if not review_passes(media_review, required) or not await asyncio.to_thread(
+        required = ("identity", "goal", "quality") if depicts_self else ("goal", "quality")
+        if content_type == PostContentType.VIDEO:
+            required = (*required, "opening")
+        if (
+            progress.get("media_url") != media_url
+            or not progress.get("media_review")
+            or not progress.get("media_selection")
+        ):
+            raise PostError("原制作任务缺少该成品的交付依据")
+        selection = MediaSelection.model_validate(progress["media_selection"])
+        media_review = VisualReview.model_validate(progress["media_review"])
+        if not selection.permits(media_review, required) or not await asyncio.to_thread(
             review_media_intact, media_review.evidence, media_url
         ):
             raise PostError("媒体检查尚未通过或证据已变化，内容未发布")
-    task.review_result_json = media_review.model_dump(mode="json") if media_review else {}
+        task.review_result_json = {"review": progress["media_review"], "selection": progress["media_selection"]}
     row = await entries_service.create_post(
         db,
         task.user_id,

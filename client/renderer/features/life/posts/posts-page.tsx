@@ -20,7 +20,6 @@ import { useForegroundRestored, useReadingForeground } from '../use-reading-fore
 import { useReadingReceipt } from '../use-reading-receipt'
 import { useReadingReload } from '../use-reading-reload'
 
-import { PostMediaRecovery } from './post-media-recovery'
 import styles from './posts.module.css'
 import {
   $posts,
@@ -136,15 +135,9 @@ function PostsContent({
 
   const getContentTypeLabel = (kind: string): string => t.contentTypeLabels[kind] ?? t.contentTypeFallback
 
-  const recovery =
-    authState.kind === 'authenticated' ? (
-      <PostMediaRecovery key={authState.snapshot.sessionId} reloadKey={reloadKey} />
-    ) : null
-
   if (posts.length === 0) {
     return (
       <div className={styles.list}>
-        {recovery}
         <div className={cn('liquid-glass-card', styles.empty)} role={loading || loadFailed ? 'status' : undefined}>
           {loading ? (
             <LoadingBlock label={t.loading} />
@@ -165,7 +158,6 @@ function PostsContent({
 
   return (
     <div className={styles.list}>
-      {recovery}
       {formattedPosts.map(m => {
         const expanded = expandedId === m.id
 

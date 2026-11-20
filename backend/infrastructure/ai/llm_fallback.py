@@ -71,6 +71,7 @@ async def execute_with_fallback[P: BaseProvider, T](
     *,
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
+    stop_on_content_policy: bool = False,
 ) -> T:
     return await _execute_with_fallback(
         chain,
@@ -78,6 +79,7 @@ async def execute_with_fallback[P: BaseProvider, T](
         lambda provider, _has_next: call_fn(provider),
         user_id=user_id,
         stream_started=stream_started,
+        stop_on_content_policy=stop_on_content_policy,
     )
 
 
@@ -90,6 +92,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
     stream_started: Callable[[], bool] | None,
     has_later_attempts: bool = False,
     prefer_content_policy_error: bool = True,
+    stop_on_content_policy: bool = False,
 ) -> T:
     """按链调用；结果未知、成品下载失败或流已开始后停止。独立生成默认优先保留内容策略拦截供提示词清洗，聊天按末项实际错误收尾。"""
     if not chain:
@@ -143,7 +146,12 @@ async def _execute_with_fallback[P: BaseProvider, T](
             )
             next_config = chain[idx + 1] if idx + 1 < chain_size else None
             started_streaming = stream_started is not None and stream_started()
-            if next_config is not None and classified.should_fallback and not started_streaming:
+            can_fallback = (
+                classified.should_fallback
+                and not started_streaming
+                and not (stop_on_content_policy and classified.reason == FailoverReason.content_policy_blocked)
+            )
+            if next_config is not None and can_fallback:
                 logger.warning(
                     "provider failed; falling back",
                     extra={
@@ -160,7 +168,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
                 log_failure(phase="chain_fallback", next_provider=next_config.provider_name)
                 continue
             log_failure(phase="chain_result", total_chain_latency_ms=int((time.monotonic() - chain_started) * 1000))
-            if content_policy_error is not None and classified.should_fallback and not started_streaming:
+            if content_policy_error is not None and can_fallback:
                 raise content_policy_error
             raise
         duration_ms = round((time.monotonic() - started) * 1000)

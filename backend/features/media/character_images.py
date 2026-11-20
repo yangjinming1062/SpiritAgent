@@ -50,8 +50,16 @@ from features.media.image_generation import (
     generate_images,
     resolve_image_gen_chain,
 )
-from features.media.review_contracts import ReviewDecision, ReviewEvidence, VisualReview, needs_review, review_passes
+from features.media.review_contracts import (
+    MediaSelection,
+    ReviewDecision,
+    ReviewEvidence,
+    VisualReview,
+    needs_review,
+    review_passes,
+)
 from features.media.scene_review import review_scene_image, scene_identity_reference
+from features.media.selection import CandidateReviewBlocked, select_delivery
 
 logger = get_logger(__name__)
 
@@ -70,6 +78,7 @@ class ReviewedImageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     purpose: Literal["character", "plain"] = "character"
+    delivery_goal: str | None = None
     prompt: str
     size: str
     aspect_ratio: str | None = None
@@ -130,6 +139,39 @@ class ImageChainState(MediaChainState):
         super().resume_download()
         self.remaining_slots = []
 
+    @property
+    def daily_goal(self) -> str | None:
+        return self.inputs.delivery_goal if isinstance(self.inputs, ReviewedImageInput) else None
+
+    def pose_correction(self, index: int, slot: int) -> tuple[bool, str | None]:
+        """从该槽已冻结的原始检查决定本地纠偏的参考职责和构图要求。"""
+        inputs = self.inputs
+        if (
+            not isinstance(inputs, ReviewedImageInput)
+            or not inputs.delivery_goal
+            or not inputs.secondary_reference_image
+            or inputs.image_edit
+            or not self.needs_pose_correction(index, slot)
+            or self.providers[index].provider != "local"
+        ):
+            return False, None
+        instruction = self.local_correction.instructions.get(slot)
+        if (
+            instruction
+            and inputs.identity_reference_mode == "portrait_and_outfit"
+            and not inputs.prefer_transparent_background
+            and self.providers[index].background != "transparent"
+        ):
+            return True, f"{inputs.delivery_goal}。{instruction}"
+        return True, None
+
+    def delivery_dimensions(self) -> tuple[str, ...]:
+        return (
+            ("identity", "goal", "quality")
+            if isinstance(self.inputs, ReviewedImageInput) and self.inputs.purpose == "character"
+            else ("goal", "quality")
+        )
+
     def _goal_enabled(self) -> bool:
         return isinstance(self.inputs, ReviewedImageInput) and self.inputs.goal_review == "required"
 
@@ -144,6 +186,8 @@ class ImageChainState(MediaChainState):
         return self.requires_review() and needs_review(candidate.review)
 
     def can_retry_goal_review(self) -> bool:
+        if self.daily_goal:
+            return False
         return (
             self.phase in {"evaluating", "complete"}
             and not (self.is_correction_attempt(self.next_index) and not self.stop_reason and not self.receive_only)
@@ -170,6 +214,8 @@ class ImageChainState(MediaChainState):
         return self.providers[candidate.attempt].generation_origin(ServiceType.image_gen)
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
+        if slot in self.selections and self.daily_goal:
+            return self.delivery_candidate(slot, self.delivery_dimensions())
         if not self.requires_review():
             return next((c for c in self.candidates if c.slot == slot and c.accepted is True), None)
         if isinstance(self.inputs, SceneImageInput):
@@ -189,6 +235,10 @@ class ImageChainState(MediaChainState):
         return self.best_qualified(slot)
 
     def needs_next(self, slot: int = 0) -> bool:
+        if self.daily_goal and any(
+            c.slot == slot and c.review and c.review.status != "complete" for c in self.candidates
+        ):
+            return False
         if isinstance(self.inputs, SceneImageInput) or not self.requires_review():
             return not self.stop_reason and self.next_index < len(self.providers) and self.best(slot) is None
         if self._goal_enabled():
@@ -358,9 +408,47 @@ async def _save_progress(state: ImageChainState, writer: ImageProgressWriter | N
         await writer(state)
 
 
-async def _complete_images(state: ImageChainState, writer: ImageProgressWriter | None) -> list[str]:
+async def _complete_images(
+    state: ImageChainState,
+    writer: ImageProgressWriter | None,
+    *,
+    user_id: int,
+    task: AiTaskKey,
+    before_submit: Callable[[], Awaitable[None]] | None,
+) -> list[str]:
     if state.inputs is None:
         raise ImageGenerationError("图片任务缺少生成输入")
+    if goal := state.daily_goal:
+        for slot in range(state.inputs.n):
+            if slot in state.selections:
+                continue
+            candidates = [c for c in state.candidates if c.slot == slot]
+            if any(c.review and c.review.status == "blocked" for c in candidates):
+                state.selections[slot] = MediaSelection(mode="not_delivered", reason="检查服务已拦截本次候选")
+                continue
+            if state.unknown_submission() or state.stop_reason in {"content_policy_blocked", "goal_review_blocked"}:
+                candidates = [c for c in candidates if c.review and c.review.model_verdict == "pass"]
+            try:
+                choice = await select_delivery(
+                    candidates,
+                    user_id=user_id,
+                    task=task,
+                    goal=goal,
+                    required=state.delivery_dimensions(),
+                    before_submit=before_submit,
+                )
+            except CandidateReviewBlocked as exc:
+                state.stop_reason = "goal_review_blocked"
+                choice = MediaSelection(mode="not_delivered", reason=str(exc))
+            state.selections[slot] = choice
+            await _save_progress(state, writer)
+        state.finish(state.inputs.n)
+        await _save_progress(state, writer)
+        return [
+            c.path
+            for slot in range(state.inputs.n)
+            if (c := state.delivery_candidate(slot, state.delivery_dimensions()))
+        ]
     selected = [candidate.path for slot in range(state.inputs.n) if (candidate := state.best(slot)) is not None]
     if any(candidate.review is not None and candidate.review.status == "blocked" for candidate in state.candidates):
         state.phase, state.stop_reason = "evaluating", "goal_review_blocked"
@@ -371,7 +459,7 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
         await _save_progress(state, writer)
         if selected:
             return selected
-        raise ImageReviewUnavailableError("图片已保留，可以查看候选后采用或重新生成")
+        raise ImageReviewUnavailableError("图片尚未通过本次制作的必要检查")
     if not selected:
         blocked = state.stop_reason == "goal_review_blocked"
         if blocked or (
@@ -387,6 +475,8 @@ async def _complete_images(state: ImageChainState, writer: ImageProgressWriter |
                 )
         if state.stop_reason == "result_unknown":
             raise ImageGenerationError("图片生成结果未知，请核对供应商任务后再决定是否重做", result_unknown=True)
+        if state.stop_reason == "result_url_unavailable":
+            raise ImageGenerationError("原图片下载地址已不可用")
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
@@ -449,6 +539,7 @@ async def generate_reviewed_images(
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit",
     identity_required: bool = True,
     goal_review: Literal["none", "required"] = "required",
+    delivery_goal: str | None = None,
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
     store_attempts: int = 3,
@@ -480,6 +571,7 @@ async def generate_reviewed_images(
                 raise ImageGenerationError(str(exc)) from exc
         inputs = ReviewedImageInput(
             purpose="character" if identity_required else "plain",
+            delivery_goal=delivery_goal,
             prompt=prompt,
             size=size,
             aspect_ratio=aspect_ratio,
@@ -705,9 +797,9 @@ async def _run_image_chain(
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
         await _save_progress(state, save_progress)
-        return await _complete_images(state, save_progress)
+        return await _complete_images(state, save_progress, user_id=user_id, task=task, before_submit=before_submit)
     if state.phase == "complete":
-        return await _complete_images(state, save_progress)
+        return await _complete_images(state, save_progress, user_id=user_id, task=task, before_submit=before_submit)
     # 参考图在链运行内不变：物化一次供提交与检查复用，避免逐候选重复读盘/解码。
     asset_memo: dict[str, tuple[bytes, str]] = {}
     uri_memo: dict[str, str] = {}
@@ -808,19 +900,31 @@ async def _run_image_chain(
                                 break
                             retryable_download = isinstance(exc, httpx.TransportError) or (
                                 isinstance(exc, httpx.HTTPStatusError)
-                                and exc.response.status_code in {408, 429, 500, 502, 503, 504}
+                                and (exc.response.status_code in {408, 425, 429} or exc.response.is_server_error)
                             )
-                            if retryable_download and attempt + 1 < max(1, store_attempts):
-                                await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
-                                continue
-                            if isinstance(exc, httpx.TransportError | httpx.HTTPStatusError):
+                            if retryable_download:
+                                if attempt + 1 < max(1, store_attempts):
+                                    await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
+                                    continue
                                 raise ImageResultDownloadError(
                                     "图片已生成，但成品下载未完成；保留原结果等待继续接收",
                                     internal=f"{type(exc).__name__}: {exc}",
                                 ) from exc
+                            if isinstance(exc, httpx.HTTPStatusError):
+                                state.resume_download()
+                                state.stop_reason = "result_url_unavailable"
+                                slot = state.pending_slots[0]
+                                if state.daily_goal and not any(c.slot == slot for c in state.candidates):
+                                    state.selections[slot] = MediaSelection(
+                                        mode="not_delivered",
+                                        reason=f"原图片下载失败（HTTP {exc.response.status_code}）",
+                                    )
+                                break
                             if state.candidates:
                                 state.stop_reason = "storage_failed"
-                                return await _complete_images(state, save_progress)
+                                return await _complete_images(
+                                    state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                                )
                             raise
                     if path is None:
                         if state.pending_path:
@@ -842,7 +946,8 @@ async def _run_image_chain(
                 for candidate in state.candidates:
                     if candidate.evaluated:
                         if (
-                            state._goal_enabled()
+                            not state.daily_goal
+                            and state._goal_enabled()
                             and (candidate.review is None or candidate.review.goal is None)
                             and not state.stop_reason
                         ):
@@ -863,7 +968,7 @@ async def _run_image_chain(
                         candidate.review = await review_scene_image(
                             user_id,
                             uri,
-                            generation_prompt=inputs.prompt,
+                            generation_prompt=state.daily_goal or inputs.prompt,
                             reference_uri=review_identity_uri or "",
                             before_submit=before_submit,
                             task=task,
@@ -882,7 +987,7 @@ async def _run_image_chain(
                         candidate.review = await review_media_quality(
                             user_id,
                             (uri,),
-                            generation_prompt=inputs.prompt,
+                            generation_prompt=state.daily_goal or inputs.prompt,
                             task=task,
                             evidence=candidate.evidence or (candidate.review.evidence if candidate.review else None),
                             previous=candidate.review,
@@ -920,7 +1025,7 @@ async def _run_image_chain(
                             uri,
                             secondary_uri=identity_secondary_uri,
                             environment_uri=review_environment_uri,
-                            generation_prompt=inputs.prompt,
+                            generation_prompt=state.daily_goal or inputs.prompt,
                             identity_reference_mode=inputs.identity_reference_mode,
                             previous_failure=previous_failure,
                             task=task,
@@ -932,6 +1037,7 @@ async def _run_image_chain(
                         failure = review.failure
                         candidate.review = VisualReview(
                             required=("identity", "goal", "quality"),
+                            correction_instruction=review.goal.correction_instruction if review.goal else "",
                             evidence=review.evidence,
                             identity=ReviewDecision(verdict=review.identity_verdict, reason=review.identity_reason)
                             if review.identity_verdict and review.identity_reason
@@ -951,11 +1057,35 @@ async def _run_image_chain(
                             status=review.failure.status if review.failure else "complete",
                         )
                         candidate.evaluated = True
+                    if state.daily_goal:
+                        if candidate.review.status == "blocked":
+                            state.stop_reason = "goal_review_blocked"
+                            state.finish(inputs.n)
+                            await _save_progress(state, save_progress)
+                            return await _complete_images(
+                                state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                            )
+                        if candidate.review.model_verdict == "pass" and candidate.slot not in state.selections:
+                            choice = await select_delivery(
+                                [candidate],
+                                user_id=user_id,
+                                task=task,
+                                goal=state.daily_goal,
+                                required=state.delivery_dimensions(),
+                                before_submit=before_submit,
+                            )
+                            if choice.mode == "passed":
+                                state.selections[candidate.slot] = choice
+                        await _save_progress(state, save_progress)
+                        continue
                     repair_planned = (
                         inputs.n == 1
                         and not review_only
                         and candidate.attempt == state.active_index
-                        and state.plan_local_correction(candidate.review.correction_notes())
+                        and state.plan_local_correction(
+                            candidate.review.correction_notes(),
+                            instructions={candidate.slot: candidate.review.correction_instruction},
+                        )
                     )
                     if repair_planned:
                         configs.clear()
@@ -968,12 +1098,46 @@ async def _run_image_chain(
                             "goal_review_blocked" if candidate.review.status == "blocked" else "review_pending"
                         )
                     await _save_progress(state, save_progress)
+                incomplete = [
+                    c
+                    for c in state.candidates
+                    if c.review and c.review.status in {"unavailable", "invalid"} and not c.review_retried
+                ]
+                if incomplete and state.stop_reason in {
+                    "",
+                    "review_pending",
+                    "goal_review_invalid",
+                    "result_url_unavailable",
+                }:
+                    if state.stop_reason != "result_url_unavailable":
+                        state.stop_reason = ""
+                    for candidate in incomplete:
+                        candidate.review_retried = True
+                        candidate.evaluated = False
+                    await _save_progress(state, save_progress)
+                    continue
+                if state.daily_goal and not state.remaining_slots:
+                    repairs = {
+                        c.slot: c.review
+                        for c in state.candidates
+                        if c.attempt == state.active_index and c.review and state.best(c.slot) is None
+                    }
+                    notes = (review.correction_notes() for review in repairs.values())
+                    if state.plan_local_correction(
+                        " ".join(dict.fromkeys(filter(None, notes)))[:960],
+                        instructions={slot: review.correction_instruction for slot, review in repairs.items()},
+                    ):
+                        configs.clear()
                 state.phase = "ready"
                 await _save_progress(state, save_progress)
                 if review_only:
-                    return await _complete_images(state, save_progress)
+                    return await _complete_images(
+                        state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                    )
             if state.stop_reason:
-                return await _complete_images(state, save_progress)
+                return await _complete_images(
+                    state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                )
             if state.remaining_slots:
                 if state.active_index is None:
                     raise ImageGenerationError("图片任务缺少当前供应商")
@@ -982,7 +1146,9 @@ async def _run_image_chain(
                 state.remaining_slots = [slot for slot in range(inputs.n) if state.needs_next(slot)]
                 index = state.next_index
             if not state.remaining_slots:
-                return await _complete_images(state, save_progress)
+                return await _complete_images(
+                    state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                )
             config = configs.get(index) or await resolve_frozen_media_provider(
                 user_id, "image_gen", state.providers[index]
             )
@@ -1002,8 +1168,9 @@ async def _run_image_chain(
             try:
                 provider = state.providers[index]
                 background = provider.background
+                recompose_pose, composition_goal = state.pose_correction(index, slots[0])
                 result = await generate_images(
-                    state.generation_prompt(index, inputs.prompt),
+                    state.generation_prompt(index, inputs.prompt, slot=slots[0]),
                     size=provider.image_size or inputs.size,
                     n=len(slots),
                     user_id=user_id,
@@ -1013,6 +1180,11 @@ async def _run_image_chain(
                     environment_reference_image=environment_uri,
                     image_edit=inputs.image_edit if isinstance(inputs, ReviewedImageInput) else False,
                     provider_config=config,
+                    noise_seeds=tuple(state.local_seed(index, slot) for slot in slots)
+                    if state.daily_goal and provider.provider == "local"
+                    else (),
+                    recompose_pose=recompose_pose,
+                    composition_goal=composition_goal,
                     background=background,
                     prefer_transparent_background=isinstance(inputs, ReviewedImageInput)
                     and inputs.prefer_transparent_background,
@@ -1030,7 +1202,9 @@ async def _run_image_chain(
                 await _save_progress(state, save_progress)
                 if not can_continue or state.next_index == len(state.providers):
                     if state.candidates:
-                        return await _complete_images(state, save_progress)
+                        return await _complete_images(
+                            state, save_progress, user_id=user_id, task=task, before_submit=before_submit
+                        )
                     raise
                 continue
             state.pending_urls = result.urls[: len(slots)]

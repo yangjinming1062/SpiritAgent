@@ -2,37 +2,22 @@
 
 from collections.abc import Collection
 
-from infrastructure.assets import asset_store
-from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chain import MediaChainState
+from .chain import MediaChainState, video_failure_message
 from .contracts import ReleasedVideoJobs, VideoJobAssetReferences, VideoJobSnapshot
 from .identity_contracts import VisualIdentitySnapshot
 from .models import VideoGenJob
 from .reference_reader import visual_identity_is_current
-from .review_contracts import VisualReview
+from .review_contracts import MediaSelection, VisualReview
 from .video_queue.contracts import VideoQueueInfo
 from .video_queue.service import video_attempt_queue_info
 
 
 def video_job_snapshot(row: VideoGenJob, queue_info: VideoQueueInfo | None = None) -> VideoJobSnapshot:
-    state = MediaChainState.model_validate(row.checkpoint or {})
-    path = row.video_url or row.candidate_video_url
-    parsed = parse_companion_asset_path(path)
-    available = (
-        parsed is not None
-        and parsed[0] == row.user_id
-        and asset_store.resolve_companion_asset_path(*parsed) is not None
-    )
-    candidate_ready = False
-    if available and row.state not in ("failed", "cancelled"):
-        candidate_ready = row.state == "succeeded" or any(
-            c.review and c.review.verdict == "pass" and c.path == path for c in state.candidates
-        )
     return VideoJobSnapshot(
         id=row.id,
         user_id=row.user_id,
@@ -47,11 +32,11 @@ def video_job_snapshot(row: VideoGenJob, queue_info: VideoQueueInfo | None = Non
             row.state, row.stage if row.state in {"running", "paused"} else row.state
         ),
         video_url=row.video_url,
-        candidate_video_url=row.candidate_video_url,
         error_reason=row.error_reason,
         error_message=row.error,
         cleanup_requested_at=row.cleanup_requested_at,
-        candidate_ready=candidate_ready,
+        receive_only=(row.checkpoint or {}).get("receive_only", False),
+        selection=MediaSelection.model_validate(row.selection_json) if row.selection_json else None,
         review=VisualReview.model_validate(row.review_result_json) if row.review_result_json else None,
         video_queue=queue_info if row.state not in ("succeeded", "failed", "cancelled") else None,
     )
@@ -99,6 +84,17 @@ async def pending_conversation_video_jobs(
     return await _video_job_snapshots(db, list(await db.scalars(statement.order_by(VideoGenJob.id))))
 
 
+def reject_video_delivery(row: VideoGenJob, reason: str, decision: MediaSelection | None = None) -> None:
+    row.state, row.stage, row.error_reason, row.error = "failed", "failed", reason, video_failure_message(reason)
+    chain = MediaChainState.model_validate(row.checkpoint or {})
+    chain.selections[0] = decision or MediaSelection(mode="not_delivered", reason=row.error)
+    row.selection_json = chain.selections[0].model_dump(mode="json")
+    chain.finish()
+    row.checkpoint = chain.model_dump(mode="json")
+    row.video_url = row.candidate_video_url = None
+    row.review_result_json = {}
+
+
 async def bind_video_reply(
     db: AsyncSession, *, user_id: int, session_id: str, job_id: int, media_id: str, message_id: int
 ) -> VideoJobSnapshot:
@@ -108,15 +104,13 @@ async def bind_video_reply(
     if row.reply_message_id not in (None, message_id) and row.state not in ("succeeded", "failed", "unknown"):
         raise ValueError("Pending video already belongs to another reply")
     frozen_identity = row.params_json.get("identity_snapshot")
-    if frozen_identity and not await visual_identity_is_current(
-        db, user_id, VisualIdentitySnapshot.model_validate(frozen_identity)
+    if (
+        row.reply_message_id is None
+        and row.state not in {"failed", "cancelled", "unknown"}
+        and frozen_identity
+        and not await visual_identity_is_current(db, user_id, VisualIdentitySnapshot.model_validate(frozen_identity))
     ):
-        row.state, row.stage, row.error_reason, row.error = (
-            "paused",
-            "confirmation",
-            "identity_changed",
-            "原任务身份已失效，候选已保留，不能按当前身份交付",
-        )
+        reject_video_delivery(row, "identity_changed")
     if row.reply_message_id is None and row.structured_reply:
         row.reply_message_id = message_id
     emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})

@@ -29,5 +29,12 @@ async def _handler(user_id: int, job_id: int) -> ReviewQuery:
 async def query_media_job(user_id: int, job_id: int) -> MediaJobView:
     query = await _handler(user_id, job_id)
     view = await query(user_id, job_id)
-    view.continuation_actions = await available_media_actions(user_id, job_id)
+    if view.kind in {"media.image", "media.video"}:
+        for slot in view.slots:
+            slot.review = None
+        view.image_request = None
+        view.bindings = {}
+        return view
+    if view.kind == "outfit.create" and view.state == "paused" and view.stage == "confirmation":
+        view.continuation_actions = await available_media_actions(user_id, job_id)
     return view

@@ -1,10 +1,4 @@
 export {
-  discardMediaPublication,
-  listMediaPublications,
-  type MediaPublicationRecovery,
-  queryMediaPublication
-} from './recovery'
-export {
   $posts,
   $postsHasMore,
   $postsHasUnread,

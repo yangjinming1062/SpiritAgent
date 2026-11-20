@@ -132,7 +132,7 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 全身及衣柜需要数据目录中的 `models/<matting_model>.onnx`，默认文件名和解析见 [matting.py](infrastructure/video_processing/matting.py)，镜像不自动下载。新付费阶段前检查模型，已有源素材保留供恢复；本地抠图入口为 [image.py](infrastructure/video_processing/image.py)。
 
-视频身份审核可从 [UltraFace 项目](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB) 获取 RFB-640 ONNX 权重，在数据目录的 `models/` 中以 `face-detector-rfb-640.onnx` 保存。后端通过 ONNX Runtime 在 CPU 上定位清晰面部。缺少权重或无法可靠定位时沿用全帧证据。
+Backend 镜像在构建时按固定 SHA-256 安装 UltraFace RFB-640（MIT）和 Google MoveNet SinglePose Lightning 的 Xenova ONNX 转换版（Apache-2.0），随镜像保存许可证。CPU 在原视频中定位面部并测量可信的下肢运动。源码运行可将 `backend/Dockerfile` 的 `review-models` 阶段导出到数据目录的 `models/`，同名本地文件优先。缺少模型或无法可靠定位时仍检查原画面和分区运动。权重来源见 [UltraFace](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB) 与 [MoveNet](https://huggingface.co/Xenova/movenet-singlepose-lightning)。
 
 ### 免费社交资讯来源
 

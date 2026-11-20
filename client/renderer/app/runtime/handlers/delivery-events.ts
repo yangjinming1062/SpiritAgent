@@ -11,7 +11,7 @@ import {
 } from '@/features/conversation'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
-import { notify, notifyError } from '@/shared/store/notifications'
+import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 import { isResourceId } from '../../../../../shared/resource-id'
@@ -144,10 +144,6 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
           payload.status_message_id
         )
         rememberPendingMessage(payload.session_id, payload.status_text)
-      }
-
-      if (payload.error && !$screenLocked.get()) {
-        notifyError(payload.error, getStrings().common.operationFailed)
       }
 
       break

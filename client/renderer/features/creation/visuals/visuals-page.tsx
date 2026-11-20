@@ -26,6 +26,7 @@ import {
   StatusToggle
 } from '@/ui'
 
+import { showVisualJobActivity } from '../../../../../shared/visuals'
 import { $actions, refreshActions } from '../actions'
 import { $sceneLibrary, loadSceneLibrary } from '../environment'
 import { $outfits, hydrateWardrobe } from '../wardrobe'
@@ -172,13 +173,10 @@ export function VisualsPage(): React.JSX.Element {
   const detail = detailState?.id === selectedId ? detailState.detail : null
   const currentVisualId = projection?.current_visual?.id ?? null
   const defaultVisualId = projection?.default_wallpaper?.visual.id ?? null
-  const activeJobs = jobs.filter(job => !['succeeded', 'cancelled'].includes(job.state))
+  const activeJobs = jobs.filter(showVisualJobActivity)
 
-  const attentionJobs = activeJobs.filter(
-    job => job.state === 'failed' || job.state === 'unknown' || job.stage === 'review_pending'
-  )
-
-  const workingJobs = activeJobs.filter(job => !attentionJobs.includes(job))
+  const attentionJobs = activeJobs.filter(job => job.state === 'failed' || job.state === 'unknown')
+  const workingJobs = activeJobs.filter(job => job.stage !== 'review_pending' && !attentionJobs.includes(job))
 
   const submitFilters = (): void => {
     updateVisualsUi({ query: draftQuery.trim(), source: draftSource.trim(), page: 0 })
@@ -401,6 +399,16 @@ export function VisualsPage(): React.JSX.Element {
                 <ImagePlus aria-hidden="true" className="size-3.5" />
                 {t.composer.upload}
               </button>
+              {activeJobs.length > 0 ? (
+                <button
+                  aria-expanded={queueOpen}
+                  className={BTN_GHOST}
+                  onClick={() => setQueueOpen(value => !value)}
+                  type="button"
+                >
+                  {queueOpen ? t.jobsHide : t.jobsShow}
+                </button>
+              ) : null}
               {hasFilters ? (
                 <button className={BTN_GHOST} onClick={clearFilters} type="button">
                   {t.clearFilters}
@@ -425,26 +433,16 @@ export function VisualsPage(): React.JSX.Element {
               : null,
             attentionJobs.length > 0
               ? {
-                  state: attentionJobs.some(job => job.stage !== 'review_pending') ? 'error' : 'review',
+                  state: 'error',
                   title: t.jobsTitle,
-                  description: attentionJobs.map(job => visualJobLabel(job, t)).join(' · '),
-                  actions: (
-                    <button className={BTN_SUBTLE} onClick={() => setQueueOpen(value => !value)} type="button">
-                      {queueOpen ? t.jobsHide : t.jobsShow}
-                    </button>
-                  )
+                  description: attentionJobs.map(job => visualJobLabel(job, t)).join(' · ')
                 }
               : null,
             workingJobs.length > 0
               ? {
                   state: workingJobs.some(job => job.state === 'paused') ? 'paused' : 'working',
                   title: t.jobsTitle,
-                  description: workingJobs.map(job => visualJobLabel(job, t)).join(' · '),
-                  actions: (
-                    <button className={BTN_SUBTLE} onClick={() => setQueueOpen(value => !value)} type="button">
-                      {queueOpen ? t.jobsHide : t.jobsShow}
-                    </button>
-                  )
+                  description: workingJobs.map(job => visualJobLabel(job, t)).join(' · ')
                 }
               : null
           ]}

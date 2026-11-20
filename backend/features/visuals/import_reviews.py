@@ -19,7 +19,7 @@ from features.media.manual_reviews import (
     manual_candidate_views,
     regenerate_image_chain,
 )
-from features.media.review_contracts import needs_review
+from features.media.review_contracts import optional_quality_choice
 from features.media.review_views import (
     MediaJobView,
     MediaManualRequest,
@@ -59,21 +59,17 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
                     status=job.stage,
                     review=report,
                     basis_id=report.evidence.basis_id if report and report.evidence else None,
-                    can_review=job.stage == "review_pending"
-                    and report is not None
-                    and report.evidence is not None
-                    and report.verdict == "review"
-                    and report.status != "blocked",
+                    can_review=job.stage == "review_pending" and context.has_optional_actor_candidate,
                     candidates=await manual_candidate_views(
                         [MediaCandidate(path=path, attempt=0, review=report)], media_type=item.media_kind
                     )
-                    if result
+                    if result and context.has_optional_actor_candidate
                     else [],
                 )
             )
         for index, component in enumerate(result.components if result else (), 1):
             chain = context.image_chains.get(component.observation.key)
-            candidate = (chain.best() or next(iter(chain.candidates), None)) if chain else None
+            candidate = next(iter(chain.optional_candidates()), None) if chain else None
             report = candidate.review if candidate else context.manual_reviews.get(component.observation.key)
             evidence = report.evidence if report else candidate.evidence if candidate else None
             slots.append(
@@ -85,9 +81,7 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
                     review=report,
                     basis_id=evidence.basis_id if evidence else None,
                     preview_url=client_asset_url(candidate.path) if candidate else None,
-                    can_review=evidence is not None
-                    and (report is None or report.verdict == "review")
-                    and needs_review(report),
+                    can_review=job.stage == "review_pending" and optional_quality_choice(report),
                     candidates=await manual_candidate_views(
                         chain.candidates
                         if chain
@@ -95,7 +89,9 @@ async def import_review_view(user_id: int, job_id: int) -> MediaJobView:
                         if component.preview_path
                         else []
                     ),
-                    can_regenerate=component.operation_state in {"paused", "failed"}
+                    can_regenerate=job.stage == "review_pending"
+                    and (bool(chain and chain.optional_candidates()) or optional_quality_choice(report))
+                    and component.operation_state in {"paused", "failed"}
                     and component.observation.kind != "action",
                 )
             )
@@ -116,6 +112,8 @@ async def manually_review_import(
     db: AsyncSession, user_id: int, job_id: int, request: MediaManualRequest
 ) -> ManualAction:
     job = await db.get(VisualImportJob, job_id)
+    if job.stage != "review_pending":
+        raise RequestError(status_code=409, message="此次整理没有可选媒体候选")
     original_context = deepcopy(job.context_json)
     context = ImportContext.model_validate(job.context_json)
     result = ImportAnalysisResult.model_validate(job.result_json) if job.result_json else None
@@ -138,7 +136,9 @@ async def manually_review_import(
         if request.action != "approve":
             raise RequestError(status_code=409, message="导入原件已经收藏，请通过原分析入口重新分析")
         selected = MediaCandidate(
-            path=context.actor_asset.media_path if context.actor_asset else item.media_path, attempt=0
+            path=context.actor_asset.media_path if context.actor_asset else item.media_path,
+            attempt=0,
+            review=context.presentation_review,
         )
         if manual_candidate_id(selected) != request.candidate_id:
             raise RequestError(status_code=409, message="所选候选已变化，请刷新")
@@ -180,6 +180,9 @@ async def manually_review_import(
         raise RequestError(status_code=409, message="这条素材已经完成或不属于图片候选")
     key = component.observation.key
     chain = context.image_chains.get(key)
+    component_review = context.manual_reviews.get(key)
+    if not ((chain and chain.optional_candidates()) or optional_quality_choice(component_review)):
+        raise RequestError(status_code=409, message="该素材没有可选候选")
     if request.action == "approve":
         if chain:
             selected = await approve_image_chain(
@@ -192,7 +195,9 @@ async def manually_review_import(
                 else ("identity", "goal", "quality"),
             )
         else:
-            selected = MediaCandidate(path=component.preview_path or "", attempt=0)
+            selected = MediaCandidate(
+                path=component.preview_path or "", attempt=0, review=context.manual_reviews.get(key)
+            )
             if manual_candidate_id(selected) != request.candidate_id:
                 raise RequestError(status_code=409, message="所选候选已变化，请刷新")
             await approve_candidate(

@@ -795,7 +795,7 @@ async def _mark_regeneration_failed(
         row.replacement_job.state = "failed"
         row.replacement_job.stage = "review_failed" if reviewing else "analyze" if retry_analysis else "failed"
         row.replacement_job.error = error
-        if reviewing:
+        if reviewing and current and current.image_chain.optional_candidates() and not unknown:
             row.replacement_job.state, row.replacement_job.stage = "paused", "review_pending"
         if unknown:
             row.replacement_job.state = "unknown"
@@ -888,8 +888,15 @@ async def _mark_failed(
         reviewing, unknown = _failure_flags(state, review_failed=review_failed, download_failed=download_failed)
         if unknown:
             row.initial_job.state = "unknown"
-        elif reviewing:
+        elif (
+            reviewing
+            and row.origin == SceneOrigin.USER_REQUEST.value
+            and state
+            and state.image_chain.optional_candidates()
+        ):
             row.initial_job.state, row.initial_job.stage = "paused", "review_pending"
+        if reviewing and row.initial_job.state == "failed":
+            row.initial_job.stage, row.initial_job.error = "review_failed", "本次环境图未通过检查"
         await _event(db, user_id, "companion.scene.updated", scene_id)
         await db.commit()
 

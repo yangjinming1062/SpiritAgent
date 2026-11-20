@@ -206,6 +206,8 @@ def _image_references(request: VideoGenRequest) -> dict[str, str]:
         "last": request.last_frame_image,
         **{f"ref{index}": value for index, value in enumerate(request.reference_images)},
     }
+    if request.observed_hold_images:
+        values["hold_opening"], values["hold_resting"] = request.observed_hold_images
     return {key: value for key, value in values.items() if value}
 
 
@@ -215,6 +217,9 @@ def _with_image_references(request: VideoGenRequest, references: dict[str, str])
         first_frame_image=references.get("first"),
         last_frame_image=references.get("last"),
         reference_images=tuple(references[f"ref{index}"] for index in range(len(request.reference_images))),
+        observed_hold_images=(references["hold_opening"], references["hold_resting"])
+        if request.observed_hold_images
+        else None,
     )
 
 

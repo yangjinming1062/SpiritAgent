@@ -11,7 +11,6 @@ from features.media.http_contracts import ProviderOperationError, TtsRequest
 from features.media.manual_reviews import manual_media_action
 from features.media.review_operations import query_media_job
 from features.media.review_views import MediaContinueRequest, MediaJobView, MediaManualRequest
-from features.media.video_jobs import receive_video_result
 from features.media.voice_contracts import VoiceSampleResponse
 from features.media.voices import upload_voice_sample
 from infrastructure.ai.llm_client import MissingLlmConfigError
@@ -133,6 +132,8 @@ async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest
     view = await query_media_job(user.id, job_id)
     if view.revision != body.expected_revision:
         raise RequestError(status_code=409, message="任务状态已变化，请刷新")
+    if body.action not in view.continuation_actions:
+        raise RequestError(status_code=409, message="当前任务没有这项可用操作")
     try:
         await continue_owned_media_operation(user.id, job_id, body.action)
     except ValueError as exc:
@@ -141,16 +142,3 @@ async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest
     if updated.revision == view.revision and updated.state == "paused":
         raise RequestError(status_code=409, message="原授权或检查条件尚不满足，结果已保留")
     return updated
-
-
-@router.post(
-    "/jobs/{job_id}/receive",
-    response_model=MediaJobView,
-    openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
-)
-async def receive_media_result(job_id: ResourceId, user: CurrentUser) -> MediaJobView:
-    try:
-        await receive_video_result(user.id, job_id)
-    except ValueError as exc:
-        raise RequestError(status_code=409, message=str(exc)) from exc
-    return await query_media_job(user.id, job_id)

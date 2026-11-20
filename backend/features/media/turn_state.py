@@ -14,6 +14,7 @@ class ImagePlan:
     request: str
     prompt: str
     size: str
+    goal: str
     subject: Literal["self"] | None = None
     reference_image: str | None = None
     secondary_reference_image: str | None = None
@@ -26,7 +27,7 @@ class MediaArtifact:
     media_id: str
     type: Literal["image", "video"]
     goal_id: str
-    status: Literal["pending", "ready", "failed", "result_unknown", "review_pending"]
+    status: Literal["pending", "ready", "failed", "result_unknown"]
     url: str | None = None
     error: str | None = None
     job_id: int | None = None

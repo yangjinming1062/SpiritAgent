@@ -1,5 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
+import { useState } from 'react'
 
 import { MediaPreview, useMediaViewId, VideoSurface } from '@/features/media'
 import { presentationPorts } from '@/shared/presentation-ports'
@@ -13,18 +14,27 @@ import { mediaReviewCopy } from '../../../../shared/media-review'
 import { useMediaJobReview } from './use-media-job-review'
 
 /** 复核入口：任务状态与操作归本功能，面板只接显示数据与回调。 */
-export function MediaReviewButton({
-  jobId,
-  mediaId,
-  receiveResult,
-  onChanged
-}: {
+interface ReviewProps {
   jobId: string
-  mediaId?: string
-  receiveResult?: boolean
   onChanged?: () => void | Promise<void>
-}): React.JSX.Element {
-  const review = useMediaJobReview({ jobId, mediaId, receiveResult, onChanged })
+}
+
+export function MediaReviewButton(props: ReviewProps): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const copy = mediaReviewCopy[useStore($locale)]
+
+  return (
+    <>
+      <button aria-expanded={open} className={BTN_SUBTLE} onClick={() => setOpen(value => !value)} type="button">
+        {copy.showCandidates}
+      </button>
+      {open ? <ReviewDetails {...props} /> : null}
+    </>
+  )
+}
+
+function ReviewDetails({ jobId, onChanged }: ReviewProps): React.JSX.Element {
+  const review = useMediaJobReview({ jobId, onChanged })
   const copy = mediaReviewCopy[useStore($locale)]
   const dict = useStrings()
   const viewId = useMediaViewId()
@@ -91,9 +101,6 @@ export function MediaReviewButton({
       copy={copy}
       error={review.error}
       job={review.job}
-      mediaId={mediaId}
-      receive={review.receive}
-      receiveResult={receiveResult}
       regenerate={review.regenerate}
       reload={review.reload}
       renderMedia={renderMedia}

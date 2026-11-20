@@ -10,7 +10,7 @@
 | 原件环境的受控入库 | [import_materials.py](import_materials.py)；采纳已检查的提取或生成补全结果，按导入来源键去重 |
 | 生成输入与图片检查 | [prompt_assembly.py](prompt_assembly.py)、[scene_review.py](../media/scene_review.py) |
 | REST 与页面 | [companion_scenes.py](../../entrypoints/http/routes/companion_scenes.py)、[场景页](../../../client/renderer/features/creation/environment/scene-page.tsx)、[详情](../../../client/renderer/features/creation/environment/scene-detail-view.tsx) |
-| 只读快照与缓存 | [queries.py](queries.py)、[scene-store.ts](../../../client/renderer/features/creation/environment/scene-store.ts) |
+| 只读快照与缓存 | [queries.py](queries.py)、[场景状态](../../../client/renderer/features/creation/environment/scene/state.ts) |
 | 启停与资产引用 | [lifecycle.py](lifecycle.py)、[asset_references.py](asset_references.py) |
 
 ## 状态与并发
@@ -27,6 +27,6 @@
 
 已取得图片地址但下载失败时保留原图片链，生活步骤保持结果待核对；创建与原位换图的重试均继续接收原结果，不新增候选或替换请求身份。
 
-图片已通过检查但描述失败时保留成品路径，重试只继续描述与采纳；尚待视觉判断的候选仍走独立复核入口。
+图片已通过检查但描述失败时保留成品路径，重试只继续描述与采纳；用户创建或原位换图时，主体与用途合格、仅画质存疑的候选可在详情选用。自主添置只有完全通过检查才入库，失败会结算关联生活步骤。
 
 核对创建/替换、分析重试、上传源保留、取消迟到结果及重启；画幅和重复伙伴检查须查看真实图片。

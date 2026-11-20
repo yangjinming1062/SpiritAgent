@@ -224,6 +224,9 @@ async def generate_images(
     storage_directory: str | None = None,
     image_edit: bool = False,
     provider_config: ProviderConfig | None = None,
+    noise_seeds: tuple[int, ...] = (),
+    recompose_pose: bool = False,
+    composition_goal: str | None = None,
     background: str | None = None,
     prefer_transparent_background: bool = False,
     aspect_ratio: str | None = None,
@@ -312,6 +315,9 @@ async def generate_images(
             result = await p.generate(
                 ImageGenRequest(
                     prompt=_provider_prompt(p.config.provider_name),
+                    noise_seeds=noise_seeds,
+                    recompose_pose=recompose_pose,
+                    composition_goal=composition_goal,
                     size=size,
                     aspect_ratio=request_aspect,
                     resolution=resolution,

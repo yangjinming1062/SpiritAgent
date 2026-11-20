@@ -2,6 +2,8 @@ import { computed } from 'nanostores'
 
 import type { CreationSection } from '@ipc/contracts'
 
+import { showVisualJobActivity } from '../../../../shared/visuals'
+
 import { $actionActivity, refreshActionActivity } from './actions'
 import { $pendingScene, $sceneCreationIssue, $sceneRegenerating } from './environment'
 import { $visualsJobs, refreshVisualJobs } from './visuals'
@@ -22,8 +24,7 @@ export interface CreationActivityItem {
 
 /**
  * 创作任务的统一投影：只合并各业务模块已有的状态，不新增状态源与轮询。
- * 状态归属仍在 visuals、actions 与 scene 模块；失败、结果未知与待复核
- * 归入“需要处理”，不与正常制作混在同一个进行中分组。
+ * 进行中的工作和需要处理的失败分组展示。手动制作的可选候选由素材详情呈现。
  */
 export const $creationActivity = computed(
   [$actionActivity, $visualsJobs, $pendingScene, $sceneRegenerating, $sceneCreationIssue],
@@ -31,16 +32,14 @@ export const $creationActivity = computed(
     const items: CreationActivityItem[] = []
 
     for (const job of jobs) {
-      if (job.state === 'succeeded' || job.state === 'cancelled') {
+      if (!showVisualJobActivity(job) || job.stage === 'review_pending') {
         continue
       }
 
-      const reviewPending = job.stage === 'review_pending'
-
       items.push({
         id: `visual:${job.id}`,
-        group: reviewPending || job.state === 'failed' || job.state === 'unknown' ? 'attention' : 'working',
-        state: reviewPending ? 'review_pending' : job.state,
+        group: job.state === 'failed' || job.state === 'unknown' ? 'attention' : 'working',
+        state: job.state,
         section: 'visuals'
       })
     }

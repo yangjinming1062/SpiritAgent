@@ -66,11 +66,7 @@ from features.media.character_images import (
 )
 from features.media.continuations import finish_media_operation, wait_for_media
 from features.media.identity_contracts import VisualIdentitySnapshot
-from features.media.image_generation import (
-    ImageGenerationError,
-    ImageReviewUnavailableError,
-    generate_with_moderation_retry,
-)
+from features.media.image_generation import ImageGenerationError, generate_with_moderation_retry
 from features.media.review_contracts import VisualReview, review_passes
 from features.media.review_evidence import review_media_intact
 
@@ -315,10 +311,12 @@ async def _generate_outfit_fullbody(
         if manual_job_id is not None:
             async with SESSION_LOCAL() as session:
                 manual_job = await session.get(OutfitCreationJob, manual_job_id, with_for_update=True)
+                state = ImageChainState.model_validate((manual_job.checkpoint or {}).get("image_chain", {}))
                 manual_job.state, manual_job.stage, manual_job.error = (
-                    ("paused", "review_pending", str(exc))
-                    if isinstance(exc, ImageReviewUnavailableError)
-                    or bool((manual_job.checkpoint or {}).get("image_chain", {}).get("candidates"))
+                    ("unknown", "result_unknown", str(exc))
+                    if state.unknown_submission()
+                    else ("paused", "review_pending", str(exc))
+                    if state.optional_candidates()
                     else ("failed", "failed", str(exc))
                 )
                 await session.commit()

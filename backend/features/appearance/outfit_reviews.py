@@ -13,11 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
 from features.companion.visual_state import persona_snapshot
-from features.life.use_cases import (
-    resume_business_media_in_session,
-    update_business_steps_in_session,
-    wait_business_media_in_session,
-)
+from features.life.use_cases import resume_business_media_in_session, wait_business_media_in_session
 from features.media.character_images import ImageChainState, run_frozen_image_chain
 from features.media.continuations import MediaWait, authorize_media_waits, finish_media_operation
 from features.media.identity_contracts import VisualIdentitySnapshot
@@ -52,7 +48,10 @@ async def outfit_review_view(user_id: int, job_id: int) -> MediaJobView:
         if row is None:
             raise RequestError(status_code=404, message="找不到造型制作任务")
         chain = ImageChainState.model_validate((row.checkpoint or {}).get("image_chain", {}))
-        candidate = chain.best() or next(iter(chain.candidates), None)
+        eligible = (
+            chain.optional_candidates() if row.request_source == "manual" and row.stage == "review_pending" else []
+        )
+        candidate = next(iter(eligible), None)
         report = candidate.review if candidate else None
         evidence = candidate.evidence if candidate else None
         candidate_key = candidate_review_key(chain.generation_id) if candidate else None
@@ -67,9 +66,9 @@ async def outfit_review_view(user_id: int, job_id: int) -> MediaJobView:
             can_review=row.stage == "review_pending"
             and (evidence is not None or candidate is not None)
             and needs_review(report),
-            candidates=await manual_candidate_views(chain.candidates),
+            candidates=await manual_candidate_views(eligible),
             error=row.error,
-            can_regenerate=chain.inputs is not None and row.state in {"paused", "failed"},
+            can_regenerate=bool(eligible),
         )
 
 
@@ -78,7 +77,12 @@ async def list_outfit_review_jobs(user_id: int) -> list[MediaJobView]:
         ids = list(
             await db.scalars(
                 select(OutfitCreationJob.id)
-                .where(OutfitCreationJob.user_id == user_id, OutfitCreationJob.state == "paused")
+                .where(
+                    OutfitCreationJob.user_id == user_id,
+                    OutfitCreationJob.state == "paused",
+                    OutfitCreationJob.stage == "review_pending",
+                    OutfitCreationJob.request_source == "manual",
+                )
                 .order_by(OutfitCreationJob.id.desc())
                 .limit(50)
             )
@@ -105,6 +109,8 @@ async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | 
     )
     if row is None or row.state == "cancelled":
         return {"cancelled": True}
+    if row.state == "failed":
+        return {"status": "failed"}
     if row.state == "succeeded":
         return {"outfit_id": str(row.result_outfit_id)}
     if row.state in {"queued", "running"}:
@@ -213,21 +219,16 @@ async def manually_review_outfit(
     db: AsyncSession, user_id: int, job_id: int, request: MediaManualRequest
 ) -> ManualAction:
     row = await db.get(OutfitCreationJob, job_id)
-    if request.slot != 0:
+    if row.request_source != "manual" or row.stage != "review_pending" or request.slot != 0:
         raise RequestError(status_code=409, message="无效的候选槽位")
     chain = ImageChainState.model_validate((row.checkpoint or {}).get("image_chain", {}))
-    if row.request_source == "manual" and not await visual_identity_is_current(
+    if not await visual_identity_is_current(
         db, user_id, VisualIdentitySnapshot.model_validate(row.checkpoint["manual_input"]["identity"])
     ):
         raise RequestError(status_code=409, message="原任务身份已失效，不能按当前身份采纳")
-    if row.request_source == "autonomous" and (
-        row.checkpoint.get("identity") is None
-        or not await visual_identity_is_current(
-            db, user_id, VisualIdentitySnapshot.model_validate(row.checkpoint["identity"])
-        )
-    ):
-        raise RequestError(status_code=409, message="原任务身份已失效，不能按当前身份采纳")
     if request.action == "regenerate":
+        if not chain.optional_candidates():
+            raise RequestError(status_code=409, message="这次造型制作没有可选候选")
         fresh = regenerate_image_chain(chain)
         row.checkpoint = {key: value for key, value in row.checkpoint.items() if key != "failure_code"}
         row.checkpoint = {**row.checkpoint, "image_chain": fresh.model_dump(mode="json"), "permission_wait": False}
@@ -244,17 +245,11 @@ async def manually_review_outfit(
     return ManualAction()
 
 
-async def run_manual_outfit_job(user_id: int, job_id: int) -> bool | None:
+async def run_manual_outfit_job(user_id: int, job_id: int) -> None:
     async with SESSION_LOCAL() as db:
         row = await db.get(OutfitCreationJob, job_id, with_for_update=True)
-        if row is None or row.user_id != user_id or row.state != "queued":
+        if row is None or row.user_id != user_id or row.request_source != "manual" or row.state != "queued":
             return
-        if not await resume_business_media_in_session(db, user_id, "outfit.create", job_id):
-            await wait_business_media_in_session(
-                db, user_id, "outfit.create", job_id, "等待继续制作", code="media_resume_waiting"
-            )
-            await db.commit()
-            return False
         chain = ImageChainState.model_validate(row.checkpoint["image_chain"])
         row.state, row.stage = "running", "manual_image"
         await db.commit()
@@ -280,23 +275,13 @@ async def run_manual_outfit_job(user_id: int, job_id: int) -> bool | None:
                 current.checkpoint = {**current.checkpoint, "image_chain": chain.model_dump(mode="json")}
                 current.state, current.stage = (
                     ("unknown", "result_unknown")
-                    if chain.phase == "submitting"
-                    else ("paused", "confirmation" if chain.best() else "review_pending")
+                    if chain.unknown_submission()
+                    else ("paused", "confirmation")
+                    if chain.best()
+                    else ("paused", "review_pending")
+                    if chain.optional_candidates()
+                    else ("failed", "failed")
                 )
                 current.error = error
-                if current.state == "unknown":
-                    await update_business_steps_in_session(
-                        db,
-                        user_id,
-                        kind="outfit.create",
-                        business_ref={"job_id": job_id},
-                        state="unknown",
-                        error=error,
-                        failure_code="result_unknown",
-                    )
-                else:
-                    await wait_business_media_in_session(
-                        db, user_id, "outfit.create", job_id, "候选已保留，等待检查", code="review_pending"
-                    )
                 emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
                 await db.commit()

@@ -724,8 +724,7 @@ class VisualJobView(BaseModel):
     asset_kind: VisualAssetKind
     # 冻结输入里的动作名称，供库内标识这一次制作。
     action_name: str = ""
-    # 基础动态准备的工作项；用于区分自动准备与用户/自主制作。
-    preparation: bool = False
+    request_source: VisualCreationSource | None = None
     target_visual_id: ResourceId | None = None
     state: VisualJobState
     stage: str

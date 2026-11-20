@@ -13,6 +13,7 @@ class ImageJobParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request: str
     request_scope: str
+    goal: str
     prompt: str
     size: str
     subject: Literal["self"] | None = None
@@ -45,7 +46,7 @@ class ImageJobParams(BaseModel):
 
 class MediaContinueRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["save_outfit", "publish_post", "deliver_message"]
+    action: Literal["save_outfit"]
     expected_revision: int = Field(ge=0)
 
 
@@ -97,7 +98,7 @@ class MediaJobView(BaseModel):
     required_slots: int
     ready_slots: int
     complete: bool
-    continuation_actions: list[Literal["save_outfit", "publish_post", "deliver_message"]] = Field(default_factory=list)
+    continuation_actions: list[Literal["save_outfit"]] = Field(default_factory=list)
     image_request: ImageJobParams | None = None
     user_id: ResourceId | None = None
     session_id: str | None = None

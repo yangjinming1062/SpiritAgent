@@ -9,7 +9,7 @@ from features.appearance.visual_identity import (
     load_self_visual_context,
 )
 from features.conversation.reply_media import apply_video_status, require_video_source
-from features.media.contracts import VideoJobSnapshot
+from features.media.contracts import VideoJobSnapshot, video_delivery_error
 from features.media.identity_contracts import CharacterReferenceRole
 from features.media.prompts import VIDEO_REFERENCE_GUIDANCE
 from features.media.queries import get_job
@@ -63,7 +63,7 @@ def _result_unknown_payload(task_id: str, job: VideoJobSnapshot) -> dict[str, ob
         "success": False,
         "status": "result_unknown",
         "task_id": task_id,
-        "error": job.error_message,
+        "error": video_delivery_error(job.status),
         "retry_safe": False,
     }
 
@@ -87,6 +87,7 @@ async def _submit_video(
     outfit_override: str | None,
 ) -> tuple[dict[str, object], VideoJobSnapshot | None]:
     """提交已校验请求并返回真实任务状态；成品由后台沿原句柄查询及交付。"""
+    goal = "\n".join(filter(None, (prompt, outfit_override)))
     visual_plan = None
     identity_reference_role: CharacterReferenceRole = "portrait"
     references = (reference_image,) if reference_image else ()
@@ -116,6 +117,7 @@ async def _submit_video(
                 request_scope=request_scope,
                 asset_directory=asset_directory,
                 prompt=prompt,
+                goal=goal,
                 duration=duration,
                 resolution=resolution,
                 reference_images=references,
@@ -136,7 +138,7 @@ async def _submit_video(
         return _result_unknown_payload(task_id, job), job
 
     if job.status == "failed":
-        return {"success": False, "task_id": task_id, "error": job.error_message or "video generation failed"}, job
+        return {"success": False, "task_id": task_id, "error": video_delivery_error(job.status)}, job
     if job.status == "succeeded":
         return {
             "success": True,
@@ -269,9 +271,9 @@ async def video_generate_status_tool(
         if row.error_message:
             payload["warning"] = row.error_message
     elif row.status == "failed":
-        payload["error"] = row.error_message
+        payload["error"] = video_delivery_error(row.status)
     elif row.status == "result_unknown":
-        payload.update({"error": row.error_message, "retry_safe": False})
+        payload.update({"error": video_delivery_error(row.status), "retry_safe": False})
     if row.media_id:
         artifact = media_turn.artifacts.get(row.media_id) or MediaArtifact(
             row.media_id, "video", row.media_id, "pending", job_id=row.id

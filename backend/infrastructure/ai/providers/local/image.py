@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import time
+from functools import partial
 from io import BytesIO
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -98,7 +99,12 @@ def qwen_image_weights(unets: list[str], clips: list[str], vaes: list[str]) -> t
     )
 
 
-def _graph(
+def composition_noise_seed(seed: int) -> int:
+    """为构图样张分出独立、可复现的噪声。"""
+    return seed ^ 451981
+
+
+def _qwen_graph(
     *,
     prompt: str,
     seed: int,
@@ -109,12 +115,14 @@ def _graph(
     unet_name: str,
     clip_name: str,
     vae_name: str,
+    recompose_pose: bool = False,
+    edit_canvas: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Qwen-Image-2.1-Turbo 工作流；参考图进编码节点，编辑时以其 latent 为画布。"""
     encode: dict[str, Any] = {"clip": ["2", 0], "prompt": prompt, "negative_prompt": ""}
-    if image_names:
+    if image_names or edit_canvas is not None:
         encode["vae"] = ["3", 0]
-    encode["resolution"] = 0 if image_names else min(width, height)
+    encode["resolution"] = 0 if image_names or edit_canvas is not None else min(width, height)
     nodes: dict[str, Any] = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}},
         "2": {
@@ -144,20 +152,108 @@ def _graph(
     }
     if not image_edit:
         nodes["5"] = {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
-    for i, name in enumerate(image_names, start=1):
+    if edit_canvas is not None:
+        encode["images.image_1"] = edit_canvas
+    for i, name in enumerate(image_names, start=2 if edit_canvas is not None else 1):
         load_id = str(20 + i)
         nodes[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
         encode[f"images.image_{i}"] = [load_id, 0]
+    if recompose_pose and "images.image_2" in encode and not image_edit:
+        # Qwen 同时编码视觉特征与参考图的空间 latent。纠偏时保留头像细节，让造型图提供衣着而少约束原站姿。
+        nodes["40"] = {
+            "class_type": "ImageScaleToTotalPixels",
+            "inputs": {
+                "image": encode["images.image_2"],
+                "upscale_method": "area",
+                "megapixels": 0.16,
+                "resolution_steps": 32,
+            },
+        }
+        encode["images.image_2"] = ["40", 0]
     return nodes
 
 
+def _embed_image(
+    nodes: dict[str, Any], prefix: str, *, shared_nodes: tuple[str, ...] = ()
+) -> tuple[dict[str, Any], list[Any]]:
+    """把该图的 RGB 输出接入外层工作流，同一提交只返回最终作品。"""
+    output, port = nodes.pop("12")["inputs"]["images"]
+    for key in shared_nodes:
+        del nodes[key]
+    for node in nodes.values():
+        for value in node["inputs"].values():
+            if isinstance(value, list) and value[0] not in shared_nodes:
+                value[0] = prefix + value[0]
+    return {prefix + key: value for key, value in nodes.items()}, [prefix + output, port]
+
+
+def _graph(
+    *,
+    prompt: str,
+    seed: int,
+    width: int,
+    height: int,
+    image_names: list[str],
+    image_edit: bool,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    recompose_pose: bool = False,
+    composition_goal: str | None = None,
+) -> dict[str, Any]:
+    """装配普通生成或从造型构图到身份复原的一次纠偏请求。"""
+    render = partial(
+        _qwen_graph, width=width, height=height, unet_name=unet_name, clip_name=clip_name, vae_name=vae_name
+    )
+    if not composition_goal or image_edit or len(image_names) < 2:
+        return render(
+            prompt=prompt, seed=seed, image_names=image_names, image_edit=image_edit, recompose_pose=recompose_pose
+        )
+
+    scene_role = "图2提供现场的环境及光线。" if len(image_names) > 2 else ""
+    guide = render(
+        prompt=f"绘制真实现场的一张构图样张。{composition_goal}。完整画出与活动有关的手、物体和视线落点。"
+        f"图1提供本次服装、首饰和发型。将图中角色画在这个现场，按活动重新安排头部朝向、眼睛与道具的位置。{scene_role}",
+        seed=composition_noise_seed(seed),
+        image_names=image_names[1:],
+        image_edit=False,
+    )
+    # 两次采样使用同一个模型、编码器、VAE、采样器与 sigma 表，避免在视频工作流中重复加载权重。
+    guide_nodes, canvas = _embed_image(guide, "composition_", shared_nodes=("1", "2", "3", "8", "9"))
+    scene_role = "图4提供现场的环境及光线。" if len(image_names) > 2 else ""
+    final = render(
+        prompt="以图1为底图，在同一瞬间更换出镜人物。图1决定原有活动、身体姿势、视线落点、手与物体的接触及机位；"
+        "图2给出替换后人物的脸和固有特征，图3给出身体比例、头饰、发型及整体穿戴。将图2中的人物按图1的姿势自然放入同一场景，"
+        f"依照成品目标呈现图3的造型和配色，头和双眼随图1的动作看向相同位置。{scene_role}成品目标是{composition_goal}",
+        seed=seed,
+        image_names=image_names,
+        image_edit=True,
+        edit_canvas=canvas,
+    )
+    return {**guide_nodes, **final}
+
+
 def qwen_opening_nodes(
-    prompt: str, files: tuple[str, str, str], image_names: tuple[str, ...], width: int, height: int, seed: int
+    prompt: str,
+    files: tuple[str, str, str],
+    image_names: tuple[str, ...],
+    width: int,
+    height: int,
+    seed: int,
+    *,
+    composition_goal: str | None = None,
 ) -> tuple[dict[str, Any], list[Any]]:
     """嵌入同一次视频作业，只把生成的 RGB 画面交给首帧节点，不发布中间图片。"""
+    opening = f"绘制以下镜头开拍时的单张完整场景图。\n{prompt}\n"
+    if image_names:
+        opening += (
+            "画出目标指定的起始状态。主体已经在现场，正在进行的活动要从视线落点、身体姿势、手和物体的位置清楚可见，后续动作留给视频。采用目标给出的场地和光线；"
+            "若只描述了人物而没有指定地点，可选有窗光的房间，让墙面、地面或近处陈设形成空间层次，"
+            "支撑点与接地阴影一致。明确指定纯色或空白背景时使用指定布景。"
+        )
     nodes = _graph(
-        prompt="绘制下面这段作品的开场静帧。按资料分工使用全部参考，以目标场景、取景和动作开始前的姿态构成一张完整画面，只表现这一个瞬间。\n"
-        + prompt,
+        prompt=opening,
+        composition_goal=composition_goal,
         seed=seed,
         width=width,
         height=height,
@@ -167,12 +263,7 @@ def qwen_opening_nodes(
         clip_name=files[1],
         vae_name=files[2],
     )
-    output, port = nodes.pop("12")["inputs"]["images"]
-    for node in nodes.values():
-        for value in node["inputs"].values():
-            if isinstance(value, list):
-                value[0] = "opening_" + value[0]
-    return {"opening_" + key: value for key, value in nodes.items()}, ["opening_" + output, port]
+    return _embed_image(nodes, "opening_")
 
 
 class LocalImageGenProvider(ImageGenProvider):
@@ -372,11 +463,16 @@ class LocalImageGenProvider(ImageGenProvider):
             logger.warning("Local image cancellation was not confirmed", extra={"prompt_id": prompt_id}, exc_info=True)
 
     async def generate(self, req: ImageGenRequest) -> ImageGenResult:
-        unet_name, clip_name, vae_name = await self._resolve_model_files()
-        prompt = _wrap_rgba(req.prompt) if req.background == "transparent" else req.prompt
         count = int(req.n or 1)
         if not 1 <= count <= 4:
             raise ProviderError("local image_gen accepts between 1 and 4 images per request", status_code=400)
+        if req.noise_seeds and (
+            len(req.noise_seeds) != count
+            or any(type(seed) is not int or not 0 <= seed < 2**64 for seed in req.noise_seeds)
+        ):
+            raise ProviderError("local image_gen requires one unsigned 64-bit seed per image", status_code=400)
+        unet_name, clip_name, vae_name = await self._resolve_model_files()
+        prompt = _wrap_rgba(req.prompt) if req.background == "transparent" else req.prompt
 
         image_names = [
             await self._upload_image(ref)
@@ -385,11 +481,20 @@ class LocalImageGenProvider(ImageGenProvider):
         ]
         width, height = _resolve_wh(req)
 
+        composition_goal = (
+            req.composition_goal
+            if req.recompose_pose
+            and req.reference_image
+            and req.secondary_reference_image
+            and not req.image_edit
+            and req.background is None
+            else None
+        )
         assets: list[ImageAsset] = []
         for i in range(count):
             graph = _graph(
                 prompt=prompt,
-                seed=(int(time.time() * 1000) + i) % (2**31),
+                seed=req.noise_seeds[i] if req.noise_seeds else (int(time.time() * 1000) + i) % (2**31),
                 width=width,
                 height=height,
                 image_names=image_names,
@@ -397,6 +502,8 @@ class LocalImageGenProvider(ImageGenProvider):
                 unet_name=unet_name,
                 clip_name=clip_name,
                 vae_name=vae_name,
+                recompose_pose=req.recompose_pose and bool(req.secondary_reference_image),
+                composition_goal=composition_goal,
             )
             assets.extend((await self._run_job(graph))[:1])
 

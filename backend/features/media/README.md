@@ -17,9 +17,9 @@
 
 单槽候选检查视图由 [review_views.py](review_views.py) 的 `single_slot_review_view` 统一装配；场景、衣柜、全身与影像只提供各自的候选、证据与操作资格。
 
-[review_contracts.py](review_contracts.py) 定义定性判断与不可变证据；[review_operations.py](review_operations.py) 受理媒体任务状态查询。[manual_reviews.py](manual_reviews.py) 受理用户选取候选或重新生成，保存原判断及人工依据，原授权下的交付由业务所有者继续，无需用户再点交付按钮。[image_jobs.py](image_jobs.py) 保存聊天图片及逐槽位结果，消息绑定、删除和换回答由会话公共操作协同。[continuations.py](continuations.py) 保存业务等待与原继续操作身份，通过组合根装配业务所有者，检查通知不直接授予业务动作。
+[review_contracts.py](review_contracts.py) 分别建模视觉判断与一次性交付决定。[selection.py](selection.py) 对完整证据按冻结目标逐槽选片；[image_jobs.py](image_jobs.py) 和 [video_jobs.py](video_jobs.py) 持久保存候选与选择。日常任务查询仅投影成品和制作状态。
 
-待复核任务不自动重新调用模型，恢复只核对原证据与原操作；候选的身份、目标和画质判断由 `VisualReview` 持有。检查中断时保留已确定的维度和阶段证据，人工排除是独立的选择事实。人工操作的持久启动交接与业务依赖等待分别恢复，不能将检查完成视为交付成功。已发布版本持有必要检查附件，执行检查点回收不清除最终依据。
+日常任务在检查暂时中断时沿原证据续审，未知提交保留原身份。终态任务的纠偏、候选和选片依据保留七天，正式交付引用由业务接手。[manual_reviews.py](manual_reviews.py) 只受理允许用户选用的长期素材或初始形象；[continuations.py](continuations.py) 负责原授权下的业务继续。
 
 ## 任务与消费边界
 

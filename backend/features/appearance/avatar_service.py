@@ -1281,7 +1281,7 @@ async def fullbody_review_view(user_id: int, job_id: int) -> MediaJobView:
             and candidate is not None
             and (report is None or report.verdict == "review" and report.status != "blocked"),
             candidates=await manual_candidate_views(
-                [MediaCandidate(path=candidate.image_url, attempt=0, review=review)]
+                [MediaCandidate(path=candidate.image_url, attempt=0, review=review)], identity_design=True
             )
             if candidate
             else [],

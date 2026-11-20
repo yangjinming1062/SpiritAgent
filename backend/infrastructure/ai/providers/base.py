@@ -207,6 +207,9 @@ class ImageGenRequest:
     )
     resolution: str | None = None
     exact_size: bool = False  # 按模型能力冻结的像素尺寸，跳过通用画幅表映射
+    noise_seeds: tuple[int, ...] = ()
+    recompose_pose: bool = False  # 身份已合格的姿势纠偏可降低造型参考的空间约束
+    composition_goal: str | None = None  # 有头像与当前全身造型时，按目标先安排活动再恢复身份细节
 
 
 @dataclass(frozen=True)
@@ -254,7 +257,12 @@ class VideoGenRequest:
     reference_images: tuple[str, ...] = ()
     reference_videos: tuple[str, ...] = ()
     aspect_ratio: str | None = None
+    noise_seed: int | None = None
     first_frame_motion: str | None = None  # 多参考先合成首帧时，视频节点仅消费运动要求
+    opening_frame_prompt: str | None = None  # 开场图消费场景与参考职责，不带视频的时序指令
+    opening_composition_goal: str | None = None  # 本地姿势纠偏的单幅开场，交给头像和造型构图流程
+    fixed_ambient_scene: bool = False  # 原目标要求锁定机位和静物布局，仅环境细节流动
+    observed_hold_images: tuple[str, str] | None = None  # 原片已拍到的起始姿势和动作到位姿势
 
 
 @dataclass(frozen=True)

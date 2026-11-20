@@ -9,22 +9,17 @@ export interface MediaJobReview {
   job: ApiSchemas['MediaJobView'] | null
   busy: boolean
   error: string
-  receive: () => void
   approve: (slot: number, candidateId: string) => void
   regenerate: (slot: number) => void
   reload: () => void
 }
 
-/** 媒体制作任务的人工复核：查询候选、接收原结果、采用候选与重新生成；页面只消费返回值。 */
+/** 用户在素材详情打开候选后，可沿原任务选用或重新生成。 */
 export function useMediaJobReview({
   jobId,
-  mediaId,
-  receiveResult,
   onChanged
 }: {
   jobId: string
-  mediaId?: string
-  receiveResult?: boolean
   onChanged?: () => void | Promise<void>
 }): MediaJobReview {
   const [job, setJob] = useState<ApiSchemas['MediaJobView'] | null>(null)
@@ -54,7 +49,7 @@ export function useMediaJobReview({
     return () => {
       epoch.current = version + 1
     }
-  }, [jobId, mediaId])
+  }, [jobId])
 
   /** 只读刷新：始终查询任务，不执行接收结果等业务变更。 */
   const reload = async (): Promise<void> => {
@@ -83,8 +78,8 @@ export function useMediaJobReview({
     }
   }
 
-  async function run(slot?: number, action?: 'approve' | 'regenerate', candidateId?: string): Promise<void> {
-    if (busy) {
+  async function run(slot: number, action: 'approve' | 'regenerate', candidateId?: string): Promise<void> {
+    if (busy || !job) {
       return
     }
 
@@ -93,18 +88,10 @@ export function useMediaJobReview({
     setError('')
 
     try {
-      let updated: ApiSchemas['MediaJobView']
-
-      if (receiveResult) {
-        updated = await requestResource('media.receive_media_result', { path: { job_id: jobId } })
-      } else if (job && slot !== undefined && action) {
-        const body = manualMediaRequest(job, slot, action, candidateId, pending.current)
-        pending.current = body
-        updated = await requestResource('media.manually_handle_media', { path: { job_id: jobId }, body })
-        pending.current = null
-      } else {
-        updated = await requestResource('media.get_media_job', { path: { job_id: jobId } })
-      }
+      const body = manualMediaRequest(job, slot, action, candidateId, pending.current)
+      pending.current = body
+      const updated = await requestResource('media.manually_handle_media', { path: { job_id: jobId }, body })
+      pending.current = null
 
       if (epoch.current !== version) {
         return
@@ -132,7 +119,6 @@ export function useMediaJobReview({
     job,
     busy,
     error,
-    receive: () => void run(),
     approve: (slot, candidateId) => void run(slot, 'approve', candidateId),
     regenerate: slot => void run(slot, 'regenerate'),
     reload: () => void reload()
