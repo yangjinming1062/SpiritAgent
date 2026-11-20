@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from openai.types.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from infrastructure.ai.error_classifier import (
     ClassifiedError,
@@ -18,7 +18,7 @@ from infrastructure.ai.error_classifier import (
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.models import ModelModality
-from infrastructure.ai.providers.base import ChatProvider
+from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
 from infrastructure.ai.response_validation import IncompleteLlmResponseError, validate_response
 from infrastructure.ai.responses import build_responses_kwargs
 from infrastructure.ai.structured_contracts import LlmSchemaContractError, validate_preserved_choices
@@ -224,7 +224,7 @@ def _schema_discriminator_choices(schema: dict[str, Any]) -> tuple[dict[str, Any
 async def call_llm_json[T](
     llm_cfg: UserLlmConfig,
     system_prompt: str,
-    user_payload: Any,
+    user_payload: JsonValue | Callable[[ProviderConfig], JsonValue],
     *,
     schema: dict[str, Any],
     schema_name: str,
@@ -253,6 +253,7 @@ async def call_llm_json[T](
     provider_index = -1
     feedback: dict[str, Any] | None = None
     rejected_response: str | None = None
+    original_input: JsonValue = None
 
     def record(diagnostic: LlmAttemptDiagnostic) -> None:
         attempts.append(diagnostic)
@@ -263,15 +264,17 @@ async def call_llm_json[T](
             )
 
     async def call(provider: ChatProvider) -> T:
-        nonlocal repair_used, provider_index, feedback, rejected_response
+        nonlocal repair_used, provider_index, feedback, rejected_response, original_input
         provider_index += 1
-        # 回退沿用已进入的编辑任务，不能把格式错误变成重新作出业务决定。
         repair = repair_used
+        # 新尝试按当前窗口取材；一旦进入格式修正，后续供应商也须沿用被拒草稿的同一份原文。
+        if not repair:
+            original_input = user_payload(provider.config) if callable(user_payload) else user_payload
         while True:
-            payload = user_payload
+            payload = original_input
             if feedback is not None:
                 payload = {
-                    "original_input": user_payload,
+                    "original_input": original_input,
                     "original_instructions": system_prompt,
                     "validation_feedback": feedback,
                     "rejected_response": rejected_response,

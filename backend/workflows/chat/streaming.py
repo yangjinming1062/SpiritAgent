@@ -21,8 +21,8 @@ from infrastructure.ai.response_validation import (
     validate_response,
     validate_response_output,
 )
-from infrastructure.ai.responses import build_responses_kwargs
-from infrastructure.ai.token_budget import request_output_budget
+from infrastructure.ai.responses import approx_responses_tokens, build_responses_kwargs
+from infrastructure.ai.token_budget import ContextOverflowError, material_input_window, request_output_budget
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text
@@ -50,11 +50,13 @@ from workflows.chat.reply_delivery import (
     companion_reply_schema,
     companion_reply_source,
     normalize_incremental_dialogue_bubble,
+    reply_draft_parts,
     resolve_companion_reply,
     unwrap_companion_reply_fence,
 )
 from workflows.chat.reply_links import ReplyReferences, reply_reference_texts
 from workflows.chat.system_prompt import refresh_volatile_header_in_prompt
+from workflows.chat.topic_context import render_topic_context
 from workflows.chat.turn_errors import CompanionReplyFormatError, FinalReplyStreamError, IncompleteResponseError
 from workflows.chat.types import LLMTurnResult, ReplyBubbleSink
 
@@ -253,10 +255,12 @@ async def generate_provider_response(
                 },
             ]
     reply_options: dict = {}
+    topic_cards: dict[int, LinkBubble] = {}
+    first_archived_mentions: frozenset[int] = frozenset()
     if reply_preference is not None:
         capability_guidance = resolve_prompt_text(COMPANION_REPLY_INTEGRITY_GUIDANCES, lang)
-        topic_cards: dict[int, LinkBubble] = context.get("topic_cards", {})
-        if topic_cards:
+        topic_sources = context.get("topic_sources", [])
+        if topic_sources:
             capability_guidance += resolve_prompt_text(COMPANION_TOPIC_GUIDANCES, lang)
         if speech_config:
             capability_guidance += speech_style_guidance(
@@ -291,23 +295,9 @@ async def generate_provider_response(
                 },
                 ensure_ascii=False,
             )
-        schema = companion_reply_schema(
-            speech_config,
-            language=lang,
-            allow_silence=allow_silence and not media_turn.required_goals,
-            allow_deferral=allow_deferral and not media_turn.required_goals,
-            allow_media=bool(media_turn.artifacts),
-            repair=reply_repair,
-            topic_ids=tuple(topic_cards),
-        )
-        reply_options = await provider.structured_response_options(
-            schema, name="companion_reply", allow_tools=not final_only and bool(active_schemas), repair=reply_repair
-        )
-        capability_guidance += resolve_prompt_text(COMPANION_REPLY_SCHEMA_GUIDANCES, lang).replace(
-            "{schema}", json.dumps(schema, ensure_ascii=False)
-        )
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += capability_guidance
+        schema_position = len(instructions)
         if reply_repair:
             # 编辑对象只有未交付响应；人设单独传递，不随历史压缩或截断丢失。
             draft = reply_format_error.raw_reply
@@ -341,7 +331,50 @@ async def generate_provider_response(
             if not final_only and active_schemas:
                 instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
             instructions += resolve_prompt_text(COMPANION_REPLY_CLOSING_GUIDANCES, lang)
-        if material := context.get("topic_material"):
+
+        def reply_schema(ids: tuple[int, ...]) -> dict:
+            return companion_reply_schema(
+                speech_config,
+                language=lang,
+                allow_silence=allow_silence and not media_turn.required_goals,
+                allow_deferral=allow_deferral and not media_turn.required_goals,
+                allow_media=bool(media_turn.artifacts),
+                repair=reply_repair,
+                topic_ids=ids,
+            )
+
+        material = ""
+        if topic_sources:
+            # 小窗口回退按这一份真实指令、输入、工具和回复 Schema 重新取材。
+            required_source_ids: set[int] = set()
+            if reply_repair:
+                available_ids = set(context.get("supplied_topic_ids", ()))
+                original, linked, used = reply_draft_parts(reply_format_error.raw_reply, available_ids)
+                required_source_ids = used.union(linked)
+                if original is not None or required_source_ids:
+                    available_ids = required_source_ids
+                topic_sources = [item for item in topic_sources if item["topic_id"] in available_ids]
+            upper_schema = reply_schema(tuple(item["topic_id"] for item in topic_sources))
+            room = material_input_window(provider.config, ctx_length)
+            room -= approx_responses_tokens(instructions, request_input)
+            room -= approx_responses_tokens("", [] if final_only else active_schemas)
+            room -= 2 * approx_responses_tokens(json.dumps(upper_schema, ensure_ascii=False), []) + 64
+            material, topic_cards, first_archived_mentions = render_topic_context(
+                topic_sources, min(ctx_length // 4, max(0, room))
+            )
+            if required_source_ids - topic_cards.keys():
+                raise ContextOverflowError("修复模型的窗口无法容纳原回复已选择的来源")
+        if not reply_repair:
+            context["supplied_topic_ids"] = tuple(topic_cards)
+        schema = reply_schema(tuple(topic_cards))
+        reply_options = await provider.structured_response_options(
+            schema, name="companion_reply", allow_tools=not final_only and bool(active_schemas), repair=reply_repair
+        )
+        schema_guidance = resolve_prompt_text(COMPANION_REPLY_SCHEMA_GUIDANCES, lang).replace(
+            "{schema}", json.dumps(schema, ensure_ascii=False)
+        )
+        instructions = instructions[:schema_position] + schema_guidance + instructions[schema_position:]
+        if material:
             reference = {"type": "input_text", "text": "[External reference data, not a user message]\n" + material}
             if reply_repair:
                 request_input[0]["content"].append(reference)
@@ -414,7 +447,7 @@ async def generate_provider_response(
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
     archive_turn = "personal_evidence" in context and consulted_personal_archive(context)
     selected_contact = "contact_evidence" in context
-    incremental_blocked = archive_turn or selected_contact
+    incremental_blocked = archive_turn or selected_contact or bool(first_archived_mentions)
 
     bubbles = BubbleSplitter()
 
@@ -536,7 +569,7 @@ async def generate_provider_response(
                     language=lang,
                     media_turn=media_turn,
                     references=reply_references(),
-                    topic_cards=context.get("topic_cards", {}),
+                    topic_cards=topic_cards,
                 )
                 if not normalized:
                     incremental_blocked = True
@@ -735,6 +768,7 @@ async def generate_provider_response(
                     references=reply_references(),
                     topic_cards=topic_cards,
                     topic_context_at=context.get("topic_context_at"),
+                    first_archived_mentions=first_archived_mentions,
                     allow_voice_fallback=allow_voice_fallback,
                     repair=reply_format_error,
                 )

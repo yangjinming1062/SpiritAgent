@@ -1,7 +1,7 @@
 import json
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -20,11 +20,11 @@ from features.conversation.replies import (
     VoiceBubble,
 )
 from features.conversation.reply_media import resolve_reply_media
-from features.media.turn_state import MediaTurnState
+from features.media.turn_state import MediaArtifact, MediaTurnState
 from infrastructure.ai.providers.base import ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_performance_schema, validate_speech_style
 from infrastructure.ai.speech_contracts import SpeechSegment
-from infrastructure.api_ids import ResourceId
+from infrastructure.api_ids import ResourceId, parse_resource_id
 from infrastructure.text import resolve_prompt_text
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
@@ -169,15 +169,16 @@ def companion_reply_schema(
     if speech_config is not None:
         bubble_types.append("VoiceBubbleInput")
     definitions = schema["$defs"] = {name: definitions[name] for name in bubble_types}
-    schema["properties"]["used_topic_ids"] = {
-        "type": "array",
-        "items": {"type": "integer", **({"enum": list(topic_ids)} if topic_ids else {})},
-        "maxItems": len(topic_ids),
-        "uniqueItems": True,
-        "description": "IDs of supplied topics actually discussed or shared; use [] when none were used.",
-    }
+    usage = schema["properties"]["used_topic_ids"]
+    usage.update(
+        maxItems=len(topic_ids),
+        uniqueItems=True,
+        description="IDs of supplied topics actually discussed or shared; use [] when none were used.",
+    )
     if topic_ids:
-        definitions["LinkBubbleInput"]["properties"]["topic_id"]["enum"] = list(topic_ids)
+        allowed = [str(topic_id) for topic_id in topic_ids]
+        usage["items"]["enum"] = allowed
+        definitions["LinkBubbleInput"]["properties"]["topic_id"]["enum"] = allowed
     schema["properties"]["bubbles"] = {
         "type": "array",
         # 空修正表示无可恢复内容，交付时仍使用实际回合的沉默权限。
@@ -214,22 +215,35 @@ def companion_reply_schema(
     return schema
 
 
-def _draft_bubbles(raw: str) -> tuple[list[dict] | None, list]:
+def reply_draft_parts(raw: str, topic_ids: Collection[int]) -> tuple[list[dict] | None, list[int], set[int]]:
+    """提取可修复气泡、须保留顺序的原文卡，以及草稿已使用的获准来源。"""
     try:
         values = json.loads(normalize_companion_reply_content(raw))
     except ValueError:
-        return None, []
-    original_ids = values.get("used_topic_ids", []) if isinstance(values, dict) else []
-    if not isinstance(original_ids, list):
-        original_ids = []
+        return None, [], set()
+
+    def authorized(ids: Iterable[object]) -> list[int]:
+        result = []
+        for value in ids:
+            with suppress(ValueError):
+                topic_id = parse_resource_id(value)
+                if topic_id in topic_ids:
+                    result.append(topic_id)
+        return result
+
+    original_ids = values.get("used_topic_ids") if isinstance(values, dict) else None
+    used_ids = set(authorized(original_ids)) if isinstance(original_ids, list) else set()
     if values is None:
-        return [], original_ids
+        return [], [], used_ids
     if isinstance(values, dict):
         if values.get("bubbles") is None and values.keys() <= {"kind", "bubbles", "followup", "used_topic_ids"}:
-            return [], original_ids
+            return [], [], used_ids
         values = values.get("bubbles", [values] if "type" in values else None)
-    bubbles = values if isinstance(values, list) and all(isinstance(value, dict) for value in values) else None
-    return bubbles, original_ids
+    if not isinstance(values, list):
+        return None, [], used_ids
+    links = authorized(b.get("topic_id") for b in values if isinstance(b, dict) and b.get("type") == "link")
+    bubbles = values if all(isinstance(value, dict) for value in values) else None
+    return bubbles, list(dict.fromkeys(links)), used_ids
 
 
 def _sentence_parts(text: str) -> list[str]:
@@ -437,11 +451,20 @@ def validate_companion_reply_repair(
     references: ReplyReferences = ReplyReferences(),
     topic_cards: Mapping[int, LinkBubble] | None = None,
     used_topic_ids: list[int] | None = None,
+    first_archived_mentions: frozenset[int] = frozenset(),
 ) -> None:
-    original, original_ids = _draft_bubbles(draft)
-    if original is None:
+    original, required_topics, required_ids = reply_draft_parts(draft, (topic_cards or {}).keys())
+    if required_ids - set(used_topic_ids or ()):
+        raise ValueError("A reply repair must preserve authorized topic usage")
+    if original is None and not required_topics:
         return
     values = json.loads(content)
+    repaired_topics = [parse_resource_id(b["topic_id"]) for b in values if b.get("type") == "link"]
+    missing_cards = (required_ids & first_archived_mentions) - set(required_topics)
+    if [topic_id for topic_id in repaired_topics if topic_id not in missing_cards] != required_topics:
+        raise ValueError("A reply repair must preserve authorized source cards and their order")
+    if original is None:
+        return
     if not any(original) and any(bubble.get("type") in ("text", "voice") for bubble in values):
         raise ValueError("A format repair cannot add speech or writing to an empty draft")
     preserve_written = True
@@ -473,25 +496,11 @@ def validate_companion_reply_repair(
     preserved = [key for key in preserved if key in required]
     if preserved != required:
         raise ValueError("A reply repair must preserve valid media references and order")
-    valid_topics = set(topic_cards or ())
-    required_topics = list(
-        dict.fromkeys(
-            b["topic_id"]
-            for b in original
-            if b.get("type") == "link" and type(b.get("topic_id")) is int and b["topic_id"] in valid_topics
-        )
-    )
-    repaired_topics = [b.get("topic_id") for b in values if b.get("type") == "link"]
-    if repaired_topics != required_topics:
-        raise ValueError("A reply repair must preserve authorized source cards and their order")
-    required_ids = {topic_id for topic_id in original_ids if type(topic_id) is int and topic_id in valid_topics}
-    if required_ids - set(used_topic_ids or ()):
-        raise ValueError("A reply repair must preserve authorized topic usage")
 
 
 def _deliverable_media(media_turn: MediaTurnState, goals: set[str]) -> list[tuple[str, str]]:
     """每个目标当前可交付的版本（图片取最新就绪版本）；无法解析的目标由后续校验照常报告。"""
-    latest: dict[str, tuple[str, str]] = {}
+    latest: dict[str, MediaArtifact] = {}
     for artifact in media_turn.artifacts.values():
         if artifact.goal_id not in goals:
             continue
@@ -499,8 +508,16 @@ def _deliverable_media(media_turn: MediaTurnState, goals: set[str]) -> list[tupl
             resolve_reply_media(media_turn, artifact.media_id, artifact.type)
         except ValueError:
             continue
-        latest[artifact.goal_id] = (artifact.type, artifact.media_id)
-    return list(latest.values())
+        prior = latest.get(artifact.goal_id)
+        if (
+            artifact.type == "image"
+            and artifact.status in {"failed", "result_unknown"}
+            and prior
+            and prior.status == "ready"
+        ):
+            continue
+        latest[artifact.goal_id] = artifact
+    return [(artifact.type, artifact.media_id) for artifact in latest.values()]
 
 
 def parse_companion_reply(
@@ -707,6 +724,7 @@ def resolve_companion_reply(
     references: ReplyReferences = ReplyReferences(),
     topic_cards: Mapping[int, LinkBubble] | None = None,
     topic_context_at: datetime | None = None,
+    first_archived_mentions: frozenset[int] = frozenset(),
     allow_voice_fallback: bool = False,
     repair: CompanionReplyFormatError | None = None,
 ) -> ResolvedCompanionReply:
@@ -813,6 +831,16 @@ def resolve_companion_reply(
             raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=repair is not None) from exc
         degraded = True
     if reply is not None and reply.used_topic_ids:
+        linked = {bubble.topic_id for bubble in reply.bubbles if isinstance(bubble, LinkBubble)}
+        missing = (first_archived_mentions & set(reply.used_topic_ids)) - linked
+        if kind == "dialogue" and missing:
+            raise CompanionReplyFormatError(
+                ValueError(
+                    f"Include a link bubble for each of these older topics used here: {sorted(map(str, missing))}"
+                ),
+                raw_reply,
+                repair_attempt=repair is not None,
+            )
         reply.topic_context_at = topic_context_at
     if repair is not None:
         try:
@@ -824,6 +852,7 @@ def resolve_companion_reply(
                 references=references,
                 topic_cards=topic_cards,
                 used_topic_ids=reply.used_topic_ids if reply else [],
+                first_archived_mentions=first_archived_mentions,
             )
         except ValueError as exc:
             raise CompanionReplyFormatError(exc, raw_reply, repair_attempt=True) from exc

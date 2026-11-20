@@ -9,7 +9,7 @@ from infrastructure.search import SearchStatus, embed_search_query, local_date_b
 from infrastructure.search_index import SearchDocument, search_documents, upsert_search_documents
 from pydantic import BaseModel
 from runtime.search_indexing import SearchIndexWorker
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -21,11 +21,18 @@ from .queries import event_view, project_public_completions, step_view
 from .schemas import LifeEventPublicView, LifeEventView, LifeTrajectoryEntry
 from .trajectory import trajectory_entries, trajectory_scope
 
-LIFE_SEARCH_WORKER = SearchIndexWorker("life.search", LifeEventSearchIndex)
+LIFE_SEARCH_WORKER = SearchIndexWorker(
+    "life.search", LifeEventSearchIndex, embedding_text=func.split_part(LifeEventSearchIndex.search_text, "\n", 1)
+)
 
 
 class LifeRecallItem(LifeEventView):
     reading_result: ReadingResultView | None = None
+
+    def index_text(self) -> str:
+        # 首行是向量模型可用的事件及摘录；完整笔记在下一行供关键词检索。
+        event = json.dumps(life_content_payload(self.prompt_payload()), ensure_ascii=False, sort_keys=True)
+        return f"{event}\n{self.reading_result.model_dump_json()}" if self.reading_result else event
 
 
 class LifeSearchItem(LifeEventPublicView):
@@ -66,12 +73,7 @@ async def index_life_events(db: AsyncSession, user_id: int, events: Sequence[Lif
         db,
         LifeEventSearchIndex,
         user_id,
-        [
-            SearchDocument(
-                item.id, json.dumps(life_content_payload(item.prompt_payload()), ensure_ascii=False, sort_keys=True)
-            )
-            for item in items
-        ],
+        [SearchDocument(item.id, item.index_text()) for item in items],
     )
 
 

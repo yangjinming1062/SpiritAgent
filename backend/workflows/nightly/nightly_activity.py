@@ -407,9 +407,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         if r.usage == "background"
     }
 
-    topic_reserve: list[dict[str, Any]] = []
     if user.nightly_activity_enabled and not has_plan:
-        topic_result = await _run_stage(
+        await _run_stage(
             stages,
             "topic discovery",
             partial(
@@ -437,8 +436,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             skipped=(NightlyWindowClosedError, DiscoveryDisabledError),
             error_note=lambda exc: {"error": type(exc).__name__},
         )
-        if topic_result is not None:
-            topic_reserve = topic_result.topics
     elif not user.nightly_activity_enabled:
         _record_stage(stages, {"stage": "topic discovery", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
@@ -462,7 +459,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 persona=persona_snapshot,
                 life_context=life_context,
                 language=user_language,
-                topic_reserve=topic_reserve,
                 diagnostics=stage_diagnostics.setdefault("planning", []),
             ),
             lambda result: ("waiting" if result.pending else "ok", {}),

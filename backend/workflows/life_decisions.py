@@ -12,7 +12,13 @@ from features.companion.intents import enqueue_companion_intent, recent_life_con
 from features.companion.narrative_quality import review_narrative
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import load_companion_prompt_context
-from features.companion.rhythm import BedtimeChange, read_rhythm, rhythm_prompt_context, set_bedtime_change
+from features.companion.rhythm import (
+    BedtimeChange,
+    ReviewMinutes,
+    read_rhythm,
+    rhythm_prompt_context,
+    set_bedtime_change,
+)
 from features.conversation.context_window import load_recent_companion_exchange
 from features.life.actions import LIFE_ACTION, NextAction, ReadingAction
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
@@ -38,11 +44,14 @@ from features.life.use_cases import (
     share_life_event_in_session,
     update_personal_growth_in_session,
 )
+from features.posts.publication import wake_post_planning
+from features.posts.store import prepare_publication_in_session
 from features.visuals.repository import notify_visuals_updated
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.token_budget import material_budget
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -78,11 +87,8 @@ class LifeDecision(BaseModel):
     episode: PrivateLifeEpisode | None = None
     pursuit: PursuitChange | None = None
     bedtime_change: BedtimeChange | None = None
-    review_after_minutes: int | None = Field(
-        default=None,
-        ge=20,
-        le=7 * 24 * 60,
-        description="下次考虑整段日常的间隔，20 至 10080 分钟；单项暂停用 resume_after",
+    review_after_minutes: ReviewMinutes | None = Field(
+        default=None, description="多久后再考虑整段日常，以分钟计；单项暂停用 resume_after"
     )
     growth: PersonalGrowthChange | None = None
     share: LifeShare | None = Field(
@@ -218,7 +224,7 @@ choice 决定自己的生活，share 单独决定有没有哪段经历想让对�
 决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，最多提前或推迟两小时。
 growth 只记录自己因有依据的独处经历或成果而产生的变化。引用来源 id；本次新片段的来源填 null。新兴趣或独立认识可以并存，修订或撤回某一条用它的 growth_id。outlook 概括今后选择上的倾向，省去来源细节和用户私事。撤回时 text、outlook 都填 null。核心身份与基本性格是起点。
 私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活页，post、diary 留给对应创作。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
-自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可读取至多三份现有资讯或真实来源，保留实际阅读范围。用中文输出符合 schema 的决定。""",
+自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可选择需要的资讯和原文，依据笔记及未解问题决定是否再读。用中文输出符合 schema 的决定。""",
     "en": """Decide how you want to spend this moment as the person described by persona. Carrying on is a complete choice. Consider your current activity, personal outlook and recorded experience. Knowing the other person informs how you relate; it supplies neither your motivation nor a mutual agreement.
 Life_context gives your state, pursuits and recent experiences. Topic_heads gives the latest episode in each thread. A new explicit arrangement in recent_exchange overrides an older user memory only on that point. Execution lists actual capabilities and materials.
 {life_facts}
@@ -232,7 +238,7 @@ Use choice for your own life. Decide separately in share whether you want the ot
 Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, within two hours of your usual bedtime.
 Use growth for a change in yourself grounded in a solo episode or confirmed result. Cite the event id, or null for this turn's new solo episode. Distinct interests and understandings coexist. Only revise or withdraw a particular one by growth_id. Outlook describes how you now tend to act without disclosing the source or user details. To withdraw it, give null text and outlook. Keep your core identity and temperament.
 Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page, post or diary for later writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
-You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read up to three actual sources; keep their scope. Return your decision in English using the schema.""",
+You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read selected discoveries and original sources; use the notes and open questions to decide whether to read further. Return your decision in English using the schema.""",
 }
 
 
@@ -263,7 +269,7 @@ _DISCLOSURE_REVIEW = {
 }
 
 
-async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> bool:
+async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> LifeEventView | None:
     saved = await share_life_event_in_session(db, user_id, share, source.id)
     if saved and share.release_work and "visual_id" in source.result_ref:
         await notify_visuals_updated(db, user_id)
@@ -402,14 +408,11 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         )
         recent_exchange = await load_recent_companion_exchange(db, user_id, current_interaction=False)
         recent_contacts = await recent_life_contacts(db, user_id)
-    execution = await life_capability_context(user_id)
     instructions = (
         resolve_prompt_text(_INSTRUCTIONS, context.language)
         .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
         .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language))
     )
-    if execution["capabilities"].get("action.design"):
-        instructions += "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, context.language)
     personal = {
         "persona": context.persona_extras,
         "topic_heads": [item.trajectory_payload() for item in life.topic_heads],
@@ -419,6 +422,25 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         "recent_contact_choices": recent_contacts,
     }
     evidence_payload = evidence.prompt_payload()
+    design_guidance = "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, context.language)
+    execution = await life_capability_context(
+        user_id,
+        query=" ".join([life.state.current_activity, *(p.title for p in life.active_pursuits), recent_exchange]),
+        token_budget=material_budget(
+            config.chain,
+            instructions + design_guidance,
+            {
+                **personal,
+                "pursuit_evidence": evidence_payload,
+                "rhythm": rhythm.model_dump(mode="json"),
+                "current_time": context.current_time,
+                "private_episode_allowed": slot is not None,
+            },
+            LifeDecision.model_json_schema(),
+        ),
+    )
+    if execution["capabilities"].get("action.design"):
+        instructions += design_guidance
     attempts: list[LlmAttemptDiagnostic] = []
     original_decision: dict[str, Any] | None = None
     original_share_scope: tuple[object, ...] | None = None
@@ -459,7 +481,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             _validate_pursuit(proposal, life, evidence)
             action = proposal.next_action.action if proposal.next_action else None
             if isinstance(action, ReadingAction):
-                topics = {str(item["id"]) for item in execution["topics"]}
+                topics = {str(item["topic_id"]) for item in execution["topics"]}
                 routes = execution["reading_sources"]
                 if not (action.query or action.urls or action.topic_ids) or (
                     action.urls
@@ -626,6 +648,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 share = None
             if any(issue.field in ("text", "outlook") for issue in review.issues):
                 growth = None
+    post_task = None
     async with SESSION_LOCAL() as db:
         if (
             is_user_in_maintenance(user_id)
@@ -665,6 +688,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                     raise LifeInputError("分享需要已保存的经历")
                 async with db.begin_nested() as sharing:
                     saved = await _save_share(db, user_id, share, source)
+                    if saved and share.channel == "post":
+                        post_task = await prepare_publication_in_session(db, user_id, excerpt_id=saved.id)
                     if saved and share.contact is not None:
                         due = utc_now() + timedelta(minutes=share.contact.after_minutes)
                         accepted = await enqueue_companion_intent(
@@ -684,6 +709,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         except LifeStateConflictError:
             return {"status": "state_changed"}
         await db.commit()
+    if post_task is not None:
+        wake_post_planning(user_id)
     if pursuit is not None and pursuit.next_action is not None:
         await run_life_execution(user_id)
     changed = decision.choice != "keep" or any((share, growth, decision.bedtime_change))

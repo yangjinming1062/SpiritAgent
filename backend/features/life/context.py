@@ -146,19 +146,37 @@ async def read_life_share_excerpts(
     db: AsyncSession, user_id: int, *, channel: LifeShareChannel, since: datetime, until: datetime
 ) -> list[dict[str, str | None]]:
     """只把伙伴指定给本渠道的展示片段交给创作模型。"""
-    rows = await db.scalars(
+    query = (
+        _share_excerpts(user_id, channel).where(LifeEvent.created_at >= since, LifeEvent.created_at < until).limit(6)
+    )
+    return await _excerpt_payload(db, user_id, query)
+
+
+async def selected_post_excerpts(
+    db: AsyncSession, user_id: int, excerpt_ids: Collection[int]
+) -> list[dict[str, str | None]]:
+    if not excerpt_ids:
+        return []
+    query = _share_excerpts(user_id, "post").where(LifeEvent.id.in_(excerpt_ids))
+    return await _excerpt_payload(db, user_id, query)
+
+
+def _share_excerpts(user_id: int, channel: LifeShareChannel) -> Select[tuple[LifeEvent]]:
+    return (
         select(LifeEvent)
         .where(
             LifeEvent.user_id == user_id,
             LifeEvent.kind == "life.share.prepared",
             LifeEvent.fact_json["channel"].as_string() == channel,
-            LifeEvent.created_at >= since,
-            LifeEvent.created_at < until,
         )
         .order_by(LifeEvent.created_at.desc(), LifeEvent.id.desc())
-        .limit(6)
     )
-    excerpts = rows.all()
+
+
+async def _excerpt_payload(
+    db: AsyncSession, user_id: int, query: Select[tuple[LifeEvent]]
+) -> list[dict[str, str | None]]:
+    excerpts = (await db.scalars(query)).all()
     if not excerpts:
         return []
     timezone = await resolve_user_timezone(db, user_id)

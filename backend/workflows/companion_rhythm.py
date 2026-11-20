@@ -41,7 +41,7 @@ Choose sleep if it suits this night. Choose stay to remain awake and available q
 Choose activity only when there is a reason to do one concrete quiet thing in the established fictional setting.
 For activity, give its short description in the requested language and its actual type. Activity does not execute a tool
 or establish an external result. A future plan belongs in the life context, not in the current activity.
-For stay or activity, give next_review_minutes (15–90). For sleep, leave it null. Return JSON matching the schema."""
+For stay or activity, set next_review_minutes to a positive number of minutes until a meaningful next review. For sleep, leave it null. Return JSON matching the schema."""
 
 _INCOMING_CALL_PROMPT = """Someone you know is calling you directly. Decide whether you want to pick up now.
 Use your character, your own plans or activity, local time and routine, and the actual relationship and recent exchanges.

@@ -10,7 +10,7 @@ from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, review_narrative
 from features.entries.diary_search import schedule_diary_embeddings
 from features.journal.journal_service import get_diary_by_date, publish_diary
-from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
+from features.journal.schemas import DiaryContent
 from features.life.context import read_life_context_in_session, read_life_share_excerpts
 from features.memory.memory_narratives import load_companion_reflection
 from features.posts.store import PostInteractions
@@ -136,7 +136,6 @@ async def _compose_diary(
         "background_memories": background_memories,
         "previous_reflection": previous_reflection,
         "life_context": life_context,
-        "max_body_chars": DIARY_BODY_MAX_CHARS,
         "persona": persona,
     }
     instructions = resolve_prompt_text(JOURNAL_DIARY_TEXTS, language)

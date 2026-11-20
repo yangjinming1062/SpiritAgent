@@ -305,9 +305,15 @@ async def reconcile_submission(user_id: int, step_id: int) -> LifeStepView | Non
         if admission is not None and row.state in {"planned", "running", "unknown"}:
             if row.job_id is None and row.business_action_id is None:
                 row.job_id = await requested_job_id(db, user_id, row.idempotency_key)
+            reading_can_resume = row.kind == "content.read" and not (row.checkpoint or {}).get("external_pending")
             if admission.submitted and (
                 row.state == "planned"
-                or (row.state == "running" and row.job_id is None and row.business_action_id is None)
+                or (
+                    row.state == "running"
+                    and row.job_id is None
+                    and row.business_action_id is None
+                    and not reading_can_resume
+                )
             ):
                 row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
                 row.failure_code = "unknown_submission"
@@ -346,6 +352,7 @@ async def finish_step(
             return
         if reading is not None and row.reading_result_json is None:
             row.reading_result_json = reading.model_dump(mode="json")
+            row.checkpoint = {}
         await settle_business_steps(
             db, user_id, kind=row.kind, business_ref={"step_id": step_id}, state=state, result_ref=result, error=error
         )

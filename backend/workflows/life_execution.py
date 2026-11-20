@@ -26,6 +26,7 @@ from features.life.execution import (
     pending_step,
     reconcile_submission,
 )
+from features.life.reading import reading_excerpt
 from features.life.schemas import LifeStepRequest, LifeStepView
 from features.life.use_cases import read_step, require_step_submission, update_business_steps_in_session
 from features.scenes.service import SceneBusyError, SceneLockedError
@@ -114,11 +115,7 @@ async def _finish_reading(user_id: int, step_id: int, reading: ReadingResult) ->
         user_id,
         step_id,
         state="completed",
-        result={
-            "reading_step_id": step_id,
-            "notes": reading.notes,
-            "sources": [source.model_dump(mode="json", exclude={"content"}) for source in reading.sources],
-        },
+        result={"reading_step_id": step_id, **reading_excerpt(reading)},
         reading=reading,
     )
 
@@ -143,12 +140,8 @@ async def _reconcile(user_id: int, step: LifeStepView) -> None:
         # 媒体模块恢复原任务，并在其采纳事务内结算；此处不发起第二次制作。
         return
     elif step.kind == "content.read":
-        saved = await checkpoint(user_id, step.id)
-        if saved.get("notes") and saved.get("sources"):
-            reading = ReadingResult(sources=saved["sources"], notes=saved["notes"])
-            await _finish_reading(user_id, step.id, reading)
-        elif step.state == "running":
-            await finish_step(user_id, step.id, state="unknown", error="阅读已提交但结果未保存，须核对原结果")
+        if step.state == "running":
+            await _finish_reading(user_id, step.id, await read_content(user_id, step))
     elif step.state == "running":
         await finish_step(user_id, step.id, state="unknown", error="执行中断且尚无业务受理记录，须核对原结果")
 
@@ -170,7 +163,8 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
                         await _reconcile(user_id, step)
                 except Exception as exc:
                     if step.kind == "content.read":
-                        await finish_step(user_id, step.id, state="failed", error=str(exc))
+                        pending = (await checkpoint(user_id, step.id)).get("external_pending")
+                        await finish_step(user_id, step.id, state="unknown" if pending else "failed", error=str(exc))
                     raise
                 return
             if problem := await action_block_reason(user_id, step):
@@ -208,15 +202,19 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
                     unsubmitted=True,
                 )
             except asyncio.CancelledError:
-                await finish_step(user_id, step.id, state="unknown", error="执行中断，保留原任务待核对")
+                if step.kind != "content.read":
+                    await finish_step(user_id, step.id, state="unknown", error="执行中断，保留原任务待核对")
                 raise
             except Exception as exc:
                 logger.warning("life action failed", extra={"user_id": user_id, "step_id": step.id}, exc_info=True)
                 latest = await read_step(user_id, step.id)
                 if latest is not None and latest.state == "running" and not latest.business_ref:
+                    known = isinstance(exc, ValueError)
+                    if step.kind == "content.read":
+                        known = not (await checkpoint(user_id, step.id)).get("external_pending")
                     await finish_step(
                         user_id,
                         step.id,
-                        state="failed" if step.kind == "content.read" or isinstance(exc, ValueError) else "unknown",
+                        state="failed" if known else "unknown",
                         error=str(exc),
                     )

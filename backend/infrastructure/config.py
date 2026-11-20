@@ -135,7 +135,6 @@ class Settings(BaseSettings):
     topic_detail_requests_per_night: int = Field(
         default=10, ge=0, le=60, validation_alias="TOPIC_DETAIL_REQUESTS_PER_NIGHT"
     )
-    topic_reserve_limit: int = Field(default=5, ge=0, le=5, validation_alias="TOPIC_RESERVE_LIMIT")
 
     # 与会话级覆盖同范围：会话设置中低于 0.3 的阈值按无效处理。
     context_compression_threshold: float = Field(

@@ -1,12 +1,9 @@
-"""回合内媒体产物、验图证据与生成预算；状态只能由执行层提供。"""
+"""回合内媒体产物与验图证据；状态只能由执行层提供。"""
 
 import asyncio
 from dataclasses import dataclass, field
 from typing import Literal
 from uuid import uuid4
-
-# 媒体请求受理后保留的工具步：足够核对结果或补做一次，其余回合时间留给最终回复。
-MEDIA_FOLLOW_UP_STEPS = 2
 
 
 @dataclass(frozen=True)
@@ -73,23 +70,13 @@ class MediaTurnState:
     current_versions: dict[str, str] = field(default_factory=dict)
     required_goals: set[str] = field(default_factory=set)
     regenerated_goals: set[str] = field(default_factory=set)
-    # 本回合已受理的图片请求（规范化请求 → 其 media_id）、已用的图片预算，以及提交图片请求所在的工具步序号。
     image_requests: dict[str, list[str]] = field(default_factory=dict)
-    image_budget_used: int = 0
-    tool_round: int = 0
-    image_round: int | None = None
-    media_round: int | None = None
-    video_claimed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    def mark_media_accepted(self) -> None:
-        """记录本回合首个媒体请求受理时所在的工具步。"""
-        if self.media_round is None:
-            self.media_round = self.tool_round
 
     def has_unknown_image_result(self) -> bool:
         return any(
-            artifact.type == "image" and artifact.status == "result_unknown" for artifact in self.artifacts.values()
+            self.artifacts[media_id].type == "image" and self.artifacts[media_id].status == "result_unknown"
+            for media_id in self.current_versions.values()
         )
 
     def image_regeneration_blocker(
@@ -112,10 +99,6 @@ class MediaTurnState:
         if self.current_versions.get(artifact.goal_id) != media_id or artifact.goal_id not in self.plans:
             return "stale"
         return None
-
-    def final_reply_due(self) -> bool:
-        """媒体请求受理后只再允许有限的工具步；用尽后模型调用只生成最终回复，不再披露工具。"""
-        return self.media_round is not None and self.tool_round - self.media_round >= MEDIA_FOLLOW_UP_STEPS
 
     def text_reply_media(self) -> list[dict[str, str]]:
         """文本回复每个交付目标只附加最新成功版本，重做失败时保留原图。"""

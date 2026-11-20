@@ -72,7 +72,8 @@ class LifeResultView(BaseModel):
 
     def prompt_payload(self) -> dict[str, Any]:
         payload = self.model_dump(
-            mode="json", exclude={"event_key", "idempotency_key", "business_ref", "action", "library_work_id"}
+            mode="json",
+            exclude={"event_key", "idempotency_key", "business_ref", "action", "library_work_id", "reading_result"},
         )
         # 技术诊断只留在任务与日志边界；生活判断模型只接收稳定的失败类别。
         payload.pop("error", None)

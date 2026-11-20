@@ -5,11 +5,11 @@ import json
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from infrastructure.text import utc_now
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -60,13 +60,22 @@ class _Adjustment(BedtimeChange):
     timezone: str
 
 
+def _valid_review_minutes(minutes: int) -> int:
+    if minutes > (datetime.max.replace(tzinfo=UTC) - utc_now()) // timedelta(minutes=1):
+        raise ValueError("The next review time is outside the supported calendar")
+    return minutes
+
+
+ReviewMinutes = Annotated[int, Field(gt=0, strict=True), AfterValidator(_valid_review_minutes)]
+
+
 class NightChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     choice: Literal["sleep", "stay", "activity"]
     activity: str | None = Field(default=None, min_length=1, max_length=200)
     activity_type: Literal["reading", "thinking", "organizing", "creating", "working"] | None = None
-    next_review_minutes: int | None = Field(default=None, ge=15, le=90)
+    next_review_minutes: ReviewMinutes | None = None
 
     @model_validator(mode="after")
     def valid_choice(self) -> "NightChoice":
@@ -106,7 +115,6 @@ class Contact(BaseModel):
     ended_at: AwareDatetime | None = None
     awake_until: AwareDatetime | None = None
     review_at: AwareDatetime | None = None
-    reviews: int = 0
     woke_at: AwareDatetime | None = None
     wake_id: str | None = None
     skip_morning_at: AwareDatetime | None = None
@@ -302,6 +310,8 @@ async def begin_contact(db: AsyncSession, user_id: int, contact_id: str, kind: C
             contact.skip_morning_at = window.end
     row.contact_json = contact.model_dump(mode="json")
     _publish(db, row, zone, now)
+    # 手势在同一事务内开始并结束交流，结束前会重新锁定并读取此行。
+    await db.flush([row])
 
 
 def _finish(row: CompanionRhythm, contact: Contact, zone: str | None, ended_at: datetime) -> None:
@@ -359,7 +369,6 @@ async def advance_rhythm(db: AsyncSession, user_id: int) -> Contact | None:
     if now >= window.end:
         return None
     contact.review_at = None
-    contact.reviews += 1
     row.contact_json = contact.model_dump(mode="json")
     _publish(db, row, zone, now)
     return contact
@@ -395,7 +404,7 @@ async def settle_night_choice(db: AsyncSession, user_id: int, claimed: Contact, 
         return
     contact.activity, contact.activity_type = choice.activity, choice.activity_type
     next_review = now + timedelta(minutes=choice.next_review_minutes or 0)
-    if choice.choice != "sleep" and contact.reviews < 2 and next_review < window.end:
+    if choice.choice != "sleep" and next_review < window.end:
         contact.review_at = next_review
         next_review += _REVIEW_GRACE
     contact.awake_until = min(window.end, next_review)

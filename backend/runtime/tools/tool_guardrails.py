@@ -101,11 +101,10 @@ class ToolCallGuardrailController:
         self._rounds = 0
         self._effect_round: int | None = None
 
-    @property
-    def must_conclude(self) -> bool:
+    def must_conclude(self, *, limit_effect_followup: bool) -> bool:
         """继续调用工具已无意义：连续多个工具步没有新信息，或动作型工具已成功且核对额度用尽。调用方应收束为最终回复。"""
         effect_done = self._effect_round is not None and self._rounds >= self._effect_round + _EFFECT_FOLLOW_UP_STEPS
-        return self._stuck_rounds >= _STALL_AFTER_ROUNDS or effect_done
+        return self._stuck_rounds >= _STALL_AFTER_ROUNDS or (limit_effect_followup and effect_done)
 
     def call_limit_error(self, tool_name: str) -> str | None:
         """状态型工具本回合已用满调用上限时的拦截说明。"""
@@ -121,18 +120,23 @@ class ToolCallGuardrailController:
         """一个工具步结束：整步调用都失败，或只是重复本回合已有的调用且结果不变，就没有新信息；连续没有新信息的工具步累计，否则清零。多模态结果（None）总是新信息。"""
         self._rounds += 1
         stuck: list[bool] = []
+        media_progress = False
         for (name, arguments), result in zip(calls, results, strict=True):
             if result is None:
                 stuck.append(False)
                 continue
             body = result.split(_LOOP_WARNING_PREFIX, 1)[0]
             failed = _tool_failed(body)
-            if name in _EFFECT_TOOLS and not failed and self._effect_round is None:
+            if not failed and self._effect_round is None and _completed_effect(name, arguments):
                 self._effect_round = self._rounds
-            signature = (name, _arguments_hash(arguments))
-            digest = _result_hash(body)
-            stuck.append(failed or self._last_results.get(signature) == digest)
+            media = _media_progress_key(name, body)
+            signature, digest = media or ((name, _arguments_hash(arguments)), _result_hash(body))
+            changed = self._last_results.get(signature) != digest
+            media_progress |= media is not None and changed and not failed
+            stuck.append(failed or not changed)
             self._last_results[signature] = digest
+        if media_progress:
+            self._effect_round = None
         self._stuck_rounds = self._stuck_rounds + 1 if stuck and all(stuck) else 0
 
     def record_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
@@ -189,6 +193,31 @@ class ToolCallGuardrailController:
                 f"{tool_name} returned the same result {repeat_count} times. Use the result already provided or change the query instead of repeating it unchanged.",
             )
         return None
+
+
+def _completed_effect(name: str, arguments: str) -> bool:
+    if name not in _EFFECT_TOOLS:
+        return False
+    if name in {"companion_wait", "cronjob"}:
+        args = safe_json_loads(arguments)
+        return isinstance(args, dict) and str(args.get("action", "")).strip().lower() not in {"list", "get"}
+    return True
+
+
+def _media_progress_key(name: str, result: str) -> tuple[tuple[str, str], str] | None:
+    """按工具返回的作品身份与状态识别重放，参数写法及重复受理提示不构成进展。"""
+    if name not in {"image_generate", "image_regenerate", "video_generate", "video_generate_status"}:
+        return None
+    data = safe_json_loads(result)
+    media = data.get("media") if isinstance(data, dict) else None
+    if (
+        not isinstance(media, list)
+        or not media
+        or not all(isinstance(item, dict) and isinstance(item.get("media_id"), str) for item in media)
+    ):
+        return None
+    key = ("media", _hash_json({"ids": [item["media_id"] for item in media]}))
+    return key, _hash_json({"media": media, "queue": data.get("video_queue")})
 
 
 def _tool_failed(result: str) -> bool:

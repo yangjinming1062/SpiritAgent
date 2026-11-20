@@ -18,11 +18,12 @@ from features.life.schemas import LifeStepView
 from features.media.image_generation import resolve_image_gen_chain
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.snapshots import list_scene_snapshots
-from features.topics.store import load_prompt_topics
+from features.topics.store import ranked_topic_summaries
 from features.visuals.queries import creation_preferences
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.token_budget import json_tokens
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -156,18 +157,22 @@ def _web_reading_block(disabled: set[str], *, search: bool) -> CapabilityBlock |
     return None
 
 
-async def life_capability_context(user_id: int) -> dict[str, Any]:
+async def require_web_reading(user_id: int, *, search: bool) -> None:
+    async with SESSION_LOCAL() as db:
+        disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
+    if problem := _web_reading_block(disabled, search=search):
+        raise ValueError(problem.reason)
+
+
+async def life_capability_context(user_id: int, *, query: str, token_budget: int) -> dict[str, Any]:
     """日常生活判断的行动目录与素材；模型只从此处了解可执行范围。"""
     materials = await load_life_materials(user_id)
     blocked = await capability_blocks(user_id, materials=materials)
     async with SESSION_LOCAL() as db:
-        topics = await load_prompt_topics(db, MemoryScope(user_id, "companion"), utc_now())
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
     url_block = _web_reading_block(disabled, search=False)
     search_block = url_block or _web_reading_block(disabled, search=True)
-    if url_block and not topics:
-        blocked.setdefault("content.read", url_block)
-    return {
+    execution = {
         "capabilities": {name: name not in blocked for name in LIFE_CAPABILITIES},
         "blocked_capabilities": {name: problem.reason for name, problem in blocked.items()},
         "capability_descriptions": {
@@ -184,10 +189,21 @@ async def life_capability_context(user_id: int) -> dict[str, Any]:
             {"id": str(item.id), "name": item.name, "description": item.motion_description}
             for item in materials.actions
         ],
-        "topics": [
-            {"id": str(item.topic_id), "title": item.title, "summary": item.summary, "url": item.url} for item in topics
-        ],
     }
+    async with SESSION_LOCAL() as db:
+        topics = await ranked_topic_summaries(
+            db,
+            MemoryScope(user_id, "companion"),
+            utc_now(),
+            query=query,
+            token_budget=token_budget - json_tokens(execution),
+        )
+    if url_block and not topics:
+        execution["capabilities"]["content.read"] = False
+        execution["blocked_capabilities"]["content.read"] = url_block.reason
+        execution["capability_descriptions"].pop("content.read", None)
+    execution["topics"] = topics
+    return execution
 
 
 async def action_block_reason(user_id: int, step: LifeStepView) -> tuple[str, str] | None:

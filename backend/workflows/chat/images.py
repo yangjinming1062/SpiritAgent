@@ -16,6 +16,7 @@ from features.appearance.visual_identity import (
 from features.conversation.prompts import CHAT_IMAGE_CORRECTION_PREFIX
 from features.media.image_generation import ImageGenerationError
 from features.media.image_jobs import produce_image_batch
+from features.media.review_views import IMAGE_JOB_MAX_SLOTS
 from features.media.turn_state import ImagePlan, MediaArtifact, MediaInspection, MediaTurnState
 from features.visuals.queries import prompt_presentation_snapshot
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat
@@ -30,8 +31,6 @@ from runtime.tools.prompts import MEDIA_INSPECTION_INSTRUCTIONS
 
 logger = get_logger(__name__)
 
-# 每回合初次生成的图片总预算（含失败项）；单次调用只描述一个画面，n 为该画面的张数。
-CHAT_IMAGES_PER_TURN = 16
 ImageAspectRatio = Literal["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"]
 IMAGE_ASPECT_RATIOS: tuple[str, ...] = get_args(ImageAspectRatio)
 
@@ -44,7 +43,7 @@ class ImageRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=16000)
     subject: Literal["self"] | None = None
     aspect_ratio: ImageAspectRatio = "1:1"
-    n: int = Field(default=1, ge=1, le=CHAT_IMAGES_PER_TURN, strict=True)
+    n: int = Field(default=1, ge=1, le=IMAGE_JOB_MAX_SLOTS, strict=True)
     outfit_override: str | None = Field(default=None, max_length=8000)
 
 
@@ -190,11 +189,11 @@ def _delivery_hint(state: MediaTurnState) -> str:
 
 
 def _call_result(state: MediaTurnState, media_ids: list[str], *, reused: bool = False) -> str:
-    """本次调用的图片结果；一张都没有就绪时按失败返回，保持顶层 error 供模型与循环守卫识别。"""
+    """返回逐槽结果；已有任务的待完成图片可交付等待卡。"""
     media = [state.artifacts[media_id].tool_view() for media_id in media_ids]
     ready = any(item["status"] == "ready" for item in media)
     payload: dict[str, object] = {
-        "success": bool(media) and all(item["status"] == "ready" for item in media),
+        "success": ready or any(item["status"] == "pending" and "task_id" in item for item in media),
         "accepted": True,
         "complete": bool(media) and all(item["status"] == "ready" for item in media),
         "requested_count": len(media),
@@ -220,7 +219,7 @@ def _validation_message(exc: ValidationError) -> str:
 
 
 async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
-    """生成同一描述的 n 张图片。图片请求只在回合的一个工具步里提交（同一步可分别描述多个画面），总量受回合预算约束；完全相同的请求只返回已有结果。"""
+    """生成同一描述的 n 张图片，同回合重复请求复用已有任务及其槽位。"""
     try:
         request = ImageRequest.model_validate(arguments)
     except ValidationError as exc:
@@ -231,19 +230,8 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
     async with state.lock:
         if (media_ids := state.image_requests.get(key)) is not None:
             return _call_result(state, media_ids, reused=True)
-        if state.image_round is not None and state.image_round != state.tool_round:
-            return tool_error(
-                "本回合的图片请求已经提交，不再接受新的图片请求；需要多幅不同的画面须在同一步里一起提交，或下一回合再提出"
-            )
         if state.has_unknown_image_result():
             return tool_error("前一次图片生成的结果尚未核实，本轮不再提交新的图片生成")
-        if state.image_budget_used + request.n > CHAT_IMAGES_PER_TURN:
-            return tool_error(
-                f"每轮最多生成 {CHAT_IMAGES_PER_TURN} 张图片，本轮已请求 {state.image_budget_used} 张，请减少张数"
-            )
-        state.image_budget_used += request.n
-        state.image_round = state.tool_round
-        state.mark_media_accepted()
         artifacts: list[MediaArtifact] = []
         for _ in range(request.n):
             media_id = uuid4().hex
@@ -293,14 +281,13 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
                 state.current_versions[artifact.goal_id] = artifact.media_id
                 media_ids[index] = artifact.media_id
                 state.image_requests[key] = media_ids
+            if artifact.job_id is not None or result.status == "ready":
+                state.required_goals.add(artifact.goal_id)
             if result.status != "ready" or result.url is None:
                 artifact.status, artifact.error = result.status, result.error
-                if result.status == "pending":
-                    state.required_goals.add(artifact.goal_id)
                 continue
             artifact.url, artifact.identity_verdict = result.url, result.identity_verdict
             artifact.status = "ready"
-            state.required_goals.add(artifact.goal_id)
     finally:
         for artifact in artifacts:
             if artifact.status == "pending" and artifact.job_id is None:

@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from infrastructure.database import SESSION_LOCAL
@@ -11,7 +11,6 @@ from infrastructure.text import ensure_utc, format_local_iso, utc_now
 from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_companion_dialogue
 from features.entries.contracts import EntryView
-from features.life.context import read_life_share_excerpts
 from features.posts.schemas import PostContext
 from features.posts.store import PostError
 
@@ -33,11 +32,6 @@ async def load_post_prompt_context(
     now = utc_now()
     async with SESSION_LOCAL() as db:
         dialogue = await load_companion_dialogue(db, user_id, now=now)
-        excerpts = (
-            await read_life_share_excerpts(db, user_id, channel="post", since=now - timedelta(days=3), until=now)
-            if publication
-            else []
-        )
     messages = json.loads(dialogue.content or "[]")
     return PostPromptContext(
         now=ensure_utc(now),
@@ -54,7 +48,6 @@ async def load_post_prompt_context(
             **({"background_memory": companion.memory.background} if not publication else {}),
             "companion_reflection": companion.memory.relationship,
             "life_context": companion.life_context.prompt_payload(shared_only=True, for_publication=publication),
-            **({"selected_life_excerpts": excerpts} if publication else {}),
             "recent_dialogue": {
                 "window_start": dialogue.window_start.isoformat(),
                 "window_end": dialogue.window_end.isoformat(),

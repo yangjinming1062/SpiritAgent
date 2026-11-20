@@ -8,6 +8,7 @@ from infrastructure.logger import get_logger
 from infrastructure.search import QueryEmbedding, valid_vectors
 from infrastructure.search_index import SearchIndexRow
 from sqlalchemy import or_, select, update
+from sqlalchemy.sql.elements import ColumnElement
 
 from .background import TaskScope
 from .lifecycle import RuntimeParticipant
@@ -17,9 +18,12 @@ logger = get_logger(__name__)
 
 
 class SearchIndexWorker:
-    def __init__(self, name: str, model: type[SearchIndexRow]) -> None:
+    def __init__(
+        self, name: str, model: type[SearchIndexRow], *, embedding_text: ColumnElement[str] | None = None
+    ) -> None:
         self._name = name
         self._model = model
+        self._embedding_text = model.search_text if embedding_text is None else embedding_text
         self._targets: dict[int, tuple[str, int]] = {}
         self._requests: set[int] = set()
         self._bag = TaskScope(name)
@@ -59,7 +63,7 @@ class SearchIndexWorker:
                         stale.append(model.dimensions != dimensions)
                     rows = list(
                         await db.execute(
-                            select(model.id, model.search_text, model.content_hash)
+                            select(model.id, self._embedding_text.label("embedding_text"), model.content_hash)
                             .where(model.user_id == user_id, or_(*stale))
                             .order_by(model.id)
                             .limit(100)
@@ -69,7 +73,7 @@ class SearchIndexWorker:
                     if user_id in self._requests:
                         continue
                     return
-                vectors = await generate_embeddings([row.search_text for row in rows], provider, user_id=user_id)
+                vectors = await generate_embeddings([row.embedding_text for row in rows], provider, user_id=user_id)
                 if (
                     vectors is None
                     or not valid_vectors(vectors, len(rows), dimensions)

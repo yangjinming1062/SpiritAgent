@@ -5,7 +5,10 @@ from datetime import date
 from typing import Any
 
 from features.journal.journal_service import search_diary
+from features.life.reading import READING_EVENT_TOKENS, reading_excerpt
 from features.life.search import recall_life
+from infrastructure.ai.token_budget import material_input_window
+from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.api_ids import ResourceId
 from infrastructure.text import tool_error
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,7 +34,12 @@ def _authorized(user_id: int, scope: MemoryScope | None) -> bool:
     return scope is not None and scope.user_id == user_id and scope.system_preset_id == "companion"
 
 
-async def life_recall(user_id: ResourceId, memory_scope: MemoryScope | None = None, **arguments: Any) -> str:
+async def life_recall(
+    user_id: ResourceId,
+    memory_scope: MemoryScope | None = None,
+    llm_config: UserLlmConfig | None = None,
+    **arguments: Any,
+) -> str:
     if not _authorized(user_id, memory_scope):
         return tool_error("仅伙伴对话可查询生活历史")
     try:
@@ -39,10 +47,20 @@ async def life_recall(user_id: ResourceId, memory_scope: MemoryScope | None = No
             {key: value for key, value in arguments.items() if key in LifeArchiveQuery.model_fields}
         )
         result = await recall_life(user_id, **query.model_dump())
-        return json.dumps(
-            {"events": [item.prompt_payload() for item in result.items], "search": result.search.model_dump()},
-            ensure_ascii=False,
-        )
+        reading_count = sum(item.reading_result is not None for item in result.items)
+        budget = READING_EVENT_TOKENS
+        if reading_count and llm_config and llm_config.chain:
+            budget = min(material_input_window(provider) for provider in llm_config.chain) // 4 // reading_count
+        events = []
+        for item in result.items:
+            event = item.prompt_payload()
+            if item.reading_result:
+                event["result"] = {
+                    **event["result"],
+                    **reading_excerpt(item.reading_result, query=query.query, budget=budget),
+                }
+            events.append(event)
+        return json.dumps({"events": events, "search": result.search.model_dump()}, ensure_ascii=False)
     except ValueError as exc:
         return tool_error(str(exc))
 

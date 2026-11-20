@@ -2,6 +2,7 @@
 
 from collections.abc import Collection
 
+from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import or_, select
@@ -45,6 +46,21 @@ def video_job_snapshot(row: VideoGenJob, queue_info: VideoQueueInfo | None = Non
 async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoJobSnapshot | None:
     row = await db.scalar(select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id))
     return await video_job_snapshot_async(db, row) if row is not None else None
+
+
+async def chat_video_by_media_id(
+    db: AsyncSession, user_id: int, session_id: str, request_scope: str, media_id: str
+) -> VideoJobSnapshot | None:
+    row = await db.scalar(select(VideoGenJob).where(VideoGenJob.owner_id == user_id, VideoGenJob.media_id == media_id))
+    if row is None:
+        return None
+    if (
+        row.conversation_id != int(session_id)
+        or row.params_json["request_scope"] != request_scope
+        or row.cleanup_requested_at is not None
+    ):
+        raise RequestError(409, "原视频任务已不可用")
+    return await video_job_snapshot_async(db, row)
 
 
 async def get_video_jobs(db: AsyncSession, user_id: int, job_ids: Collection[int]) -> dict[int, VideoJobSnapshot]:

@@ -4,12 +4,14 @@ from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
+from infrastructure.ai.token_budget import json_tokens
 from infrastructure.request_errors import RequestError
+from infrastructure.search import extract_search_terms
 from infrastructure.text import ensure_utc, utc_now
 from infrastructure.web.social_content import validate_source_url
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.locking import lock_account
@@ -113,13 +115,11 @@ async def reserve_request(
 
 
 async def publish_batch(
-    db: AsyncSession, batch_id: int, scope: MemoryScope, selections: Sequence[TopicSelection], *, limit: int = 5
+    db: AsyncSession, batch_id: int, scope: MemoryScope, selections: Sequence[TopicSelection]
 ) -> TopicBatchSnapshot:
     row = await _locked_batch(db, batch_id, scope)
     if row.status != "collecting":
         return TopicBatchSnapshot.model_validate(row)
-    if len(selections) > limit:
-        raise ValueError("Topic reserve exceeds limit")
     events: set[str] = set()
     sources: set[tuple[str, str]] = set()
     for selection in selections:
@@ -194,26 +194,118 @@ async def _load_topic_snapshots(db: AsyncSession, scope: MemoryScope, *where: An
         await db.execute(
             select(CompanionTopic, _used(scope), TopicFeedback.value)
             .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
-            .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
-            .where(*_scope(CompanionTopic, scope), *where)
+            .outerjoin(TopicFeedback, and_(TopicFeedback.topic_id == CompanionTopic.id, *_scope(TopicFeedback, scope)))
+            .where(*_scope(CompanionTopic, scope), *_scope(TopicBatch, scope), *where)
             .order_by(CompanionTopic.id)
         )
     ).all()
     return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in rows]
 
 
-async def load_prompt_topics(
-    db: AsyncSession, scope: MemoryScope, now: datetime, *, historical_topic_ids: Sequence[int] = ()
-) -> list[TopicSnapshot]:
+async def ranked_topic_summaries(
+    db: AsyncSession,
+    scope: MemoryScope,
+    now: datetime,
+    *,
+    query: str,
+    token_budget: int,
+    historical_topic_ids: Sequence[int] | None = None,
+) -> list[dict[str, Any]]:
+    """当前批次可供探索；已过采集日的来源按主题匹配，聊天已分享项另受会话水位约束。"""
+    if token_budget <= 0:
+        return []
+    terms = extract_search_terms(query)
+    searchable = func.concat_ws(" ", CompanionTopic.title, CompanionTopic.summary, CompanionTopic.event_key)
+    interests = func.concat_ws(
+        " ", CompanionTopic.user_relevance, CompanionTopic.companion_interest, CompanionTopic.conversation_angle
+    )
+
+    def term_score(column: Any) -> Any:
+        # 西文使用 PostgreSQL 词干与停用词处理，避免 i、a 等短词命中几乎所有旧闻。
+        english = func.to_tsvector("english", column)
+        matches = [
+            english.op("@@")(func.plainto_tsquery("english", term))
+            if term.isascii()
+            else column.icontains(term, autoescape=True)
+            for term in terms
+        ]
+        return sum((case((match, 1), else_=0) for match in matches), literal(0))
+
+    score, interest_score = term_score(searchable), term_score(interests)
     used = _used(scope)
-    return await _load_topic_snapshots(db, scope, or_(_active(now), CompanionTopic.id.in_(historical_topic_ids) & used))
+    eligibility = or_(TopicBatch.expires_at > now, score > 0)
+    if historical_topic_ids is not None:
+        eligibility = or_(~used & eligibility, used & CompanionTopic.id.in_(historical_topic_ids))
+    fields = (
+        CompanionTopic.id.label("topic_id"),
+        CompanionTopic.title,
+        CompanionTopic.platform,
+        CompanionTopic.url,
+        CompanionTopic.author,
+        CompanionTopic.published_at,
+        CompanionTopic.collected_at,
+        CompanionTopic.summary,
+        CompanionTopic.conversation_angle,
+        CompanionTopic.user_relevance,
+        CompanionTopic.companion_interest,
+        used.label("already_used"),
+        (TopicBatch.expires_at <= now).label("past_batch"),
+        TopicFeedback.value.label("feedback"),
+    )
+    stmt = (
+        select(*fields)
+        .join(TopicBatch, TopicBatch.id == CompanionTopic.batch_id)
+        .outerjoin(TopicFeedback, and_(TopicFeedback.topic_id == CompanionTopic.id, *_scope(TopicFeedback, scope)))
+        .where(
+            *_scope(CompanionTopic, scope),
+            *_scope(TopicBatch, scope),
+            TopicBatch.status == "ready",
+            TopicBatch.available_from <= now,
+            eligibility,
+        )
+        .order_by(
+            score.desc(),
+            case((TopicFeedback.value == "less", 1), else_=0),
+            interest_score.desc(),
+            case((TopicFeedback.value == "like", 0), else_=1),
+            CompanionTopic.published_at.desc(),
+            CompanionTopic.id.desc(),
+        )
+        .execution_options(yield_per=32)
+    )
+    summaries = []
+    rows = await db.stream(stmt)
+    try:
+        async for row in rows.mappings():
+            brief = {
+                **row,
+                "topic_id": str(row["topic_id"]),
+                "published_at": ensure_utc(row["published_at"]).isoformat(),
+                "collected_at": ensure_utc(row["collected_at"]).isoformat(),
+            }
+            size = json_tokens(brief) + 2
+            if size > token_budget:
+                if summaries:
+                    break
+                continue
+            summaries.append(brief)
+            token_budget -= size
+    finally:
+        await rows.close()
+    return summaries
 
 
 async def read_saved_topics(db: AsyncSession, scope: MemoryScope, topic_ids: Sequence[int]) -> list[TopicSnapshot]:
     """阅读已有来源不受主动分享时窗限制，也不新增分享记录。"""
     if not topic_ids:
         return []
-    return await _load_topic_snapshots(db, scope, CompanionTopic.id.in_(topic_ids))
+    return await _load_topic_snapshots(
+        db,
+        scope,
+        CompanionTopic.id.in_(topic_ids),
+        TopicBatch.status == "ready",
+        TopicBatch.available_from <= utc_now(),
+    )
 
 
 async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetime) -> bool:
@@ -221,15 +313,22 @@ async def has_unshared_topics(db: AsyncSession, scope: MemoryScope, now: datetim
         await db.scalar(
             select(CompanionTopic.id)
             .join(TopicBatch)
-            .where(*_scope(CompanionTopic, scope), _active(now), ~_used(scope))
+            .where(*_scope(CompanionTopic, scope), *_scope(TopicBatch, scope), _active(now), ~_used(scope))
             .limit(1)
         )
         is not None
     )
 
 
-async def load_batch_topics(db: AsyncSession, scope: MemoryScope, batch_id: int) -> list[TopicSnapshot]:
-    return await _load_topic_snapshots(db, scope, TopicBatch.id == batch_id, TopicBatch.status == "ready")
+async def batch_topic_count(db: AsyncSession, scope: MemoryScope, batch_id: int) -> int:
+    return int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CompanionTopic)
+            .where(*_scope(CompanionTopic, scope), CompanionTopic.batch_id == batch_id)
+        )
+        or 0
+    )
 
 
 async def record_topic_usage(
@@ -253,7 +352,9 @@ async def record_topic_usage(
             .where(
                 *_scope(CompanionTopic, scope),
                 CompanionTopic.id.in_(topic_ids),
-                or_(_active(authorized_at), _used(scope)),
+                *_scope(TopicBatch, scope),
+                TopicBatch.status == "ready",
+                TopicBatch.available_from <= authorized_at,
             )
         )
     )
@@ -289,26 +390,31 @@ async def recent_topic_feedback(
         .group_by(TopicUsage.topic_id)
         .subquery()
     )
-    rows = (
-        await db.execute(
-            select(CompanionTopic, usages.c.used_at, TopicFeedback.value, TopicFeedback.updated_at)
-            .outerjoin(usages, usages.c.topic_id == CompanionTopic.id)
-            .outerjoin(TopicFeedback, TopicFeedback.topic_id == CompanionTopic.id)
-            .where(
-                *_scope(CompanionTopic, scope),
-                or_(usages.c.used_at >= since, TopicFeedback.updated_at >= since, CompanionTopic.created_at >= since),
-            )
-            .order_by(func.coalesce(TopicFeedback.updated_at, usages.c.used_at, CompanionTopic.created_at).desc())
-            .limit(limit)
+    rows = await db.execute(
+        select(
+            CompanionTopic.platform,
+            CompanionTopic.title,
+            CompanionTopic.published_at,
+            CompanionTopic.summary,
+            CompanionTopic.user_relevance,
+            CompanionTopic.companion_interest,
+            CompanionTopic.event_key,
+            usages.c.used_at,
+            TopicFeedback.value.label("feedback"),
+            TopicFeedback.updated_at.label("feedback_updated_at"),
         )
-    ).all()
+        .outerjoin(usages, usages.c.topic_id == CompanionTopic.id)
+        .outerjoin(TopicFeedback, and_(TopicFeedback.topic_id == CompanionTopic.id, *_scope(TopicFeedback, scope)))
+        .where(
+            *_scope(CompanionTopic, scope),
+            or_(usages.c.used_at >= since, TopicFeedback.updated_at >= since, CompanionTopic.created_at >= since),
+        )
+        .order_by(func.coalesce(TopicFeedback.updated_at, usages.c.used_at, CompanionTopic.created_at).desc())
+        .limit(limit)
+    )
     return [
-        {
-            **_snapshot(topic, used_at is not None, feedback).model_dump(mode="json", exclude={"body", "subtitle"}),
-            "used_at": ensure_utc(used_at).isoformat() if used_at else None,
-            "feedback_updated_at": ensure_utc(feedback_at).isoformat() if feedback_at else None,
-        }
-        for topic, used_at, feedback, feedback_at in rows
+        {key: ensure_utc(value).isoformat() if isinstance(value, datetime) else value for key, value in row.items()}
+        for row in rows.mappings()
     ]
 
 

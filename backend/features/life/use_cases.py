@@ -323,14 +323,16 @@ async def commit_private_episode_in_session(
     return event_view(view)
 
 
-async def share_life_event_in_session(db: AsyncSession, user_id: int, share: LifeShare, source_id: int) -> bool:
+async def share_life_event_in_session(
+    db: AsyncSession, user_id: int, share: LifeShare, source_id: int
+) -> LifeEventView | None:
     """公开一段独立写就的片段。保留原记录及其可见范围。"""
     await get_or_create_state(db, user_id, lock=True)
     original = await db.scalar(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id == source_id))
     if original is None:
         raise LifeInputError("分享来源不属于当前生活记录")
     if original.source == "life_share":
-        return False
+        return None
     step = await db.get(LifeStep, original.step_id) if original.step_id is not None else None
     work_id = step.library_work_id if step else None
     public_artifact = work_id is None or await released_work(db, user_id, work_id)
@@ -359,7 +361,7 @@ async def share_life_event_in_session(db: AsyncSession, user_id: int, share: Lif
         )
         .limit(1)
     ):
-        return False
+        return None
     if release:
         public_artifact = True
         if "scene_id" in result:
@@ -377,7 +379,7 @@ async def share_life_event_in_session(db: AsyncSession, user_id: int, share: Lif
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
             )
     public = share.channel == "life"
-    await accept_event_in_session(
+    return await accept_event_in_session(
         db,
         user_id,
         LifeEventInput(
@@ -394,7 +396,6 @@ async def share_life_event_in_session(db: AsyncSession, user_id: int, share: Lif
             shared_with_user=public,
         ),
     )
-    return True
 
 
 async def update_personal_growth_in_session(

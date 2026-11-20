@@ -13,7 +13,7 @@ from infrastructure.assets.asset_store import dated_asset_directory, save_compan
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import local_date, resolve_language, resolve_prompt_text, utc_now
+from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused
@@ -21,6 +21,7 @@ from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.locking import lock_account
 from features.appearance.visual_identity import (
     build_plain_image_prompt,
     build_plain_video_prompt,
@@ -37,6 +38,7 @@ from features.configuration.settings.values import load_user_settings
 from features.entries.contracts import PostContentType
 from features.entries.queries import recent_posts
 from features.jobs.service import bind_job_assets
+from features.life.context import selected_post_excerpts
 from features.media.character_images import (
     ImageChainState,
     generate_reviewed_images,
@@ -68,15 +70,16 @@ from features.posts.store import (
     PostBlockedError,
     PostError,
     commit_publication,
-    get_or_create_planning_publication,
+    next_planning_publication,
     posts_policy_ok,
-    response_for_publication,
+    prepare_publication_in_session,
 )
 from features.scenes.queries import get_scene_state, scene_environment
 from features.visuals.queries import prompt_presentation_snapshot
 
 logger = get_logger(__name__)
 _TASKS = TaskScope("posts.publication")
+_PLANNERS = TaskScope("posts.planning")
 _TERMINAL = {"succeeded", "failed", "cancelled"}
 # 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
 _VIDEO_RESOLUTIONS = ("768P", "720P", "1080P")
@@ -141,17 +144,19 @@ async def _video_supported(user_id: int) -> bool:
     return False
 
 
-async def _creation_input(user_id: int) -> dict:
+async def _creation_input(user_id: int, excerpt_ids: list[int]) -> dict:
     types = await available_types(user_id)
     if not types:
         raise PostBlockedError("发布开关已关闭")
     ctx = await load_post_prompt_context(user_id, publication=True)
     async with SESSION_LOCAL() as db:
+        excerpts = await selected_post_excerpts(db, user_id, excerpt_ids)
         recent = await recent_posts(db, user_id, since=ctx.now - timedelta(days=3), until=ctx.now)
         environment = scene_environment(await get_scene_state(db, user_id))
     presentation = await prompt_presentation_snapshot(user_id)
     return {
         **ctx.payload,
+        "selected_life_excerpts": excerpts,
         "environment": environment,
         "presentation": {
             "visual_description": presentation.visual_description,
@@ -171,11 +176,11 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
     language = payload["output_language"]
     instructions = render_post_instructions(POST_PUBLISH_INSTRUCTIONS, language)
     instructions += (
-        "\nselected_life_excerpts 是你先前明确选给动态的摘选。可以择一继续表达，保留其发生时间、范围和事实性质。"
+        "\nselected_life_excerpts 是你为这次动态选出的片段。可以选一段、合写有关联的几段，或这次不发。保留各段实际发生的时间、范围和事实性质。"
         "近期用户发言只用于相处背景，私人交流、关系理解及记忆不直接成为动态素材。"
         if language == "zh"
-        else "\nThe selected_life_excerpts are excerpts you explicitly chose for future posts. You may use one if it still fits, "
-        "preserving its date, scope and factual status. Recent user messages inform the relationship. Keep private exchanges, "
+        else "\nThe selected_life_excerpts are passages you chose for this post. Use one, connect related passages, or decline, "
+        "preserving the date, scope and factual status of each. Recent user messages inform the relationship. Keep private exchanges, "
         "relationship interpretations and memories out of the post itself."
     )
     creation_payload = payload
@@ -253,14 +258,20 @@ async def request_publication(user_id: int) -> PostPublicationResult:
     if is_user_in_maintenance(user_id):
         raise PostError("账户正在维护，暂不能发布")
     async with SESSION_LOCAL() as db:
-        timezone = await resolve_user_timezone(db, user_id)
-        row = await get_or_create_planning_publication(db, user_id, activity_date=local_date(utc_now(), timezone))
-    schedule_publication(row.id, user_id)
-    return response_for_publication(row)
+        result = await prepare_publication_in_session(db, user_id)
+        if result is None:
+            raise PostBlockedError("动态自主发布已关闭或账户不可用")
+        await db.commit()
+    wake_post_planning(user_id)
+    return result
+
+
+def wake_post_planning(user_id: int) -> None:
+    _PLANNERS.schedule(user_id, lambda: _plan_publications(user_id), name=f"post.plan.{user_id}", user_id=user_id)
 
 
 def schedule_publication(task_id: int, user_id: int) -> None:
-    _TASKS.spawn(task_id, lambda: _run_publication(task_id), name=f"post.publish.{task_id}", user_id=user_id)
+    _TASKS.spawn(task_id, lambda: _run_publication(task_id, user_id), name=f"post.publish.{task_id}", user_id=user_id)
 
 
 def _owned_assets(row: PostPublication) -> list[str]:
@@ -486,11 +497,48 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     return progress
 
 
-async def _run_publication(task_id: int) -> None:
+async def _plan_publications(user_id: int) -> None:
+    """同账户按受理顺序构思；冻结后到达的摘录由下一个任务接续。"""
+    while not is_user_in_maintenance(user_id):
+        async with SESSION_LOCAL() as db:
+            await lock_account(db, user_id)
+            row = await next_planning_publication(db, user_id)
+            if row is None:
+                return
+            task_id = row.id
+            payload = row.request_json
+            excerpt_ids = (row.checkpoint or {}).get("excerpt_ids", [])
+            enabled = await posts_policy_ok(db, user_id)
+            row.state = "running"
+            await db.commit()
+        try:
+            if not enabled:
+                raise PostBlockedError("动态自主发布已关闭或账户不可用")
+            if not payload:
+                payload = await _creation_input(user_id, excerpt_ids)
+                await _save(task_id, request=payload)
+            plan = await compose_plan(user_id, payload)
+            if plan is None:
+                await _save(task_id, status="declined", phase="complete")
+            else:
+                await _save(task_id, plan=plan, phase="planned")
+                schedule_publication(task_id, user_id)
+        except PostBlockedError as exc:
+            await _save(task_id, status="blocked", error=str(exc))
+        except NarrativeQualityError as exc:
+            await _save(task_id, status="failed", error=str(exc))
+        except Exception:
+            logger.exception("Post planning failed", extra={"publication_id": task_id})
+            await _save(task_id, status="failed", error="动态构思失败，内容未发布")
+
+
+async def _run_publication(task_id: int, user_id: int) -> None:
     try:
         async with SESSION_LOCAL() as db:
-            row = await db.get(PostPublication, task_id)
-        if row is None or row.state not in {"queued", "running"}:
+            row = await db.scalar(
+                select(PostPublication).where(PostPublication.id == task_id, PostPublication.user_id == user_id)
+            )
+        if row is None or row.state not in {"queued", "running"} or row.stage == "planning":
             return
         if row.stage == "narration_submitting" and (row.checkpoint or {}).get("media_url"):
             row.checkpoint = {**(row.checkpoint or {}), "narration_failed": True}
@@ -500,16 +548,7 @@ async def _run_publication(task_id: int) -> None:
             return
         if is_user_in_maintenance(row.user_id):
             return
-        if row.plan_json is None:
-            payload = await _creation_input(row.user_id)
-            await _save(task_id, status="running", phase="planning", request=payload)
-            plan = await compose_plan(row.user_id, payload)
-            if plan is None:
-                await _save(task_id, status="declined", phase="complete")
-                return
-            await _save(task_id, plan=plan, phase="planned")
-        else:
-            plan = PostPlan.model_validate(row.plan_json)
+        plan = PostPlan.model_validate(row.plan_json)
         has_video_job = plan.content_type == PostContentType.VIDEO and row.video_job_id is not None
         if not await _post_type_ready(row.user_id, plan.content_type.value, needs_provider=not has_video_job):
             await _save(task_id, status="blocked", error="发布开关或供应商能力不可用")
@@ -541,6 +580,7 @@ async def _run_publication(task_id: int) -> None:
             await commit_publication(
                 db,
                 task_id,
+                user_id,
                 title=plan.title,
                 body=plan.body,
                 content_type=plan.content_type,
@@ -581,8 +621,6 @@ async def _run_publication(task_id: int) -> None:
             status="result_unknown" if exc.result_unknown else "failed",
             error="图片制作结果未知，未重复提交" if exc.result_unknown else "图片制作失败",
         )
-    except NarrativeQualityError as exc:
-        await _save(task_id, status="failed", error=str(exc))
     except Exception:
         logger.exception("Post publication failed", extra={"publication_id": task_id})
         await _save(task_id, status="failed", error="动态制作失败，内容未发布")
@@ -590,14 +628,23 @@ async def _run_publication(task_id: int) -> None:
 
 async def resume_publications() -> None:
     async with SESSION_LOCAL() as db:
-        rows = list(
-            (await db.scalars(select(PostPublication).where(PostPublication.state.in_(("queued", "running"))))).all()
+        rows = await db.execute(
+            select(PostPublication.id, PostPublication.user_id, PostPublication.stage)
+            .where(PostPublication.state.in_(("queued", "running")))
+            .order_by(PostPublication.id)
         )
-    for row in rows:
-        schedule_publication(row.id, row.user_id)
+    planning_users: set[int] = set()
+    for task_id, user_id, stage in rows:
+        if stage == "planning":
+            planning_users.add(user_id)
+        else:
+            schedule_publication(task_id, user_id)
+    for user_id in planning_users:
+        wake_post_planning(user_id)
 
 
 async def drain_publications() -> None:
+    await _PLANNERS.drain()
     await _TASKS.drain()
 
 

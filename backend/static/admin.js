@@ -1687,7 +1687,6 @@ const SETTINGS_SECTIONS = [
                 num('topic_search_requests_per_night', '每账户每夜搜索 HTTP 上限 (含接口准备)', 1, { min: 0, max: 60 }),
                 num('topic_candidate_limit', '每账户每夜候选内容上限', 1, { min: 0, max: 300 }),
                 num('topic_detail_requests_per_night', '每账户每夜详情 HTTP 请求上限', 1, { min: 0, max: 60 }),
-                num('topic_reserve_limit', '每天话题储备上限', 1, { min: 0, max: 5 }),
             ], true],
         ],
     },

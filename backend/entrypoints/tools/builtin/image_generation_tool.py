@@ -1,3 +1,4 @@
+from features.media.review_views import IMAGE_JOB_MAX_SLOTS
 from features.media.turn_state import MediaTurnState
 from runtime.tools.prompts import (
     IMAGE_GENERATION_DESC,
@@ -7,7 +8,6 @@ from runtime.tools.prompts import (
 )
 from runtime.tools.registry import ToolsRegistry
 from workflows.chat.images import (
-    CHAT_IMAGES_PER_TURN,
     IMAGE_ASPECT_RATIOS,
     generate_chat_images,
     inspect_chat_image,
@@ -62,7 +62,7 @@ IMAGE_GENERATION_SCHEMA = {
             "n": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": CHAT_IMAGES_PER_TURN,
+                "maximum": IMAGE_JOB_MAX_SLOTS,
                 "description": IMAGE_GENERATION_PARAM_DESCS["n"],
             },
             "outfit_override": {"type": "string", "description": IMAGE_GENERATION_PARAM_DESCS["outfit_override"]},

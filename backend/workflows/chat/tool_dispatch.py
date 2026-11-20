@@ -100,7 +100,7 @@ def matched_tool_names(output: object) -> list[str]:
 
 
 def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> list[dict]:
-    """按真实图片与验图状态披露工具，参数只接受可用产物标识；已受理本回合图片请求后不再披露 image_generate。"""
+    """按真实图片与验图状态披露工具，参数只接受可用产物标识。"""
     ready_images = {
         artifact.media_id: artifact
         for artifact in state.artifacts.values()
@@ -114,8 +114,8 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
     available = []
     for schema in schemas:
         name = schema["name"]
-        if name == "image_generate" and (state.image_round is not None or state.has_unknown_image_result()):
-            continue  # 图片请求每回合只受理一次；其后不再披露，避免把交付回复误当成再次生成。
+        if name == "image_generate" and state.has_unknown_image_result():
+            continue
         if name == "video_generate_status" and not any(a.type == "video" for a in state.artifacts.values()):
             continue  # 没有视频任务可查时不披露。
         if name not in {"media_inspect", "image_regenerate"}:

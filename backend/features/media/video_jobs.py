@@ -23,6 +23,7 @@ from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
@@ -59,7 +60,7 @@ from features.media.identity_review import review_character_frames_with_referenc
 from features.media.image_jobs import cleanup_user_image_jobs
 from features.media.models import VideoGenJob
 from features.media.prompts import CHARACTER_MEDIA_VIDEO_REVIEW, REFERENCED_VIDEO_MOTION, character_reference_roles
-from features.media.queries import reject_video_delivery, video_job_snapshot_async
+from features.media.queries import chat_video_by_media_id, reject_video_delivery, video_job_snapshot_async
 from features.media.reference_reader import visual_identity_is_current
 from features.media.review_contracts import (
     MediaSelection,
@@ -280,7 +281,7 @@ async def ensure_video_capability(
     allowed_durations: Collection[int] | None = None,
     allowed_resolutions: Collection[str] | None = None,
 ) -> None:
-    """占用视频名额前核对参考模式、时长与分辨率，并在调用方允许的范围内给出可用档位。"""
+    """创建视频任务前核对参考模式、时长与分辨率，并在调用方允许的范围内给出可用档位。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     if not chain:
@@ -461,11 +462,11 @@ async def enqueue_video_job(
     *,
     user_id: int,
     task: AiTaskKey,
-    session_id: str | None,
+    session_id: str,
     prompt: str,
     goal: str | None = None,
     source_message_id: int | None = None,
-    request_scope: str | None = None,
+    request_scope: str,
     asset_directory: str | None = None,
     duration: int,
     resolution: str,
@@ -475,8 +476,13 @@ async def enqueue_video_job(
     identity_reference_path: str | None = None,
     identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
-    media_id: str | None = None,
-) -> VideoJobSnapshot:
+    media_id: str,
+) -> tuple[VideoJobSnapshot, bool]:
+    """聊天请求按账户与稳定的媒体身份受理；重放只读取原任务。"""
+    await lock_domain(db, user_id, f"chat.video:{media_id}")
+    existing = await chat_video_by_media_id(db, user_id, session_id, request_scope, media_id)
+    if existing is not None:
+        return existing, False
     job = await prepare_video_job(
         db,
         user_id=user_id,
@@ -499,7 +505,7 @@ async def enqueue_video_job(
     )
     await _sync_changed_job_assets(db)
     await db.commit()
-    return await submit_video_job(user_id, job.id)
+    return await submit_video_job(user_id, job.id), True
 
 
 def _spawn_poll(job_id: int, user_id: int) -> None:

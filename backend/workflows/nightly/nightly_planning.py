@@ -19,8 +19,10 @@ from features.life.schemas import LifeStepView
 from features.media.identity_rendering import render_character_appearance
 from features.memory.contracts import MemoryListItem
 from features.scenes.queries import get_scene_state, scene_environment
+from features.topics.store import ranked_topic_summaries
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.token_budget import material_budget
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.api_ids import ResourceId, parse_resource_id
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
@@ -28,6 +30,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from pydantic import BaseModel, ConfigDict, Field
+from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 
 from workflows.companion_actions import build_action_view
@@ -628,7 +631,6 @@ async def run_nightly_planning(
     persona: PersonaPlanningSnapshot | None,
     life_context: dict[str, Any],
     language: str,
-    topic_reserve: list[dict[str, Any]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> PlanningResult:
     timezone = ZoneInfo(date_context.user_timezone)
@@ -645,7 +647,7 @@ async def run_nightly_planning(
             "user_profile": user_profile,
             "recall_highlights": [item.model_dump() for item in recall_highlights],
             "today_conversations": today_conversations,
-            "topic_reserve": topic_reserve or [],
+            "topic_reserve": [],
             **({"post_interactions": post_interactions} if post_interactions else {}),
             "autonomous_context": _planning_context_payload(context),
             "current_time": utc_now().astimezone(timezone).isoformat(),
@@ -655,11 +657,28 @@ async def run_nightly_planning(
         instructions = PLANNING_SYSTEM_PROMPT
         if any(cap.name == "action.design" for cap in context.available_capabilities):
             instructions += "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, "en")
+        config = await load_user_llm_config(user_id, AiTaskKey.nightly)
+        schema = NightlyPlanOutput.model_json_schema()
+        # 话题只作为计划背景；旧发现按当日实际交流和正在做的事项取材。
+        query = " ".join(
+            [
+                *(str(row.get("content") or "") for row in today_conversations[-1:]),
+                *(str(row.get("title") or "") for row in life_context.get("active_pursuits", [])),
+            ]
+        )
+        async with SESSION_LOCAL() as db:
+            payload["topic_reserve"] = await ranked_topic_summaries(
+                db,
+                MemoryScope(user_id, "companion"),
+                utc_now(),
+                query=query,
+                token_budget=material_budget(config.chain, instructions, payload, schema),
+            )
         plan = await call_llm_json(
-            await load_user_llm_config(user_id, AiTaskKey.nightly),
+            config,
             instructions,
             payload,
-            schema=NightlyPlanOutput.model_json_schema(),
+            schema=schema,
             schema_name="nightly_plan",
             parse_output=partial(_normalize_plan, context=context),
             repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, "en"),

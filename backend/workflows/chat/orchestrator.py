@@ -567,15 +567,14 @@ async def _refresh_turn_material(
             action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
             if memory_scope is not None:
                 topic_context_at = utc_now()
-                topic_material, topic_cards = await load_topic_context(
+                current_context["topic_sources"] = await load_topic_context(
                     db,
                     memory_scope,
                     inputs.context.get("historical_topic_ids", ()),
                     now=topic_context_at,
                     query=memory_query,
+                    token_budget=inputs.ctx_length // 4,
                 )
-                current_context["topic_material"] = topic_material
-                current_context["topic_cards"] = topic_cards
                 current_context["topic_context_at"] = topic_context_at
     current_context["instructions"] = "\n\n".join(instruction_parts)
     return action_tools_not_ready
@@ -704,10 +703,8 @@ async def _run_chat_turn(
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 只依据已有结果收束回复；主动回合由意图有效期约束。
-            reply_only = (
-                setup.final_reply_only
-                or (media_turn.structured_reply and media_turn.final_reply_due())
-                or (not ephemeral and dispatch_ctx.guardrails.must_conclude)
+            reply_only = setup.final_reply_only or dispatch_ctx.guardrails.must_conclude(
+                limit_effect_followup=not ephemeral
             )
             planner_pass = reply_bubble_sink is not None and bool(active_schemas) and not reply_only
             generate = partial(

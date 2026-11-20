@@ -7,18 +7,20 @@ from datetime import date, datetime
 
 from infrastructure.assets.asset_store import signed_companion_asset_url
 from infrastructure.assets.paths import parse_companion_asset_path
-from infrastructure.domain_locks import lock_domain
-from infrastructure.text import ensure_utc, format_local_iso
+from infrastructure.text import ensure_utc, format_local_iso, local_date, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
 from features.appearance.identity import visual_identity_is_current
+from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting_bool
 from features.entries import queries as entries_queries
 from features.entries import service as entries_service
 from features.entries.contracts import CommentView, EntryError, EntryNotFoundError, EntryView, PostContentType
+from features.jobs.service import bind_job_request, requested_job_id
 from features.media.continuations import finish_media_operation
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.review_contracts import MediaSelection, VisualReview
@@ -98,36 +100,56 @@ async def posts_policy_ok(db: AsyncSession, user_id: int) -> bool:
     )
 
 
-async def get_or_create_planning_publication(db: AsyncSession, user_id: int, *, activity_date: date) -> PostPublication:
-    await lock_domain(db, user_id, "post_planning")
-    if not await posts_policy_ok(db, user_id):
-        raise PostBlockedError("动态自主发布已关闭或账户不可用")
-    row = await db.scalar(
+async def next_planning_publication(
+    db: AsyncSession, user_id: int, *, collecting_only: bool = False
+) -> PostPublication | None:
+    states = ("queued",) if collecting_only else ("queued", "running")
+    return await db.scalar(
         select(PostPublication)
         .where(
-            PostPublication.user_id == user_id,
-            PostPublication.stage == "planning",
-            PostPublication.state.in_(("queued", "running")),
+            PostPublication.user_id == user_id, PostPublication.stage == "planning", PostPublication.state.in_(states)
         )
+        .order_by(PostPublication.id)
         .limit(1)
     )
+
+
+async def prepare_publication_in_session(
+    db: AsyncSession, user_id: int, *, excerpt_id: int | None = None
+) -> PostPublicationResult | None:
+    """摘选与接受它的任务在调用者事务内一起提交；运行中的规划已冻结输入。"""
+    await lock_account(db, user_id)
+    if not await posts_policy_ok(db, user_id):
+        return None
+    request_id = f"post-excerpt:{excerpt_id}" if excerpt_id is not None else None
+    if request_id and (previous := await requested_job_id(db, user_id, request_id)) is not None:
+        row = await db.get(PostPublication, previous)
+        if row is None:
+            raise PostError("摘选关联的动态任务不存在")
+        return response_for_publication(row)
+    row = await next_planning_publication(db, user_id, collecting_only=excerpt_id is not None)
     if row is None:
+        timezone = await resolve_user_timezone(db, user_id)
         row = PostPublication(
             user_id=user_id,
-            activity_date=activity_date,
+            activity_date=local_date(utc_now(), timezone),
             request_json={},
             checkpoint={},
             state="queued",
             stage="planning",
         )
         db.add(row)
-    await db.commit()
-    return row
+        await db.flush()
+    if request_id and excerpt_id is not None:
+        row.checkpoint = {**row.checkpoint, "excerpt_ids": [*row.checkpoint.get("excerpt_ids", []), excerpt_id]}
+        await bind_job_request(db, user_id, row.id, request_id, str(excerpt_id))
+    return response_for_publication(row)
 
 
 async def commit_publication(
     db: AsyncSession,
     task_id: int,
+    user_id: int,
     *,
     title: str,
     body: str,
@@ -137,9 +159,10 @@ async def commit_publication(
     context: PostContext,
     partial: bool,
 ) -> EntryView:
+    await lock_account(db, user_id)
     task = await db.scalar(
         select(PostPublication)
-        .where(PostPublication.id == task_id)
+        .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )

@@ -21,7 +21,7 @@ interface PendingGesture {
   conversationId?: string
 }
 
-let pending: PendingGesture | null = null
+let pending: PendingGesture[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 
 function resetGesture(): void {
@@ -30,7 +30,7 @@ function resetGesture(): void {
     timer = null
   }
 
-  pending = null
+  pending = []
 }
 
 registerStorageClearHandler(resetGesture)
@@ -81,24 +81,27 @@ export function enqueueGesture(kind: Gesture, conversationId?: string): void {
   }
 
   const stage = $presentation.get()
-  const previous = pending
-  const count = previous?.kind === kind && previous.stageEpoch === stage.stageEpoch ? previous.count + 1 : 1
-  pending = {
-    at: Date.now(),
-    count: Math.min(10, count),
-    isCurrent,
-    kind,
-    conversationId,
-    stageEpoch: stage.stageEpoch
+  const previous = pending.at(-1)
+
+  if (
+    previous?.kind === kind &&
+    previous.stageEpoch === stage.stageEpoch &&
+    previous.conversationId === conversationId &&
+    previous.isCurrent()
+  ) {
+    previous.count = Math.min(10, previous.count + 1)
+    previous.at = Date.now()
+  } else {
+    pending.push({ kind, conversationId, at: Date.now(), count: 1, isCurrent, stageEpoch: stage.stageEpoch })
   }
 
   if (timer === null) {
-    timer = setTimeout(() => {
-      const gesture = pending
+    timer = setTimeout(async () => {
+      const batch = pending
       resetGesture()
 
-      if (gesture) {
-        void dispatchGesture(gesture)
+      for (const gesture of batch) {
+        await dispatchGesture(gesture)
       }
     }, GROUP_MS)
   }

@@ -35,7 +35,6 @@ export const $wakePerformance = atom<WakePerformance | null>(null)
 
 const AMBIENT_INTERVAL_MS = 90_000
 const SUBTLE_AMBIENT_FACTOR = 2
-const INTERACTION_COOLDOWN_MS = 20_000
 const INTERACTION_TTL_MS = 15_000
 const CLOCK_RETRY_MS = 5_000
 
@@ -204,9 +203,7 @@ function performInteraction(visual: ReactionVisual, eventId: string, at: number)
     intentRevision: null,
     createdAt: at,
     expiresAt: at + INTERACTION_TTL_MS,
-    durationMs: entry.duration_ms,
-    cooldownKey: 'interaction',
-    cooldownMs: INTERACTION_COOLDOWN_MS
+    durationMs: entry.duration_ms
   })
 }
 

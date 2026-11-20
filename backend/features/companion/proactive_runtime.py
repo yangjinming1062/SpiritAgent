@@ -1,8 +1,9 @@
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from uuid import UUID
 
 from infrastructure.config import SETTINGS
 from pydantic import BaseModel, ConfigDict
@@ -19,7 +20,7 @@ _USER_PROACTIVE_STATE: dict[int, "UserProactiveRecord"] = {}
 @dataclass
 class UserProactiveRecord:
     last_outreach_ts: float = 0.0
-    last_reaction_ts: float = 0.0
+    recent_gestures: dict[UUID, datetime] = field(default_factory=dict)
     reaction_pending: bool = False
     last_user_contact_ts: float = 0.0
     contact_revision: int = 0

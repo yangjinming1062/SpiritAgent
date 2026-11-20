@@ -17,8 +17,6 @@ interface PerformanceRequest {
   createdAt: number
   expiresAt: number
   durationMs?: number | null
-  cooldownKey?: string
-  cooldownMs?: number
 }
 
 interface PerformanceTask extends PerformanceRequest {
@@ -61,7 +59,6 @@ function createPerformanceScheduler(ports: PerformancePorts, changed: (state: Pe
   const queue: PerformanceTask[] = []
   const seen = new Set<string>()
   const requested = new Set<string>()
-  const cooldowns = new Map<string, number>()
   const failedVersions = new Set<string>()
   // WS 可能先于点播 HTTP 返回；受理身份明确后才允许舞台认领。
   let deferred: VisualPlayCommand | null = null
@@ -181,10 +178,6 @@ function createPerformanceScheduler(ports: PerformancePorts, changed: (state: Pe
     active = running
     state = 'dispatching'
 
-    if (task.cooldownKey) {
-      cooldowns.set(task.cooldownKey, Date.now() + (task.cooldownMs ?? 0))
-    }
-
     running.dispatch = Promise.resolve().then(() => {
       if (running.closing || !valid(running.task)) {
         throw new Error('Performance cancelled before dispatch')
@@ -233,15 +226,6 @@ function createPerformanceScheduler(ports: PerformancePorts, changed: (state: Pe
     const task: PerformanceTask = { ...input, priority: PRIORITY[input.source], playId: null }
 
     if (!valid(task) || blocked || requested.has(task.performanceId)) {
-      return false
-    }
-
-    if (
-      task.cooldownKey &&
-      ((cooldowns.get(task.cooldownKey) ?? 0) > Date.now() ||
-        active?.task.cooldownKey === task.cooldownKey ||
-        queue.some(item => item.cooldownKey === task.cooldownKey))
-    ) {
       return false
     }
 

@@ -166,7 +166,7 @@ speech 持唯一合成与播放队列，自动和点播共用。[conversation-sp
 
 [director.ts](features/creation/visuals/director.ts) 负责在当前计划内轮换。从播放器报告实际开播起计算期限，普通刷新沿用已有期限；按开播记录避开近期片段。只有当前可见、已读到睡眠状态的宿主消费新的起身过渡。起身使用独立事件身份，在原休息环境完成，安全保留末帧直到最新的基础画面接手。时钟到期或收到实时通知时重新读取权威计划，恢复使用当前状态。默认壁纸及临时演出退出后也按当时的舞台计划恢复。
 
-[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 继续持有唯一宿主的点播及互动任务，管理优先级、队列和冷却；[performance.ts](features/creation/visuals/performance.ts) 处理正式播放认领与串行回执。精灵单击、进入对话及身体反应可通过带账户、舞台代次、身份和有效期的信号转发。普通身体反应在安睡或起身期间暂停。切换账户、宿主与动态权限时释放待执行的本地动画。
+[performance-scheduler.ts](features/creation/visuals/performance-scheduler.ts) 继续持有唯一宿主的点播及互动任务，管理优先级、队列和请求去重；[performance.ts](features/creation/visuals/performance.ts) 处理正式播放认领与串行回执。精灵单击、进入对话及身体反应可通过带账户、舞台代次、身份和有效期的信号转发。普通身体反应在安睡或起身期间暂停。切换账户、宿主与动态权限时释放待执行的本地动画。
 
 视频下载和磁盘缓存由主进程按账户共享；[stage-video-cache.ts](shared/lib/stage-video-cache.ts) 合并本窗口对象地址，每个可见舞台自行解码，引用释放与换号使迟到加载失效。窗口与桌面只在实际播放后回执，首帧预载或取得地址不算开播；短动作结束才完成，普通待机循环不逐圈记账。桌面按指令目标由一个图层回执，主体失败仍可显示冻结造型。锁屏、隐藏、减少动态和全屏时保留静帧并暂停解码推进。
 

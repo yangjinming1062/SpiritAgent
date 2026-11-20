@@ -64,7 +64,7 @@ def _read_tool_artifact(data: dict) -> MediaArtifact | None:
 def _restore_image_artifacts(
     state: MediaTurnState, image_jobs: tuple[MediaJobView, ...], source_message_id: int | None
 ) -> None:
-    """把持久图片任务还原成回合产物：槽位、当前版本、计划与已用预算。"""
+    """把持久图片任务还原成回合产物：槽位、当前版本及冻结计划。"""
 
     active_image_ids = {job.id for job in image_jobs}
     for artifact in state.artifacts.values():
@@ -111,13 +111,10 @@ def _restore_image_artifacts(
                     )
                 else:
                     state.regenerated_goals.add(goal_id)
-                if artifact.bound_message_id is None and artifact.status in {"ready", "pending"}:
+                if artifact.bound_message_id is None:
                     state.required_goals.add(goal_id)
         if current_request and frozen.parent_media_id is None:
             state.image_requests[frozen.request] = frozen.media_ids
-            state.image_budget_used += len(frozen.media_ids)
-            state.image_round = state.tool_round
-            state.mark_media_accepted()
 
 
 async def load_media_turn(
@@ -200,7 +197,6 @@ async def load_media_turn(
             continue
         artifact = MediaArtifact(job.media_id, "video", job.media_id, "pending", job_id=job.id)
         apply_video_status(artifact, job)
-        state.video_claimed = True
         if artifact.bound_message_id is None:
             state.required_goals.add(artifact.goal_id)
         state.current_versions[artifact.goal_id] = artifact.media_id

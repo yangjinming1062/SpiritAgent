@@ -62,14 +62,13 @@ class ReadingAction(ActionInput):
             "prior understanding; do not invent a connection."
         ),
     )
-    query: str = Field(default="", max_length=500, description="未指定 urls 且仍有阅读余量时搜索一次的关键词")
+    query: str = Field(default="", max_length=500, description="未指定 urls 时搜索一次的关键词")
     urls: list[str] = Field(
         default_factory=list,
-        max_length=3,
-        description="公开网页原文地址；已有资讯先读取，再按剩余名额读取网页，总计最多三份",
+        description="本次选定的公开网页原文地址",
     )
     topic_ids: list[ResourceId] = Field(
-        default_factory=list, max_length=3, description="topics 中已保存资讯的 id；不是已经阅读的证明"
+        default_factory=list, description="topics 中已保存资讯的 id；不是已经阅读的证明"
     )
 
 
@@ -109,7 +108,7 @@ LIFE_CAPABILITIES = {
         "优先使用已有合适成品；确有新画面用途时用已就绪的造型、环境和动作制作。一个瞬间用图片，值得观看的连续变化才用视频；检查通过并保存后才可呈现。",
     ),
     "content.read": LifeCapability(
-        ReadingAction, "为当前生活目的读取已有资讯或公开网页，也可搜索一次，总计最多三份资料。"
+        ReadingAction, "为当前生活目的读取已有资讯或公开网页，也可搜索一次；读完后再决定是否继续追查。"
     ),
     "outreach.schedule": LifeCapability(
         OutreachAction, "为有具体缘由的次日联系保存等待意图；由未来回合结合最新情境决定是否开口。"
@@ -127,8 +126,8 @@ class ReadingSource(ActionInput):
 
 
 class ReadingResult(ActionInput):
-    sources: list[ReadingSource] = Field(min_length=1, max_length=3)
-    notes: str = Field(min_length=1, max_length=12000)
+    sources: list[ReadingSource] = Field(min_length=1)
+    notes: str = Field(min_length=1)
 
 
 class ReadingSourceView(ActionInput):

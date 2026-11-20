@@ -1,7 +1,6 @@
 """即时桌面表达，选择来自当前可播成品与实际互动。"""
 
 from datetime import datetime, timedelta
-from time import monotonic
 from typing import Literal, Self
 from uuid import UUID
 
@@ -31,8 +30,6 @@ from runtime.events.emit import emit_ws_event
 
 GestureKind = Literal["tap", "drag_released", "chat_opened"]
 _GESTURE_TTL = timedelta(seconds=15)
-# 同一账户跨窗口共享预算，冷却长于事件有效期，原请求送达不明时不重复推理。
-_REACTION_COOLDOWN_SECONDS = 20
 
 
 class GestureReactionRequest(BaseModel):
@@ -85,20 +82,23 @@ async def _decide(
 ) -> GestureReactionResponse:
     presence = get_presentation_snapshot(user_id)
     record = get_user_proactive_record(user_id)
-    now = monotonic()
-    age = utc_now() - occurred_at
+    now = utc_now()
+    age = now - occurred_at
     direct = event["kind"] != "dialogue"
     if (
         (presence is None and event["kind"] != "chat_opened")
         or age < -timedelta(seconds=3)
         or age > _GESTURE_TTL
         or record.reaction_pending
-        or (record.last_reaction_ts and now - record.last_reaction_ts < _REACTION_COOLDOWN_SECONDS)
         or (direct and record.busy_count > 0)
     ):
         return GestureReactionResponse()
+    if gesture is not None:
+        record.recent_gestures = {key: expires for key, expires in record.recent_gestures.items() if expires >= now}
+        if gesture.request_id in record.recent_gestures:
+            return GestureReactionResponse()
+        record.recent_gestures[gesture.request_id] = occurred_at + _GESTURE_TTL
     record.reaction_pending = True
-    record.last_reaction_ts = now
     contact_revision = record.contact_revision
     try:
         tier = await get_disturbance_tier(user_id)

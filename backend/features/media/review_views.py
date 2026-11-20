@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .review_contracts import VisualReview
 
+IMAGE_JOB_MAX_SLOTS = 16
+
 
 class ImageJobParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,8 +25,8 @@ class ImageJobParams(BaseModel):
     identity_reference_mode: Literal["primary", "portrait_and_outfit"]
     task: AiTaskKey
     directory: str
-    media_ids: list[str] = Field(min_length=1, max_length=16)
-    goal_ids: list[str] = Field(min_length=1, max_length=16)
+    media_ids: list[str] = Field(min_length=1, max_length=IMAGE_JOB_MAX_SLOTS)
+    goal_ids: list[str] = Field(min_length=1, max_length=IMAGE_JOB_MAX_SLOTS)
     parent_media_id: str | None = None
 
     @model_validator(mode="after")
