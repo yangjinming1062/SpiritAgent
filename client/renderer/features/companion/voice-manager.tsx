@@ -409,7 +409,7 @@ function VoiceManagerSession({
                       >
                         {active ? <SquareFilled aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
                       </button>
-                      {current ? null : (
+                      {current && !onVoiceSelected ? null : (
                         <button
                           className={BTN_SUBTLE}
                           disabled={blocked}
