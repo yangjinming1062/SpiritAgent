@@ -1,16 +1,19 @@
 """动态发布事务；内容、评论和附件通过 entries 领域操作。"""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
+from infrastructure.ai.token_budget import json_tokens
 from infrastructure.assets.asset_store import signed_companion_asset_url
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.text import ensure_utc, format_local_iso, local_date, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from features.accounts.locking import lock_account
 from features.accounts.queries import user_is_active
@@ -20,7 +23,8 @@ from features.configuration.settings.values import get_user_setting_bool
 from features.entries import queries as entries_queries
 from features.entries import service as entries_service
 from features.entries.contracts import CommentView, EntryError, EntryNotFoundError, EntryView, PostContentType
-from features.jobs.service import bind_job_request, requested_job_id
+from features.jobs.service import bind_job_request, requested_job_id, requested_job_ids
+from features.life.context import previous_post_excerpt_pages
 from features.media.continuations import finish_media_operation
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.review_contracts import MediaSelection, VisualReview
@@ -98,6 +102,77 @@ async def posts_policy_ok(db: AsyncSession, user_id: int) -> bool:
     return await user_is_active(db, user_id) and await get_user_setting_bool(
         db, user_id, "companion.posts_enabled", default=True
     )
+
+
+def fit_post_choice(item: dict[str, Any], room: int) -> tuple[dict[str, Any] | None, int]:
+    """完整正文放不下时仍尽量交代选择和发表事实。"""
+    cost = json_tokens(item) + 2
+    if cost <= room:
+        return item, cost
+    compact = {k: v for k, v in item.items() if k not in {"published_post", "narrative"}}
+    cost = json_tokens(compact) + 2
+    return (compact, cost) if cost <= room else (None, 0)
+
+
+async def post_choice_history(
+    db: AsyncSession,
+    user_id: int,
+    source_ids: Collection[int],
+    *,
+    token_budget: int,
+    exclude: Collection[int] = (),
+) -> tuple[list[dict[str, Any]], bool]:
+    """从最近的选择开始分页，达到模型输入余量即停；同一成稿的正文只取一次。"""
+    history: list[dict[str, Any]] = []
+    posts: dict[int, tuple[set[int] | None, dict[str, Any]]] = {}
+    included_posts: set[str] = set()
+    excerpted = False
+    async for excerpts in previous_post_excerpt_pages(db, user_id, source_ids, exclude=exclude):
+        requests = {f"post-excerpt:{item['id']}": item for item in excerpts}
+        job_ids = await requested_job_ids(db, user_id, requests.keys())
+        jobs = {
+            row.id: row
+            for row in await db.scalars(
+                select(PostPublication)
+                .options(load_only(PostPublication.state, PostPublication.outcome, PostPublication.post_id))
+                .where(PostPublication.user_id == user_id, PostPublication.id.in_(job_ids.values()))
+            )
+        }
+        missing = {job.post_id for job in jobs.values() if job.post_id is not None} - posts.keys()
+        if missing:
+            entries = await entries_queries.selected_posts(db, user_id, list(missing))
+            for post in entries.values():
+                context = PostContext.model_validate(post.context_json)
+                used = set(context.used_excerpt_ids) if context.used_excerpt_ids is not None else None
+                posts[post.id] = (
+                    used,
+                    {
+                        "id": str(post.id),
+                        "published_at": post.published_at.isoformat(),
+                        "title": post.title,
+                        "body": post.body,
+                        "transcript": context.transcript,
+                        "narration": context.narration,
+                    },
+                )
+        for request, excerpt in requests.items():
+            job = jobs.get(job_ids[request]) if request in job_ids else None
+            item: dict[str, Any] = {**excerpt, "planning_status": publication_status(job) if job else "not_requested"}
+            if job and job.post_id in posts:
+                used, content = posts[job.post_id]
+                item["post_id"] = str(job.post_id)
+                item["used_in_post"] = int(excerpt["id"]) in used if used is not None else None
+                if item["post_id"] not in included_posts:
+                    item["published_post"] = content
+            kept, cost = fit_post_choice(item, token_budget)
+            if kept is None:
+                return history, True
+            if "published_post" in kept:
+                included_posts.add(kept["post_id"])
+            excerpted |= kept is not item
+            history.append(kept)
+            token_budget -= cost
+    return history, excerpted
 
 
 async def next_planning_publication(
@@ -221,7 +296,7 @@ async def commit_publication(
         content_type=content_type.value,
         media_url=media_url,
         audio_url=audio_url,
-        context=context.model_dump(),
+        context=context.model_dump(mode="json"),
     )
     task.post_id = row.id
     task.state = "succeeded"

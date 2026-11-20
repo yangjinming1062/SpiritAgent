@@ -30,7 +30,7 @@
 |---|---|
 | 会话、消息和媒体引用：[conversation/models.py](../backend/features/conversation/models.py) | `parent_id` 表示依附子会话，`forked_from_id` 表示可失去的分叉来源；预设固定记忆域。消息原文与交付快照须一致，文件和本地声音另有关系表；统计由[消息触发器](../backend/features/conversation/statistics.py)派生。`gesture_request_id` 对一次手势产生的发言去重。生活联系实际送达时，`life_excerpt_id` 将发言关联到当次选定的摘选。通话记录与通话发言也是同一表的行，`call_record_id` 表达归属，`call_last_seen_at` 与 `call_duration_ms` 是结算依据 |
 | 受理账本：[submission_models.py](../backend/features/conversation/submission_models.py) | 请求标识和内容指纹决定重放资格，结果/替换回复是实体关系；批量输入经有序关联与请求一次提交；`is_realtime_call` 区分通话受理与普通提交 |
-| 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期与完成情况，来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
+| 话题资料、分享和反馈：[topics/models.py](../backend/features/topics/models.py) | 批次保存日期、搜索进度与完成情况。候选按批次及平台来源键去重，记录详情、审阅进度与精选结果。入库来源保存原文依据，usage 才表示随消息实际分享；反馈不自动成为聊天消息或用户事实 |
 
 ## 任务与资产
 
@@ -65,9 +65,9 @@
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 内容、评论与附件：[entries/models.py](../backend/features/entries/models.py) | 动态/日记共享正文和阅读状态，日记按账户/业务日期唯一；来源动态用有方向和顺序的关联保存，评论回复限定同账户同内容 |
+| 内容、评论与附件：[entries/models.py](../backend/features/entries/models.py) | 动态/日记共享正文和阅读状态，日记按账户/业务日期唯一；来源动态用有方向和顺序的关联保存，评论回复限定同账户同内容，延后回复的原始截止时刻保存在 `reply_expires_at` |
 | 日记检索：同一[内容模型](../backend/features/entries/models.py) | `diary_search_index` 保存来源、可重建文本、内容指纹和兼容空间向量；来源删除级联索引，正文不复制进记忆 |
-| 发布工作：[publication_models.py](../backend/features/posts/publication_models.py) | 计划、媒体任务和结果归发布详情；`outcome` 表示业务事实，继承的执行状态表示进度，二者不能互换 |
+| 发布工作：[publication_models.py](../backend/features/posts/publication_models.py) | 冻结输入保存获准考虑的摘录，计划的 `excerpt_uses` 标记各摘录对应的交付字段，成稿的 `used_excerpt_ids` 保存最终采用的摘录。空列表表示独立创作，历史记录的空值表示无法核实。计划、媒体任务和结果归发布详情；`outcome` 表示业务事实，继承的执行状态表示进度，二者不能互换 |
 
 ## 生活、夜间与调度
 

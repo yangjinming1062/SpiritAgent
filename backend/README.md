@@ -52,7 +52,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-[完整基线](alembic/versions/0001_baseline.py) 的修订号为 `baseline`。首次启动使用空数据库，已有旧修订记录的安装需切换到新空库，即使业务表已清空。启动执行 `alembic upgrade head`。同样标为 `baseline` 的既有库会跳过基线建表，仍有旧生活额度列的库需单独更新结构或使用新空库。后续增量迁移在基线上追加。基线冻结表、约束、索引和触发器。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
+[完整基线](alembic/versions/0001_baseline.py) 的修订号为 `baseline`。首次启动使用空数据库，已有旧修订记录的安装需切换到新空库，即使业务表已清空。启动执行 `alembic upgrade head`。已有 `baseline` 的数据库直接运行增量迁移，保留业务记录。伙伴自主性修订会清理旧限额列、转换采集检查点和动态输入，并为已有评论跟进保留原期限。升级前备份数据库，需要回到旧版且已有转换数据时恢复该备份。迁移时按数据库、环境与配置文件中的旧设置保留关闭采集或仅搜索的选择。使用离线脚本时，按目标部署的环境和配置文件运行 `alembic upgrade baseline:head --sql`，生成的脚本在执行时读取目标数据库中的覆盖值。升级后可在管理后台更改资讯模式。基线冻结表、约束、索引和触发器。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
 
 ### 装配与启停
 
@@ -140,9 +140,9 @@ Backend 镜像在构建时按固定 SHA-256 安装 UltraFace RFB-640（MIT）和
 
 小红书服务随 Compose 启动，Backend 固定连接 `http://xiaohongshu-mcp:18060`，无地址或访问令牌配置，也不发布宿主机端口。修改该服务时执行 `docker compose up -d --build backend xiaohongshu-mcp`；后端启动不依赖其健康检查，健康只证明进程可访问。
 
-平台 Cookie 只由 Backend 数据库按账户持久保存，关闭设置页面不取消登录。管理后台只维护相关夜间预算，`NO_PROXY` 须包含服务短名称。
+平台 Cookie 只由 Backend 数据库按账户持久保存，关闭设置页面不取消登录。管理后台选择搜索并读取详情、仅搜索或关闭夜间采集，`NO_PROXY` 须包含服务短名称。
 
-新增平台在 [social_platforms.py](infrastructure/web/social_platforms.py) 登记标识与原文规则，在 [social_sources.py](infrastructure/web/social_sources.py) 登记凭证及采集/登录工厂，再生成共享契约。复用账户存储、预算和分享流程，仅新登录交互类型需补客户端表单。
+新增平台在 [social_platforms.py](infrastructure/web/social_platforms.py) 登记标识与原文规则，在 [social_sources.py](infrastructure/web/social_sources.py) 登记凭证及采集/登录工厂，再生成共享契约。复用账户存储、请求统计和分享流程，仅新登录交互类型需补客户端表单。
 
 ### 服务更新
 

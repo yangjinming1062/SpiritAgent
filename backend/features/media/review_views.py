@@ -28,6 +28,7 @@ class ImageJobParams(BaseModel):
     media_ids: list[str] = Field(min_length=1, max_length=IMAGE_JOB_MAX_SLOTS)
     goal_ids: list[str] = Field(min_length=1, max_length=IMAGE_JOB_MAX_SLOTS)
     parent_media_id: str | None = None
+    edit_reference: str | None = None
 
     @model_validator(mode="after")
     def valid_slots(self) -> "ImageJobParams":

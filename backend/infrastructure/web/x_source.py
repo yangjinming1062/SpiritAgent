@@ -1,6 +1,7 @@
 """账户独立的 X 读取适配器；只复用 SDK 的固定请求定义与解析器。"""
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -13,7 +14,7 @@ from twscrape.models import Tweet, parse_tweet, parse_tweets
 from twscrape.utils import encode_params, find_obj
 from twscrape.xclid import XClIdAccountError, XClIdGen, XClIdParseError, get_tw_page_text, load_keys
 
-from infrastructure.network import safe_outbound_async_client
+from infrastructure.network import read_capped_response, safe_outbound_async_client
 from infrastructure.text import utc_now
 
 from .social_content import (
@@ -177,17 +178,25 @@ class XSource:
         if before_request is not None:
             await before_request()
         try:
-            async with safe_outbound_async_client(timeout=45, follow_redirects=False) as client:
-                response = await client.get(
-                    f"{_X_GRAPHQL_URL}/{operation}", params=params, headers=headers, cookies=self._x_cookies
-                )
+            async with (
+                safe_outbound_async_client(timeout=45, follow_redirects=False) as client,
+                client.stream(
+                    "GET", f"{_X_GRAPHQL_URL}/{operation}", params=params, headers=headers, cookies=self._x_cookies
+                ) as response,
+            ):
                 if not 200 <= response.status_code < 300:
                     raise SocialSourceError(
                         "X source request failed",
                         code=response.status_code,
                         reason=failure_reason(response.status_code),
                     )
-                payload = response.json()
+                payload = json.loads(
+                    await read_capped_response(
+                        response,
+                        max_bytes=16 * 1024 * 1024,
+                        too_large=SocialSourceError("X response too large", code=422, reason="response_invalid"),
+                    )
+                )
         except httpx.HTTPError:
             raise SocialSourceError("X source network error", reason="network_error") from None
         except ValueError:
@@ -236,15 +245,9 @@ class XSource:
             raise SocialSourceError(
                 "X source content could not be normalized", code=422, reason="parser_failed"
             ) from exc
-        candidates = [
-            source
-            for source in sources
-            if source is not None
-            and source.published_at is not None
-            and window_start <= source.published_at < window_end
-        ]
+        candidates = [source for source in sources if source is not None]
         next_item = find_obj(raw, lambda item: item.get("cursorType") == "Bottom")
-        next_value = _text(next_item.get("value")) if isinstance(next_item, dict) else ""
+        next_value = _text(next_item.get("value"), 30000) if isinstance(next_item, dict) else ""
         return SocialSearchPage(candidates=candidates, next_cursor={"cursor": next_value} if next_value else None)
 
     async def detail(

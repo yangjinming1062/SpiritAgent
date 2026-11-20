@@ -124,6 +124,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
+        include_upscaled: bool = False,
     ) -> tuple[str, ...]:
         durations, resolutions = self.durations, self.resolutions
         if duration not in durations or self._reject_reference_media(

@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,9 @@ class TopicBatch(ModelBase, TimestampMixin):
     __tablename__ = "companion_topic_batches"
     __table_args__ = (
         UniqueConstraint("user_id", "system_preset_id", "activity_date", name="uq_topic_batch_scope_date"),
+        Index(
+            "ix_topic_batches_collecting", "user_id", "activity_date", postgresql_where=text("status = 'collecting'")
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -28,6 +31,23 @@ class TopicBatch(ModelBase, TimestampMixin):
     detail_requests: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     checkpoint: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     error: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
+
+class TopicCandidate(ModelBase):
+    """批次内暂存一份来源；详情与精选进度随对应来源一起提交。"""
+
+    __tablename__ = "companion_topic_candidates"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "candidate_key", name="uq_topic_candidate_source"),
+        Index("ix_topic_candidates_pending", "batch_id", "id", postgresql_where=text("NOT reviewed")),
+    )
+
+    batch_id: Mapped[int] = mapped_column(ForeignKey("companion_topic_batches.id", ondelete="CASCADE"))
+    candidate_key: Mapped[str] = mapped_column(String(128))
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    detailed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    reviewed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    selection: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
 
 
 class CompanionTopic(ModelBase, TimestampMixin):

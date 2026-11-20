@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any, Literal
 
+from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -269,7 +270,7 @@ async def fail_reply(db: AsyncSession, user_id: int, comment_id: int) -> None:
             EntryComment.user_id == user_id,
             eligible_reply(),
         )
-        .values(reply_status="failed", reply_error="回复暂未完成，可以重试", reply_not_before=None, reply_followup=None)
+        .values(reply_status="failed", reply_error="回复暂未完成，可以重试")
         .returning(EntryComment)
     )
     if row is not None:
@@ -285,21 +286,38 @@ async def finish_reply(
     content: str | None,
     *,
     deferred_until: datetime | None = None,
+    expires_at: datetime | None = None,
     purpose: str | None = None,
 ) -> None:
+    # 取锁后核对本次尝试和原截止时间，生成或等待行锁期间过期也不投递。
+    locked = (
+        await db.execute(
+            select(EntryComment.id, EntryComment.reply_expires_at)
+            .where(
+                EntryComment.id == comment_id,
+                EntryComment.user_id == user_id,
+                EntryComment.post_id == post_id,
+                EntryComment.reply_attempts == attempt,
+                EntryComment.reply_status == "running",
+            )
+            .with_for_update()
+        )
+    ).one_or_none()
+    if locked is None:
+        return
+    deadline = locked.reply_expires_at or expires_at
+    if deadline is not None and (utc_now() >= deadline or deferred_until is not None and deferred_until >= deadline):
+        content = deferred_until = purpose = None
+    if deferred_until is not None and (content is not None or deadline is None or not purpose):
+        raise EntryError("延后评论需要复查时间、有效期和目的")
     target = await db.scalar(
         update(EntryComment)
-        .where(
-            EntryComment.id == comment_id,
-            EntryComment.user_id == user_id,
-            EntryComment.post_id == post_id,
-            EntryComment.reply_attempts == attempt,
-            EntryComment.reply_status == "running",
-        )
+        .where(EntryComment.id == locked.id)
         .values(
             reply_status="completed" if content is not None else "deferred" if deferred_until is not None else "silent",
             reply_error=None,
             reply_not_before=deferred_until,
+            reply_expires_at=deadline if deferred_until is not None else None,
             reply_followup=purpose,
         )
         .returning(EntryComment)

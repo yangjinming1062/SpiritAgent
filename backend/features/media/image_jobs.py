@@ -29,8 +29,9 @@ from .character_images import ImageChainState, generate_reviewed_images
 from .continuations import wait_for_media
 from .delivery import deliver_image_result
 from .identity_contracts import VisualIdentitySnapshot
-from .image_generation import ImageGenerationError, ImageResultDownloadError
+from .image_generation import ImageGenerationError, ImageResultDownloadError, resolve_image_gen_chain
 from .models import ImageGenJob
+from .prompts import CHAT_IMAGE_EDIT_PROMPT
 from .reference_reader import visual_identity_is_current
 from .review_contracts import MediaSelection, ReviewPendingError
 from .review_evidence import review_media_intact
@@ -131,6 +132,7 @@ async def produce_image_batch(
     request_scope: str,
     goal_ids: list[str],
     parent_media_id: str | None = None,
+    parent_image: str | None = None,
 ) -> MediaJobView:
     fingerprint = hashlib.sha256(repr((asdict(plan), len(media_ids))).encode()).hexdigest()
     async with SESSION_LOCAL() as db:
@@ -141,8 +143,20 @@ async def produce_image_batch(
             return await _snapshot(row)
         if previous:
             raise ValueError("原图片任务已清理，不能重复制作")
+        references = {"identity": plan.reference_image, "outfit": plan.secondary_reference_image}
+        if parent_image:
+            edits = await resolve_image_gen_chain(
+                db,
+                user_id,
+                task=task,
+                has_reference=True,
+                image_edit=True,
+                prompt_chars=len(CHAT_IMAGE_EDIT_PROMPT.format(goal=plan.goal)),
+            )
+            if edits.providers:
+                references["edit"] = parent_image
         frozen = await freeze_image_references(
-            {"identity": plan.reference_image, "outfit": plan.secondary_reference_image},
+            references,
             user_id=user_id,
             generation_id=hashlib.sha256(request_id.encode()).hexdigest()[:32],
             directory=directory,
@@ -157,6 +171,7 @@ async def produce_image_batch(
             "goal_ids": goal_ids,
             "request_scope": request_scope,
             "parent_media_id": parent_media_id,
+            "edit_reference": frozen.get("edit"),
         }
         row = ImageGenJob(
             user_id=user_id,
@@ -169,18 +184,8 @@ async def produce_image_batch(
         )
         db.add(row)
         await db.flush()
+        await bind_job_assets(db, user_id, row.id, set(frozen.values()), "input")
         await bind_job_request(db, user_id, row.id, request_id, fingerprint)
-        for index in range(len(media_ids)):
-            await wait_for_media(
-                db,
-                user_id=user_id,
-                owner_kind="chat.image",
-                owner_job_id=row.id,
-                dependency_job_id=row.id,
-                operation_id=f"chat-image:{row.source_key}:{index}",
-                automatic=True,
-                context={"slot": index},
-            )
         await db.commit()
         job_id = row.id
     await _run_image_job(user_id, job_id)
@@ -265,12 +270,18 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
         error: str | None = None
         try:
             await generate_reviewed_images(
-                params["prompt"],
+                CHAT_IMAGE_EDIT_PROMPT.format(goal=input_params.goal)
+                if input_params.edit_reference
+                else input_params.prompt,
                 user_id=user_id,
                 storage_directory=params["directory"],
-                reference_image=params["reference_image"] or "",
+                reference_image=input_params.edit_reference or input_params.reference_image or "",
                 identity_reference=params["reference_image"] or "",
-                secondary_reference_image=params["secondary_reference_image"],
+                secondary_reference_image=None
+                if input_params.edit_reference
+                else input_params.secondary_reference_image,
+                identity_secondary_reference=input_params.secondary_reference_image,
+                image_edit=bool(input_params.edit_reference),
                 identity_reference_mode=params["identity_reference_mode"],
                 identity_required=input_params.identity_required,
                 size=params["size"],
@@ -366,8 +377,21 @@ async def bind_image_reply(
                 "delivered_slots": list(dict.fromkeys([*row.result_json.get("delivered_slots", []), media_id])),
             }
     await db.flush()
-    emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
-    return await _snapshot(row)
+    view = await _snapshot(row)
+    index = params.media_ids.index(media_id)
+    if view.slots[index].status in {"pending", "result_unknown"}:
+        # 消息选定版本后才登记续行；同目标未选用的版本只保留制作记录。
+        await wait_for_media(
+            db,
+            user_id=user_id,
+            owner_kind="chat.image",
+            owner_job_id=row.id,
+            dependency_job_id=row.id,
+            operation_id=f"chat-image:{row.source_key}:{index}",
+            automatic=True,
+            context={"slot": index},
+        )
+    return view
 
 
 async def record_image_delivery(db: AsyncSession, user_id: int, job_id: int, media_id: str) -> int:
@@ -411,11 +435,13 @@ async def checked_image_result(db: AsyncSession, user_id: int, job_id: int) -> M
 
 async def conversation_image_jobs(db: AsyncSession, user_id: int, session_id: str) -> tuple[MediaJobView, ...]:
     rows = await db.scalars(
-        select(ImageGenJob).where(
+        select(ImageGenJob)
+        .where(
             ImageGenJob.user_id == user_id,
             ImageGenJob.conversation_id == int(session_id),
             ImageGenJob.cleanup_requested_at.is_(None),
         )
+        .order_by(ImageGenJob.id)
     )
     return tuple([await _snapshot(row) for row in rows])
 

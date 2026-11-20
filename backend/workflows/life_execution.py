@@ -1,7 +1,7 @@
 """一次推进一个持久生活步骤；业务模块拥有实际制作与采纳。"""
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from weakref import WeakValueDictionary
 
 from features.action_library.queries import action_detail
@@ -83,7 +83,7 @@ async def _schedule_outreach(
     user_id: int, step: LifeStepView, request: LifeStepRequest, action: OutreachAction
 ) -> None:
     now = utc_now()
-    run_at = max(action.scheduled_at, now + timedelta(minutes=2)).astimezone(UTC)
+    run_at = max(action.scheduled_at, now).astimezone(UTC)
     if run_at >= action.expires_at:
         raise ValueError("联系安排已过期")
     async with SESSION_LOCAL() as db:

@@ -180,6 +180,13 @@ async def has_unread_entries(db: AsyncSession, user_id: int, kind: Literal["post
     )
 
 
+async def selected_posts(db: AsyncSession, user_id: int, ids: Sequence[int]) -> dict[int, EntryView]:
+    rows = await read_entries(
+        db, user_id, entry_query().where(CompanionEntry.kind == "post", CompanionEntry.id.in_(ids))
+    )
+    return {row.id: row for row in rows}
+
+
 async def recent_posts(
     db: AsyncSession,
     user_id: int,
@@ -187,8 +194,11 @@ async def recent_posts(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int | None = None,
+    before: tuple[datetime, int] | None = None,
 ) -> list[EntryView]:
     statement = entry_query().where(CompanionEntry.kind == "post")
+    if before is not None:
+        statement = statement.where(tuple_(CompanionEntry.published_at, CompanionEntry.id) < before)
     if since is not None:
         statement = statement.where(CompanionEntry.published_at >= since)
     if until is not None:

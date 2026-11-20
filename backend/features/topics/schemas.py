@@ -4,7 +4,6 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from infrastructure.api_ids import ResourceId
-from infrastructure.web.social_content import SocialContent
 from infrastructure.web.social_platforms import SocialPlatform
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,15 +27,14 @@ class TopicBatchSnapshot(BaseModel):
     error: str | None
 
 
-class TopicSelection(BaseModel):
+class TopicCandidateChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    source: SocialContent
-    summary: str = Field(min_length=1, max_length=2500)
-    user_relevance: str = Field(max_length=1200)
-    companion_interest: str = Field(max_length=1200)
-    conversation_angle: str = Field(min_length=1, max_length=1200)
-    event_key: str = Field(min_length=1, max_length=200)
+    candidate_id: str = Field(min_length=1, max_length=128)
+    fact_summary: str = Field(min_length=1, max_length=2000)
+    why_user: str = Field(min_length=1, max_length=800)
+    why_companion: str = Field(min_length=1, max_length=800)
+    conversation_angle: str = Field(min_length=1, max_length=800)
+    event_key: str = Field(min_length=1, max_length=120)
 
 
 class TopicCardSnapshot(BaseModel):

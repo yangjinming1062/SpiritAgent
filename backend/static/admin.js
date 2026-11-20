@@ -1650,7 +1650,6 @@ const SETTINGS_SECTIONS = [
             ]],
             ['sub', '主动回合预算'],
             ['grid', [
-                num('companion_max_pending_intents', '待处理意图上限 (条)', 1),
                 num('companion_min_turn_interval_seconds', '主动回合最小间隔 (秒)', 5),
             ]],
             ['sub', '动作制作'],
@@ -1675,19 +1674,13 @@ const SETTINGS_SECTIONS = [
             ['sub', '调度与自动化'],
             ['grid', [
                 num('scheduler_interval_seconds', '调度器 tick 周期 (秒)', 1),
-                num('cron_max_active_per_user', '单用户活跃 Cron 上限', 1),
             ]],
         ],
     },
     {
-        title: '社交资讯来源', hint: '维护夜间检索预算；平台账号由用户在客户端连接',
+        title: '社交资讯来源', hint: '平台账号由用户在客户端连接',
         blocks: [
-            ['sub', '每日检索预算'],
-            ['grid', [
-                num('topic_search_requests_per_night', '每账户每夜搜索 HTTP 上限 (含接口准备)', 1, { min: 0, max: 60 }),
-                num('topic_candidate_limit', '每账户每夜候选内容上限', 1, { min: 0, max: 300 }),
-                num('topic_detail_requests_per_night', '每账户每夜详情 HTTP 请求上限', 1, { min: 0, max: 60 }),
-            ], true],
+            ['field', sel('topic_discovery_mode', '夜间资讯采集', [['full', '搜索并读取详情'], ['search_only', '仅使用搜索结果'], ['off', '关闭']])],
         ],
     },
     {

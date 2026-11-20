@@ -89,7 +89,11 @@ _EXCHANGE_REVIEW = {
 
 
 async def life_inspect(
-    user_id: ResourceId, pursuit_id: ResourceId | None = None, memory_scope: MemoryScope | None = None, **_: Any
+    user_id: ResourceId,
+    pursuit_id: ResourceId | None = None,
+    memory_scope: MemoryScope | None = None,
+    cursor: str | None = None,
+    **_: Any,
 ) -> str:
     if memory_scope is None or memory_scope.user_id != user_id or memory_scope.system_preset_id != "companion":
         return tool_error("仅伙伴对话可读取生活记录")
@@ -100,8 +104,12 @@ async def life_inspect(
         if detail is not None:
             pursuits["steps"] = [_inspection_payload(step) for step in detail.steps]
     else:
-        listing = await read_pursuits(user_id, status=None, cursor=None, limit=20)
-        pursuits = {"items": [_inspection_payload(item) for item in listing.items], "has_more": listing.has_more}
+        listing = await read_pursuits(user_id, status=None, cursor=cursor, limit=20)
+        pursuits = {
+            "items": [_inspection_payload(item) for item in listing.items],
+            "has_more": listing.has_more,
+            "next_cursor": listing.next_cursor,
+        }
     return json.dumps(
         {"state": state.model_dump(mode="json", exclude=_STATE_INTERNAL_FIELDS), "pursuits": pursuits},
         ensure_ascii=False,
@@ -247,11 +255,12 @@ def register(registry: ToolsRegistry) -> None:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cursor": {"type": "string", "description": "使用上一页 next_cursor 续读事项。"},
                     "pursuit_id": {
                         "type": "string",
                         "pattern": "^[1-9][0-9]*$",
                         "description": "指定事情的 id；省略时列出最近事项",
-                    }
+                    },
                 },
             },
         },

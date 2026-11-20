@@ -46,6 +46,7 @@ async def _handle_cron_action(
     schedule: str | None,
     name: str | None,
     kind: str | None,
+    cursor: int | None,
 ) -> str:
     if schedule and compute_next_run_at(schedule, utc_now()) is None:
         return tool_error(_INVALID_SCHEDULE.format(schedule=schedule))
@@ -60,8 +61,13 @@ async def _handle_cron_action(
             ensure_ascii=False,
         )
     if action == "list":
+        jobs, next_cursor = await list_jobs(scope, include_paused=True, cursor=cursor)
         return json.dumps(
-            {"success": True, "jobs": [_job_payload(job) for job in await list_jobs(scope=scope, include_paused=True)]},
+            {
+                "success": True,
+                "jobs": [_job_payload(job) for job in jobs],
+                "next_cursor": str(next_cursor) if next_cursor else None,
+            },
             ensure_ascii=False,
         )
     if action not in {"remove", "get", *_UPDATE_VERBS}:
@@ -101,13 +107,14 @@ async def cronjob(
     schedule: str | None = None,
     name: str | None = None,
     kind: str | None = None,
+    cursor: ResourceId | None = None,
     **_: object,
 ) -> str:
     normalized = (action or "").strip().lower()
     try:
         async with SESSION_LOCAL() as db:
             scope = await resolve_memory_scope(db, user_id, parent_session_id)
-        return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, kind)
+        return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, kind, cursor)
     except ValueError as e:
         # 参数与作用域校验的提示可直接回给模型；其他异常交给注册表脱敏并记录，不把 SQL 与参数暴露为工具结果。
         return tool_error(str(e))
@@ -120,6 +127,11 @@ CRONJOB_SCHEMA = {
         "type": "object",
         "properties": {
             "action": {"type": "string", "description": CRONJOB_PARAM_DESCS["action"]},
+            "cursor": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$",
+                "description": "Use next_cursor from the previous list page.",
+            },
             "job_id": {"type": "string", "pattern": "^[1-9][0-9]*$", "description": CRONJOB_PARAM_DESCS["job_id"]},
             "prompt": {"type": "string", "description": CRONJOB_PARAM_DESCS["prompt"]},
             "schedule": {"type": "string", "maxLength": 128, "description": CRONJOB_PARAM_DESCS["schedule"]},

@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.response_validation import IncompleteLlmResponseError
+from infrastructure.ai.token_budget import material_budget
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text
@@ -42,6 +43,26 @@ class NarrativeQualityError(RuntimeError):
         super().__init__("创作内容仍有问题，暂未发布")
 
 
+def _review_instructions(language: str, requirements: str) -> str:
+    return resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language) + (f"\n\n{requirements}" if requirements else "")
+
+
+def narrative_source_budget(
+    config: UserLlmConfig,
+    source: dict[str, Any],
+    draft: dict[str, str],
+    language: str,
+    *,
+    requirements: str = "",
+) -> int:
+    return material_budget(
+        config.chain,
+        _review_instructions(language, requirements),
+        {"output_language": language, "draft": draft, "source": source},
+        NarrativeReview.model_json_schema(),
+    )
+
+
 async def review_narrative(
     llm_cfg: UserLlmConfig,
     source: dict[str, Any],
@@ -61,7 +82,7 @@ async def review_narrative(
     async def review(effort: str) -> NarrativeReview:
         return await call_llm_json(
             llm_cfg,
-            resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language) + (f"\n\n{requirements}" if requirements else ""),
+            _review_instructions(language, requirements),
             {"output_language": language, "draft": draft, "source": source},
             schema=NarrativeReview.model_json_schema(),
             schema_name="narrative_review",

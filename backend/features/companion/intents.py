@@ -1,11 +1,13 @@
+import asyncio
 import secrets
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from infrastructure.api_ids import parse_resource_id
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
@@ -14,12 +16,13 @@ from runtime.desktop.connection import MANAGER
 from runtime.events.contracts import COMPANION_TURN_EVENT, DEFERRED_REPLY_EVENT, LIFE_CONTACT_EVENT
 from runtime.events.emit import emit_ws_event
 from runtime.user_maintenance import user_request_scope
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.intent_contracts import (
     MAX_COMPANION_FAILURES,
+    CompanionIntentPage,
     CompanionIntentView,
     CompanionTurnRequest,
     CompanionWaitRequest,
@@ -40,11 +43,20 @@ from features.conversation.replies import CompanionReply
 from features.conversation.turn_access import turn_conversation, turn_message
 from features.life.context import read_contact_excerpt
 
-# 待处理意图与回合间隔走 SETTINGS 动态配置；队列认领租约独立于模型等待。
-_QUEUE_LEASE_SECONDS: int = 180
+# 认领与执行按可续租的短租约恢复；模型所选的事项有效期可远长于租约。
+_LEASE_SECONDS: int = 180
 _ACTIVE_STATUSES: tuple[str, ...] = ("waiting", "queued", "running")
 _INTENT_RETENTION: timedelta = timedelta(days=30)
 _TURN_PLAN: ContextVar["CompanionTurnPlan | None"] = ContextVar("companion_turn_plan", default=None)
+
+
+@dataclass(frozen=True)
+class ScheduledWait:
+    intent: str
+    decided_at: datetime
+    wake_at: datetime | None
+    wake_on: CompanionWakeEvent | None
+    expires_at: datetime
 
 
 @dataclass
@@ -52,7 +64,7 @@ class CompanionTurnPlan:
     user_id: int
     intent_id: int
     expires_at: datetime
-    followup: CompanionWaitRequest | None = None
+    followup: ScheduledWait | None = None
 
 
 @dataclass(frozen=True)
@@ -92,18 +104,7 @@ async def enqueue_deferred_reply(
     )
     if existing is not None:
         return
-    count = await db.scalar(
-        select(func.count())
-        .select_from(CompanionIntent)
-        .where(
-            CompanionIntent.user_id == user_id,
-            CompanionIntent.status.in_(_ACTIVE_STATUSES),
-            CompanionIntent.expires_at > now,
-        )
-    )
-    if count is not None and count >= SETTINGS.companion_max_pending_intents:
-        raise ValueError("Pending companion intent limit reached")
-    due = now + timedelta(seconds=followup.after_seconds)
+    due, expires_at = followup.bounds(now)
     db.add(
         CompanionIntent(
             user_id=user_id,
@@ -111,9 +112,10 @@ async def enqueue_deferred_reply(
             intent=followup.purpose,
             not_before_at=due,
             wake_at=due,
-            expires_at=now + timedelta(days=1),
+            expires_at=expires_at,
         )
     )
+    await db.flush()
 
 
 @contextmanager
@@ -173,11 +175,6 @@ async def enqueue_companion_intent(
     if life_event_id is not None:
         if await db.scalar(select(CompanionIntent.id).where(scope, CompanionIntent.life_event_id == life_event_id)):
             return False
-        if (
-            await db.scalar(select(func.count()).select_from(CompanionIntent).where(scope, *active))
-            >= SETTINGS.companion_max_pending_intents
-        ):
-            return False
     elif await db.scalar(
         select(CompanionIntent.id)
         .where(
@@ -205,14 +202,14 @@ async def enqueue_companion_intent(
     return True
 
 
-def _apply_wait(row: CompanionIntent, request: CompanionWaitRequest, now: datetime) -> None:
+def _apply_wait(row: CompanionIntent, request: ScheduledWait) -> None:
     row.intent = request.intent
     row.status = "waiting"
-    row.not_before_at = now + timedelta(seconds=60)
-    row.wake_at = now + timedelta(seconds=request.after_seconds) if request.after_seconds is not None else None
+    row.not_before_at = request.decided_at
+    row.wake_at = request.wake_at
     row.wake_event = request.wake_on
     row.event_received_at = None
-    row.expires_at = now + timedelta(seconds=request.expires_seconds)
+    row.expires_at = min(row.expires_at, request.expires_at) if row.expires_at is not None else request.expires_at
     row.lease_token = None
     row.lease_until = None
     row.failure_count = 0
@@ -220,16 +217,21 @@ def _apply_wait(row: CompanionIntent, request: CompanionWaitRequest, now: dateti
 
 
 async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent_id: int | None = None) -> int:
+    now = utc_now()
+    due, expires_at = request.bounds(now)
+    wait = ScheduledWait(
+        request.intent, now, due if request.after_seconds is not None else None, request.wake_on, expires_at
+    )
     plan = _TURN_PLAN.get()
     if plan is not None:
         if plan.user_id != user_id or intent_id not in (None, plan.intent_id):
             raise ValueError("This proactive turn can only defer its current follow-up: omit intent_id")
-        if utc_now() + timedelta(seconds=request.after_seconds or 60) >= plan.expires_at:
+        if due >= plan.expires_at:
             raise ValueError(
                 "The wake time must fall before the current follow-up expires: use a shorter after_seconds"
             )
         # 主动回合内只暂存计划，成功终态时与消息原子提交；取消或失败不能留下幽灵跟进。
-        plan.followup = request
+        plan.followup = wait
         return plan.intent_id
     async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, "companion_intents")
@@ -247,25 +249,13 @@ async def set_companion_wait(user_id: int, request: CompanionWaitRequest, intent
         # 已认领或执行中的意图由其回合负责收尾；改写会丢失“工具已执行、需核对”的终态。
         if row is not None and row.status in ("queued", "running"):
             raise ValueError("Companion intent is queued or running in a proactive turn and cannot be rescheduled now")
-        now = utc_now()
-        if row is None or row.status not in _ACTIVE_STATUSES or row.expires_at <= now:
-            count = (
-                await db.execute(
-                    select(func.count())
-                    .select_from(CompanionIntent)
-                    .where(
-                        CompanionIntent.user_id == user_id,
-                        CompanionIntent.status.in_(_ACTIVE_STATUSES),
-                        CompanionIntent.expires_at > now,
-                    )
-                )
-            ).scalar_one()
-            if count >= SETTINGS.companion_max_pending_intents:
-                raise ValueError(f"Pending companion intent limit ({SETTINGS.companion_max_pending_intents}) reached")
+        deadline = min(row.expires_at, expires_at) if row is not None else expires_at
+        if max(utc_now(), due) >= deadline:
+            raise ValueError("The wake time must fall within the remaining follow-up window")
         if row is None:
             row = CompanionIntent(user_id=user_id)
             db.add(row)
-        _apply_wait(row, request, now)
+        _apply_wait(row, wait)
         await db.flush()
         result = row.id
         await db.commit()
@@ -308,33 +298,49 @@ async def recent_life_contacts(db: AsyncSession, user_id: int) -> list[dict[str,
     ]
 
 
-async def list_companion_intents(db: AsyncSession, user_id: int) -> list[CompanionIntentView]:
+async def list_companion_intents(db: AsyncSession, user_id: int, *, cursor: str | None = None) -> CompanionIntentPage:
     now = utc_now()
-    rows = (
-        await db.execute(
-            select(CompanionIntent)
-            .where(
-                CompanionIntent.user_id == user_id,
-                or_(
-                    CompanionIntent.status.in_(_ACTIVE_STATUSES) & (CompanionIntent.expires_at > now),
-                    (CompanionIntent.status == "failed") & (CompanionIntent.updated_at >= now - _INTENT_RETENTION),
-                ),
-            )
-            .order_by(CompanionIntent.status == "failed", CompanionIntent.created_at.desc(), CompanionIntent.id.desc())
-            .limit(32)
-        )
-    ).scalars()
-    return [CompanionIntentView.model_validate(row) for row in rows]
+    failed = CompanionIntent.status == "failed"
+    query = select(CompanionIntent).where(
+        CompanionIntent.user_id == user_id,
+        or_(
+            CompanionIntent.status.in_(_ACTIVE_STATUSES) & (CompanionIntent.expires_at > now),
+            failed & (CompanionIntent.updated_at >= now - _INTENT_RETENTION),
+        ),
+    )
+    if cursor is not None:
+        group, _, identifier = cursor.partition(":")
+        if group not in ("active", "failed"):
+            raise ValueError("Invalid companion intent cursor")
+        older = CompanionIntent.id < parse_resource_id(identifier)
+        query = query.where((failed | older) if group == "active" else (failed & older))
+    page_size = 32
+    rows = (await db.scalars(query.order_by(failed, CompanionIntent.id.desc()).limit(page_size + 1))).all()
+    page = [CompanionIntentView.model_validate(row) for row in rows[:page_size]]
+    next_cursor = None
+    if len(rows) > page_size:
+        last = page[-1]
+        next_cursor = f"{'failed' if last.status == 'failed' else 'active'}:{last.id}"
+    return CompanionIntentPage(intents=page, next_cursor=next_cursor)
 
 
-async def has_pending_companion_intent(db: AsyncSession, user_id: int) -> bool:
+def _ready_wait(now: datetime) -> ColumnElement[bool]:
+    return (
+        (CompanionIntent.status == "waiting")
+        & (CompanionIntent.not_before_at <= now)
+        & or_(CompanionIntent.wake_at <= now, CompanionIntent.event_received_at.is_not(None))
+    )
+
+
+async def has_due_companion_intent(db: AsyncSession, user_id: int) -> bool:
+    now = utc_now()
     return (
         await db.scalar(
             select(CompanionIntent.id)
             .where(
                 CompanionIntent.user_id == user_id,
-                CompanionIntent.status.in_(_ACTIVE_STATUSES),
-                CompanionIntent.expires_at > utc_now(),
+                or_(CompanionIntent.status.in_(("queued", "running")), _ready_wait(now)),
+                CompanionIntent.expires_at > now,
             )
             .limit(1)
         )
@@ -439,10 +445,8 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
                     True
                     if desktop
                     else or_(CompanionIntent.source_kind == "life", CompanionIntent.source_kind.startswith("reply:")),
-                    CompanionIntent.status == "waiting",
+                    _ready_wait(now),
                     CompanionIntent.expires_at > now,
-                    CompanionIntent.not_before_at <= now,
-                    or_(CompanionIntent.wake_at <= now, CompanionIntent.event_received_at.is_not(None)),
                 )
                 .order_by(
                     case((CompanionIntent.source_kind == "checkin", 1), else_=0),
@@ -458,7 +462,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         lease_token = secrets.token_hex(16)
         row.status = "queued"
         row.lease_token = lease_token
-        row.lease_until = now + timedelta(seconds=_QUEUE_LEASE_SECONDS)
+        row.lease_until = now + timedelta(seconds=_LEASE_SECONDS)
         row.last_attempt_at = now
         emit_ws_event(
             db,
@@ -509,9 +513,41 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
             await db.commit()
             return None
         row.status = "running"
-        row.lease_until = row.expires_at + timedelta(seconds=30)
+        row.lease_until = min(row.expires_at, now + timedelta(seconds=_LEASE_SECONDS))
         await db.commit()
         return CompanionIntentView.model_validate(row)
+
+
+@asynccontextmanager
+async def maintain_companion_lease(user_id: int, request: CompanionTurnRequest) -> AsyncIterator[None]:
+    async def renew() -> None:
+        while True:
+            await asyncio.sleep(_LEASE_SECONDS / 3)
+            async with SESSION_LOCAL() as db:
+                now = utc_now()
+                renewed = await db.scalar(
+                    update(CompanionIntent)
+                    .where(
+                        CompanionIntent.id == request.intent_id,
+                        CompanionIntent.user_id == user_id,
+                        CompanionIntent.lease_token == request.lease_token,
+                        CompanionIntent.status == "running",
+                        CompanionIntent.lease_until > now,
+                        CompanionIntent.expires_at > now,
+                    )
+                    .values(lease_until=func.least(CompanionIntent.expires_at, now + timedelta(seconds=_LEASE_SECONDS)))
+                    .returning(CompanionIntent.id)
+                )
+                await db.commit()
+            if renewed is None:
+                raise RuntimeError("Companion intent lease is no longer valid")
+
+    async with asyncio.TaskGroup() as tasks:
+        heartbeat = tasks.create_task(renew())
+        try:
+            yield
+        finally:
+            heartbeat.cancel()
 
 
 async def finish_companion_intent(
@@ -520,7 +556,7 @@ async def finish_companion_intent(
     *,
     reply: CompanionReply | None = None,
     reply_content: str | None = None,
-    followup: CompanionWaitRequest | None = None,
+    followup: ScheduledWait | None = None,
     contact_revision: int,
     user_message_id: int,
     original_source: DeferredReplySource | None = None,
@@ -600,10 +636,8 @@ async def finish_companion_intent(
             if followup is None:
                 row.status = "completed"
             else:
-                original_expiry = row.expires_at
-                _apply_wait(row, followup, now)
-                row.expires_at = min(original_expiry, row.expires_at)
-                if row.not_before_at >= row.expires_at or row.wake_at is not None and row.wake_at >= row.expires_at:
+                _apply_wait(row, followup)
+                if row.expires_at <= now or row.wake_at is not None and row.wake_at >= row.expires_at:
                     row.status = "expired"
         row.lease_token = None
         row.lease_until = None

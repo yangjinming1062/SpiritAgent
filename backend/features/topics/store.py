@@ -8,20 +8,21 @@ from infrastructure.ai.token_budget import json_tokens
 from infrastructure.request_errors import RequestError
 from infrastructure.search import extract_search_terms
 from infrastructure.text import ensure_utc, utc_now
-from infrastructure.web.social_content import validate_source_url
+from infrastructure.web.social_content import SocialContent, validate_source_url
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
-from sqlalchemy import and_, case, exists, func, literal, or_, select
+from sqlalchemy import Select, and_, case, delete, exists, func, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.locking import lock_account
 
-from .models import CompanionTopic, TopicBatch, TopicFeedback, TopicUsage
+from .models import CompanionTopic, TopicBatch, TopicCandidate, TopicFeedback, TopicUsage
 from .schemas import (
     TopicBatchSnapshot,
+    TopicCandidateChoice,
     TopicFeedbackSnapshot,
     TopicFeedbackValue,
-    TopicSelection,
     TopicSnapshot,
 )
 
@@ -102,71 +103,194 @@ async def save_checkpoint(
     return TopicBatchSnapshot.model_validate(row)
 
 
-async def reserve_request(
-    db: AsyncSession, batch_id: int, scope: MemoryScope, *, kind: Literal["search", "detail"], limit: int
-) -> bool:
+async def count_request(db: AsyncSession, batch_id: int, scope: MemoryScope, kind: Literal["search", "detail"]) -> bool:
     row = await _locked_batch(db, batch_id, scope)
-    column = "search_requests" if kind == "search" else "detail_requests"
-    if row.status != "collecting" or getattr(row, column) >= limit or utc_now() >= ensure_utc(row.expires_at):
+    if row.status != "collecting" or utc_now() >= ensure_utc(row.expires_at):
         return False
-    setattr(row, column, getattr(row, column) + 1)
-    await db.flush()
+    if kind == "search":
+        row.search_requests += 1
+    else:
+        row.detail_requests += 1
     return True
 
 
-async def publish_batch(
-    db: AsyncSession, batch_id: int, scope: MemoryScope, selections: Sequence[TopicSelection]
+async def collecting_batches(db: AsyncSession) -> list[tuple[int, date]]:
+    rows = await db.execute(
+        select(TopicBatch.user_id, TopicBatch.activity_date).where(TopicBatch.status == "collecting")
+    )
+    return [(user_id, activity_date) for user_id, activity_date in rows]
+
+
+def candidate_key(source: SocialContent) -> str:
+    return f"{source.platform}:{source.source_id}"
+
+
+async def stage_candidates(
+    db: AsyncSession, scope: MemoryScope, batch_id: int, sources: Sequence[SocialContent], *, read_details: bool
+) -> tuple[int, int]:
+    row = await _locked_batch(db, batch_id, scope)
+    if not sources or row.status != "collecting":
+        return 0, 0
+    values = []
+    for item in sources:
+        outside = item.published_at is not None and not row.window_start <= item.published_at < row.window_end
+        values.append(
+            {
+                "batch_id": batch_id,
+                "candidate_key": candidate_key(item),
+                "content": {} if outside else item.model_dump(mode="json"),
+                "detailed": outside or not read_details or not item.needs_detail,
+                "reviewed": outside,
+            }
+        )
+    result = await db.scalars(
+        insert(TopicCandidate)
+        .values(values)
+        .on_conflict_do_nothing(constraint="uq_topic_candidate_source")
+        .returning(TopicCandidate.reviewed)
+    )
+    added = result.all()
+    return len(added), sum(added)
+
+
+def _candidates(batch_id: int, scope: MemoryScope) -> Select[tuple[TopicCandidate]]:
+    return (
+        select(TopicCandidate)
+        .join(TopicBatch)
+        .where(*_scope(TopicBatch, scope), TopicBatch.id == batch_id, TopicBatch.status == "collecting")
+    )
+
+
+async def candidate_page(
+    db: AsyncSession, scope: MemoryScope, batch_id: int, *, for_review: bool
+) -> list[SocialContent]:
+    rows = await db.scalars(
+        _candidates(batch_id, scope)
+        .where(~TopicCandidate.reviewed, TopicCandidate.detailed == for_review)
+        .order_by(TopicCandidate.id)
+        .limit(64)
+    )
+    return [SocialContent.model_validate(row.content) for row in rows]
+
+
+async def save_details(db: AsyncSession, scope: MemoryScope, batch_id: int, source: SocialContent) -> None:
+    batch = await _locked_batch(db, batch_id, scope)
+    if batch.status == "collecting":
+        await db.execute(
+            update(TopicCandidate)
+            .where(TopicCandidate.batch_id == batch_id, TopicCandidate.candidate_key == candidate_key(source))
+            .values(content=source.model_dump(mode="json"), detailed=True)
+        )
+
+
+async def save_selections(
+    db: AsyncSession, scope: MemoryScope, batch_id: int, keys: set[str], choices: Sequence[TopicCandidateChoice]
+) -> None:
+    row = await _locked_batch(db, batch_id, scope)
+    if row.status != "collecting":
+        return
+    await db.execute(
+        update(TopicCandidate)
+        .where(TopicCandidate.batch_id == batch_id, TopicCandidate.candidate_key.in_(keys))
+        .values(reviewed=True)
+    )
+    for choice in choices:
+        await db.execute(
+            update(TopicCandidate)
+            .where(TopicCandidate.batch_id == batch_id, TopicCandidate.candidate_key == choice.candidate_id)
+            .values(selection=choice.model_dump(mode="json"))
+        )
+
+
+async def selected_history(
+    db: AsyncSession, scope: MemoryScope, batch_id: int, token_budget: int
+) -> tuple[list[dict[str, str]], set[str]]:
+    rows = await db.stream(
+        _candidates(batch_id, scope)
+        .with_only_columns(
+            TopicCandidate.selection["event_key"].astext, TopicCandidate.selection["fact_summary"].astext
+        )
+        .where(TopicCandidate.selection.is_not(None))
+        .order_by(TopicCandidate.id.desc())
+        .execution_options(yield_per=64)
+    )
+    recent = []
+    keys = set()
+    try:
+        async for event_key, summary in rows:
+            keys.add(event_key.casefold())
+            if token_budget > 0:
+                item = {"event_key": event_key, "summary": summary}
+                token_budget -= json_tokens(item) + 2
+                if token_budget >= 0:
+                    recent.append(item)
+    finally:
+        await rows.close()
+    return recent, keys
+
+
+async def complete_batch(
+    db: AsyncSession, batch_id: int, scope: MemoryScope, summary: dict[str, Any], *, reason: str | None = None
 ) -> TopicBatchSnapshot:
     row = await _locked_batch(db, batch_id, scope)
     if row.status != "collecting":
         return TopicBatchSnapshot.model_validate(row)
-    events: set[str] = set()
-    sources: set[tuple[str, str]] = set()
-    for selection in selections:
-        source = selection.source
-        if (
-            source.published_at is None
-            or not source.has_evidence
-            or not ensure_utc(row.window_start) <= source.published_at < ensure_utc(row.window_end)
-        ):
-            raise ValueError("Topic lacks dated content evidence in the collection window")
-        canonical = validate_source_url(source.platform, source.source_id, source.url)
-        identity = source.platform, source.source_id
-        normalized_event = selection.event_key.casefold()
-        if identity in sources or normalized_event in events:
-            raise ValueError("Duplicate topic content or event")
-        sources.add(identity)
-        events.add(normalized_event)
-        existing = await db.scalar(
-            select(CompanionTopic.id).where(
-                *_scope(CompanionTopic, scope),
-                CompanionTopic.platform == source.platform,
-                CompanionTopic.source_id == source.source_id,
+    items = await db.stream_scalars(
+        _candidates(batch_id, scope)
+        .where(TopicCandidate.selection.is_not(None))
+        .order_by(TopicCandidate.id)
+        .execution_options(yield_per=32)
+    )
+    seen: set[str] = set()
+    try:
+        async for item in items:
+            source = SocialContent.model_validate(item.content)
+            selection = TopicCandidateChoice.model_validate(item.selection)
+            if (
+                source.published_at is None
+                or not source.has_evidence
+                or not ensure_utc(row.window_start) <= source.published_at < ensure_utc(row.window_end)
+                or candidate_key(source) != selection.candidate_id
+            ):
+                raise ValueError("Topic lacks dated content evidence in the collection window")
+            event = selection.event_key.casefold()
+            if event in seen:
+                raise ValueError("Duplicate selected event")
+            seen.add(event)
+            canonical = validate_source_url(source.platform, source.source_id, source.url)
+            await db.execute(
+                insert(CompanionTopic)
+                .values(
+                    user_id=scope.user_id,
+                    system_preset_id=scope.system_preset_id,
+                    batch_id=row.id,
+                    **source.model_dump(exclude={"url"}),
+                    url=canonical,
+                    summary=selection.fact_summary,
+                    user_relevance=selection.why_user,
+                    companion_interest=selection.why_companion,
+                    conversation_angle=selection.conversation_angle,
+                    event_key=selection.event_key,
+                )
+                .on_conflict_do_nothing(constraint="uq_topic_scope_source")
             )
-        )
-        if existing is not None:
-            continue
-        db.add(
-            CompanionTopic(
-                user_id=scope.user_id,
-                system_preset_id=scope.system_preset_id,
-                batch_id=row.id,
-                **source.model_dump(exclude={"url"}),
-                url=canonical,
-                **selection.model_dump(exclude={"source"}),
-            )
-        )
-    row.status = "ready"
-    row.error = None
-    row.checkpoint = {}
+    finally:
+        await items.close()
+    await db.execute(delete(TopicCandidate).where(TopicCandidate.batch_id == row.id))
+    row.status = "ready" if seen or reason is None else "failed"
+    row.error = reason
+    row.checkpoint = {"result": summary}
     await db.flush()
     return TopicBatchSnapshot.model_validate(row)
 
 
-async def finish_failed_batch(db: AsyncSession, batch_id: int, scope: MemoryScope, error: str) -> TopicBatchSnapshot:
+async def finish_failed_batch(
+    db: AsyncSession, batch_id: int, scope: MemoryScope, error: str, summary: dict[str, Any]
+) -> TopicBatchSnapshot:
     row = await _locked_batch(db, batch_id, scope)
     if row.status == "collecting":
-        row.status, row.error = "failed", error[:160]
+        row.status, row.error, row.checkpoint = "failed", error[:160], {"result": summary}
+        await db.execute(delete(TopicCandidate).where(TopicCandidate.batch_id == row.id))
     await db.flush()
     return TopicBatchSnapshot.model_validate(row)
 

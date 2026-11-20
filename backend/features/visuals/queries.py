@@ -38,6 +38,7 @@ from .repository import (
     version_view,
     visual_clip_kind,
     visual_is_short_action,
+    visual_job_row,
     visual_playable,
     visual_plays_as_loop,
     visual_snapshot,
@@ -512,6 +513,11 @@ async def job_views(db: AsyncSession, jobs: list[VisualJob]) -> list[VisualJobVi
 
 async def job_view(db: AsyncSession, job: VisualJob) -> VisualJobView:
     return (await job_views(db, [job]))[0]
+
+
+async def visual_job_detail(user_id: int, job_id: int) -> VisualJobView:
+    async with SESSION_LOCAL() as db:
+        return await job_view(db, await visual_job_row(db, user_id, job_id))
 
 
 async def list_visuals(

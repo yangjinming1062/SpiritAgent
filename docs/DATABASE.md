@@ -38,6 +38,7 @@ flowchart LR
     prompt_submissions -->|result / replacement| messages
     submission_messages --> prompt_submissions
     submission_messages --> messages
+    companion_topic_candidates --> companion_topic_batches
     companion_topics --> companion_topic_batches
     companion_topic_usages --> companion_topics
     companion_topic_usages --> messages
@@ -46,7 +47,7 @@ flowchart LR
 
 会话拥有上下文边界，消息拥有原文与交付快照，受理账本拥有请求身份和结果关系。通话记录与原发言同属会话，联合外键保证归属并在记录删除时清理关联行。整批输入与关联一起提交，断线后可查询原请求。依附子会话随父删除，独立分叉只失去来源指针。
 
-消息文件和本地声音版本用关系表保护，回收不扫描正文 JSON 猜引用。会话统计由[语句级触发器](../backend/features/conversation/statistics.py)维护，计数规则见[查询设计与验证](#查询设计与验证)。话题资料、实际分享和显式反馈独立，选材不代表分享。
+消息文件和本地声音版本用关系表保护，回收不扫描正文 JSON 猜引用。会话统计由[语句级触发器](../backend/features/conversation/statistics.py)维护，计数规则见[查询设计与验证](#查询设计与验证)。采集中的候选、详情进度和精选决定绑定原批次，批次结束即释放暂存行。话题资料、实际分享和显式反馈独立，选材不代表分享。
 
 ## 任务、供应商尝试与资产
 

@@ -367,14 +367,12 @@ async def _prepare_turn(
         waits = (
             await list_companion_intents(db, user_id)
             if setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None
-            else []
+            else None
         )
-        if waits:
+        if waits and waits.intents:
             inputs.context["input"].append(
                 user_text_item(
-                    resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language)
-                    + "\n"
-                    + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
+                    resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language) + "\n" + waits.model_dump_json()
                 )
             )
         if ephemeral and req.message.content:
@@ -703,9 +701,7 @@ async def _run_chat_turn(
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 只依据已有结果收束回复；主动回合由意图有效期约束。
-            reply_only = setup.final_reply_only or dispatch_ctx.guardrails.must_conclude(
-                limit_effect_followup=not ephemeral
-            )
+            reply_only = setup.final_reply_only or dispatch_ctx.guardrails.must_conclude()
             planner_pass = reply_bubble_sink is not None and bool(active_schemas) and not reply_only
             generate = partial(
                 generate_turn_response,
@@ -784,7 +780,7 @@ async def _run_chat_turn(
                     submission_request_id=submission_request_id,
                     submitted_message_id=setup.user_message_id,
                     open_contact=dispatch_ctx.open_contact,
-                    media_request_scope=media_turn.request_scope,
+                    media_turn=media_turn,
                     reply_delivery=reply_delivery,
                     call_record_id=call_record_id,
                 )

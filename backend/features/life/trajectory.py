@@ -1,10 +1,10 @@
 """按同一事件身份读取生活轨迹、主题和阅读成果。"""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from zoneinfo import ZoneInfo
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
-from sqlalchemy import ColumnElement, and_, func, or_, select, tuple_
+from sqlalchemy import ColumnElement, and_, case, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -145,7 +145,9 @@ async def list_trajectory(
     )
 
 
-async def trajectory_topic_heads(db: AsyncSession, user_id: int, *, limit: int = 6) -> list[LifeEventView]:
+async def trajectory_topic_heads(
+    db: AsyncSession, user_id: int, *, limit: int = 6, preferred_events: Collection[int] = ()
+) -> list[LifeEventView]:
     topic = func.coalesce(LifeEvent.topic_id, LifeEvent.id)
     heads = (
         select(LifeEvent.id)
@@ -157,10 +159,19 @@ async def trajectory_topic_heads(db: AsyncSession, user_id: int, *, limit: int =
         .distinct(topic)
         .order_by(topic, LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
     )
-    events = await db.scalars(
-        select(LifeEvent)
-        .where(LifeEvent.user_id == user_id, LifeEvent.id.in_(heads))
-        .order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc())
-        .limit(limit)
-    )
+    query = select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id.in_(heads))
+    if preferred_events:
+        previous = aliased(LifeEvent)
+        earlier_topic = func.coalesce(previous.topic_id, previous.id)
+        rank = case({i: rank for rank, i in enumerate(preferred_events)}, value=previous.id)
+        linked_topics = (
+            select(earlier_topic.label("topic"), func.min(rank).label("rank"))
+            .where(previous.user_id == user_id, previous.id.in_(preferred_events))
+            .group_by(earlier_topic)
+            .subquery()
+        )
+        query = query.outerjoin(linked_topics, linked_topics.c.topic == topic).order_by(
+            linked_topics.c.rank.asc().nulls_last()
+        )
+    events = await db.scalars(query.order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit))
     return [event_view(row) for row in events]

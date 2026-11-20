@@ -1,21 +1,25 @@
 """夜间自主规划、持久化动作账本与顺序执行。"""
 
 import json
-from datetime import date, datetime, time, timedelta
 from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from features.accounts.queries import nightly_account
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
-from features.appearance.nightly import list_outfits
 from features.appearance.observations import load_visual_observation
 from features.companion.planning_queries import PersonaPlanningSnapshot
 from features.entries.queries import post_summaries
-from features.life.actions import CREATION_CAPABILITIES, LIFE_ACTION, LIFE_CAPABILITIES, NextAction, OutreachAction
+from features.life.actions import (
+    CREATION_CAPABILITIES,
+    LIFE_ACTION,
+    LIFE_CAPABILITIES,
+    NextAction,
+    VisualAction,
+)
 from features.life.execution import UnresolvedPursuitStepError, enqueue_action
 from features.life.queries import pursuit_evidence, steps_by_id
-from features.life.schemas import LifeStepView
+from features.life.schemas import LifeContactWindow, LifeStepView
 from features.media.identity_rendering import render_character_appearance
 from features.memory.contracts import MemoryListItem
 from features.scenes.queries import get_scene_state, scene_environment
@@ -33,8 +37,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 
-from workflows.companion_actions import build_action_view
-from workflows.life_capabilities import capability_blocks, capability_schema, load_life_materials
+from workflows.life_capabilities import (
+    capability_blocks,
+    capability_schema,
+    fit_life_materials,
+    load_life_materials,
+    validate_visual_materials,
+)
 from workflows.life_execution import run_life_execution
 from workflows.nightly.models import NightlyActivityAction, NightlyActivityLog
 from workflows.nightly.output_contracts import NightlyPlanOutput
@@ -69,13 +78,9 @@ class DateContext(BaseModel):
     user_timezone: str
 
 
-class OutreachScheduleArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
+class OutreachScheduleArgs(LifeContactWindow):
     narrative: str = Field(min_length=1, max_length=1000)
     name: str = Field(default="主动联系", min_length=1, max_length=100)
-    # 规划给出用户本地时刻，时区换算由代码完成。
-    local_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     prompt: str = Field(min_length=1, max_length=4000)
 
 
@@ -137,25 +142,6 @@ class SceneContext(BaseModel):
     generation_pending: bool = False
 
 
-class WardrobeItem(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: ResourceId
-    name: str
-    description: str = ""
-    status: str
-
-
-class VisualMaterialSelection(BaseModel):
-    """规划期选定的一组 ready 素材；影像制作按这组冻结组合，不重新挑选。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    outfit_id: ResourceId
-    scene_id: ResourceId
-    action_id: ResourceId
-
-
 class RecentActionSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -190,26 +176,12 @@ class PlanningContext(BaseModel):
     life_context: dict[str, Any] = Field(default_factory=dict)
     pursuit_evidence: dict[str, Any] = Field(default_factory=dict)
     scene: SceneContext
-    wardrobe: list[WardrobeItem] = Field(default_factory=list)
-    # 模型只读取当前可播能力，制作目标由代码单独冻结。
-    actions: dict[str, Any] = Field(default_factory=dict)
-    # 影像制作各选一份 ready 素材，由代码冻结，模型只提供制作要求。
-    visual_materials: VisualMaterialSelection | None = Field(default=None, exclude=True)
+    materials: dict[str, list[dict[str, str]]]
     recent_autonomous_actions: list[RecentActionSummary] = Field(default_factory=list)
     recent_posts: list[RecentPostSummary] = Field(default_factory=list)
     available_capabilities: list[NightlyCapability] = Field(default_factory=list)
     blocked_capabilities: list[BlockedCapability] = Field(default_factory=list)
     plan_theme: str = ""
-
-
-def _planning_context_payload(context: PlanningContext) -> dict[str, Any]:
-    """模型读取规划资料；已冻结的制作素材只提供标识，执行目标保留在代码上下文。"""
-
-    payload = context.model_dump(exclude_none=True)
-    payload["outfits"] = payload.pop("wardrobe", [])
-    if context.visual_materials is not None:
-        payload["visual_materials"] = context.visual_materials.model_dump()
-    return payload
 
 
 _NIGHTLY_PHASES = {
@@ -224,10 +196,6 @@ _NIGHTLY_PHASES = {
 def _nightly_capability(name: str) -> NightlyCapability:
     definition = LIFE_CAPABILITIES[name]
     schema = capability_schema(name, model=OutreachScheduleArgs if name == "outreach.schedule" else None)
-    if name == "visual.generate":
-        for key in ("outfit_id", "scene_id", "action_id"):
-            schema["properties"].pop(key)
-            schema["required"].remove(key)
     schema["properties"]["narrative"] = {
         "type": "string",
         "minLength": 1,
@@ -263,7 +231,6 @@ async def _collect_context(
     materials = await load_life_materials(user_id)
     blocked = await capability_blocks(user_id, source="nightly", materials=materials)
     async with SESSION_LOCAL() as db:
-        outfits = await list_outfits(db, user_id)
         scene = await get_scene_state(db, user_id)
         observation = await load_visual_observation(db, user_id)
         recent_actions = (
@@ -281,16 +248,6 @@ async def _collect_context(
         evidence = await pursuit_evidence(
             db, user_id, [parse_resource_id(item["id"]) for item in life_context.get("active_pursuits", [])]
         )
-        action_view = await build_action_view(user_id)
-        action_snapshot = {"ready_actions": [item.model_dump() for item in action_view.items]}
-        # 影像制作各选一份 ready 素材（最新可用项），模型只提供制作要求。
-        visual_materials = None
-        if selected := materials.visual:
-            outfit, environment, action = selected
-            visual_materials = VisualMaterialSelection(
-                outfit_id=outfit.id, scene_id=environment.id, action_id=action.id
-            )
-
     definition = dict(persona.definition) if persona is not None else {}
     if observation is not None:
         definition["visual_observation"] = render_character_appearance(observation, language=language)
@@ -311,12 +268,7 @@ async def _collect_context(
             environment=scene_environment(scene),
             generation_pending=scene.pending is not None or scene.regenerating is not None,
         ),
-        wardrobe=[
-            WardrobeItem(id=outfit.id, name=outfit.name, description=outfit.description or "", status=outfit.status)
-            for outfit in outfits
-        ],
-        actions=action_snapshot,
-        visual_materials=visual_materials,
+        materials=materials,
         recent_autonomous_actions=recent_action_summaries,
         # 与动作的 target_date 一样按用户本地日标注。
         recent_posts=[
@@ -330,8 +282,6 @@ async def _collect_context(
         reason = blocked[name].reason if name in blocked else None
         if name == "scene.create" and context.scene.generation_pending:
             reason = reason or "已有环境图片正在生成"
-        if name == "visual.generate" and context.visual_materials is None:
-            reason = reason or "缺少可用的造型、环境或动作"
         if reason:
             context.blocked_capabilities.append(BlockedCapability(name=name, reason=reason))
         else:
@@ -346,6 +296,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         raise LlmJsonValidationError("duplicate_action_id", fields=("id",))
     available_names = {item.name for item in context.available_capabilities}
     active_pursuits = {parse_resource_id(item["id"]) for item in context.life_context.get("active_pursuits", [])}
+    decided_at = utc_now()
     actions: list[PlannedAction] = []
     for index, action in enumerate(raw_plan.actions):
         capability_name = action.capability.strip()
@@ -356,6 +307,27 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             raise LlmJsonValidationError("unknown_pursuit", fields=("pursuit_id",))
         if capability_name in CREATION_CAPABILITIES and type(action.arguments.get("add_to_user_library")) is not bool:
             raise LlmJsonValidationError("missing_library_choice", fields=("add_to_user_library",))
+        if capability_name == "visual.generate":
+            visual = VisualAction.model_validate(
+                {
+                    **{
+                        key: value
+                        for key, value in action.arguments.items()
+                        if key not in {"narrative", "add_to_user_library"}
+                    },
+                    "capability": capability_name,
+                }
+            )
+            validate_visual_materials(visual, context.materials)
+        arguments = action.arguments
+        if capability_name == "outreach.schedule":
+            contact = OutreachScheduleArgs.model_validate(arguments)
+            due, expiry = contact.bounds(decided_at)
+            arguments = {
+                **contact.model_dump(exclude={"after_seconds", "expires_seconds"}),
+                "scheduled_at": due.isoformat(),
+                "expires_at": expiry.isoformat(),
+            }
         # 前置项被过滤时仍保留引用，执行端据此跳过依赖它的动作。
         for dependency in action.depends_on:
             dependency_index = action_positions.get(dependency)
@@ -371,14 +343,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
                 phase=spec.phase,
                 pursuit_id=action.pursuit_id,
                 depends_on=action.depends_on,
-                arguments={
-                    **action.arguments,
-                    **(
-                        context.visual_materials.model_dump()
-                        if capability_name == "visual.generate" and context.visual_materials is not None
-                        else {}
-                    ),
-                },
+                arguments=arguments,
             )
         )
     outfit_ids = {action.id for action in actions if action.capability.startswith("outfit.")}
@@ -487,30 +452,17 @@ async def _read_action_results(rows: list[NightlyActivityAction]) -> dict[str, A
     return {row.action_key: _action_result(row, steps) for row in rows}
 
 
-def _action_input(
-    row: NightlyActivityAction, *, language: str, plan_theme: str, date_context: DateContext, facts: list[str]
-) -> NextAction:
+def _action_input(row: NightlyActivityAction, *, language: str, plan_theme: str, facts: list[str]) -> NextAction:
     arguments = (row.arguments or {}).get("values", {})
     payload = {key: value for key, value in arguments.items() if key not in {"narrative", "add_to_user_library"}}
     payload["capability"] = row.capability
     if row.capability == "outreach.schedule":
-        parsed = OutreachScheduleArgs.model_validate(arguments)
-        timezone = ZoneInfo(date_context.user_timezone)
-        target = date.fromisoformat(date_context.tomorrow_date)
-        hour, minute = map(int, parsed.local_time.split(":"))
-        prompt = OUTREACH_CONTEXT_TEMPLATES[resolve_language(language)].format(
-            prompt=parsed.prompt,
+        payload["prompt"] = OUTREACH_CONTEXT_TEMPLATES[resolve_language(language)].format(
+            prompt=arguments["prompt"],
             context=json.dumps(
                 {"completed_nightly_action_facts": facts, "nightly_theme": plan_theme}, ensure_ascii=False
             ),
         )
-        payload = OutreachAction(
-            capability="outreach.schedule",
-            name=parsed.name,
-            prompt=prompt,
-            scheduled_at=datetime.combine(target, time(hour, minute), timezone),
-            expires_at=datetime.combine(target + timedelta(days=1), time.min, timezone),
-        ).model_dump()
     return NextAction(
         description=str(
             arguments.get("requirements")
@@ -593,9 +545,7 @@ async def _execute_persisted_actions(
                 continue
             try:
                 facts = [result.fact for result in results.values() if result.status == "succeeded" and result.fact]
-                action = _action_input(
-                    row, language=language, plan_theme=plan_theme, date_context=date_context, facts=facts
-                )
+                action = _action_input(row, language=language, plan_theme=plan_theme, facts=facts)
                 row.life_step_id = await _link_action_step(row, user_id, action)
             except UnresolvedPursuitStepError:
                 continue
@@ -649,7 +599,7 @@ async def run_nightly_planning(
             "today_conversations": today_conversations,
             "topic_reserve": [],
             **({"post_interactions": post_interactions} if post_interactions else {}),
-            "autonomous_context": _planning_context_payload(context),
+            "autonomous_context": context.model_dump(exclude_none=True),
             "current_time": utc_now().astimezone(timezone).isoformat(),
             **date_context.model_dump(),
             **anomaly_stats,
@@ -666,6 +616,15 @@ async def run_nightly_planning(
                 *(str(row.get("title") or "") for row in life_context.get("active_pursuits", [])),
             ]
         )
+        payload["autonomous_context"]["materials"] = {}
+        context.materials = fit_life_materials(
+            context.materials, query, material_budget(config.chain, instructions, payload, schema)
+        )
+        if not all(context.materials.values()):
+            context.available_capabilities = [
+                item for item in context.available_capabilities if item.name != "visual.generate"
+            ]
+        payload["autonomous_context"] = context.model_dump(exclude_none=True)
         async with SESSION_LOCAL() as db:
             payload["topic_reserve"] = await ranked_topic_summaries(
                 db,

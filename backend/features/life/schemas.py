@@ -6,6 +6,7 @@ from typing import Any, Literal
 from infrastructure.api_ids import ResourceId
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_serializer, model_validator
 
+from features.companion.intent_contracts import ContactWindow
 from features.media.visual_semantics import ActivityType, SceneTags
 
 from .actions import LifeAction, NextAction, ReadingResultView
@@ -562,10 +563,8 @@ class PrivateLifeEpisode(LifeSceneChange):
     activity_type: ActivityType = Field(description="虚拟情境内当前活动的类别")
 
 
-class LifeContactWindow(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    after_minutes: int = Field(ge=0, le=10080, description="多久后适合联系，0 表示此刻")
-    window_minutes: int = Field(ge=1, le=1440, description="从那时起这件事还值得提起的分钟数")
+class LifeContactWindow(ContactWindow):
+    after_seconds: int = Field(ge=0, description="多久后适合联系，以秒计，0 表示此刻")
 
 
 class LifeShare(BaseModel):

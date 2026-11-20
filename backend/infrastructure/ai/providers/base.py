@@ -329,8 +329,9 @@ class VideoGenProvider(BaseProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
+        include_upscaled: bool = False,
     ) -> tuple[str, ...]:
-        """配置模型在本次输入组合下的原生档，去除别名并按尺寸升序排列。"""
+        """当前输入组合可生成的档位，默认只含原生分辨率；显式输出可包含放大档。"""
         return ()
 
     def max_resolution(

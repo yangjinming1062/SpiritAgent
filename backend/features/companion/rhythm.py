@@ -51,7 +51,7 @@ DEFAULT_ROUTINE = RoutineHours(bedtime=time(23), rise_time=time(7))
 class BedtimeChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    minutes: int = Field(ge=-120, le=120)
+    minutes: int = Field(strict=True)
     reason: str = Field(min_length=1, max_length=200)
 
 
@@ -424,6 +424,12 @@ async def set_bedtime_change(db: AsyncSession, user_id: int, change: BedtimeChan
     row = await _lock_rhythm(db, user_id)
     routine = _routine(row)
     normal_start = _boundary(local_day, routine.bedtime, zone)
+    wake_day = local_day + timedelta(days=int(routine.rise_time <= routine.bedtime))
+    previous_wake = _boundary(wake_day - timedelta(days=1), routine.rise_time, zone, fold=1)
+    next_wake = _boundary(wake_day, routine.rise_time, zone, fold=1)
+    minute = timedelta(minutes=1)
+    if not (previous_wake - normal_start) // minute < change.minutes < (next_wake - normal_start) // minute:
+        return
     start = normal_start + timedelta(minutes=change.minutes)
     if min(normal_start, start) <= now:
         return

@@ -31,6 +31,8 @@ class MediaArtifact:
     identity_verdict: str | None = None
     bound_message_id: int | None = None
     media_revision: int = 0
+    parent_media_id: str | None = None
+    image_plan: ImagePlan | None = None
 
     def tool_view(self) -> dict:
         return {
@@ -50,8 +52,9 @@ class MediaArtifact:
 class MediaInspection:
     inspection_id: str
     media_id: str
-    verdict: Literal["pass", "revise", "unavailable"]
+    verdict: Literal["pass", "revise", "stalled", "unavailable"]
     issues: tuple[str, ...]
+    parent_media_id: str | None
 
 
 @dataclass
@@ -65,45 +68,52 @@ class MediaTurnState:
     request_scope: str = field(default_factory=lambda: uuid4().hex)
     asset_directory: str = ""
     artifacts: dict[str, MediaArtifact] = field(default_factory=dict)
-    plans: dict[str, ImagePlan] = field(default_factory=dict)
     inspections: dict[str, MediaInspection] = field(default_factory=dict)
     current_versions: dict[str, str] = field(default_factory=dict)
     required_goals: set[str] = field(default_factory=set)
-    regenerated_goals: set[str] = field(default_factory=set)
     image_requests: dict[str, list[str]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def has_unknown_image_result(self) -> bool:
-        return any(
-            self.artifacts[media_id].type == "image" and self.artifacts[media_id].status == "result_unknown"
-            for media_id in self.current_versions.values()
-        )
-
     def image_regeneration_blocker(
         self, media_id: str, inspection_id: str | None = None
-    ) -> Literal["result_unknown", "not_ready", "inspection", "quota", "stale"] | None:
-        if self.has_unknown_image_result():
-            return "result_unknown"
+    ) -> Literal["not_ready", "inspection", "stale"] | None:
         artifact = self.artifacts.get(media_id)
         if artifact is None or artifact.type != "image" or artifact.status != "ready" or not artifact.url:
             return "not_ready"
         inspection = self.inspections.get(media_id)
         if (
             inspection is None
+            or inspection.parent_media_id != artifact.parent_media_id
             or inspection.verdict != "revise"
             or (inspection_id is not None and inspection.inspection_id != inspection_id)
         ):
             return "inspection"
-        if artifact.goal_id in self.regenerated_goals:
-            return "quota"
-        if self.current_versions.get(artifact.goal_id) != media_id or artifact.goal_id not in self.plans:
+        if self.current_versions.get(artifact.goal_id) != media_id or artifact.image_plan is None:
             return "stale"
         return None
 
-    def text_reply_media(self) -> list[dict[str, str]]:
-        """文本回复每个交付目标只附加最新成功版本，重做失败时保留原图。"""
-        selected: dict[str, dict[str, str]] = {}
+    def delivery_versions(self) -> list[MediaArtifact]:
+        """每个目标交付一个版本。已受理的修正版可原位回填，明确失败或无改善时保留此前的成品。"""
+        selected: dict[str, MediaArtifact] = {}
         for artifact in self.artifacts.values():
-            if artifact.goal_id in self.required_goals and artifact.status == "ready" and artifact.url:
-                selected[artifact.goal_id] = {"type": artifact.type, "url": artifact.url}
+            if artifact.goal_id not in self.required_goals or artifact.bound_message_id is not None:
+                continue
+            current = selected.get(artifact.goal_id)
+            review = self.inspections.get(artifact.media_id)
+            accepted_revision = artifact.status == "pending" and artifact.job_id is not None
+            if (
+                current
+                and current.status == "ready"
+                and not accepted_revision
+                and (artifact.status != "ready" or not artifact.url or (review and review.verdict == "stalled"))
+            ):
+                continue
+            selected[artifact.goal_id] = artifact
         return list(selected.values())
+
+    def text_reply_media(self) -> list[dict[str, str]]:
+        return [
+            {"type": artifact.type, "url": artifact.url}
+            for artifact in self.delivery_versions()
+            if artifact.status == "ready" and artifact.url
+        ]

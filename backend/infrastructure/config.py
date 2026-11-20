@@ -128,12 +128,8 @@ class Settings(BaseSettings):
 
     # 服务更新器共享 socket 目录；目录为空或没有 socket 时按未启用处理。
     service_updater_socket_dir: str = Field(default="", validation_alias="SERVICE_UPDATER_SOCKET_DIR")
-    topic_search_requests_per_night: int = Field(
-        default=6, ge=0, le=60, validation_alias="TOPIC_SEARCH_REQUESTS_PER_NIGHT"
-    )
-    topic_candidate_limit: int = Field(default=60, ge=0, le=300, validation_alias="TOPIC_CANDIDATE_LIMIT")
-    topic_detail_requests_per_night: int = Field(
-        default=10, ge=0, le=60, validation_alias="TOPIC_DETAIL_REQUESTS_PER_NIGHT"
+    topic_discovery_mode: Literal["full", "search_only", "off"] = Field(
+        default="full", validation_alias="TOPIC_DISCOVERY_MODE"
     )
 
     # 与会话级覆盖同范围：会话设置中低于 0.3 的阈值按无效处理。
@@ -151,7 +147,6 @@ class Settings(BaseSettings):
     desktop_disconnect_grace_seconds: float = Field(
         default=30.0, gt=0, validation_alias="DESKTOP_DISCONNECT_GRACE_SECONDS"
     )
-    companion_max_pending_intents: int = Field(default=16, gt=0, validation_alias="COMPANION_MAX_PENDING_INTENTS")
     companion_min_turn_interval_seconds: float = Field(
         default=60.0, gt=0, validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS"
     )
@@ -167,13 +162,12 @@ class Settings(BaseSettings):
     # 动作库：自主创建开关。
     action_autocreate_enabled: bool = Field(default=True, validation_alias="ACTION_AUTOCREATE_ENABLED")
 
-    # 夜间整理窗口、规划与日记预算；调度器 tick 周期与用户 Cron 配额。
+    # 夜间整理窗口与调度器扫描周期。
     nightly_window_start_hour: int = Field(default=0, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_START_HOUR")
     nightly_window_end_hour: int = Field(default=5, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_END_HOUR")
     nightly_scan_interval_seconds: float = Field(default=300.0, gt=0, validation_alias="NIGHTLY_SCAN_INTERVAL_SECONDS")
     reflection_max_content_chars: int = Field(default=1_000, gt=0, validation_alias="REFLECTION_MAX_CONTENT_CHARS")
     scheduler_interval_seconds: float = Field(default=60.0, gt=0, validation_alias="SCHEDULER_INTERVAL_SECONDS")
-    cron_max_active_per_user: int = Field(default=10, gt=0, validation_alias="CRON_MAX_ACTIVE_PER_USER")
 
     rate_limit_enabled: bool = Field(default=True, validation_alias="RATE_LIMIT_ENABLED")
     # 各端点限流项须为正数（0 会使该端点请求全部 429）；整体关闭限流用 rate_limit_enabled。

@@ -1,4 +1,4 @@
-"""聊天图片请求、实际验图与有界重做。"""
+"""聊天图片请求、实际验图与按版本修正。"""
 
 import asyncio
 import hashlib
@@ -50,7 +50,7 @@ class ImageRequest(BaseModel):
 class InspectionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    verdict: Literal["pass", "revise"]
+    verdict: Literal["pass", "revise", "stalled"]
     issues: list[str] = Field(max_length=8)
 
 
@@ -112,6 +112,7 @@ async def _generate_batch(
         request_scope=turn.request_scope,
         goal_ids=[turn.artifacts[media_id].goal_id for media_id in media_ids],
         parent_media_id=parent_media_id,
+        parent_image=turn.artifacts[parent_media_id].url if parent_media_id else None,
     )
     return [
         ImageSlotResult(
@@ -230,8 +231,6 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
     async with state.lock:
         if (media_ids := state.image_requests.get(key)) is not None:
             return _call_result(state, media_ids, reused=True)
-        if state.has_unknown_image_result():
-            return tool_error("前一次图片生成的结果尚未核实，本轮不再提交新的图片生成")
         artifacts: list[MediaArtifact] = []
         for _ in range(request.n):
             media_id = uuid4().hex
@@ -248,7 +247,7 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             _fail_all(artifacts, "failed", str(exc))
             return _call_result(state, media_ids)
         for artifact in artifacts:
-            state.plans[artifact.goal_id] = plan
+            artifact.image_plan = plan
         # 单次批量请求失败会使该次调用的全部图片失败。
         try:
             results = await _generate_batch(
@@ -274,10 +273,8 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             if result.media_id and result.media_id != artifact.media_id:
                 state.artifacts.pop(artifact.media_id, None)
                 state.current_versions.pop(artifact.goal_id, None)
-                state.plans.pop(artifact.goal_id, None)
                 artifact.media_id = artifact.goal_id = result.media_id
                 state.artifacts[artifact.media_id] = artifact
-                state.plans[artifact.goal_id] = plan
                 state.current_versions[artifact.goal_id] = artifact.media_id
                 media_ids[index] = artifact.media_id
                 state.image_requests[key] = media_ids
@@ -301,22 +298,16 @@ def _inspection_result(inspection: MediaInspection, state: MediaTurnState) -> st
             "The inspection has no usable visual findings. Share an already ready image and describe only "
             "details supported by the available evidence."
         )
+    elif inspection.verdict == "stalled":
+        next_step = "The revision made no verified progress. Choose the best already ready version."
     elif inspection.verdict == "pass":
         next_step = "This check found no concrete defects. The ready image can be delivered as is."
     else:
         blocker = state.image_regeneration_blocker(inspection.media_id, inspection.inspection_id)
         next_step = {
             None: (
-                "Redraw once with image_regenerate using this inspection_id and a specific correction, "
+                "Redraw this version with image_regenerate using this inspection_id and a specific correction, "
                 "or deliver the ready image as is."
-            ),
-            "result_unknown": (
-                "An image generation outcome is still unverified. Do not submit any generation or redraw request; "
-                "deliver only versions already ready and report the unknown outcome."
-            ),
-            "quota": (
-                "This picture's one redraw has already been used. Choose one of its already ready versions; "
-                "do not redraw again."
             ),
             "stale": (
                 "This inspection describes an older version and does not authorize a redraw. "
@@ -328,62 +319,82 @@ def _inspection_result(inspection: MediaInspection, state: MediaTurnState) -> st
     return json.dumps({**asdict(inspection), "next": next_step}, ensure_ascii=False)
 
 
+async def _inspection_image(artifact: MediaArtifact, user_id: int) -> str:
+    parsed = parse_companion_asset_path(artifact.url or "")
+    local = asset_store.resolve_companion_asset_path(*parsed) if parsed and parsed[0] == user_id else None
+    if local is None:
+        raise ValueError("图片资产不可访问")
+    data = await asyncio.to_thread(local[0].read_bytes)
+    return await asyncio.to_thread(build_data_uri, data, local[1])
+
+
 async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
     async with state.lock:
         artifact = state.artifacts.get(media_id)
         if artifact is None or artifact.type != "image" or artifact.status != "ready" or not artifact.url:
             return tool_error("只能检查当前会话中已就绪的图片")
         prior = state.inspections.get(media_id)
-        if prior is not None:
+        if prior is not None and prior.parent_media_id == artifact.parent_media_id:
             return _inspection_result(prior, state)
-        parsed = parse_companion_asset_path(artifact.url)
-        local = asset_store.resolve_companion_asset_path(*parsed) if parsed and parsed[0] == state.user_id else None
-        if local is None:
-            return tool_error("图片资产不可访问")
-        plan = state.plans.get(artifact.goal_id)
+        plan = artifact.image_plan
         try:
-            data = await asyncio.to_thread(local[0].read_bytes)
-            uri = await asyncio.to_thread(build_data_uri, data, local[1])
-            raw = await vision_chat(
-                state.user_id,
-                MEDIA_INSPECTION_INSTRUCTIONS,
-                json.dumps(
-                    {
-                        "user_request": state.original_request,
-                        "image_request": plan.request if plan else "",
-                        "identity_verdict": artifact.identity_verdict,
-                    },
-                    ensure_ascii=False,
-                ),
-                reference_images=(uri,),
-                task=AiTaskKey(state.task),
-            )
-            result = InspectionResult.model_validate(parse_llm_json(raw))
-            issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())
-            consistent = (result.verdict == "pass" and not issues) or (result.verdict == "revise" and bool(issues))
-            verdict = result.verdict if consistent else "unavailable"
-            if not consistent:
-                issues = ("验图结论与问题列表不一致，未取得有效验图结果，不据此重新生成",)
+            images = (await _inspection_image(artifact, state.user_id),)
+            parent = artifact.parent_media_id
+            prior_issues: tuple[str, ...] = ()
+            if parent:
+                images += (await _inspection_image(state.artifacts[parent], state.user_id),)
+                if parent_review := state.inspections.get(parent):
+                    prior_issues = parent_review.issues
+            if parent and images[0] == images[1]:
+                verdict, issues = "stalled", prior_issues or ("本版与上一版图片相同，未能确认改善",)
+            else:
+                raw = await vision_chat(
+                    state.user_id,
+                    MEDIA_INSPECTION_INSTRUCTIONS,
+                    json.dumps(
+                        {
+                            "user_request": state.original_request,
+                            "image_request": plan.request if plan else "",
+                            **({"revision_goal": plan.goal} if parent and plan else {}),
+                            "identity_verdict": artifact.identity_verdict,
+                            "previous_issues": prior_issues,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    reference_images=images,
+                    task=AiTaskKey(state.task),
+                )
+                result = InspectionResult.model_validate(parse_llm_json(raw))
+                issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())
+                consistent = (result.verdict == "pass" and not issues) or (
+                    result.verdict in {"revise", "stalled"} and bool(issues)
+                )
+                verdict = result.verdict if consistent else "unavailable"
+                if not consistent:
+                    issues = ("验图结论与问题列表不一致，未取得有效验图结果，不据此重新生成",)
         except Exception:
             logger.warning(
                 "Image inspection unavailable", extra={"media_id": media_id, "user_id": state.user_id}, exc_info=True
             )
             verdict, issues = "unavailable", ("未取得有效验图结果，不据此重新生成",)
-        inspection = MediaInspection(uuid4().hex, media_id, verdict, issues)
+        inspection = MediaInspection(uuid4().hex, media_id, verdict, issues, artifact.parent_media_id)
         state.inspections[media_id] = inspection
         return _inspection_result(inspection, state)
 
 
 async def regenerate_chat_image(media_id: str, inspection_id: str, correction: str, state: MediaTurnState) -> str:
     async with state.lock:
+        inspection = state.inspections.get(media_id)
+        if inspection is not None and inspection.inspection_id == inspection_id:
+            for child in state.artifacts.values():
+                if child.parent_media_id == media_id:
+                    return _call_result(state, [child.media_id], reused=True)
         blocker = state.image_regeneration_blocker(media_id, inspection_id)
         if blocker is not None:
             return tool_error(
                 {
-                    "result_unknown": "前一次图片生成的结果尚未核实，本轮不再提交生成或重做请求",
                     "not_ready": "重做必须引用已成功生成的图片",
                     "inspection": "需要实际验图发现具体问题后才能重做",
-                    "quota": "该图片本轮的一次重做额度已用完，请从已有就绪版本中选择",
                     "stale": "验图版本已过期，或图片不是本轮生成的产物",
                 }[blocker]
             )
@@ -391,15 +402,15 @@ async def regenerate_chat_image(media_id: str, inspection_id: str, correction: s
         inspection = state.inspections[media_id]
         if not correction.strip():
             return tool_error("请说明针对验图问题的修改要求")
-        state.regenerated_goals.add(artifact.goal_id)
-        original = state.plans[artifact.goal_id]
-        plan = replace(
-            original,
-            prompt=original.prompt
-            + CHAT_IMAGE_CORRECTION_PREFIX
-            + json.dumps({"verified_issues": inspection.issues, "correction": correction[:8000]}, ensure_ascii=False),
+        original = artifact.image_plan
+        assert original is not None  # image_regeneration_blocker 已验证当前版本的制作输入。
+        adjustment = CHAT_IMAGE_CORRECTION_PREFIX + json.dumps(
+            {"verified_issues": inspection.issues, "correction": correction[:8000]}, ensure_ascii=False
         )
-        revised = MediaArtifact(uuid4().hex, "image", artifact.goal_id, "pending")
+        plan = replace(original, prompt=original.prompt + adjustment, goal=original.goal + adjustment)
+        revised = MediaArtifact(
+            uuid4().hex, "image", artifact.goal_id, "pending", parent_media_id=media_id, image_plan=plan
+        )
         state.artifacts[revised.media_id] = revised
         state.current_versions[artifact.goal_id] = revised.media_id
     await _produce(state, revised, plan, parent_media_id=media_id)

@@ -36,23 +36,6 @@ _EXACT_FAILURE_WARN_AFTER = 2
 _SAME_TOOL_FAILURE_WARN_AFTER = 3
 _NO_PROGRESS_WARN_AFTER = 2
 _STALL_AFTER_ROUNDS = 3
-# 成功即完成用户请求的动作型工具：陪伴聊天里其后只需回复，只再保留少量工具步用于核对。
-_EFFECT_TOOLS = frozenset(
-    {
-        "companion_wait",
-        "life_adjust",
-        "life_share_work",
-        "visual_play",
-        "visual_generate",
-        "action_design",
-        "scene_create",
-        "cronjob",
-        "memory_retain",
-    }
-)
-_EFFECT_FOLLOW_UP_STEPS = 2
-# 状态型工具在一个回合内的调用上限：合理需求至多几次，超出只会是空转。
-_TURN_CALL_LIMITS = {"companion_wait": 4, "visual_play": 2}
 # 守卫追加在工具结果之后的提示不属于结果信封，判定前须先剥离。
 _LOOP_WARNING_PREFIX = "\n\n[Tool loop warning"
 
@@ -95,63 +78,76 @@ class ToolCallGuardrailController:
         self._exact_failure_counts: dict[tuple[str, str], int] = {}
         self._same_tool_failure_counts: dict[str, int] = {}
         self._no_progress: dict[tuple[str, str], tuple[str, int]] = {}
-        self._call_counts: dict[str, int] = {}
         self._last_results: dict[tuple[str, str], str] = {}
+        self._schedule_receipts: dict[tuple[str, str], str] = {}
+        self._schedule_requests_by_id: dict[tuple[str, str], tuple[str, str]] = {}
         self._stuck_rounds = 0
-        self._rounds = 0
-        self._effect_round: int | None = None
 
-    def must_conclude(self, *, limit_effect_followup: bool) -> bool:
-        """继续调用工具已无意义：连续多个工具步没有新信息，或动作型工具已成功且核对额度用尽。调用方应收束为最终回复。"""
-        effect_done = self._effect_round is not None and self._rounds >= self._effect_round + _EFFECT_FOLLOW_UP_STEPS
-        return self._stuck_rounds >= _STALL_AFTER_ROUNDS or (limit_effect_followup and effect_done)
-
-    def call_limit_error(self, tool_name: str) -> str | None:
-        """状态型工具本回合已用满调用上限时的拦截说明。"""
-        limit = _TURN_CALL_LIMITS.get(tool_name)
-        if limit is None or self._call_counts.get(tool_name, 0) < limit:
+    def schedule_receipt(self, tool_name: str, args: dict[str, Any]) -> str | None:
+        """同一回合重放已受理的创建请求时返回原凭据，避免重复写入。"""
+        if tool_name not in {"companion_wait", "cronjob"}:
             return None
-        return (
-            f"{tool_name} was already used {limit} times this turn, which is its limit. "
-            "Continue with what you have and write the final reply."
-        )
+        return self._schedule_receipts.get((tool_name, _hash_json(args)))
+
+    def must_conclude(self) -> bool:
+        """连续多个工具步都没有新结果时交付已有结论。"""
+        return self._stuck_rounds >= _STALL_AFTER_ROUNDS
 
     def record_round(self, calls: list[tuple[str, str]], results: list[str | None]) -> None:
         """一个工具步结束：整步调用都失败，或只是重复本回合已有的调用且结果不变，就没有新信息；连续没有新信息的工具步累计，否则清零。多模态结果（None）总是新信息。"""
-        self._rounds += 1
         stuck: list[bool] = []
-        media_progress = False
         for (name, arguments), result in zip(calls, results, strict=True):
             if result is None:
                 stuck.append(False)
                 continue
             body = result.split(_LOOP_WARNING_PREFIX, 1)[0]
             failed = _tool_failed(body)
-            if not failed and self._effect_round is None and _completed_effect(name, arguments):
-                self._effect_round = self._rounds
             media = _media_progress_key(name, body)
             signature, digest = media or ((name, _arguments_hash(arguments)), _result_hash(body))
             changed = self._last_results.get(signature) != digest
-            media_progress |= media is not None and changed and not failed
             stuck.append(failed or not changed)
             self._last_results[signature] = digest
-        if media_progress:
-            self._effect_round = None
         self._stuck_rounds = self._stuck_rounds + 1 if stuck and all(stuck) else 0
 
     def record_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
         """记录原始结果，返回独立于不可信工具内容的循环提示。"""
-        self._call_counts[tool_name] = self._call_counts.get(tool_name, 0) + 1
         signature = (tool_name, _hash_json(args))
         if _tool_failed(result):
             warning = self._record_failure(tool_name, signature)
         else:
+            if tool_name in {"companion_wait", "cronjob"}:
+                self._record_schedule(signature, args, result)
             warning = self._record_success(tool_name, signature, result)
         return (
             ""
             if warning is None
             else f"{_LOOP_WARNING_PREFIX}: {warning.code}; count={warning.count}; {warning.message}]"
         )
+
+    def _record_schedule(self, signature: tuple[str, str], args: dict[str, Any], result: str) -> None:
+        name = signature[0]
+        action = str(args.get("action", "")).strip().lower()
+        if action in {"list", "get"}:
+            return
+        body = safe_json_loads(result)
+        if not isinstance(body, dict):
+            return
+        if name == "companion_wait":
+            resource_id = body.get("intent_id") or args.get("intent_id")
+            created = action == "schedule" and args.get("intent_id") is None
+        else:
+            job = body.get("job", {})
+            resource_id = job.get("id") or args.get("job_id")
+            created = action == "create"
+        if resource_id is None:
+            return
+        # 该事项已改期、取消或删除后，同样的创建参数可以再次生效。
+        resource = (name, str(resource_id))
+        if previous := self._schedule_requests_by_id.pop(resource, None):
+            del self._schedule_receipts[previous]
+        if created:
+            self._schedule_requests_by_id[resource] = signature
+            self._schedule_receipts[signature] = result
 
     def _record_failure(self, tool_name: str, signature: tuple[str, str]) -> _LoopWarning | None:
         exact_count = self._exact_failure_counts.get(signature, 0) + 1
@@ -193,15 +189,6 @@ class ToolCallGuardrailController:
                 f"{tool_name} returned the same result {repeat_count} times. Use the result already provided or change the query instead of repeating it unchanged.",
             )
         return None
-
-
-def _completed_effect(name: str, arguments: str) -> bool:
-    if name not in _EFFECT_TOOLS:
-        return False
-    if name in {"companion_wait", "cronjob"}:
-        args = safe_json_loads(arguments)
-        return isinstance(args, dict) and str(args.get("action", "")).strip().lower() not in {"list", "get"}
-    return True
 
 
 def _media_progress_key(name: str, result: str) -> tuple[tuple[str, str], str] | None:

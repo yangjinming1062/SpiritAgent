@@ -57,10 +57,12 @@ def material_budget(
     return min((room for room in rooms if room > 0), default=0)
 
 
-def fit_text_prefix(text: str, budget: int) -> str:
-    """计算 JSON 字符串实际转义后的大小，返回可完整放入的前缀。"""
+def fit_text_prefix(text: str, budget: int, *, offset: int = 0) -> str:
+    """从 offset 起按 JSON 转义后的大小取一段，避免复制长文的整个剩余部分。"""
     if budget <= 0:
         return ""
+    # approx_text_tokens 对任何字符至少按四分之一 token 计。
+    text = text[offset : offset + 4 * budget]
     if json_tokens(text) <= budget:
         return text
     low, high = 0, len(text)

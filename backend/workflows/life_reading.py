@@ -76,9 +76,8 @@ async def _saved_sources(user_id: int, action: ReadingAction) -> list[ReadingSou
                     url=topic.url,
                     title=topic.title,
                     retrieved_at=topic.collected_at,
-                    content=text[:50000],
+                    content=text,
                     content_kind=kind,
-                    excerpted=len(text) > 50000,
                 )
             )
     return sources
@@ -121,9 +120,9 @@ async def _acquire_sources(
                         url=doc.url,
                         title=doc.title,
                         retrieved_at=utc_now(),
-                        content=doc.content[:50000],
+                        content=doc.content,
                         content_kind=doc.content_kind,
-                        excerpted=doc.source_excerpted or len(doc.content) > 50000,
+                        excerpted=doc.source_excerpted,
                     )
                 except (ValueError, ConnectError):
                     # 已取得但来源校验失败的结果不采纳；该 URL 的外部请求已经结束。
@@ -155,7 +154,7 @@ def _reading_passages(
             "acquired_length": len(source.content),
             "content": "",
         }
-        text = fit_text_prefix(source.content[offset:], room - json_tokens(row) - 3)
+        text = fit_text_prefix(source.content, room - json_tokens(row) - 3, offset=offset)
         if not text or (passages and len(text) < len(source.content) - offset):
             break
         offset += len(text)

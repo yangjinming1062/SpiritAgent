@@ -1,14 +1,13 @@
 """生活能力政策与素材快照；日常判断、夜间规划和执行前复核共用。"""
 
 from dataclasses import dataclass
+from itertools import zip_longest
 from typing import Any, Literal
 
 from features.accounts.queries import nightly_account, user_is_active
-from features.action_library.queries import list_actions
-from features.action_library.schemas import ActionAssetView
+from features.action_library.queries import action_planning_materials, count_library_actions
 from features.appearance.identity import IDENTITY_NOT_CONFIRMED, load_visual_identity
-from features.appearance.queries import ready_outfit_snapshots
-from features.appearance.query_contracts import OutfitSnapshot
+from features.appearance.queries import count_ready_outfits, outfit_planning_materials
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.values import load_user_settings
@@ -16,8 +15,7 @@ from features.life.actions import LIFE_CAPABILITIES, ReadingAction, VisualAction
 from features.life.execution import checkpoint
 from features.life.schemas import LifeStepView
 from features.media.image_generation import resolve_image_gen_chain
-from features.scenes.query_contracts import SceneSnapshot
-from features.scenes.snapshots import list_scene_snapshots
+from features.scenes.queries import count_ready_scenes, scene_planning_materials
 from features.topics.store import ranked_topic_summaries
 from features.visuals.queries import creation_preferences
 from infrastructure.ai.llm_client import resolve_provider_chain
@@ -27,6 +25,7 @@ from infrastructure.ai.token_budget import json_tokens
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.search import extract_search_terms
 from infrastructure.text import utc_now
 from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
 from pydantic import BaseModel
@@ -40,27 +39,45 @@ class CapabilityBlock:
     reason: str
 
 
-@dataclass(frozen=True)
-class LifeMaterials:
-    """当前可自动使用的素材；顺序由各领域查询决定，首个即优先项。"""
+type LifeMaterials = dict[str, list[dict[str, str]]]
 
-    outfits: tuple[OutfitSnapshot, ...]
-    scenes: tuple[SceneSnapshot, ...]
-    actions: tuple[ActionAssetView, ...]
 
-    @property
-    def visual(self) -> tuple[OutfitSnapshot, SceneSnapshot, ActionAssetView] | None:
-        if self.outfits and self.scenes and self.actions:
-            return self.outfits[0], self.scenes[0], self.actions[0]
-        return None
+def fit_life_materials(materials: LifeMaterials, query: str, token_budget: int) -> LifeMaterials:
+    """优先取相关素材，三类交替取材，使用本次模型输入的实际余量。"""
+    terms = extract_search_terms(query)
+
+    def score(row: dict[str, str]) -> int:
+        description = " ".join(row.values()).lower()
+        return sum(term in description for term in terms)
+
+    selected: LifeMaterials = {group: [] for group in materials}
+    ranked = [sorted(rows, key=score, reverse=True) for rows in materials.values()]
+    available = token_budget - json_tokens(selected)
+    for candidates in zip_longest(*ranked):
+        for group, row in zip(materials, candidates, strict=True):
+            if row is not None and (cost := json_tokens(row) + 2) <= available:
+                selected[group].append(row)
+                available -= cost
+    return selected
+
+
+def validate_visual_materials(action: VisualAction, catalog: dict[str, Any]) -> None:
+    for group, identifier in (
+        ("outfits", action.outfit_id),
+        ("scenes", action.scene_id),
+        ("actions", action.action_id),
+    ):
+        if not any(item["id"] == str(identifier) for item in catalog[group]):
+            raise ValueError(f"Select a ready material from {group}")
 
 
 async def load_life_materials(user_id: int) -> LifeMaterials:
     async with SESSION_LOCAL() as db:
-        outfits = await ready_outfit_snapshots(db, user_id)
-        scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=50)).scenes
-        actions = (await list_actions(db, user_id, status="approved", limit=50)).actions
-    return LifeMaterials(tuple(outfits), tuple(scenes), tuple(actions))
+        return {
+            "outfits": await outfit_planning_materials(db, user_id),
+            "scenes": await scene_planning_materials(db, user_id),
+            "actions": await action_planning_materials(db, user_id),
+        }
 
 
 def capability_schema(capability: str, *, model: type[BaseModel] | None = None) -> dict[str, Any]:
@@ -128,8 +145,16 @@ async def capability_blocks(
                 if not chain.providers:
                     blocked[capability] = CapabilityBlock("unavailable", "图片制作模型尚未配置")
     if "visual.generate" in targets and "visual.generate" not in blocked:
-        snapshot = materials if materials is not None else await load_life_materials(user_id)
-        if snapshot.visual is None:
+        if materials is None:
+            async with SESSION_LOCAL() as db:
+                ready = (
+                    await count_ready_outfits(db, user_id)
+                    and await count_ready_scenes(db, user_id)
+                    and await count_library_actions(db, user_id)
+                )
+        else:
+            ready = all(materials.values())
+        if not ready:
             blocked["visual.generate"] = CapabilityBlock("unavailable", "缺少可用的造型、环境或动作")
     if (
         "action.design" in targets
@@ -179,17 +204,13 @@ async def life_capability_context(user_id: int, *, query: str, token_budget: int
             name: definition.description for name, definition in LIFE_CAPABILITIES.items() if name not in blocked
         },
         "reading_sources": {"public_urls": url_block is None, "web_search": search_block is None},
-        "outfits": [
-            {"id": str(item.id), "name": item.name, "description": item.description} for item in materials.outfits
-        ],
-        "scenes": [
-            {"id": str(item.id), "title": item.title, "description": item.description} for item in materials.scenes
-        ],
-        "actions": [
-            {"id": str(item.id), "name": item.name, "description": item.motion_description}
-            for item in materials.actions
-        ],
     }
+    catalog = fit_life_materials(materials, query, token_budget - json_tokens(execution))
+    execution.update(catalog)
+    if not all(catalog.values()) and execution["capabilities"]["visual.generate"]:
+        execution["capabilities"]["visual.generate"] = False
+        execution["blocked_capabilities"]["visual.generate"] = "模型窗口无法容纳一组制作素材"
+        execution["capability_descriptions"].pop("visual.generate")
     async with SESSION_LOCAL() as db:
         topics = await ranked_topic_summaries(
             db,

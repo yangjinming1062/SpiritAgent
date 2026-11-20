@@ -218,6 +218,7 @@ class LocalVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
+        include_upscaled: bool = False,
     ) -> tuple[str, ...]:
         if duration not in self.durations:
             return ()

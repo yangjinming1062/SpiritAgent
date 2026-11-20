@@ -114,8 +114,6 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
     available = []
     for schema in schemas:
         name = schema["name"]
-        if name == "image_generate" and state.has_unknown_image_result():
-            continue
         if name == "video_generate_status" and not any(a.type == "video" for a in state.artifacts.values()):
             continue  # 没有视频任务可查时不披露。
         if name not in {"media_inspect", "image_regenerate"}:
@@ -220,15 +218,6 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
         # 在入口处统一剥离保留键，使 backend / memory / runner 三类工具都受同一过滤。
         args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
 
-        if (limited := ctx.guardrails.call_limit_error(name)) is not None:
-            result_str = tool_error(limited)
-            return make_tool_result_message(
-                name,
-                _redact_tool_payload(result_str),
-                tc["call_id"],
-                trusted_suffix=ctx.guardrails.record_call(name, args, result_str),
-            )
-
         if (blocked := check_file_safety(name, args)) is not None:
             return make_tool_result_message(name, blocked, tc["call_id"])
 
@@ -236,6 +225,8 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
         if tool_location != "unknown" and ctx.open_contact is not None and tool_may_have_effects(name):
             await ctx.open_contact()
         progress.started.add(tc["call_id"])
+        if tool_location == "backend" and (receipt := ctx.guardrails.schedule_receipt(name, args)) is not None:
+            return make_tool_result_message(name, _redact_tool_payload(receipt), tc["call_id"])
         match tool_location:
             case "backend":
                 # 委派工具只返回控制动作；子回合由对话执行层接管，避免工具处理器反向重入对话入口。

@@ -111,7 +111,7 @@ LIFE_CAPABILITIES = {
         ReadingAction, "为当前生活目的读取已有资讯或公开网页，也可搜索一次；读完后再决定是否继续追查。"
     ),
     "outreach.schedule": LifeCapability(
-        OutreachAction, "为有具体缘由的次日联系保存等待意图；由未来回合结合最新情境决定是否开口。"
+        OutreachAction, "为有具体缘由的未来联系保存等待意图；由未来回合结合最新情境决定是否开口。"
     ),
 }
 
@@ -120,7 +120,7 @@ class ReadingSource(ActionInput):
     url: str = Field(pattern=r"^https?://", max_length=2048)
     title: str
     retrieved_at: datetime
-    content: str = Field(min_length=1, max_length=50000)
+    content: str = Field(min_length=1)
     content_kind: Literal["extracted_text", "summary"] = "extracted_text"
     excerpted: bool = False
 

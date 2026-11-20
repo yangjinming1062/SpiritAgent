@@ -20,6 +20,7 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
                 "enum": ["schedule", "list", "cancel"],
                 "description": COMPANION_WAIT_PARAM_DESCS["action"],
             },
+            "cursor": {"type": "string", "description": "Use next_cursor from the previous list page."},
             "intent_id": {
                 "type": "string",
                 "pattern": "^[1-9][0-9]*$",
@@ -28,8 +29,7 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
             "intent": {"type": "string", "description": COMPANION_WAIT_PARAM_DESCS["intent"]},
             "after_seconds": {
                 "type": "integer",
-                "minimum": 60,
-                "maximum": 2592000,
+                "minimum": 1,
                 "description": COMPANION_WAIT_PARAM_DESCS["after_seconds"],
             },
             "wake_on": {
@@ -39,8 +39,7 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
             },
             "expires_seconds": {
                 "type": "integer",
-                "minimum": 120,
-                "maximum": 2592000,
+                "minimum": 1,
                 "description": COMPANION_WAIT_PARAM_DESCS["expires_seconds"],
             },
         },
@@ -56,14 +55,15 @@ async def companion_wait(
     intent_id: ResourceId | None = None,
     after_seconds: int | None = None,
     wake_on: CompanionWakeEvent | None = None,
-    expires_seconds: int = 86400,
+    expires_seconds: int | None = None,
+    cursor: str | None = None,
     **kwargs: object,
 ) -> str:
     try:
         if action == "list":
             async with SESSION_LOCAL() as db:
-                rows = await list_companion_intents(db, user_id)
-            return json.dumps({"intents": [row.model_dump(mode="json") for row in rows]}, ensure_ascii=False)
+                page = await list_companion_intents(db, user_id, cursor=cursor)
+            return page.model_dump_json()
         if action == "cancel":
             if intent_id is None:
                 raise ValueError("intent_id is required for cancellation")
@@ -72,6 +72,8 @@ async def companion_wait(
             return json.dumps({"cancelled": True})
         if action != "schedule":
             raise ValueError("action must be schedule, list or cancel")
+        if expires_seconds is None:
+            raise ValueError("Provide expires_seconds for schedule")
         request = CompanionWaitRequest(
             intent=intent or "", after_seconds=after_seconds, wake_on=wake_on, expires_seconds=expires_seconds
         )

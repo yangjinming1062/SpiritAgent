@@ -100,7 +100,7 @@ async def count_ready_outfits(db: AsyncSession, user_id: int) -> int:
 
 
 async def search_outfit_snapshots(
-    db: AsyncSession, user_id: int, keywords: list[str], *, limit: int = 30
+    db: AsyncSession, user_id: int, keywords: list[str], *, limit: int = 30, cursor: int | None = None
 ) -> tuple[list[OutfitSnapshot], bool]:
     """按名称或描述命中任一关键词检索已就绪造型；无关键词时返回最新一页。
 
@@ -109,6 +109,8 @@ async def search_outfit_snapshots(
 
     limit = max(1, min(limit, 100))
     conditions: list[Any] = [CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready"]
+    if cursor is not None:
+        conditions.append(CompanionOutfit.id < cursor)
     if keywords:
         conditions.append(
             or_(
@@ -127,3 +129,15 @@ async def search_outfit_snapshots(
         )
     )
     return [OutfitSnapshot.model_validate(row) for row in rows[:limit]], len(rows) > limit
+
+
+async def outfit_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    rows = await db.execute(
+        select(CompanionOutfit.id, CompanionOutfit.name, CompanionOutfit.description)
+        .where(CompanionOutfit.user_id == user_id, CompanionOutfit.status == "ready")
+        .order_by(CompanionOutfit.id.desc())
+    )
+    return [
+        {"id": str(identifier), "name": name, "description": description or ""}
+        for identifier, name, description in rows
+    ]

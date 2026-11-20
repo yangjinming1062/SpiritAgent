@@ -27,6 +27,7 @@ from features.conversation.turn_store import (
     persist_tool_results,
     replace_assistant_message,
 )
+from features.media.turn_state import MediaTurnState
 from infrastructure.ai.responses import message_to_response_items
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.usage import CacheUsageSummary
@@ -168,7 +169,7 @@ async def _persist_assistant_no_tool_turn(
     submission_request_id: str | None = None,
     submitted_message_id: int | None = None,
     open_contact: Callable[[], Awaitable[None]] | None = None,
-    media_request_scope: str | None = None,
+    media_turn: MediaTurnState | None = None,
     reply_delivery: TerminalReplyDelivery | None = None,
     on_reply_persisted: Callable[[], None] | None = None,
     call_record_id: int | None = None,
@@ -250,7 +251,7 @@ async def _persist_assistant_no_tool_turn(
                     persist=persist,
                     track_task=track_task,
                     submission_request_id=submission_request_id,
-                    media_request_scope=media_request_scope,
+                    media_turn=media_turn,
                     on_reply_persisted=lambda: reply_delivery.mark_persisted(indices),
                     call_record_id=call_record_id,
                 ),
@@ -267,9 +268,9 @@ async def _persist_assistant_no_tool_turn(
     turn_data = _turn_data(result)
     if conv.system_preset_id == COMPANION_PRESET_ID:
         turn_data = replace(turn_data, reasoning=None)
-    if persist and reply is None and media_request_scope is not None:
+    if persist and reply is None and media_turn is not None:
         async with SESSION_LOCAL() as db:
-            plain_reply = await plain_media_delivery_reply(db, user_id, str(conv.id), turn_content, media_request_scope)
+            plain_reply = await plain_media_delivery_reply(db, media_turn, turn_content)
         if plain_reply is not None:
             reply = plain_reply
             turn_content = json.dumps(

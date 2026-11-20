@@ -322,3 +322,21 @@ def scene_view(row: CompanionScene) -> SceneSnapshot:
 async def scene_snapshot(db: AsyncSession, user_id: int, scene_id: int) -> SceneSnapshot | None:
     row = await get_scene(db, user_id, scene_id)
     return scene_view(row) if row is not None else None
+
+
+async def scene_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    rows = await db.execute(
+        select(CompanionScene.id, CompanionScene.title, CompanionScene.description)
+        .where(
+            CompanionScene.user_id == user_id,
+            CompanionScene.status == "ready",
+            CompanionScene.title != "",
+            CompanionScene.description != "",
+            CompanionScene.media_path != "",
+        )
+        .order_by(CompanionScene.id.desc())
+    )
+    return [
+        {"id": str(identifier), "title": name, "description": description or ""}
+        for identifier, name, description in rows
+    ]

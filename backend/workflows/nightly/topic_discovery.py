@@ -1,9 +1,10 @@
-"""夜间信息检索：固定采集窗口、逐次请求预算与可恢复的精选结果。"""
+"""夜间信息检索：逐页取材与审阅，批次独立于夜间生活推进。"""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
+from itertools import chain
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -11,22 +12,34 @@ from features.accounts.locking import lock_account
 from features.accounts.queries import nightly_account
 from features.configuration.social_accounts import credential_is_current, load_social_credentials, mark_login_required
 from features.configuration.social_schemas import SocialCredentialSnapshot
-from features.topics.schemas import TopicSelection
+from features.topics.schemas import TopicBatchSnapshot, TopicCandidateChoice
 from features.topics.store import (
     batch_topic_count,
     begin_batch,
+    candidate_key,
+    candidate_page,
+    complete_batch,
+    count_request,
     finish_failed_batch,
     load_batch,
-    publish_batch,
     recent_topic_feedback,
-    reserve_request,
     save_checkpoint,
+    save_details,
+    save_selections,
+    selected_history,
+    stage_candidates,
 )
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.providers.base import ProviderConfig
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.token_budget import ContextOverflowError, fit_text_prefix, json_tokens, material_budget
+from infrastructure.ai.token_budget import (
+    ContextOverflowError,
+    fit_text_prefix,
+    json_tokens,
+    material_budget,
+    material_input_window,
+)
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.constants import NIGHTLY_REASONING_EFFORT
@@ -48,10 +61,6 @@ class DiscoveryDisabledError(LlmCallBlockedError):
     """启动或请求前发现账户或夜间政策不可用。"""
 
 
-class _RequestBudgetExhausted(RuntimeError):
-    pass
-
-
 class _Query(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     platform: SocialPlatform
@@ -67,19 +76,9 @@ class _SearchRequest(_Query):
     cursor: dict[str, Any] | None = None
 
 
-class _Selection(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    candidate_id: str = Field(min_length=1, max_length=128)
-    fact_summary: str = Field(min_length=1, max_length=2000)
-    why_user: str = Field(min_length=1, max_length=800)
-    why_companion: str = Field(min_length=1, max_length=800)
-    conversation_angle: str = Field(min_length=1, max_length=800)
-    event_key: str = Field(min_length=1, max_length=120)
-
-
 class _SelectionPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    selections: list[_Selection]
+    selections: list[TopicCandidateChoice]
 
 
 class _Checkpoint(BaseModel):
@@ -89,14 +88,9 @@ class _Checkpoint(BaseModel):
     queries: list[_SearchRequest] = Field(default_factory=list)
     query_plan_done: bool = False
     search_index: int = 0
-    candidates: list[SocialContent] = Field(default_factory=list)
-    search_done: bool = False
-    details: list[str] = Field(default_factory=list)
-    detail_index: int = 0
-    details_done: bool = False
-    selections: list[_Selection] = Field(default_factory=list)
-    selection_index: int = 0
     errors: list[dict[str, Any]] = Field(default_factory=list)
+    candidate_count: int = 0
+    eligible_count: int = 0
     search_successes: int = 0
     platform_search_successes: dict[str, int] = Field(default_factory=dict)
     duplicate_candidates: int = 0
@@ -104,12 +98,8 @@ class _Checkpoint(BaseModel):
 
 
 class TopicDiscoveryResult(BaseModel):
-    status: Literal["ok", "error", "skipped"]
+    status: Literal["ok", "error", "skipped", "waiting"]
     summary: dict[str, Any] = Field(default_factory=dict)
-
-
-def _candidate_id(candidate: SocialContent) -> str:
-    return f"{candidate.platform}:{candidate.source_id}"
 
 
 def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> bool:
@@ -118,7 +108,12 @@ def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> 
 
 async def _configured(db: AsyncSession, scope: MemoryScope) -> None:
     account = await nightly_account(db, scope.user_id)
-    if account is None or not account.is_active or not account.nightly_activity_enabled:
+    if (
+        account is None
+        or not account.is_active
+        or not account.nightly_activity_enabled
+        or SETTINGS.topic_discovery_mode == "off"
+    ):
         raise DiscoveryDisabledError("夜间检索已关闭或账户不可用")
 
 
@@ -152,16 +147,15 @@ async def _remote_call[T](
 ) -> T:
     async def before_request() -> None:
         await _before_batch_call(scope, timezone, expires_at)
-        limit = (
-            SETTINGS.topic_search_requests_per_night if kind == "search" else SETTINGS.topic_detail_requests_per_night
-        )
+        if kind == "detail" and SETTINGS.topic_discovery_mode != "full":
+            raise SocialSourceError("Detail collection is disabled", code=409, reason="details_disabled")
         async with SESSION_LOCAL() as db:
             if not await credential_is_current(db, scope.user_id, platform, source_revision):
                 raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
-            permitted = await reserve_request(db, batch_id, scope, kind=kind, limit=limit)
+            permitted = await count_request(db, batch_id, scope, kind)
             await db.commit()
         if not permitted:
-            raise _RequestBudgetExhausted(kind)
+            raise NightlyWindowClosedError("资讯批次已结束")
 
     for attempt in range(2):
         try:
@@ -171,24 +165,21 @@ async def _remote_call[T](
                 async with SESSION_LOCAL() as db:
                     await mark_login_required(db, scope.user_id, platform, source_revision)
                     await db.commit()
-            # 限流/额度与请求参数失败留给下一夜；只有网络或服务故障做一次预算内重试。
+            # 限流/额度与请求参数失败留给下一夜；只有网络或服务故障做一次重试。
             if attempt or exc.code is not None and exc.code < 500:
                 raise
             await asyncio.sleep(1)
     raise RuntimeError("Unreachable social source attempt state")
 
 
-def _query_schema(platforms: tuple[SocialPlatform, ...], limit: int) -> dict[str, Any]:
+def _query_schema(platforms: tuple[SocialPlatform, ...]) -> dict[str, Any]:
     schema = _QueryPlan.model_json_schema()
     schema["$defs"]["_Query"]["properties"]["platform"]["enum"] = list(platforms)
-    schema["properties"]["queries"]["maxItems"] = limit
     return schema
 
 
-def _parse_queries(raw: Any, limit: int, platforms: tuple[SocialPlatform, ...]) -> _QueryPlan:
+def _parse_queries(raw: Any, platforms: tuple[SocialPlatform, ...]) -> _QueryPlan:
     plan = _QueryPlan.model_validate(raw)
-    if len(plan.queries) > limit:
-        raise LlmJsonValidationError("too_many_queries", fields=("queries",))
     if any(query.platform not in platforms for query in plan.queries):
         raise LlmJsonValidationError("unsupported_platform", fields=("platform",))
     keys = {(query.platform, query.query.casefold()) for query in plan.queries}
@@ -208,36 +199,22 @@ def _parse_selections(raw: Any, candidates: set[str]) -> _SelectionPlan:
     return plan
 
 
-def _selected(checkpoint: _Checkpoint, eligible: dict[str, SocialContent]) -> list[TopicSelection]:
-    return [
-        TopicSelection(
-            source=eligible[item.candidate_id],
-            summary=item.fact_summary,
-            user_relevance=item.why_user,
-            companion_interest=item.why_companion,
-            conversation_angle=item.conversation_angle,
-            event_key=item.event_key,
-        )
-        for item in checkpoint.selections
-    ]
-
-
-def _discovery_payload(context: dict[str, Any], room: int) -> dict[str, Any]:
+def _recent_topics(items: Iterable[dict[str, Any]], room: int) -> list[dict[str, Any]]:
     recent = []
-    for item in context.get("recent_topics", []):
+    for item in items:
         cost = json_tokens(item) + 2
         if cost > room:
             break
         recent.append(item)
         room -= cost
-    return {**context, "recent_topics": recent}
+    return recent
 
 
 def _candidate_batch(candidates: list[SocialContent], available: int, output_room: int) -> list[dict[str, Any]]:
     batch = []
     for source in candidates:
         row = {
-            "candidate_id": _candidate_id(source),
+            "candidate_id": candidate_key(source),
             **source.model_dump(mode="json", exclude={"body", "subtitle"}),
             "body": "",
             "subtitle": "",
@@ -267,264 +244,310 @@ def _candidate_batch(candidates: list[SocialContent], available: int, output_roo
 
 async def _select_candidates(
     scope: MemoryScope,
-    batch_id: int,
+    batch: TopicBatchSnapshot,
     checkpoint: _Checkpoint,
-    eligible: dict[str, SocialContent],
     config: UserLlmConfig,
-    language: str,
+    previous: list[dict[str, str]],
+    history_room: int,
+    seen_events: set[str],
     before_call: Callable[[], Awaitable[None]],
-    diagnostics: list[LlmAttemptDiagnostic] | None,
+    diagnostics: list[LlmAttemptDiagnostic],
 ) -> None:
+    language = checkpoint.context["language"]
     instructions = resolve_prompt_text(TOPIC_SELECTION_TEXTS, language)
     schema = _SelectionPlan.model_json_schema()
     base = {**checkpoint.context, "recent_topics": [], "candidates": []}
-    seen_events = {item["event_key"].casefold() for item in checkpoint.context.get("recent_topics", [])}
-    seen_events.update(item.event_key.casefold() for item in checkpoint.selections)
-    candidates = list(eligible.values())
-    batch_ids: set[str] = set()
-
-    def selection_payload(provider: ProviderConfig) -> dict[str, Any]:
-        nonlocal batch_ids
-        room = material_budget((provider,), instructions, base, schema)
-        recent = [
-            {"event_key": item.event_key, "summary": item.fact_summary} for item in reversed(checkpoint.selections)
+    while True:
+        async with SESSION_LOCAL() as db:
+            page = await candidate_page(db, scope, batch.id, for_review=True)
+        if not page:
+            return
+        eligible = [
+            item for item in page if item.has_evidence and _inside_window(item, batch.window_start, batch.window_end)
         ]
-        payload = _discovery_payload(
-            {**checkpoint.context, "recent_topics": [*recent, *checkpoint.context.get("recent_topics", [])]}, room // 3
-        )
-        remaining = candidates[checkpoint.selection_index :]
-        output_room = provider.max_output_tokens or 0
-        available = room - (json_tokens(payload["recent_topics"]) - json_tokens([]))
-        batch = _candidate_batch(remaining, available, output_room)
-        if not batch and payload["recent_topics"]:
-            payload["recent_topics"] = []
-            batch = _candidate_batch(remaining, room, output_room)
-        if not batch:
-            raise ContextOverflowError("模型窗口无法容纳话题来源依据")
-        batch_ids = {item["candidate_id"] for item in batch}
-        return {**payload, "candidates": batch}
+        skipped = {candidate_key(item) for item in page} - {candidate_key(item) for item in eligible}
+        batch_ids: set[str] = set()
 
-    while checkpoint.selection_index < len(candidates):
-        plan = await call_llm_json(
-            config,
-            instructions,
-            selection_payload,
-            schema=schema,
-            schema_name="topic_selection",
-            parse_output=lambda value: _parse_selections(value, batch_ids),
-            repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
-            reasoning_effort=NIGHTLY_REASONING_EFFORT,
-            before_call=before_call,
-            diagnostics=diagnostics,
-        )
-        for selected in plan.selections:
-            event = selected.event_key.casefold()
-            if event not in seen_events:
-                seen_events.add(event)
-                checkpoint.selections.append(selected)
-        checkpoint.selection_index += len(batch_ids)
-        await _save(scope, batch_id, checkpoint)
+        def selection_payload(provider: ProviderConfig) -> dict[str, Any]:
+            nonlocal batch_ids
+            room = material_budget((provider,), instructions, base, schema)
+            recent = _recent_topics(chain(previous, checkpoint.context.get("recent_topics", [])), room // 3)
+            payload = {**checkpoint.context, "recent_topics": recent}
+            available = room - (json_tokens(payload["recent_topics"]) - json_tokens([]))
+            candidates = _candidate_batch(eligible, available, provider.max_output_tokens or 0)
+            if not candidates and payload["recent_topics"]:
+                payload["recent_topics"] = []
+                candidates = _candidate_batch(eligible, room, provider.max_output_tokens or 0)
+            if not candidates:
+                raise ContextOverflowError("模型窗口无法容纳话题来源依据")
+            batch_ids = {item["candidate_id"] for item in candidates}
+            return {**payload, "candidates": candidates}
+
+        accepted = []
+        if eligible:
+            plan = await call_llm_json(
+                config,
+                instructions,
+                selection_payload,
+                schema=schema,
+                schema_name="topic_selection",
+                parse_output=lambda value: _parse_selections(value, batch_ids),
+                repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
+                reasoning_effort=NIGHTLY_REASONING_EFFORT,
+                before_call=before_call,
+                diagnostics=diagnostics,
+            )
+            for choice in plan.selections:
+                event = choice.event_key.casefold()
+                if event not in seen_events:
+                    seen_events.add(event)
+                    accepted.append(choice)
+            if accepted:
+                latest = ({"event_key": item.event_key, "summary": item.fact_summary} for item in reversed(accepted))
+                previous[:] = _recent_topics(chain(latest, previous), history_room)
+        async with SESSION_LOCAL() as db:
+            await save_selections(db, scope, batch.id, skipped | batch_ids, accepted)
+            checkpoint.eligible_count += len(batch_ids)
+            await save_checkpoint(db, batch.id, scope, checkpoint.model_dump(mode="json"))
+            await db.commit()
+
+
+def _error(checkpoint: _Checkpoint, platform: str, operation: str, reason: str) -> None:
+    error = {"platform": platform, "operation": operation, "reason": reason}
+    if error not in checkpoint.errors:
+        checkpoint.errors.append(error)
+
+
+def _platform_stopped(checkpoint: _Checkpoint, platform: str) -> bool:
+    return any(
+        row["platform"] == platform
+        and row["reason"] in {"rate_limited", "login_required", "configuration_changed", "source_unavailable"}
+        for row in checkpoint.errors
+    )
 
 
 async def _collect(
     scope: MemoryScope,
-    batch_id: int,
+    batch: TopicBatchSnapshot,
     timezone: ZoneInfo,
-    start: datetime,
-    end: datetime,
-    expires_at: datetime,
     checkpoint: _Checkpoint,
     connections: dict[str, SocialCredentialSnapshot],
+    config: UserLlmConfig,
+    before_call: Callable[[], Awaitable[None]],
+    diagnostics: list[LlmAttemptDiagnostic],
 ) -> None:
     clients = {}
-    for platform, connection in connections.items():
-        if checkpoint.source_revisions.get(platform) != connection.revision:
+    for platform, revision in checkpoint.source_revisions.items():
+        connection = connections.get(platform)
+        if connection is None or revision != connection.revision:
+            _error(checkpoint, platform, "configure", "configuration_changed")
             continue
         try:
             clients[platform] = create_social_client(platform, connection.credentials)
         except ValueError:
-            checkpoint.errors.append({"platform": platform, "operation": "configure", "reason": "source_unavailable"})
-    candidate_limit = SETTINGS.topic_candidate_limit
-    while (
-        not checkpoint.search_done
-        and checkpoint.search_index < len(checkpoint.queries)
-        and len(checkpoint.candidates) < candidate_limit
-    ):
+            _error(checkpoint, platform, "configure", "source_unavailable")
+    history_room = max((material_input_window(provider) for provider in config.chain), default=0) // 3
+    async with SESSION_LOCAL() as db:
+        previous, seen_events = await selected_history(db, scope, batch.id, history_room)
+    seen_events.update(row["event_key"].casefold() for row in checkpoint.context.get("recent_topics", []))
+
+    while True:
+        # 先处理已经落库的一页，重启时也从相同位置继续。
+        while True:
+            async with SESSION_LOCAL() as db:
+                page = await candidate_page(db, scope, batch.id, for_review=False)
+            if not page:
+                break
+            for item in page:
+                platform = item.platform
+                error_count = len(checkpoint.errors)
+                if (
+                    item.needs_detail
+                    and SETTINGS.topic_discovery_mode == "full"
+                    and not _platform_stopped(checkpoint, platform)
+                ):
+                    client = clients[platform]
+                    try:
+                        detail = await _remote_call(
+                            scope,
+                            batch.id,
+                            timezone,
+                            batch.expires_at,
+                            platform,
+                            checkpoint.source_revisions[platform],
+                            "detail",
+                            lambda guard: client.detail(item, before_request=guard),
+                        )
+                        if detail is not None and candidate_key(detail) == candidate_key(item):
+                            item = detail
+                    except SocialSourceError as exc:
+                        _error(checkpoint, platform, "detail", exc.reason)
+                async with SESSION_LOCAL() as db:
+                    await save_details(db, scope, batch.id, item)
+                    if len(checkpoint.errors) != error_count:
+                        await save_checkpoint(db, batch.id, scope, checkpoint.model_dump(mode="json"))
+                    await db.commit()
+        await _select_candidates(
+            scope, batch, checkpoint, config, previous, history_room, seen_events, before_call, diagnostics
+        )
+        if checkpoint.search_index >= len(checkpoint.queries):
+            return
+
         request = checkpoint.queries[checkpoint.search_index]
+        checkpoint.search_index += 1
+        if _platform_stopped(checkpoint, request.platform):
+            await _save(scope, batch.id, checkpoint)
+            continue
         try:
-            client = clients.get(request.platform)
-            if client is None:
-                raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
-            page = await _remote_call(
+            client = clients[request.platform]
+            result = await _remote_call(
                 scope,
-                batch_id,
+                batch.id,
                 timezone,
-                expires_at,
+                batch.expires_at,
                 request.platform,
                 checkpoint.source_revisions[request.platform],
                 "search",
                 lambda guard: client.search(
-                    request.query, window_start=start, window_end=end, cursor=request.cursor, before_request=guard
+                    request.query,
+                    window_start=batch.window_start,
+                    window_end=batch.window_end,
+                    cursor=request.cursor,
+                    before_request=guard,
                 ),
             )
-        except _RequestBudgetExhausted:
-            break
         except SocialSourceError as exc:
-            checkpoint.errors.append(
-                {"platform": request.platform, "operation": "search", "code": exc.code, "reason": exc.reason}
-            )
-        else:
-            checkpoint.search_successes += 1
-            checkpoint.platform_search_successes[request.platform] = (
-                checkpoint.platform_search_successes.get(request.platform, 0) + 1
-            )
-            known = {_candidate_id(candidate) for candidate in checkpoint.candidates}
-            for candidate in page.candidates:
-                if candidate.platform != request.platform:
-                    continue
-                identifier = _candidate_id(candidate)
-                if identifier in known:
-                    checkpoint.duplicate_candidates += 1
-                    continue
-                if candidate.published_at is not None and not _inside_window(candidate, start, end):
-                    checkpoint.outside_window_candidates += 1
-                    continue
-                checkpoint.candidates.append(candidate)
-                known.add(identifier)
-                if len(checkpoint.candidates) >= candidate_limit:
-                    break
-            if page.next_cursor and len(checkpoint.queries) < SETTINGS.topic_search_requests_per_night:
-                next_request = _SearchRequest(platform=request.platform, query=request.query, cursor=page.next_cursor)
-                if next_request not in checkpoint.queries:
-                    checkpoint.queries.append(next_request)
-        checkpoint.search_index += 1
-        await _save(scope, batch_id, checkpoint)
-    checkpoint.search_done = True
-    await _save(scope, batch_id, checkpoint)
-
-    if not checkpoint.details:
-        candidates = sorted(
-            checkpoint.candidates,
-            key=lambda candidate: not (candidate.published_at is None or not candidate.has_evidence),
+            _error(checkpoint, request.platform, "search", exc.reason)
+            await _save(scope, batch.id, checkpoint)
+            continue
+        checkpoint.search_successes += 1
+        checkpoint.platform_search_successes[request.platform] = (
+            checkpoint.platform_search_successes.get(request.platform, 0) + 1
         )
-        checkpoint.details = [
-            _candidate_id(candidate)
-            for candidate in candidates
-            if candidate.published_at is None
-            or not candidate.has_evidence
-            or candidate.content_type == "video"
-            and not candidate.subtitle
-        ]
-        await _save(scope, batch_id, checkpoint)
-    by_id = {_candidate_id(candidate): index for index, candidate in enumerate(checkpoint.candidates)}
-    while checkpoint.detail_index < len(checkpoint.details):
-        index = by_id[checkpoint.details[checkpoint.detail_index]]
-        candidate = checkpoint.candidates[index]
-        try:
-            client = clients.get(candidate.platform)
-            if client is None:
-                raise SocialSourceError("Platform credentials changed", code=409, reason="configuration_changed")
-            detailed = await _remote_call(
-                scope,
-                batch_id,
-                timezone,
-                expires_at,
-                candidate.platform,
-                checkpoint.source_revisions[candidate.platform],
-                "detail",
-                lambda guard: client.detail(candidate, before_request=guard),
+        sources = [source for source in result.candidates if source.platform == request.platform]
+        async with SESSION_LOCAL() as db:
+            added, outside = await stage_candidates(
+                db, scope, batch.id, sources, read_details=SETTINGS.topic_discovery_mode == "full"
             )
-        except _RequestBudgetExhausted:
-            break
-        except SocialSourceError as exc:
-            checkpoint.errors.append(
-                {"platform": candidate.platform, "operation": "detail", "code": exc.code, "reason": exc.reason}
-            )
-        else:
-            if detailed is not None and _candidate_id(detailed) == _candidate_id(candidate):
-                checkpoint.candidates[index] = detailed
-        checkpoint.detail_index += 1
-        await _save(scope, batch_id, checkpoint)
-    checkpoint.details_done = True
-    await _save(scope, batch_id, checkpoint)
+            checkpoint.duplicate_candidates += len(sources) - added
+            checkpoint.outside_window_candidates += outside
+            checkpoint.candidate_count += added - outside
+            if added and result.next_cursor:
+                following = request.model_copy(update={"cursor": result.next_cursor})
+                if following not in checkpoint.queries:
+                    checkpoint.queries.append(following)
+            await save_checkpoint(db, batch.id, scope, checkpoint.model_dump(mode="json"))
+            await db.commit()
 
 
-async def discover_topics(
-    scope: MemoryScope,
-    target_date: date,
-    timezone: ZoneInfo,
-    context: dict[str, Any],
-    language: str,
-    *,
-    diagnostics: list[LlmAttemptDiagnostic] | None = None,
-) -> TopicDiscoveryResult:
-    """阶段检查点归话题模块，夜间日志只保存无正文的结果统计。"""
-    activity_date = target_date + timedelta(days=1)
-    available_from = datetime.combine(activity_date, time.min, timezone).astimezone(UTC)
-    expires_at = datetime.combine(activity_date + timedelta(days=1), time.min, timezone).astimezone(UTC)
+async def _batch_result(db: AsyncSession, scope: MemoryScope, batch: TopicBatchSnapshot) -> TopicDiscoveryResult:
+    summary = {
+        **batch.checkpoint.get("result", {}),
+        "batch_id": batch.id,
+        "selected": await batch_topic_count(db, scope, batch.id),
+        "search_requests": batch.search_requests,
+        "detail_requests": batch.detail_requests,
+    }
+    if batch.status == "failed":
+        return TopicDiscoveryResult(
+            status="skipped" if batch.error in ("window_closed", "disabled") else "error",
+            summary={**summary, "reason": batch.error},
+        )
+    return TopicDiscoveryResult(status="ok" if batch.status == "ready" else "waiting", summary=summary)
+
+
+async def discovery_status(scope: MemoryScope, activity_date: date) -> TopicDiscoveryResult:
     async with SESSION_LOCAL() as db:
-        await _configured(db, scope)
-        connections = await load_social_credentials(db, scope.user_id)
         batch = await load_batch(db, scope, activity_date)
         if batch is None:
-            await require_nightly_window(timezone)
-            if not connections:
-                return TopicDiscoveryResult(status="skipped", summary={"reason": "unconfigured"})
-            batch = await begin_batch(
-                db, scope, activity_date, available_from=available_from, expires_at=expires_at, started_at=utc_now()
-            )
-        recent = (
-            await recent_topic_feedback(db, scope, since=batch.started_at - timedelta(days=30), limit=None)
-            if not batch.checkpoint
-            else []
+            return TopicDiscoveryResult(status="skipped", summary={"reason": "no_batch"})
+        return await _batch_result(db, scope, batch)
+
+
+async def prepare_discovery(
+    scope: MemoryScope, target_date: date, timezone: ZoneInfo, context: dict[str, Any]
+) -> TopicDiscoveryResult:
+    activity_date = target_date + timedelta(days=1)
+    async with SESSION_LOCAL() as db:
+        await lock_account(db, scope.user_id)
+        batch = await load_batch(db, scope, activity_date)
+        if batch:
+            return await _batch_result(db, scope, batch)
+        await _configured(db, scope)
+        await require_nightly_window(timezone)
+        connections = await load_social_credentials(db, scope.user_id)
+        if not connections:
+            return TopicDiscoveryResult(status="skipped", summary={"reason": "unconfigured"})
+        start = datetime.combine(activity_date, time.min, timezone).astimezone(UTC)
+        expires = datetime.combine(activity_date + timedelta(days=1), time.min, timezone).astimezone(UTC)
+        batch = await begin_batch(
+            db, scope, activity_date, available_from=start, expires_at=expires, started_at=utc_now()
         )
-        await db.commit()
-    checkpoint = (
-        _Checkpoint.model_validate(batch.checkpoint)
-        if batch.checkpoint
-        else _Checkpoint(
-            source_revisions={platform: connection.revision for platform, connection in connections.items()},
+        recent = await recent_topic_feedback(db, scope, since=batch.started_at - timedelta(days=30), limit=None)
+        checkpoint = _Checkpoint(
             context={**context, "recent_topics": recent},
+            source_revisions={key: value.revision for key, value in connections.items()},
         )
-    )
-    if batch.status == "failed":
-        return TopicDiscoveryResult(status="error", summary={"batch_id": batch.id, "reason": batch.error})
-    if batch.status == "ready":
-        async with SESSION_LOCAL() as db:
-            selected_count = await batch_topic_count(db, scope, batch.id)
-        return TopicDiscoveryResult(
-            status="ok",
-            summary={"batch_id": batch.id, "selected": selected_count, "recovered": True},
+        await save_checkpoint(db, batch.id, scope, checkpoint.model_dump(mode="json"))
+        await db.commit()
+    return TopicDiscoveryResult(status="waiting", summary={"batch_id": batch.id})
+
+
+def _collection_summary(checkpoint: _Checkpoint | None, diagnostics: list[LlmAttemptDiagnostic]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"diagnostics": [attempt.model_dump() for attempt in diagnostics]}
+    if checkpoint is not None:
+        summary.update(
+            candidates=checkpoint.candidate_count,
+            eligible=checkpoint.eligible_count,
+            platforms=list(checkpoint.source_revisions),
+            platform_errors=checkpoint.errors,
+            platform_search_successes=checkpoint.platform_search_successes,
+            duplicate_candidates=checkpoint.duplicate_candidates,
+            outside_window_candidates=checkpoint.outside_window_candidates,
         )
-    await _save(scope, batch.id, checkpoint)
+    return summary
+
+
+async def collect_topics(scope: MemoryScope, activity_date: date) -> None:
+    async with SESSION_LOCAL() as db:
+        batch = await load_batch(db, scope, activity_date)
+    if batch is None or batch.status != "collecting":
+        return
+    diagnostics: list[LlmAttemptDiagnostic] = []
+    checkpoint = None
+    reason = None
     try:
-        if not checkpoint.source_revisions and not checkpoint.candidates:
-            raise DiscoveryDisabledError("未配置可用的资讯来源")
-        config = await load_user_llm_config(scope.user_id, AiTaskKey.nightly)
+        checkpoint = _Checkpoint.model_validate(batch.checkpoint)
+        timezone = ZoneInfo(checkpoint.context["user_timezone"])
+        language = checkpoint.context["language"]
         before_call = partial(_before_batch_call, scope, timezone, batch.expires_at)
+        await before_call()
+        async with SESSION_LOCAL() as db:
+            connections = await load_social_credentials(db, scope.user_id)
+        config = await load_user_llm_config(scope.user_id, AiTaskKey.nightly)
         if not checkpoint.query_plan_done:
-            limit = SETTINGS.topic_search_requests_per_night
-            if limit and SETTINGS.topic_candidate_limit:
-                platforms = tuple(get_social_platform(platform).id for platform in checkpoint.source_revisions)
+            platforms = tuple(
+                get_social_platform(key).id
+                for key in checkpoint.source_revisions
+                if key in connections and connections[key].revision == checkpoint.source_revisions[key]
+            )
+            if platforms:
                 instructions = resolve_prompt_text(TOPIC_SEARCH_TEXTS, language)
-                query_schema = _query_schema(platforms, limit)
-                search_payload = {
+                schema = _query_schema(platforms)
+                payload = {
                     **checkpoint.context,
                     "available_platforms": list(platforms),
-                    "max_queries": limit,
                     "window_start": batch.window_start.isoformat(),
                     "window_end": batch.window_end.isoformat(),
                 }
-                room = material_budget(
-                    config.chain, instructions, {**search_payload, "recent_topics": []}, query_schema
-                )
+                room = material_budget(config.chain, instructions, {**payload, "recent_topics": []}, schema)
                 plan = await call_llm_json(
                     config,
                     instructions,
-                    _discovery_payload(search_payload, room),
-                    schema=query_schema,
+                    {**payload, "recent_topics": _recent_topics(checkpoint.context.get("recent_topics", []), room)},
+                    schema=schema,
                     schema_name="topic_search_plan",
-                    parse_output=partial(_parse_queries, limit=limit, platforms=platforms),
+                    parse_output=partial(_parse_queries, platforms=platforms),
                     repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
                     reasoning_effort=NIGHTLY_REASONING_EFFORT,
                     before_call=before_call,
@@ -533,65 +556,44 @@ async def discover_topics(
                 checkpoint.queries = [_SearchRequest(**item.model_dump()) for item in plan.queries]
             checkpoint.query_plan_done = True
             await _save(scope, batch.id, checkpoint)
-        if not checkpoint.details_done:
-            await _collect(
-                scope,
-                batch.id,
-                timezone,
-                batch.window_start,
-                batch.window_end,
-                batch.expires_at,
-                checkpoint,
-                connections,
-            )
-        eligible = {
-            _candidate_id(candidate): candidate
-            for candidate in checkpoint.candidates
-            if candidate.has_evidence and _inside_window(candidate, batch.window_start, batch.window_end)
-        }
+        await _collect(scope, batch, timezone, checkpoint, connections, config, before_call, diagnostics)
         if (
             checkpoint.queries
             and not checkpoint.search_successes
-            and any(error.get("reason") != "configuration_changed" for error in checkpoint.errors)
+            and any(err["reason"] != "configuration_changed" for err in checkpoint.errors)
         ):
             raise SocialSourceError("All topic searches failed")
-        await _select_candidates(scope, batch.id, checkpoint, eligible, config, language, before_call, diagnostics)
-        selections = _selected(checkpoint, eligible)
-        async with SESSION_LOCAL() as db:
-            # 已受理的精选可跨过夜间窗口结算，账户政策与批次有效期在提交事务内核对。
-            await lock_account(db, scope.user_id)
-            await _configured(db, scope)
-            _require_batch_lifetime(batch.expires_at)
-            completed = await publish_batch(db, batch.id, scope, selections)
-            selected_count = await batch_topic_count(db, scope, batch.id)
-            await db.commit()
-        return TopicDiscoveryResult(
-            status="ok",
-            summary={
-                "batch_id": batch.id,
-                "candidates": len(checkpoint.candidates),
-                "eligible": len(eligible),
-                "platforms": list(checkpoint.source_revisions),
-                "selected": selected_count,
-                "search_requests": completed.search_requests,
-                "detail_requests": completed.detail_requests,
-                "platform_errors": checkpoint.errors,
-                "platform_search_successes": checkpoint.platform_search_successes,
-                "duplicate_candidates": checkpoint.duplicate_candidates,
-                "outside_window_candidates": checkpoint.outside_window_candidates,
-            },
-        )
+    except NightlyWindowClosedError:
+        reason = "window_closed"
+    except DiscoveryDisabledError:
+        reason = "disabled"
     except Exception as exc:
-        error = (
-            "window_closed"
-            if isinstance(exc, NightlyWindowClosedError)
-            else "disabled"
-            if isinstance(exc, DiscoveryDisabledError)
-            else type(exc).__name__
-        )
         async with SESSION_LOCAL() as db:
-            await finish_failed_batch(db, batch.id, scope, error)
+            await finish_failed_batch(
+                db, batch.id, scope, type(exc).__name__, _collection_summary(checkpoint, diagnostics)
+            )
             await db.commit()
-        if isinstance(exc, NightlyWindowClosedError | DiscoveryDisabledError):
-            return TopicDiscoveryResult(status="skipped", summary={"batch_id": batch.id, "reason": error})
         raise
+    summary = _collection_summary(checkpoint, diagnostics)
+    if reason:
+        summary["reason"] = reason
+    async with SESSION_LOCAL() as db:
+        await lock_account(db, scope.user_id)
+        try:
+            if reason == "disabled":
+                raise DiscoveryDisabledError("采集期间已关闭")
+            async with db.begin_nested():
+                await _configured(db, scope)
+                _require_batch_lifetime(batch.expires_at)
+                await complete_batch(db, batch.id, scope, summary, reason=reason)
+                # 大批量写入可能跨过有效期，收口前复核；失败会一并撤回刚写入的来源。
+                await _configured(db, scope)
+                _require_batch_lifetime(batch.expires_at)
+        except (DiscoveryDisabledError, NightlyWindowClosedError) as exc:
+            reason = "disabled" if isinstance(exc, DiscoveryDisabledError) else "window_closed"
+            await finish_failed_batch(db, batch.id, scope, reason, {**summary, "reason": reason})
+        except ValueError as exc:
+            await finish_failed_batch(db, batch.id, scope, type(exc).__name__, summary)
+            await db.commit()
+            raise
+        await db.commit()

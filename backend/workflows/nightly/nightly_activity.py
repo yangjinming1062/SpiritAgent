@@ -44,7 +44,7 @@ from workflows.nightly.nightly_planning import (
 from workflows.nightly.output_contracts import parse_reflection, reflection_schema
 from workflows.nightly.prompts import NIGHTLY_JSON_REPAIR_TEXTS, NIGHTLY_REFLECTION_TEXTS
 from workflows.nightly.stage_state import load_narrative_result, save_narrative_result
-from workflows.nightly.topic_discovery import DiscoveryDisabledError, discover_topics
+from workflows.nightly.topic_discovery import DiscoveryDisabledError, discovery_status, prepare_discovery
 from workflows.nightly.window import NightlyWindowClosedError, in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
@@ -58,7 +58,7 @@ _FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "result_unknown"))
 def _record_stage(stages: list[dict[str, Any]], entry: dict[str, Any]) -> None:
     """更新同一目标日的阶段结论，保留恢复诊断；跳过不覆盖已有实际结论。"""
     existing = next((stage for stage in stages if stage["stage"] == entry["stage"]), None)
-    if entry["status"] == "skipped" and existing is not None and existing["status"] != "skipped":
+    if entry["status"] == "skipped" and existing is not None and existing["status"] not in {"skipped", "waiting"}:
         return
     if existing is not None and "diagnostics" in existing:
         entry = {"diagnostics": existing["diagnostics"], **entry}
@@ -323,6 +323,18 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         logger.info("nightly_activity: skipped, missing timezone", extra={"user_id": user_id})
         await _update_log(log_id, status="skipped", summary="缺少时区设置")
         return False
+    if payload.get("awaiting_topic_batch"):
+        topic_result = await discovery_status(scope, target_date + timedelta(days=1))
+        if topic_result.status == "waiting":
+            return False
+        _record_stage(stages, {"stage": "topic discovery", "status": topic_result.status, **topic_result.summary})
+        await _update_log(
+            log_id,
+            status=payload["awaiting_topic_batch"],
+            summary="; ".join(f"{stage['stage']}:{stage['status']}" for stage in stages),
+            payload={"stages": stages, "awaiting_topic_batch": None},
+        )
+        return True
     try:
         utc_start, utc_end = _local_day_utc_bounds(target_date, tz_str)
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -407,12 +419,14 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         if r.usage == "background"
     }
 
-    if user.nightly_activity_enabled and not has_plan:
+    if user.nightly_activity_enabled and (
+        not has_plan or any(stage["stage"] == "topic discovery" and stage["status"] == "waiting" for stage in stages)
+    ):
         await _run_stage(
             stages,
             "topic discovery",
             partial(
-                discover_topics,
+                prepare_discovery,
                 scope,
                 target_date,
                 ZoneInfo(tz_str),
@@ -428,8 +442,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                     "user_timezone": tz_str,
                     "language": user_language,
                 },
-                user_language,
-                diagnostics=stage_diagnostics.setdefault("topic discovery", []),
             ),
             lambda result: (result.status, result.summary),
             user_id=user_id,
@@ -548,10 +560,16 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     has_errors = any(stage["status"] == "error" for stage in stages) or any(
         action.status in _FAILED_ACTION_STATUSES for action in action_results.values()
     )
+    terminal_status = "completed_with_errors" if has_errors else "completed"
+    waiting = any(stage["stage"] == "topic discovery" and stage["status"] == "waiting" for stage in stages)
     await _update_log(
         log_id,
-        status="completed_with_errors" if has_errors else "completed",
+        status="running" if waiting else terminal_status,
         summary="; ".join(f"{s['stage']}:{s['status']}" for s in stages),
-        payload={"stages": _stage_results(stages, stage_diagnostics), "target_date": local_date_str},
+        payload={
+            "stages": _stage_results(stages, stage_diagnostics),
+            "target_date": local_date_str,
+            "awaiting_topic_batch": terminal_status if waiting else None,
+        },
     )
-    return True
+    return not waiting

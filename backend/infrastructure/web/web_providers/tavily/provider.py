@@ -1,7 +1,8 @@
+import json
 from typing import Any
 
 from infrastructure.logger import get_logger
-from infrastructure.network import safe_outbound_async_client
+from infrastructure.network import read_capped_response, safe_outbound_async_client
 from infrastructure.web.web_providers.base import (
     WebDocument,
     WebSearchData,
@@ -89,9 +90,12 @@ class TavilyWebSearchProvider(WebSearchProvider):
         """调用方先经 is_available 确认密钥存在。"""
         url = f"{self._base_url}/{endpoint}"
         logger.info("Tavily request", extra={"endpoint": endpoint, "url": url})
-        response = await _HTTP_CLIENT.post(url, json={**payload, "api_key": self._api_key})
-        response.raise_for_status()
-        return response.json()
+        async with _HTTP_CLIENT.stream("POST", url, json={**payload, "api_key": self._api_key}) as response:
+            response.raise_for_status()
+            body = await read_capped_response(
+                response, max_bytes=16 * 1024 * 1024, too_large=ValueError("Tavily response too large")
+            )
+        return json.loads(body)
 
     async def search(self, query: str, limit: int = 5) -> WebSearchResult:
         try:

@@ -3,13 +3,12 @@ from datetime import datetime
 from typing import Any
 
 from croniter import croniter
-from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from runtime.memory_scope import MemoryScope, validate_memory_scope
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.automation.models import CRON_NAME_MAX_LENGTH, CRON_SCHEDULE_MAX_LENGTH, CronJob
@@ -21,7 +20,6 @@ SPECIAL_CRON_KIND = "special"
 STANDARD_CRON_KIND = "standard"
 _CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
-_SCHEDULE_KEYS = ("schedule", "is_paused")
 _INTENT_INVALIDATING_FIELDS = ("prompt", "schedule", "kind", "expires_at", "is_paused")
 JobIntentInvalidator = Callable[[AsyncSession, int, int], Awaitable[None]]
 _invalidate_job_intents: JobIntentInvalidator | None = None
@@ -86,14 +84,6 @@ async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> 
     )
 
 
-async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_job_id: int | None = None) -> None:
-    stmt = select(func.count()).select_from(CronJob).where(CronJob.user_id == user_id, CronJob.is_paused.is_(False))
-    if candidate_job_id is not None:
-        stmt = stmt.where(CronJob.id != candidate_job_id)
-    if (await db.execute(stmt)).scalar_one() >= SETTINGS.cron_max_active_per_user:
-        raise ValueError(f"Maximum active cron jobs limit ({SETTINGS.cron_max_active_per_user}) reached.")
-
-
 async def create_job(
     scope: MemoryScope,
     prompt: str,
@@ -140,11 +130,10 @@ async def create_job_in_session(
         one_shot=one_shot,
         expires_at=expires_at,
     )
-    _refresh_schedule(job)
-    if next_run_at is not None:
-        job.next_run_at, job.is_paused = next_run_at, False
-    if not job.is_paused:
-        await _ensure_active_job_capacity(db, user_id)
+    if next_run_at is None:
+        _refresh_schedule(job)
+    else:
+        job.next_run_at = next_run_at
     if normalized_kind == STANDARD_CRON_KIND:
         job.conversation_id = await create_task_conversation(db, user_id, name)
     db.add(job)
@@ -166,7 +155,9 @@ async def get_user_job(user_id: int, job_id: int) -> dict[str, Any] | None:
         return job.to_dict() if job else None
 
 
-async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
+async def list_jobs(
+    scope: MemoryScope, include_paused: bool = False, *, cursor: int | None = None
+) -> tuple[list[dict[str, Any]], int | None]:
     validate_memory_scope(scope)
     async with SESSION_LOCAL() as db:
         stmt = select(CronJob).where(
@@ -174,8 +165,11 @@ async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[di
         )
         if not include_paused:
             stmt = stmt.where(CronJob.is_paused.is_(False))
-        jobs = (await db.execute(stmt)).scalars().all()
-        return [j.to_dict() for j in jobs]
+        if cursor is not None:
+            stmt = stmt.where(CronJob.id < cursor)
+        page_size = 32
+        jobs = (await db.scalars(stmt.order_by(CronJob.id.desc()).limit(page_size + 1))).all()
+        return [job.to_dict() for job in jobs[:page_size]], jobs[page_size - 1].id if len(jobs) > page_size else None
 
 
 async def update_job(scope: MemoryScope, job_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
@@ -194,10 +188,8 @@ async def update_job(scope: MemoryScope, job_id: int, updates: dict[str, Any]) -
             if key in _JOB_IMMUTABLE_FIELDS or not hasattr(job, key):
                 continue
             setattr(job, key, value)
-        if any(k in updates for k in _SCHEDULE_KEYS):
+        if "schedule" in updates or "is_paused" in updates and not job.one_shot:
             _refresh_schedule(job)
-        if not job.is_paused:
-            await _ensure_active_job_capacity(db, user_id, job.id)
         if job.kind == STANDARD_CRON_KIND and job.conversation_id is None:
             job.conversation_id = await create_task_conversation(db, user_id, job.name)
         elif job.kind == SPECIAL_CRON_KIND:

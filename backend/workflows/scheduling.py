@@ -4,7 +4,7 @@ import asyncio
 import json
 import random
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -21,7 +21,7 @@ from features.automation.scheduling import (
     due_jobs,
 )
 from features.companion.disturbance import get_disturbance_tier, is_still
-from features.companion.intents import claim_companion_intent, enqueue_companion_intent, has_pending_companion_intent
+from features.companion.intents import claim_companion_intent, enqueue_companion_intent, has_due_companion_intent
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.proactive_runtime import (
     can_start_companion_turn,
@@ -41,7 +41,7 @@ from features.life.use_cases import pending_presentation_users
 from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import review_memories
 from features.posts.autonomous import autonomous_post_users, request_autonomous_post, resume_autonomous_submissions
-from features.topics.store import has_unshared_topics
+from features.topics.store import collecting_batches, has_unshared_topics
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.config import SETTINGS
@@ -65,13 +65,13 @@ from workflows.life_execution import run_life_execution
 from workflows.life_presentation import evaluate_life_presentation
 from workflows.nightly.nightly_activity import run_nightly_pipeline
 from workflows.nightly.scheduling import NIGHTLY_UNFINISHED_STATUSES, close_expired_logs, nightly_logs
+from workflows.nightly.topic_discovery import collect_topics
 from workflows.nightly.window import in_nightly_window
 
 logger = get_logger(__name__)
 
 _CONTACT_REVIEW_INTERVAL_SECONDS = 3600
-# 每个 tick 最多推进 200 个到期 job；按当前时间计算下一次，停摆期间不逐次回追。
-_MAX_DUE_PER_TICK = 200
+_DUE_PAGE_SIZE = 200
 
 
 @dataclass(frozen=True)
@@ -190,11 +190,21 @@ async def drain() -> None:
     await _RHYTHM_SCANS.drain()
 
 
-async def _select_due_jobs() -> list[DueJob]:
-    now = utc_now()
+async def _due_job_pages(now: datetime) -> AsyncIterator[list[DueJob]]:
+    """固定本轮截止时间，跨过仍需静候或处于维护的账户，逐页推进后面的任务。"""
     async with SESSION_LOCAL() as db:
         active_users = await list_user_ids(db, active_only=True)
-        return await due_jobs(db, now, MANAGER.local_user_ids(), active_users, limit=_MAX_DUE_PER_TICK + 1)
+    online = MANAGER.local_user_ids()
+    cursor = None
+    while True:
+        async with SESSION_LOCAL() as db:
+            jobs = await due_jobs(db, now, online, active_users, limit=_DUE_PAGE_SIZE, cursor=cursor)
+        if not jobs:
+            return
+        yield jobs
+        if len(jobs) < _DUE_PAGE_SIZE:
+            return
+        cursor = jobs[-1].next_run_at, jobs[-1].id
 
 
 async def _bulk_cas_advance(due_jobs: list[DueJob], now: datetime) -> list[DueJob]:
@@ -299,7 +309,7 @@ async def _consider_contact(user_id: int) -> None:
         async with SESSION_LOCAL() as db:
             if (
                 await get_disturbance_tier(user_id, db=db) == "still"
-                or await has_pending_companion_intent(db, user_id)
+                or await has_due_companion_intent(db, user_id)
                 or user_id not in await onboarded_user_ids(db, (user_id,))
                 or (await read_rhythm(db, user_id)).state == "asleep"
             ):
@@ -343,27 +353,19 @@ async def run_tick() -> None:
     _SCANS.every(
         "nightly_activity", interval=SETTINGS.nightly_scan_interval_seconds, discover=_discover_nightly_activity
     )
+    _SCANS.every("topic_discovery", interval=0, discover=_discover_topic_batches)
     _SCANS.every("post_impulse", interval=0, discover=_discover_autonomous_posts)
     _SCANS.every("memory_review", interval=600, discover=_discover_memory_reviews)
     _SCANS.every("outbox_gc", interval=900, discover=_discover_gc)
     await _SCANS.tick()
 
     now = utc_now()
-    due_jobs = await _select_due_jobs()
-    if len(due_jobs) > _MAX_DUE_PER_TICK:
-        logger.warning(
-            "cron: tick over cap, deferred to next tick", extra={"due_count": len(due_jobs), "cap": _MAX_DUE_PER_TICK}
-        )
-    due_jobs = due_jobs[:_MAX_DUE_PER_TICK]
-    if not due_jobs:
-        return
-    async with AsyncExitStack() as stack:
-        leases: dict[int, bool] = {}
-        for job in due_jobs:
-            uid = int(job.user_id)
-            if uid not in leases:
-                leases[uid] = await stack.enter_async_context(user_request_scope(uid))
-        await _advance_due_jobs([job for job in due_jobs if leases[int(job.user_id)]], now)
+    async for jobs in _due_job_pages(now):
+        async with AsyncExitStack() as stack:
+            leases = {
+                uid: await stack.enter_async_context(user_request_scope(uid)) for uid in {job.user_id for job in jobs}
+            }
+            await _advance_due_jobs([job for job in jobs if leases[job.user_id]], now)
 
 
 async def _discover_life_work() -> list[ScheduledWork]:
@@ -441,6 +443,19 @@ async def _close_nightly_logs(log_ids: list[int]) -> None:
     async with SESSION_LOCAL() as db:
         await close_expired_logs(db, log_ids)
         await db.commit()
+
+
+async def _discover_topic_batches() -> list[ScheduledWork]:
+    async with SESSION_LOCAL() as db:
+        batches = await collecting_batches(db)
+    return [
+        ScheduledWork(
+            local_day.isoformat(),
+            partial(collect_topics, MemoryScope(user_id, COMPANION_PRESET_ID), local_day),
+            user_id,
+        )
+        for user_id, local_day in batches
+    ]
 
 
 async def _discover_nightly_activity() -> list[ScheduledWork]:

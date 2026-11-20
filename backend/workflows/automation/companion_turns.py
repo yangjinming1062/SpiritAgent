@@ -9,6 +9,7 @@ from features.companion.intents import (
     companion_turn_plan,
     deferred_reply_source,
     finish_companion_intent,
+    maintain_companion_lease,
 )
 from features.companion.proactive_runtime import get_user_proactive_record
 from features.companion.prompts import PROACTIVE_CONTEXT_LABELS
@@ -111,7 +112,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     source = None
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
-        async with asyncio.timeout(max(0.0, remaining)):
+        async with asyncio.timeout(max(0.0, remaining)), maintain_companion_lease(user_id, trigger):
             async with SESSION_LOCAL() as db:
                 if intent.source_kind and intent.source_kind.startswith("reply:"):
                     source = await deferred_reply_source(db, user_id, intent.source_kind)

@@ -125,3 +125,15 @@ async def list_actions(
         next_cursor=str(rows[limit - 1].id) if len(rows) > limit else None,
         limit=limit,
     )
+
+
+async def action_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    rows = await db.execute(
+        select(ActionDefinition.id, ActionDefinition.name, ActionDefinition.motion_description)
+        .where(ActionDefinition.user_id == user_id, ActionDefinition.status == "approved")
+        .order_by(ActionDefinition.id.desc())
+    )
+    return [
+        {"id": str(identifier), "name": name, "description": description or ""}
+        for identifier, name, description in rows
+    ]

@@ -79,7 +79,13 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
 
 
 async def completed_personal_works(
-    db: AsyncSession, user_id: int, *, event_id: int | None = None, limit: int = 8
+    db: AsyncSession,
+    user_id: int,
+    *,
+    event_id: int | None = None,
+    limit: int = 8,
+    preferred_events: Collection[int] = (),
+    terms: Sequence[str] = (),
 ) -> list[PersonalWorkView]:
     """直接分享按原事件核对，日常选择只拿仍在自己手中的作品。"""
     query = (
@@ -105,6 +111,12 @@ async def completed_personal_works(
         if event_id is not None
         else query.where(~visible_library_work(LifeStep.library_work_id))
     )
+    if preferred_events:
+        query = query.order_by(
+            case({i: rank for rank, i in enumerate(preferred_events)}, value=LifeEvent.id, else_=len(preferred_events))
+        )
+    if terms:
+        query = query.order_by(or_(*(LifeStep.description.icontains(term, autoescape=True) for term in terms)).desc())
     rows = await db.execute(query.order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit))
     return [
         PersonalWorkView(

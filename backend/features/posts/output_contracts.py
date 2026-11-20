@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, TypeAdapter
 
-from features.posts.schemas import PostPlan
+from features.posts.schemas import PostExcerptUse, PostPlan
 
 
 def _post_boolean(value: Any) -> bool:
@@ -19,16 +19,20 @@ class DeclinedPost(BaseModel):
     post: Annotated[Literal[False], BeforeValidator(_post_boolean)]
 
 
+class SelectedPostPlan(PostPlan):
+    excerpt_uses: list[PostExcerptUse]
+
+
 class PlannedPost(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     post: Annotated[Literal[True], BeforeValidator(_post_boolean)]
-    plan: PostPlan
+    plan: SelectedPostPlan
 
 
 POST_DECISION = TypeAdapter(DeclinedPost | PlannedPost)
 
 
-def parse_post_decision(value: Any) -> PostPlan | None:
+def parse_post_decision(value: Any) -> SelectedPostPlan | None:
     decision = POST_DECISION.validate_python(value)
     return decision.plan if isinstance(decision, PlannedPost) else None

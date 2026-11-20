@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
-from features.appearance.queries import ready_outfit_snapshots
-from features.visuals.queries import list_jobs, list_visuals, visual_detail
+from features.appearance.queries import search_outfit_snapshots
+from features.visuals.queries import list_jobs, list_visuals, visual_detail, visual_job_detail
 from features.visuals.repository import VisualNotFoundError
 from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
@@ -19,7 +19,7 @@ VISUAL_SEARCH_TOOL_DESCRIPTION = (
 )
 VISUAL_INSPECT_TOOL_DESCRIPTION = (
     "查看已生成图片或视频的详情，或查询制作进度。传 visual_id 返回画面内容、所用穿着、环境与活动、尺寸、时长及相关制作记录；"
-    f"不传 visual_id 时返回最近 {_MAX_RESULTS} 次制作，可用 job_id 从中选择一次。"
+    "可以按 job_id 查看指定制作，未指定时按页浏览。"
 )
 VISUAL_GENERATE_TOOL_DESCRIPTION = (
     "提交一次制作：指定一套造型、一个环境和一段动作，由你决定具体组合并生成图片或视频。"
@@ -33,42 +33,50 @@ VISUAL_PLAY_TOOL_DESCRIPTION = (
 
 
 async def visual_search_tool(
-    user_id: ResourceId, query: str = "", media_kind: str | None = None, limit: int = 10, **_: Any
+    user_id: ResourceId,
+    query: str = "",
+    media_kind: str | None = None,
+    limit: int = 10,
+    cursor: ResourceId | None = None,
+    **_: Any,
 ) -> str:
     if media_kind not in (None, "image", "video"):
         return json.dumps({"error": "媒体类型须为 image 或 video"}, ensure_ascii=False)
-    result = await list_visuals(user_id, query=query, media_kind=media_kind, limit=max(1, min(limit, _MAX_RESULTS)))
+    result = await list_visuals(
+        user_id, query=query, media_kind=media_kind, cursor=cursor, limit=max(1, min(limit, _MAX_RESULTS))
+    )
     return result.model_dump_json()
 
 
-async def outfit_list_tool(user_id: ResourceId, query: str = "", **_: Any) -> str:
+async def outfit_list_tool(user_id: ResourceId, query: str = "", cursor: ResourceId | None = None, **_: Any) -> str:
     async with SESSION_LOCAL() as db:
-        items = await ready_outfit_snapshots(db, user_id)
-    needle = query.strip().casefold()
+        keywords = [query.strip()] if query.strip() else []
+        items, more = await search_outfit_snapshots(db, user_id, keywords, cursor=cursor, limit=_MAX_RESULTS)
     return json.dumps(
-        [
-            {"id": str(item.id), "name": item.name, "description": item.description}
-            for item in items
-            if not needle or needle in f"{item.name}\n{item.description}".casefold()
-        ],
+        {
+            "outfits": [{"id": str(item.id), "name": item.name, "description": item.description} for item in items],
+            "next_cursor": str(items[-1].id) if more else None,
+        },
         ensure_ascii=False,
     )
 
 
 async def visual_inspect_tool(
-    user_id: ResourceId, visual_id: ResourceId | None = None, job_id: ResourceId | None = None, **_: Any
+    user_id: ResourceId,
+    visual_id: ResourceId | None = None,
+    job_id: ResourceId | None = None,
+    cursor: ResourceId | None = None,
+    **_: Any,
 ) -> str:
-    if visual_id is not None:
-        try:
-            detail = await visual_detail(user_id, visual_id)
-        except VisualNotFoundError as exc:
-            return json.dumps({"error": str(exc)}, ensure_ascii=False)
-        return detail.model_dump_json()
-    result = await list_jobs(user_id, limit=_MAX_RESULTS)
-    matched = [job.model_dump(mode="json") for job in result.jobs if job_id is None or job.id == job_id]
-    if job_id is not None and not matched:
-        return json.dumps({"error": "未找到这次制作"}, ensure_ascii=False)
-    return json.dumps(matched, ensure_ascii=False)
+    try:
+        if visual_id is not None:
+            return (await visual_detail(user_id, visual_id)).model_dump_json()
+        if job_id is not None:
+            return (await visual_job_detail(user_id, job_id)).model_dump_json()
+    except VisualNotFoundError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    result = await list_jobs(user_id, cursor=cursor, limit=_MAX_RESULTS)
+    return result.model_dump_json()
 
 
 async def visual_generate_tool(
@@ -118,11 +126,12 @@ async def visual_play_tool(visual_id: ResourceId, user_id: ResourceId, proactive
 
 
 def register(registry: ToolsRegistry) -> None:
+    cursor = {"type": "string", "pattern": "^[1-9][0-9]*$", "description": "续读时使用上页的 next_cursor。"}
     definitions = [
         (
             "outfit_list",
             outfit_list_tool,
-            {"query": {"type": "string", "description": "按造型名称或描述筛选，留空返回全部。"}},
+            {"query": {"type": "string", "description": "按造型名称或描述筛选，留空时浏览衣柜。"}, "cursor": cursor},
             [],
         ),
         (
@@ -130,6 +139,7 @@ def register(registry: ToolsRegistry) -> None:
             visual_search_tool,
             {
                 "query": {"type": "string", "description": "按名称或画面描述文本匹配；留空不筛选。"},
+                "cursor": cursor,
                 "media_kind": {
                     "type": "string",
                     "enum": ["image", "video"],
@@ -143,6 +153,7 @@ def register(registry: ToolsRegistry) -> None:
             "visual_inspect",
             visual_inspect_tool,
             {
+                "cursor": cursor,
                 "visual_id": {
                     "type": "string",
                     "pattern": "^[1-9][0-9]*$",
@@ -151,7 +162,7 @@ def register(registry: ToolsRegistry) -> None:
                 "job_id": {
                     "type": "string",
                     "pattern": "^[1-9][0-9]*$",
-                    "description": f"某次制作的 id；不传 visual_id 时从最近 {_MAX_RESULTS} 次制作中选择它。",
+                    "description": "按制作任务 id 读取。",
                 },
             },
             [],

@@ -93,14 +93,9 @@ class BilibiliSource:
             )
             if source is not None:
                 candidates.append(source)
-        inside = [
-            source
-            for source in candidates
-            if source.published_at is not None and window_start <= source.published_at < window_end
-        ]
         # 平台搜索页数有上限，触顶后不再给出游标，避免检查点保存无法请求的页码。
         more = len(results) >= _PAGE_SIZE and page < _MAX_PAGE
-        return SocialSearchPage(candidates=inside, next_cursor={"page": page + 1} if more else None)
+        return SocialSearchPage(candidates=candidates, next_cursor={"page": page + 1} if more else None)
 
     async def detail(
         self, candidate: SocialContent, *, before_request: RequestGuard | None = None

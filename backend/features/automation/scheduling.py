@@ -26,37 +26,39 @@ class DueJob:
 
 
 async def due_jobs(
-    db: AsyncSession, now: datetime, online_user_ids: list[int], active_user_ids: list[int], *, limit: int
+    db: AsyncSession,
+    now: datetime,
+    online_user_ids: list[int],
+    active_user_ids: list[int],
+    *,
+    limit: int,
+    cursor: tuple[datetime, int] | None = None,
 ) -> list[DueJob]:
     """读取到期 job；未过期的窗口型问候只在用户在线时入选，避免离线等待项堵住全局批次。"""
     expiring_scope = or_(CronJob.expires_at.is_(None), CronJob.expires_at <= now)
     if online_user_ids:
         expiring_scope = or_(expiring_scope, CronJob.user_id.in_(online_user_ids))
-    rows = (
-        await db.execute(
-            select(
-                CronJob.id,
-                CronJob.user_id,
-                CronJob.name,
-                CronJob.schedule,
-                CronJob.next_run_at,
-                CronJob.prompt,
-                CronJob.one_shot,
-                CronJob.kind,
-                CronJob.conversation_id,
-                CronJob.expires_at,
-            )
-            .where(
-                CronJob.user_id.in_(active_user_ids),
-                CronJob.is_paused.is_(False),
-                CronJob.next_run_at.is_not(None),
-                CronJob.next_run_at <= now,
-                expiring_scope,
-            )
-            .order_by(CronJob.next_run_at, CronJob.id)
-            .limit(limit)
-        )
-    ).all()
+    query = select(
+        CronJob.id,
+        CronJob.user_id,
+        CronJob.name,
+        CronJob.schedule,
+        CronJob.next_run_at,
+        CronJob.prompt,
+        CronJob.one_shot,
+        CronJob.kind,
+        CronJob.conversation_id,
+        CronJob.expires_at,
+    ).where(
+        CronJob.user_id.in_(active_user_ids),
+        CronJob.is_paused.is_(False),
+        CronJob.next_run_at.is_not(None),
+        CronJob.next_run_at <= now,
+        expiring_scope,
+    )
+    if cursor is not None:
+        query = query.where(tuple_(CronJob.next_run_at, CronJob.id) > cursor)
+    rows = (await db.execute(query.order_by(CronJob.next_run_at, CronJob.id).limit(limit))).all()
     return [DueJob(*row) for row in rows]
 
 

@@ -2,6 +2,8 @@
 
 from features.media.identity_contracts import CharacterReferenceRole
 
+CHAT_IMAGE_EDIT_PROMPT = "编辑提供的上一版图片。保留已符合要求的主体、构图、身份和造型，结合以下完整目标和历次修正要求，修复仍可见的问题。\n{goal}"
+
 REAL_PHOTO_LOOK = (
     "整体是真实相机拍下的照片（photorealistic，未经修图），而不是插画、3D 渲染或 CG 合成：光线来自真实可信的光源，"
     "明暗过渡自然，色彩与对比克制，不加夸张的光晕、柔焦或调色；"

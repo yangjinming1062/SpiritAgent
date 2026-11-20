@@ -62,8 +62,8 @@ class SocialContent(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     author: str = Field(default="", max_length=160)
     published_at: datetime | None = None
-    body: str = Field(default="", max_length=30000)
-    subtitle: str = Field(default="", max_length=30000)
+    body: str = ""
+    subtitle: str = ""
     collected_at: datetime
     content_type: Literal["text", "image", "video"] = "text"
 
@@ -85,6 +85,10 @@ class SocialContent(BaseModel):
     def has_evidence(self) -> bool:
         return bool(self.body.strip() or self.subtitle.strip())
 
+    @property
+    def needs_detail(self) -> bool:
+        return self.published_at is None or not self.has_evidence or self.content_type == "video" and not self.subtitle
+
 
 class SocialSearchPage(BaseModel):
     candidates: list[SocialContent]
@@ -96,11 +100,11 @@ def _inline_subtitle(value: Any, *, depth: int = 0) -> str:
     if depth > 8:
         return ""
     if isinstance(value, str):
-        text = value.strip()[:30000]
+        text = value.strip()
         return "" if re.fullmatch(r"(?:https?://|//)\S+", text, re.IGNORECASE) else text
     if isinstance(value, list):
         parts = [_inline_subtitle(item, depth=depth + 1) for item in value]
-        return "\n".join(part for part in parts if part)[:30000]
+        return "\n".join(part for part in parts if part)
     if isinstance(value, dict):
         for key in ("text", "content", "subtitle_text", "caption_text"):
             text = _inline_subtitle(value.get(key), depth=depth + 1)

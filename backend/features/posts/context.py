@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from infrastructure.ai.token_budget import json_tokens
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, format_local_iso, utc_now
 
@@ -12,7 +13,7 @@ from features.companion.prompt_runtime import load_companion_prompt_context
 from features.conversation.context_window import load_companion_dialogue
 from features.entries.contracts import EntryView
 from features.posts.schemas import PostContext
-from features.posts.store import PostError
+from features.posts.store import PostError, fit_post_choice
 
 
 @dataclass(frozen=True)
@@ -71,5 +72,39 @@ def post_prompt_entry(post: EntryView, context: PostPromptContext) -> dict[str, 
         "content_type": post.content_type,
         "published_at": format_local_iso(post.published_at, context.user_timezone),
         "seconds_since_publication": elapsed_seconds(context.now, post.published_at),
-        "media_context": PostContext.model_validate(post.context_json).model_dump(exclude={"voice_id"}),
+        "media_context": PostContext.model_validate(post.context_json).model_dump(
+            exclude={"voice_id", "used_excerpt_ids"}
+        ),
     }
+
+
+def fit_post_history(
+    choices: list[dict[str, Any]],
+    recent: list[dict[str, Any]],
+    room: int,
+    *,
+    excerpted: bool,
+) -> dict[str, Any]:
+    """按当前请求余量选择历史；已给出正文的动态无需在近期动态中再次展开。"""
+    kept_choices, kept_recent = [], []
+    shown_posts: set[str] = set()
+    for item in choices:
+        kept, cost = fit_post_choice(item, room)
+        if kept is None:
+            excerpted = True
+            break
+        excerpted |= kept is not item
+        kept_choices.append(kept)
+        room -= cost
+        if post := kept.get("published_post"):
+            shown_posts.add(str(post["id"]))
+    for item in recent:
+        if str(item["id"]) in shown_posts:
+            continue
+        cost = json_tokens(item) + 2
+        if cost > room:
+            excerpted = True
+            break
+        kept_recent.append(item)
+        room -= cost
+    return {"previous_post_choices": kept_choices, "recent_posts": kept_recent, "post_history_excerpted": excerpted}

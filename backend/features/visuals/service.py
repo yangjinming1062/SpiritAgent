@@ -509,7 +509,7 @@ async def play_visual(
             else "base"
         )
         if source == "autonomous":
-            blocked = await visual_autonomous_block_reason(db, state, item, snapshot=snapshot)
+            blocked = await visual_autonomous_block_reason(db, state, item)
             if blocked is not None:
                 raise VisualStateError(f"当前不适合自主播放：{blocked}")
         if source in ("manual", "autonomous", "life"):
@@ -618,9 +618,7 @@ async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
         stale = not await _playback_is_current(db, state, play, item)
         blocked = None
         if not stale and item is not None and play.source == "autonomous":
-            blocked = await visual_autonomous_block_reason(
-                db, state, item, snapshot=visual_snapshot(item), excluded_play_id=play.play_id
-            )
+            blocked = await visual_autonomous_block_reason(db, state, item, excluded_play_id=play.play_id)
         if stale or blocked is not None:
             play.status = "expired"
             play.error = "播放指令已过期，请重新播放" if stale else f"当前不适合自主播放：{blocked}"

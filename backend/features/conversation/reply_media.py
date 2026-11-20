@@ -70,6 +70,7 @@ def _restore_image_artifacts(
     for artifact in state.artifacts.values():
         if artifact.type == "image" and artifact.job_id is not None and artifact.job_id not in active_image_ids:
             artifact.status, artifact.url, artifact.error = "failed", None, "原图片任务已失效"
+    bound_goals = set()
     for image_job in image_jobs:
         frozen = image_job.image_request
         if frozen is None:
@@ -86,35 +87,36 @@ def _restore_image_artifacts(
                 "image",
                 goal_id,
                 slot.status,
-                url=asset_store_path(slot.url),
+                url=asset_store_path(slot.url) or None,
                 error=slot.error,
                 job_id=image_job.id,
                 bound_message_id=int(image_job.bindings[slot.media_id])
                 if slot.media_id in image_job.bindings
                 else None,
                 media_revision=slot.media_revision,
+                parent_media_id=frozen.parent_media_id,
             )
             state.artifacts[artifact.media_id] = artifact
             if current_request:
                 state.current_versions[goal_id] = artifact.media_id
-                if frozen.parent_media_id is None:
-                    state.plans[goal_id] = ImagePlan(
-                        request=frozen.request,
-                        prompt=frozen.prompt,
-                        goal=frozen.goal,
-                        size=frozen.size,
-                        subject=frozen.subject,
-                        reference_image=frozen.reference_image,
-                        secondary_reference_image=frozen.secondary_reference_image,
-                        identity_json=frozen.identity_json,
-                        identity_reference_mode=frozen.identity_reference_mode,
-                    )
-                else:
-                    state.regenerated_goals.add(goal_id)
+                artifact.image_plan = ImagePlan(
+                    request=frozen.request,
+                    prompt=frozen.prompt,
+                    goal=frozen.goal,
+                    size=frozen.size,
+                    subject=frozen.subject,
+                    reference_image=frozen.reference_image,
+                    secondary_reference_image=frozen.secondary_reference_image,
+                    identity_json=frozen.identity_json,
+                    identity_reference_mode=frozen.identity_reference_mode,
+                )
                 if artifact.bound_message_id is None:
                     state.required_goals.add(goal_id)
+                else:
+                    bound_goals.add(goal_id)
         if current_request and frozen.parent_media_id is None:
             state.image_requests[frozen.request] = frozen.media_ids
+    state.required_goals.difference_update(bound_goals)
 
 
 async def load_media_turn(
@@ -157,7 +159,7 @@ async def load_media_turn(
                 inspected = json.loads(message.content or "")
                 if (
                     isinstance(inspected, dict)
-                    and inspected.get("verdict") in {"pass", "revise", "unavailable"}
+                    and inspected.get("verdict") in {"pass", "revise", "stalled", "unavailable"}
                     and isinstance(inspected.get("media_id"), str)
                     and isinstance(inspected.get("inspection_id"), str)
                     and isinstance(inspected.get("issues"), list)
@@ -167,6 +169,7 @@ async def load_media_turn(
                         inspected["media_id"],
                         inspected["verdict"],
                         tuple(issue for issue in inspected["issues"] if isinstance(issue, str)),
+                        inspected.get("parent_media_id"),
                     )
             except ValueError:
                 pass
@@ -508,29 +511,31 @@ async def continue_chat_video(db: AsyncSession, wait: MediaWait) -> dict | None:
     )
 
 
-async def plain_media_delivery_reply(
-    db: AsyncSession, user_id: int, session_id: str, text: str, request_scope: str
-) -> CompanionReply | None:
+async def plain_media_delivery_reply(db: AsyncSession, state: MediaTurnState, text: str) -> CompanionReply | None:
     bubbles: list[TextBubble | MediaBubble] = [TextBubble(type="text", text=text)] if text.strip() else []
-    for job in await conversation_image_jobs(db, user_id, session_id):
-        if job.image_request is None or job.image_request.request_scope != request_scope:
-            continue
-        for slot in job.slots:
-            if slot.media_id in job.bindings:
-                continue
-            bubbles.append(
-                MediaBubble(
-                    type="image",
-                    media_id=slot.media_id,
-                    goal_id=job.image_request.goal_ids[slot.slot],
-                    status=slot.status,
-                    url=asset_store_path(slot.url) or None,
-                    error=slot.error,
-                    job_id=job.id,
-                    media_revision=slot.media_revision,
-                )
+    images = tuple(
+        job
+        for job in await conversation_image_jobs(db, state.user_id, state.session_id)
+        if job.image_request and job.image_request.request_scope == state.request_scope
+    )
+    delivered = MediaTurnState(
+        state.user_id, state.session_id, state.task, request_scope=state.request_scope, inspections=state.inspections
+    )
+    _restore_image_artifacts(delivered, images, state.source_message_id)
+    for artifact in delivered.delivery_versions():
+        bubbles.append(
+            MediaBubble(
+                type="image",
+                media_id=artifact.media_id,
+                goal_id=artifact.goal_id,
+                status=artifact.status,
+                url=artifact.url,
+                error=artifact.error,
+                job_id=artifact.job_id,
+                media_revision=artifact.media_revision,
             )
-    for job in await pending_conversation_video_jobs(db, user_id, session_id, request_scope):
+        )
+    for job in await pending_conversation_video_jobs(db, state.user_id, state.session_id, state.request_scope):
         if job.reply_message_id is not None or job.media_id is None:
             continue
         artifact = MediaArtifact(job.media_id, "video", job.media_id, "pending", job_id=job.id)

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-def text(value: Any, limit: int = 30000) -> str:
+def text(value: Any, limit: int | None = None) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 

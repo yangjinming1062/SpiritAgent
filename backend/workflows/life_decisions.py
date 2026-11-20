@@ -2,25 +2,26 @@
 
 import asyncio
 import json
-from datetime import timedelta
 from typing import Any, Literal
 from weakref import WeakValueDictionary
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.companion.intents import enqueue_companion_intent, recent_life_contacts
-from features.companion.narrative_quality import review_narrative
+from features.companion.narrative_quality import narrative_source_budget, review_narrative
 from features.companion.persona_service import onboarded_user_ids
-from features.companion.prompt_runtime import load_companion_prompt_context
+from features.companion.prompt_runtime import CompanionPromptContext, load_companion_prompt_context
 from features.companion.rhythm import (
     BedtimeChange,
     ReviewMinutes,
+    RhythmPromptContext,
     read_rhythm,
     rhythm_prompt_context,
     set_bedtime_change,
 )
 from features.conversation.context_window import load_recent_companion_exchange
-from features.life.actions import LIFE_ACTION, NextAction, ReadingAction
+from features.life.actions import LIFE_ACTION, LIFE_CAPABILITIES, NextAction, ReadingAction, VisualAction
+from features.life.context import read_life_context_in_session
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
 from features.life.queries import completed_personal_works, pursuit_evidence
 from features.life.schemas import (
@@ -35,6 +36,7 @@ from features.life.schemas import (
     PursuitDecisionFields,
     PursuitOperation,
 )
+from features.life.search import recall_life
 from features.life.service import LifeInputError, LifeStateConflictError
 from features.life.use_cases import (
     commit_decision_in_session,
@@ -44,15 +46,17 @@ from features.life.use_cases import (
     share_life_event_in_session,
     update_personal_growth_in_session,
 )
+from features.posts.context import fit_post_history
 from features.posts.publication import wake_post_planning
-from features.posts.store import prepare_publication_in_session
+from features.posts.store import post_choice_history, prepare_publication_in_session
 from features.visuals.repository import notify_visuals_updated
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.token_budget import material_budget
+from infrastructure.ai.token_budget import json_tokens, material_budget
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
+from infrastructure.api_ids import ResourceId
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
@@ -60,7 +64,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from runtime.user_maintenance import is_user_in_maintenance, user_request_scope
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from workflows.life_capabilities import life_capability_context
+from workflows.life_capabilities import life_capability_context, validate_visual_materials
 from workflows.life_execution import run_life_execution
 
 
@@ -80,10 +84,26 @@ class PursuitChange(PursuitDecisionFields):
     next_action: PursuitNextAction | None = None
 
 
+class LifeLookup(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    query: str = Field(default="", max_length=1000)
+    event_id: ResourceId | None = None
+    pursuit_id: ResourceId | None = None
+    growth_id: ResourceId | None = None
+
+    @model_validator(mode="after")
+    def require_target(self) -> "LifeLookup":
+        if not (self.query or self.event_id or self.pursuit_id or self.growth_id):
+            raise ValueError("Provide a topic or a known identifier")
+        return self
+
+
 class LifeDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    choice: Literal["keep", "private_episode", PursuitOperation]
+    choice: Literal["keep", "recall", "private_episode", PursuitOperation]
+    lookup: LifeLookup | None = None
     episode: PrivateLifeEpisode | None = None
     pursuit: PursuitChange | None = None
     bedtime_change: BedtimeChange | None = None
@@ -102,8 +122,12 @@ class LifeDecision(BaseModel):
 
     @model_validator(mode="after")
     def check_choice(self) -> "LifeDecision":
+        if (self.lookup is not None) != (self.choice == "recall"):
+            raise ValueError("Only a recall choice has lookup")
+        if self.lookup and any((self.growth, self.share, self.bedtime_change, self.review_after_minutes)):
+            raise ValueError("Recall reads earlier material before making a decision")
         if (self.episode is not None) != (self.choice == "private_episode") or (
-            (self.pursuit is not None) != (self.choice not in {"keep", "private_episode"})
+            (self.pursuit is not None) != (self.choice not in {"keep", "private_episode", "recall"})
         ):
             raise ValueError("只填写对应选择的内容")
         if self.pursuit is not None and (self.choice == "start_pursuit") != (self.pursuit.pursuit_id is None):
@@ -127,6 +151,9 @@ def _decision_schema(
     schema = LifeDecision.model_json_schema()
     definitions = schema["$defs"]
     choices = schema["properties"]["choice"]["enum"]
+    if not capabilities.get("recall", True):
+        choices.remove("recall")
+        schema["properties"]["lookup"] = {"type": "null"}
     if not has_active:
         choices[:] = [
             choice for choice in choices if choice not in ("advance_pursuit", "complete_pursuit", "pause_pursuit")
@@ -212,6 +239,7 @@ def _keep_original_action(original: dict[str, Any] | None, repaired: dict[str, A
 
 _INSTRUCTIONS = {
     "zh": """以 persona 描述的身份决定此刻想怎样过。生活可以继续原样。结合正在做的事、自己形成的认识和已经发生的经历，选择一个真的想作出的决定。相处资料帮助你理解对方，不能代替自己的动机或双方的约定。
+如果需要补读先前事项、主题、私作或某条认识，can_recall 为 true 时先选 recall，只在 lookup 填查询主题或已知 event_id、pursuit_id、growth_id。查资料时，其余决定字段均留空，share 填 null。last_lookup 记录刚已执行的查询，结果在当前生活资料中。根据查回的内容作决定，只有另需新资料时才再查。
 life_context 是当前状态、事项和近期经历；topic_heads 是每个主题的最近片段。recent_exchange 中新的明确安排优先于较早的用户记忆，只影响涉及的事。execution 给出此刻的真实能力与素材。
 {life_facts}
 {life_narrative}
@@ -221,9 +249,10 @@ choice 决定自己的生活，share 单独决定有没有哪段经历想让对�
 • private_episode：仅在允许独处日常时，写此刻虚拟情境中一次具体观察、选择或变化。继续原主题用其最新 previous_episode_id。用简短标题和一到三句第一人称叙述，标明 activity_type。只有自己参与；有关用户的事实来自真实交流。换环境时保留仍成立的条件，current_scene.title 使用目录中该地点的准确名称，scene_tags 给出完整条件。
 • 真实事项：选对应操作并填写 pursuit。新目标需要动机和可核验的成果，start_pursuit 还需要可执行的 next_action；episode_origin_id 可承接个人主题。next_step 是设想，实际受理依赖 next_action。narrative.pursuit 写现状与下一步，narrative.event 写本次变化，行动的打算和缘由只写在 next_action.narrative。已登记或结果未知的步骤沿原任务核对，可以同时关注其他主题。更新进度时，evidence_event_ids 只从 pursuit_evidence.events 选属于本事项的结果或支持目标的独立发表作品。启发立项的旧经历留作背景。只改打算时 progress 留空。完成整个目标须有充分成果且没有未解决步骤。暂停、恢复或放下由具体缘由决定，用户暂停须由用户要求恢复，遵守 resume_after。旧事项保留迟到成果。真实事项不改写当前环境和活动。
 
-决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，最多提前或推迟两小时。
+决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，新的入睡时刻须在相邻两次起床之间并且还未到来。
 growth 只记录自己因有依据的独处经历或成果而产生的变化。引用来源 id；本次新片段的来源填 null。新兴趣或独立认识可以并存，修订或撤回某一条用它的 growth_id。outlook 概括今后选择上的倾向，省去来源细节和用户私事。撤回时 text、outlook 都填 null。核心身份与基本性格是起点。
 私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活页，post、diary 留给对应创作。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
+previous_post_choices 记录先前选给动态的片段，同一成稿由 post_id 关联。post_history_excerpted 为 true 表示仅提供部分历史。暂时放下的片段可以重选；已经发表后，只有新的感受、进展或表达目的才再次选择。used_in_post 为 null 表示使用情况未知。
 自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可选择需要的资讯和原文，依据笔记及未解问题决定是否再读。用中文输出符合 schema 的决定。""",
     "en": """Decide how you want to spend this moment as the person described by persona. Carrying on is a complete choice. Consider your current activity, personal outlook and recorded experience. Knowing the other person informs how you relate; it supplies neither your motivation nor a mutual agreement.
 Life_context gives your state, pursuits and recent experiences. Topic_heads gives the latest episode in each thread. A new explicit arrangement in recent_exchange overrides an older user memory only on that point. Execution lists actual capabilities and materials.
@@ -235,9 +264,10 @@ Use choice for your own life. Decide separately in share whether you want the ot
 • private_episode: when private episodes are available, describe one concrete observation, choice or change in the established virtual setting, by yourself. Continue a thread using its latest previous_episode_id. Give a short title, one to three first-person sentences and an activity_type. User-related facts come from actual exchanges. When changing setting, use the exact listed place name in current_scene.title and the full remaining conditions in scene_tags.
 • A real pursuit: choose its operation and supply pursuit. For a new goal, give your motivation and a verifiable result; start_pursuit also requires a feasible next_action. An episode_origin_id can connect a personal thread. Next_step is an idea; next_action registers work. Use narrative.pursuit for the present state and next step, narrative.event for today's change, and next_action.narrative for the plan and its reason just once. Wait for existing or uncertain work on its original request; another matter can still proceed. When updating progress, cite only matching results or applicable independent publications from pursuit_evidence.events. Earlier inspiration is background. Leave progress null for a change of plan alone. Completion requires sufficient results for the whole goal and no unresolved steps. Pause, resume or abandon for a reason. A user pause needs their request to resume; honor resume_after. Later results remain with their original pursuit. Pursuit changes do not change current setting or activity.
 
-Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, within two hours of your usual bedtime.
+Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, keeping the new bedtime in the future between consecutive rise times.
 Use growth for a change in yourself grounded in a solo episode or confirmed result. Cite the event id, or null for this turn's new solo episode. Distinct interests and understandings coexist. Only revise or withdraw a particular one by growth_id. Outlook describes how you now tend to act without disclosing the source or user details. To withdraw it, give null text and outlook. Keep your core identity and temperament.
 Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page, post or diary for later writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
+When can_recall is true, use choice=recall and fill lookup with a topic or a known event_id, pursuit_id or growth_id if earlier material is needed before deciding. Leave share null and omit all other decision fields during lookup. Last_lookup is the completed query; its results are in the current life material. Decide from those results unless you need different evidence. When post_history_excerpted is true, only part of the post history is shown. Previous_post_choices describes earlier selections and actual posts. You may reconsider a declined passage and revisit a published source for a new purpose or development. A null used_in_post means unknown.
 You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read selected discoveries and original sources; use the notes and open questions to decide whether to read further. Return your decision in English using the schema.""",
 }
 
@@ -269,8 +299,10 @@ _DISCLOSURE_REVIEW = {
 }
 
 
-async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> LifeEventView | None:
-    saved = await share_life_event_in_session(db, user_id, share, source.id)
+async def _save_share(
+    db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView, *, slot: str | None = None
+) -> LifeEventView | None:
+    saved = await share_life_event_in_session(db, user_id, share, source.id, decision_slot=slot)
     if saved and share.release_work and "visual_id" in source.result_ref:
         await notify_visuals_updated(db, user_id)
     return saved
@@ -398,151 +430,53 @@ async def _consider_life(user_id: int) -> dict[str, object]:
     config = await load_user_llm_config(user_id, AiTaskKey.proactive)
     if not config.is_configured:
         return {"status": "unconfigured"}
-    context = await load_companion_prompt_context(user_id, include_life_topics=True)
+    async with SESSION_LOCAL() as db:
+        recent_exchange = await load_recent_companion_exchange(db, user_id, current_interaction=False)
+    context = await load_companion_prompt_context(user_id, include_life_topics=True, memory_query=recent_exchange)
     if context is None:
         return {"status": "not_ready"}
     life = context.life_context
-    async with SESSION_LOCAL() as db:
-        evidence = await pursuit_evidence(
-            db, user_id, [item.id for item in life.active_pursuits], include_publications=True
+    attempted: set[str] = set()
+    can_recall = True
+    last_lookup: LifeLookup | None = None
+    while True:
+        decision, personal, execution, evidence = await _choose_life(
+            user_id,
+            context,
+            life,
+            rhythm,
+            config,
+            recent_exchange,
+            can_recall,
+            last_lookup,
         )
-        recent_exchange = await load_recent_companion_exchange(db, user_id, current_interaction=False)
-        recent_contacts = await recent_life_contacts(db, user_id)
-    instructions = (
-        resolve_prompt_text(_INSTRUCTIONS, context.language)
-        .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
-        .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language))
-    )
-    personal = {
-        "persona": context.persona_extras,
-        "topic_heads": [item.trajectory_payload() for item in life.topic_heads],
-        "life_context": life.prompt_payload(),
-        "memory": context.memory.model_dump(mode="json"),
-        "recent_exchange": recent_exchange,
-        "recent_contact_choices": recent_contacts,
-    }
+        if decision.lookup is None:
+            break
+        lookup = decision.lookup
+        last_lookup = lookup
+        fingerprint = lookup.model_dump_json()
+        if fingerprint in attempted:
+            can_recall = False
+            continue
+        attempted.add(fingerprint)
+        found = (await recall_life(user_id, query=lookup.query)).items if lookup.query else []
+        event_ids = list(dict.fromkeys(i for i in (lookup.event_id, *(event.id for event in found)) if i))
+        pursuit_ids = list(dict.fromkeys(i for i in (lookup.pursuit_id, *(event.pursuit_id for event in found)) if i))
+        async with SESSION_LOCAL() as db:
+            refreshed = await read_life_context_in_session(
+                db,
+                user_id,
+                growth_query=lookup.query,
+                include_topic_heads=True,
+                preferred_events=event_ids,
+                preferred_pursuits=pursuit_ids,
+                preferred_growth=lookup.growth_id,
+            )
+        if refreshed.state.revision != life.state.revision:
+            return {"status": "state_changed"}
+        can_recall = refreshed != life
+        life = refreshed
     evidence_payload = evidence.prompt_payload()
-    design_guidance = "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, context.language)
-    execution = await life_capability_context(
-        user_id,
-        query=" ".join([life.state.current_activity, *(p.title for p in life.active_pursuits), recent_exchange]),
-        token_budget=material_budget(
-            config.chain,
-            instructions + design_guidance,
-            {
-                **personal,
-                "pursuit_evidence": evidence_payload,
-                "rhythm": rhythm.model_dump(mode="json"),
-                "current_time": context.current_time,
-                "private_episode_allowed": slot is not None,
-            },
-            LifeDecision.model_json_schema(),
-        ),
-    )
-    if execution["capabilities"].get("action.design"):
-        instructions += design_guidance
-    attempts: list[LlmAttemptDiagnostic] = []
-    original_decision: dict[str, Any] | None = None
-    original_share_scope: tuple[object, ...] | None = None
-
-    def parse_decision(value: Any) -> LifeDecision:
-        nonlocal original_decision, original_share_scope
-        if isinstance(value, dict):
-            raw_share = value.get("share")
-            share_scope = (
-                (
-                    raw_share["event_id"],
-                    raw_share.get("channel", "life"),
-                    raw_share.get("show_activity", False),
-                    raw_share.get("contact"),
-                    raw_share.get("release_work", False),
-                )
-                if isinstance(raw_share, dict) and "event_id" in raw_share
-                else None
-            )
-            if any(attempt.validation in ("invalid_json", "invalid_contract") for attempt in attempts):
-                value = _keep_original_action(original_decision, value)
-                if raw_share is not None and (
-                    share_scope is None
-                    or original_share_scope is None
-                    or any(
-                        type(current) is not type(original) or current != original
-                        for current, original in zip(share_scope, original_share_scope, strict=True)
-                    )
-                ):
-                    value = {**value, "share": None}
-                if value.get("growth") != (original_decision or {}).get("growth"):
-                    value = {**value, "growth": None}
-            else:
-                original_decision = value
-                original_share_scope = share_scope
-        decision = LifeDecision.model_validate(value)
-        if proposal := decision.pursuit_request(life.state.revision):
-            _validate_pursuit(proposal, life, evidence)
-            action = proposal.next_action.action if proposal.next_action else None
-            if isinstance(action, ReadingAction):
-                topics = {str(item["topic_id"]) for item in execution["topics"]}
-                routes = execution["reading_sources"]
-                if not (action.query or action.urls or action.topic_ids) or (
-                    action.urls
-                    and not routes["public_urls"]
-                    or action.query
-                    and not action.urls
-                    and not routes["web_search"]
-                    or any(str(topic_id) not in topics for topic_id in action.topic_ids)
-                ):
-                    raise LlmJsonValidationError("reading_source_unavailable", fields=("query", "urls", "topic_ids"))
-        if (
-            decision.pursuit
-            and decision.pursuit.next_action
-            and not execution["capabilities"].get(decision.pursuit.next_action.action.capability)
-        ):
-            raise ValueError("请选择目前可执行的下一步；暂不能执行的想法可以保留到之后")
-        if (
-            decision.growth
-            and decision.growth.growth_id is not None
-            and not any(
-                item.id == decision.growth.growth_id and item.aspect == decision.growth.aspect
-                for item in life.personal_growth
-            )
-        ):
-            raise ValueError("只能更新提供的同一条个人认识")
-        if (
-            decision.share
-            and decision.share.release_work
-            and decision.share.event_id not in {item.id for item in life.private_works}
-        ):
-            raise ValueError("公开原件需要从 private_works 选择一件仍在手里的作品")
-        return decision
-
-    evidence_ids = [str(item.id) for item in evidence.events]
-    decision = await call_llm_json(
-        config,
-        instructions,
-        {
-            **personal,
-            "current_time": context.current_time,
-            "rhythm": rhythm.model_dump(mode="json", exclude_none=True),
-            "private_episode_allowed": slot is not None,
-            "pursuit_evidence": evidence_payload,
-            "execution": execution,
-        },
-        schema=_decision_schema(
-            execution["capabilities"], evidence_ids, bool(life.active_pursuits), bool(life.paused_pursuits)
-        ),
-        schema_name="companion_life_decision",
-        reasoning_effort="none",
-        parse_output=parse_decision,
-        repair_prompt=(
-            "Keep the original pursuit id, next_action, timing and library choice. Repair structure, not the plan. "
-            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable. "
-            "For progress or completion, only cite matching results from pursuit_evidence.events. If only the plan "
-            "changed, leave progress null and evidence_event_ids empty. A pursuit with a step still outstanding "
-            "cannot register another step or finish."
-        ),
-        preserve_choices=("choice",),
-        diagnostics=attempts,
-    )
     episode = decision.episode
     pursuit = decision.pursuit_request(life.state.revision)
     draft = {}
@@ -574,12 +508,17 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             "available_materials": {kind: execution[kind] for kind in ("actions", "outfits", "scenes")},
         }
     if draft:
+        requirements = resolve_prompt_text(_CANDIDATE_REVIEW, context.language)
+        if "previous_post_choices" in review_source:
+            choices = review_source.pop("previous_post_choices")
+            room = narrative_source_budget(config, review_source, draft, context.language, requirements=requirements)
+            review_source.update(fit_post_history(choices, [], room, excerpted=personal["post_history_excerpted"]))
         review = await review_narrative(
             config,
             review_source,
             draft,
             context.language,
-            requirements=resolve_prompt_text(_CANDIDATE_REVIEW, context.language),
+            requirements=requirements,
         )
         if review.issues:
             return {"status": "discarded", "choice": decision.choice}
@@ -687,11 +626,11 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 if source is None:
                     raise LifeInputError("分享需要已保存的经历")
                 async with db.begin_nested() as sharing:
-                    saved = await _save_share(db, user_id, share, source)
+                    saved = await _save_share(db, user_id, share, source, slot=slot)
                     if saved and share.channel == "post":
                         post_task = await prepare_publication_in_session(db, user_id, excerpt_id=saved.id)
                     if saved and share.contact is not None:
-                        due = utc_now() + timedelta(minutes=share.contact.after_minutes)
+                        due, expires_at = share.contact.bounds(utc_now())
                         accepted = await enqueue_companion_intent(
                             db,
                             user_id,
@@ -699,7 +638,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                             source_kind="life",
                             life_event_id=source.id,
                             not_before=due,
-                            expires_at=due + timedelta(minutes=share.contact.window_minutes),
+                            expires_at=expires_at,
                         )
                         if not accepted:
                             await sharing.rollback()
@@ -720,3 +659,167 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         if not changed:
             result["status"] = "review_unavailable"
     return result
+
+
+async def _choose_life(
+    user_id: int,
+    context: CompanionPromptContext,
+    life: LifeContext,
+    rhythm: RhythmPromptContext,
+    config: UserLlmConfig,
+    recent_exchange: str,
+    can_recall: bool,
+    last_lookup: LifeLookup | None = None,
+) -> tuple[LifeDecision, dict[str, Any], dict[str, Any], LifePursuitEvidence]:
+    async with SESSION_LOCAL() as db:
+        evidence = await pursuit_evidence(
+            db, user_id, [item.id for item in life.active_pursuits], include_publications=True
+        )
+        recent_contacts = await recent_life_contacts(db, user_id)
+        source_ids = {
+            item.id for item in (*life.private_works, *life.recent_events, *life.topic_heads, *evidence.events)
+        }
+    instructions = (
+        resolve_prompt_text(_INSTRUCTIONS, context.language)
+        .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
+        .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language))
+    )
+    personal = {
+        "persona": context.persona_extras,
+        "topic_heads": [item.trajectory_payload() for item in life.topic_heads],
+        "life_context": life.prompt_payload(),
+        "memory": context.memory.model_dump(mode="json"),
+        "recent_exchange": recent_exchange,
+        "recent_contact_choices": recent_contacts,
+        "previous_post_choices": [],
+        "post_history_excerpted": False,
+        "can_recall": can_recall,
+        "last_lookup": last_lookup.model_dump(mode="json", exclude_none=True) if last_lookup else None,
+    }
+    evidence_payload = evidence.prompt_payload()
+    design_guidance = "\n\naction.design: " + resolve_prompt_text(ACTION_DESIGN_GUIDANCE, context.language)
+    fixed = {
+        "pursuit_evidence": evidence_payload,
+        "rhythm": rhythm.model_dump(mode="json", exclude_none=True),
+        "current_time": context.current_time,
+        "private_episode_allowed": True,
+    }
+    evidence_ids = [str(item.id) for item in evidence.events]
+    has_active, has_paused = bool(life.active_pursuits), bool(life.paused_pursuits)
+    # 素材和历史先按全部能力的契约留足空间，发送时再收窄到实际可用能力。
+    budget_schema = _decision_schema(dict.fromkeys(LIFE_CAPABILITIES, True), evidence_ids, has_active, has_paused)
+    room = material_budget(config.chain, instructions + design_guidance, {**personal, **fixed}, budget_schema)
+    # 历史选择和可用制作素材共享输入余量，留出可实际执行动作的空间。
+    async with SESSION_LOCAL() as db:
+        choices, more = await post_choice_history(db, user_id, source_ids, token_budget=room // 2)
+    execution = await life_capability_context(
+        user_id,
+        query=" ".join([life.state.current_activity, *(p.title for p in life.active_pursuits), recent_exchange]),
+        token_budget=room - json_tokens(choices),
+    )
+    if execution["capabilities"].get("action.design"):
+        instructions += design_guidance
+    attempts: list[LlmAttemptDiagnostic] = []
+    original_decision: dict[str, Any] | None = None
+    original_share_scope: tuple[object, ...] | None = None
+
+    def parse_decision(value: Any) -> LifeDecision:
+        nonlocal original_decision, original_share_scope
+        if isinstance(value, dict):
+            raw_share = value.get("share")
+            share_scope = (
+                (
+                    raw_share["event_id"],
+                    raw_share.get("channel", "life"),
+                    raw_share.get("show_activity", False),
+                    raw_share.get("contact"),
+                    raw_share.get("release_work", False),
+                )
+                if isinstance(raw_share, dict) and "event_id" in raw_share
+                else None
+            )
+            if any(attempt.validation in ("invalid_json", "invalid_contract") for attempt in attempts):
+                value = _keep_original_action(original_decision, value)
+                if raw_share is not None and (
+                    share_scope is None
+                    or original_share_scope is None
+                    or any(
+                        type(current) is not type(original) or current != original
+                        for current, original in zip(share_scope, original_share_scope, strict=True)
+                    )
+                ):
+                    value = {**value, "share": None}
+                if value.get("growth") != (original_decision or {}).get("growth"):
+                    value = {**value, "growth": None}
+            else:
+                original_decision = value
+                original_share_scope = share_scope
+        decision = LifeDecision.model_validate(value)
+        if decision.lookup is not None and not can_recall:
+            raise ValueError("The last lookup found no additional material. Decide from the available evidence.")
+        if proposal := decision.pursuit_request(life.state.revision):
+            _validate_pursuit(proposal, life, evidence)
+            action = proposal.next_action.action if proposal.next_action else None
+            if isinstance(action, VisualAction):
+                validate_visual_materials(action, execution)
+            if isinstance(action, ReadingAction):
+                topics = {str(item["topic_id"]) for item in execution["topics"]}
+                routes = execution["reading_sources"]
+                if not (action.query or action.urls or action.topic_ids) or (
+                    action.urls
+                    and not routes["public_urls"]
+                    or action.query
+                    and not action.urls
+                    and not routes["web_search"]
+                    or any(str(topic_id) not in topics for topic_id in action.topic_ids)
+                ):
+                    raise LlmJsonValidationError("reading_source_unavailable", fields=("query", "urls", "topic_ids"))
+        if (
+            decision.pursuit
+            and decision.pursuit.next_action
+            and not execution["capabilities"].get(decision.pursuit.next_action.action.capability)
+        ):
+            raise ValueError("请选择目前可执行的下一步；暂不能执行的想法可以保留到之后")
+        if (
+            decision.growth
+            and decision.growth.growth_id is not None
+            and not any(
+                item.id == decision.growth.growth_id and item.aspect == decision.growth.aspect
+                for item in life.personal_growth
+            )
+        ):
+            raise ValueError("只能更新提供的同一条个人认识")
+        if (
+            decision.share
+            and decision.share.release_work
+            and decision.share.event_id not in {item.id for item in life.private_works}
+        ):
+            raise ValueError("公开原件需要从 private_works 选择一件仍在手里的作品")
+        return decision
+
+    fixed["execution"] = execution
+    history = fit_post_history(
+        choices, [], material_budget(config.chain, instructions, {**personal, **fixed}, budget_schema), excerpted=more
+    )
+    personal.update(history)
+    decision = await call_llm_json(
+        config,
+        instructions,
+        {**personal, **fixed},
+        schema=_decision_schema(
+            {**execution["capabilities"], "recall": can_recall}, evidence_ids, has_active, has_paused
+        ),
+        schema_name="companion_life_decision",
+        reasoning_effort="none",
+        parse_output=parse_decision,
+        repair_prompt=(
+            "Keep the original pursuit id, next_action, timing and library choice. Repair structure, not the plan. "
+            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable. "
+            "For progress or completion, only cite matching results from pursuit_evidence.events. If only the plan "
+            "changed, leave progress null and evidence_event_ids empty. A pursuit with a step still outstanding "
+            "cannot register another step or finish."
+        ),
+        preserve_choices=("choice",),
+        diagnostics=attempts,
+    )
+    return decision, personal, execution, evidence

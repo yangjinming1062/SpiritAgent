@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from infrastructure.ai.prompt_engineer import call_llm_once
+from infrastructure.ai.token_budget import ContextOverflowError, fit_text_prefix, material_budget
 from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
@@ -27,25 +28,38 @@ async def _summarize_doc(llm_config: UserLlmConfig, doc: WebDocument) -> None:
     content = doc.content
     if not content or len(content) <= 1000:
         return
+    room = 0
     try:
-        summary = await call_llm_once(
-            llm_config,
-            WEB_SUMMARY_INSTRUCTIONS,
-            {"source_url": doc.url, "content": content[:50000], "source_excerpted": len(content) > 50000},
-            temperature=0.1,
+        metadata = {"source_url": doc.url, "acquired_length": len(content), "source_excerpted": doc.source_excerpted}
+        room = material_budget(
+            llm_config.chain, WEB_SUMMARY_INSTRUCTIONS, {**metadata, "offset": len(content), "content": ""}, {}
         )
-        if not summary.strip():
-            raise RuntimeError("Web summary response was empty")
-        doc.content = summary
+        summaries = []
+        offset = 0
+        while offset < len(content):
+            passage = fit_text_prefix(content, room, offset=offset)
+            if not passage:
+                raise ContextOverflowError("No input space for a web document passage")
+            summary = await call_llm_once(
+                llm_config,
+                WEB_SUMMARY_INSTRUCTIONS,
+                {**metadata, "offset": offset, "content": passage},
+                temperature=0.1,
+            )
+            if not summary.strip():
+                raise RuntimeError("Web summary response was empty")
+            summaries.append(summary.strip())
+            offset += len(passage)
+        doc.content = "\n\n".join(summaries)
         doc.content_kind = "summary"
-        doc.source_excerpted = len(content) > 50000
     except Exception as e:
         # 单文档失败必须隔离，否则会拖垮整批 gather（httpx、JSON 解析、LLMRuntimeError、空 choices 都落在这一层）。
         logger.warning("Failed to summarize content", extra={"error_msg": str(e)})
-        doc.content = content[:5000]
-        doc.content_kind = "extracted_text"
-        doc.source_excerpted = len(content) > 5000
+        doc.content = fit_text_prefix(content, room)
+        doc.source_excerpted = doc.source_excerpted or len(doc.content) < len(content)
         doc.summarization_failed = True
+        if not doc.content:
+            doc.error = "Summarization failed. Request the extracted content with use_llm_processing=false."
 
 
 async def _summarize_documents(documents: list[WebDocument], llm_config: UserLlmConfig) -> None:

@@ -248,26 +248,52 @@ def _compatible_video_configs(
     reference_image_count: int | None = None,
     duration: int,
     resolution: str,
+    include_upscaled: bool = True,
 ) -> list[ProviderConfig]:
-    compatible = []
     count = reference_image_count if reference_image_count is not None else int(reference_images)
-    for config in chain:
-        provider = build_provider(config, VideoGenProvider)
-        if count and not provider.supports_reference_image_count(count):
-            continue
-        if reference_images:
-            available = provider.available_resolutions(duration=duration, reference_images=True)
-            native = provider.native_resolution(resolution)
-            if not native or native.upper() not in {value.upper() for value in available}:
-                continue
-        if provider.durations is not None and duration not in provider.durations:
-            continue
-        if provider.resolutions is not None and resolution.lower() not in {
-            value.lower() for value in provider.resolutions
-        }:
-            continue
-        compatible.append(config)
-    return compatible
+    return [
+        config
+        for config in chain
+        if _supports_video_output(
+            build_provider(config, VideoGenProvider), duration, resolution, count, include_upscaled=include_upscaled
+        )
+    ]
+
+
+def _supports_video_output(
+    provider: VideoGenProvider, duration: int, resolution: str, reference_count: int, *, include_upscaled: bool = False
+) -> bool:
+    if reference_count and not provider.supports_reference_image_count(reference_count):
+        return False
+    native = provider.native_resolution(resolution)
+    available = provider.available_resolutions(
+        duration=duration, reference_images=bool(reference_count), include_upscaled=include_upscaled
+    )
+    return bool(native and native.upper() in {item.upper() for item in available})
+
+
+async def video_duration_options(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    task: AiTaskKey,
+    preferred: Sequence[str],
+    self_reference_count: int,
+) -> dict[str, list[int]]:
+    """按同一供应商的原生时长、参考模式和可交付分辨率列举计划选项。"""
+    chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
+    providers = [build_provider(config, VideoGenProvider) for config in chain]
+    return {
+        mode: sorted(
+            {
+                seconds
+                for provider in providers
+                for seconds in provider.durations or ()
+                if any(_supports_video_output(provider, seconds, resolution, count) for resolution in preferred)
+            }
+        )
+        for mode, count in (("plain", 0), ("self", self_reference_count))
+    }
 
 
 async def ensure_video_capability(
@@ -343,6 +369,7 @@ async def select_video_resolution(
             reference_image_count=reference_image_count,
             duration=duration,
             resolution=resolution,
+            include_upscaled=False,
         )
         if compatible:
             declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
@@ -370,6 +397,7 @@ async def prepare_video_job(
     identity: VisualIdentitySnapshot | None = None,
     identity_reference_role: CharacterReferenceRole = "portrait",
     media_id: str | None = None,
+    include_upscaled: bool = True,
 ) -> VideoJobSnapshot:
     """冻结能力与请求，在调用方事务内创建任务；提交供应商之前必须提交事务。"""
     if identity is not None and (not identity_reference_path or not reference_images):
@@ -381,6 +409,7 @@ async def prepare_video_job(
         reference_image_count=len(reference_images),
         duration=duration,
         resolution=resolution,
+        include_upscaled=include_upscaled,
     )
     if not compatible:
         raise MissingLlmConfigError("未配置支持本次参考输入、时长和分辨率的视频供应商")

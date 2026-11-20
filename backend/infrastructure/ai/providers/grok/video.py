@@ -69,6 +69,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
+        include_upscaled: bool = False,
     ) -> tuple[str, ...]:
         if (
             self._reject_reference_media(
@@ -83,7 +84,11 @@ class GrokVideoGenProvider(VideoGenProvider):
         if last_frame or reference_images:
             return ("480p", "720p") if self.supports_loop_frames else ()
         # Lite 的 1080p 来自 720p 放大，原生档仅列到 720p。
-        return _SUPPORTED_RESOLUTIONS if self.config.model == "grok-imagine-video-1.5" else ("480p", "720p")
+        return (
+            _SUPPORTED_RESOLUTIONS
+            if include_upscaled or self.config.model == "grok-imagine-video-1.5"
+            else ("480p", "720p")
+        )
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model

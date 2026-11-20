@@ -33,6 +33,7 @@ class PostPublicationResult(BaseModel):
 
 class PostContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    used_excerpt_ids: list[ResourceId] | None
     publication_intent: str = ""
     creation_intent: str = ""
     transcript: str = ""
@@ -40,8 +41,16 @@ class PostContext(BaseModel):
     voice_id: str = ""
 
 
+class PostExcerptUse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excerpt_id: ResourceId
+    fields: list[Literal["title", "body", "prompt", "text", "narration"]] = Field(min_length=1)
+
+
 class PostPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    excerpt_uses: list[PostExcerptUse] | None
     publication_intent: str = Field(min_length=1, max_length=1000)
     content_type: PostContentType
     title: str = Field(min_length=1, max_length=64)
@@ -53,8 +62,18 @@ class PostPlan(BaseModel):
     size: Literal["1024x1024", "1024x1792", "1792x1024", "1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"] = (
         "1024x1024"
     )
-    duration: Literal[6, 10] = 6
+    duration: int = Field(default=6, gt=0, strict=True)
     aspect_ratio: Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"] = "16:9"
+
+    def published_excerpt_ids(self, *, has_narration: bool) -> list[int] | None:
+        """按实际交付部分归集来源，历史计划缺少归属证据时保留未知。"""
+        if self.excerpt_uses is None:
+            return None
+        return [
+            use.excerpt_id
+            for use in self.excerpt_uses
+            if any(getattr(self, field) and (field != "narration" or has_narration) for field in use.fields)
+        ]
 
     @model_validator(mode="after")
     def require_content(self) -> "PostPlan":

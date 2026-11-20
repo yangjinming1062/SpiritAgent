@@ -17,8 +17,6 @@ def render_post_instructions(texts: dict[str, str], language: str) -> str:
         },
         "image_sizes": "/".join(fields["size"]["enum"]),
         "video_ratios": "/".join(fields["aspect_ratio"]["enum"]),
-        "durations_zh": "或".join(map(str, fields["duration"]["enum"])),
-        "durations_en": " or ".join(map(str, fields["duration"]["enum"])),
         **{
             f"default_{name}": fields[field]["default"]
             for name, field in (("size", "size"), ("duration", "duration"), ("ratio", "aspect_ratio"))

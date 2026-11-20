@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, Self
 
 from infrastructure.api_ids import ResourceId
+from infrastructure.text import utc_now
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 from runtime.presentation import PresentationMode
 
@@ -10,27 +11,44 @@ CompanionIntentStatus = Literal["waiting", "queued", "running", "completed", "ca
 MAX_COMPANION_FAILURES: int = 3
 
 
-class DeferredReply(BaseModel):
+class ContactWindow(BaseModel):
+    """两个偏移共用一次决定时刻；后续任务只保存换算后的绝对时间。"""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, strict=True)
 
-    after_seconds: int = Field(ge=60, le=23 * 3600)
+    after_seconds: int | None = Field(ge=0, description="从本次决定到适合复查的秒数")
+    expires_seconds: int = Field(gt=0, description="从同一决定到事情失效的秒数，须晚于复查")
+
+    def bounds(self, decided_at: datetime) -> tuple[datetime, datetime]:
+        try:
+            return decided_at + timedelta(seconds=self.after_seconds or 0), decided_at + timedelta(
+                seconds=self.expires_seconds
+            )
+        except OverflowError as exc:
+            raise ValueError("Contact window falls outside the supported calendar") from exc
+
+    @model_validator(mode="after")
+    def valid_expiry(self) -> Self:
+        if self.after_seconds is not None and self.expires_seconds <= self.after_seconds:
+            raise ValueError("Expiry must be later than the scheduled wake time")
+        self.bounds(utc_now())
+        return self
+
+
+class DeferredReply(ContactWindow):
+    after_seconds: int = Field(gt=0)
     purpose: str = Field(min_length=1, max_length=500)
 
 
-class CompanionWaitRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
+class CompanionWaitRequest(ContactWindow):
     intent: str = Field(min_length=1, max_length=4000)
-    after_seconds: int | None = Field(default=None, ge=60, le=2_592_000)
+    after_seconds: int | None = Field(default=None, gt=0)
     wake_on: CompanionWakeEvent | None = None
-    expires_seconds: int = Field(default=86400, ge=120, le=2_592_000)
 
     @model_validator(mode="after")
-    def validate_window(self) -> Self:
+    def has_wake_condition(self) -> Self:
         if self.after_seconds is None and self.wake_on is None:
             raise ValueError("Provide after_seconds or wake_on")
-        if self.after_seconds is not None and self.after_seconds >= self.expires_seconds:
-            raise ValueError("Expiry must be later than the scheduled wake time")
         return self
 
 
@@ -48,6 +66,11 @@ class CompanionIntentView(BaseModel):
     expires_at: datetime
     failure_count: int = Field(ge=0, le=MAX_COMPANION_FAILURES)
     last_error: str | None
+
+
+class CompanionIntentPage(BaseModel):
+    intents: list[CompanionIntentView]
+    next_cursor: str | None
 
 
 class CompanionSignal(BaseModel):

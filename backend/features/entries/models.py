@@ -154,4 +154,5 @@ class EntryComment(ModelBase, TimestampMixin):
     reply_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
     reply_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     reply_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reply_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reply_followup: Mapped[str | None] = mapped_column(Text)

@@ -1,7 +1,6 @@
 """每条动态内串行、可恢复的评论回复。"""
 
 import asyncio
-from datetime import timedelta
 from typing import Literal, Self
 
 from infrastructure.ai.prompt_engineer import call_llm_json
@@ -72,8 +71,8 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
         if post is None:
             return
         attempt = target.reply_attempts
-        deadline = ensure_utc(target.created_at) + timedelta(days=1)
-        if target.reply_followup is not None and utc_now() >= deadline:
+        deadline = ensure_utc(target.reply_expires_at) if target.reply_expires_at is not None else None
+        if deadline is not None and utc_now() >= deadline:
             await finish_reply(db, user_id, post_id, comment_id, attempt, None)
             await db.commit()
             return
@@ -98,7 +97,7 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
         "media_context": post_data.pop("media_context"),
         "post": post_data,
         "previous_followup": target.reply_followup,
-        "max_delay_seconds": max(0, min(23 * 3600, int((deadline - ctx.now).total_seconds()) - 1)),
+        "original_expiry": format_local_iso(deadline, ctx.user_timezone) if deadline is not None else None,
         "target_comment": {
             "id": target.id,
             "role": "user",
@@ -126,7 +125,7 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
 
     def parse_reply(value: object) -> CommentReplyDecision:
         result = CommentReplyDecision.model_validate(value)
-        if result.followup and result.followup.after_seconds > payload["max_delay_seconds"]:
+        if result.followup and deadline is not None and result.followup.bounds(ctx.now)[0] >= deadline:
             raise ValueError("Followup exceeds the remaining time")
         return result
 
@@ -138,14 +137,12 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
         schema_name="companion_comment_reply",
         parse_output=parse_reply,
         repair_prompt="Preserve the original kind and content or followup. "
-        "Use only the fields for that kind and respect max_delay_seconds.",
+        "For defer, preserve both offsets relative to the decision and keep the wake time before original_expiry.",
         preserve_choices=("kind",),
     )
     async with SESSION_LOCAL() as db:
-        now = utc_now()
-        followup = reply.followup
-        if followup is not None:
-            due = now + timedelta(seconds=followup.after_seconds)
+        if reply.followup is not None:
+            due, expiry = reply.followup.bounds(utc_now())
             await finish_reply(
                 db,
                 user_id,
@@ -153,8 +150,9 @@ async def _generate_reply(user_id: int, post_id: int, comment_id: int) -> None:
                 comment_id,
                 attempt,
                 None,
-                deferred_until=due if due < deadline else None,
-                purpose=followup.purpose if due < deadline else None,
+                deferred_until=due,
+                expires_at=expiry,
+                purpose=reply.followup.purpose,
             )
         else:
             await finish_reply(db, user_id, post_id, comment_id, attempt, reply.text)
