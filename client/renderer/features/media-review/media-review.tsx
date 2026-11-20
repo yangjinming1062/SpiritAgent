@@ -3,6 +3,7 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { MediaPreview, useMediaViewId, VideoSurface } from '@/features/media'
+import { requestResource } from '@/shared/lib/resource-request'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
@@ -10,8 +11,9 @@ import { BTN_SUBTLE, MediaReviewPanel } from '@/ui'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 import { mediaReviewCopy } from '../../../../shared/media-review'
+import { useMediaJobReview } from '../../../../shared/use-media-job-review'
 
-import { useMediaJobReview } from './use-media-job-review'
+const reviewApi = { invoke: requestResource }
 
 /** 复核入口：任务状态与操作归本功能，面板只接显示数据与回调。 */
 interface ReviewProps {
@@ -28,13 +30,13 @@ export function MediaReviewButton(props: ReviewProps): React.JSX.Element {
       <button aria-expanded={open} className={BTN_SUBTLE} onClick={() => setOpen(value => !value)} type="button">
         {copy.showCandidates}
       </button>
-      {open ? <ReviewDetails {...props} /> : null}
+      {open ? <ReviewDetails key={props.jobId} {...props} /> : null}
     </>
   )
 }
 
 function ReviewDetails({ jobId, onChanged }: ReviewProps): React.JSX.Element {
-  const review = useMediaJobReview({ jobId, onChanged })
+  const review = useMediaJobReview(reviewApi, jobId, onChanged)
   const copy = mediaReviewCopy[useStore($locale)]
   const dict = useStrings()
   const viewId = useMediaViewId()

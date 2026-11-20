@@ -10,7 +10,8 @@ import {
 } from '../shared/life-trajectory'
 
 import type { RemoteApi } from './api'
-import { Media, Notice, useAlive, useTask } from './ui'
+import { useAlive, useTask } from './tasks'
+import { Media, Notice } from './ui'
 
 const labels = {
   virtual: '虚拟日常',

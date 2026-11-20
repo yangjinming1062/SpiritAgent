@@ -525,7 +525,7 @@ export function createArchitecturePlugin(clientDirectory) {
             return {}
           }
 
-          const bridges = new Set(['spiritagent', 'desktopBackground', 'spiritagentWebUtils'])
+          const bridges = new Set(['spiritagent', 'desktopBackground'])
 
           function isWindow(node, visited = new Set()) {
             if (!node || visited.has(node)) {

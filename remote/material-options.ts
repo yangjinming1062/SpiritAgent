@@ -4,7 +4,7 @@ import { loadVisualMaterials, type VisualMaterialOptions } from '../shared/visua
 
 import type { RemoteApi } from './api'
 import { errorText } from './api'
-import { useAlive } from './ui'
+import { useAlive } from './tasks'
 
 /** 着装、环境、动作三类素材选项；revision 变化时重取，active 为假时不加载。 */
 export function useMaterialOptions(

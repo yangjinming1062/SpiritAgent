@@ -9,6 +9,7 @@ import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 import { useStrings } from '@/shared/strings'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Pill } from '@/ui'
+import type { VisualDetail } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import {
@@ -21,7 +22,6 @@ import { loadVisualMaterials, type VisualMaterialOptions } from '../../../../../
 
 import { visualsApi } from './api'
 import { loadVisualDetail, refreshVisuals } from './library'
-import { type VisualDetail } from './types'
 import { VISUAL_BODY, VISUAL_FIELD, VISUAL_META } from './visual-text'
 import { $visualsUi, updateVisualsUi } from './visuals-state'
 

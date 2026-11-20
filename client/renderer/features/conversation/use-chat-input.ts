@@ -2,10 +2,10 @@ import { useStore } from '@nanostores/react'
 import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import { useVoiceRecorder } from '@/features/speech'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { blobToDataUrl } from '@/shared/lib/blob-data-url'
-import { resolveDroppedFiles } from '@/shared/lib/file-drop'
-import { currentClearEpoch } from '@/shared/lib/storage'
+import { resolveDroppedFiles } from '@/shared/platform/desktop'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
@@ -123,22 +123,42 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     [controller, isReadOnlySession, view.receiveExternalAttachments, view.visible, view.eligible, stageExternalPaths]
   )
 
+  const beginRead = useAsyncGuard()
+
+  const attachmentTarget = () => {
+    const live = beginRead()
+    const sessionId = $chatSessionId.get()
+
+    return () => live() && isCurrent() && $chatSessionId.get() === sessionId
+  }
+
   const handleDrop = (e: DragEvent): void => {
-    if (!view.eligible || submit.editing) {
-      e.preventDefault()
+    const files = e.dataTransfer.files
 
-      return
-    }
-
-    const paths = resolveDroppedFiles(e.dataTransfer?.files)
-
-    if (paths.length === 0) {
+    if (!files.length) {
       return
     }
 
     e.preventDefault()
-    stageExternalPaths(paths)
-    notify({ kind: 'info', message: getStrings().chat.attachmentsAdded(paths.length) })
+    e.stopPropagation()
+
+    if (!view.eligible || isReadOnlySession || submit.editing) {
+      return
+    }
+
+    const accepts = attachmentTarget()
+    void resolveDroppedFiles(files)
+      .then(paths => {
+        if (paths.length && accepts()) {
+          stageExternalPaths(paths)
+          notify({ kind: 'info', message: getStrings().chat.attachmentsAdded(paths.length) })
+        }
+      })
+      .catch(error => {
+        if (accepts()) {
+          notifyError(error, getStrings().chat.filesHandoffFailed)
+        }
+      })
   }
 
   const handlePaste = async (e: ClipboardEvent): Promise<void> => {
@@ -150,16 +170,15 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
 
     e.preventDefault()
 
-    if (!view.eligible || submit.editing) {
+    if (!view.eligible || isReadOnlySession || submit.editing) {
       return
     }
 
     // 读取与上传期间切走会话时，其余文件不再加入新会话。
-    const sessionId = $chatSessionId.get()
-    const epoch = currentClearEpoch()
+    const accepts = attachmentTarget()
 
     for (const file of files) {
-      if (!isCurrent() || $chatSessionId.get() !== sessionId) {
+      if (!accepts()) {
         return
       }
 
@@ -169,7 +188,7 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
         try {
           const dataUrl = await blobToDataUrl(file).catch(() => null)
 
-          if (dataUrl && currentClearEpoch() === epoch) {
+          if (dataUrl && accepts()) {
             submit.setPending({ type: 'image', value: dataUrl, fileName: file.name })
           }
         } finally {
@@ -179,9 +198,9 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
         continue
       }
 
-      const [filePath] = resolveDroppedFiles([file])
+      const [filePath] = await resolveDroppedFiles([file])
 
-      if (filePath) {
+      if (filePath && accepts()) {
         if (file.type.startsWith('video/')) {
           await attachVideoFile(filePath, submit.setPending, controller)
         } else {
@@ -222,7 +241,7 @@ export function useChatInput({ isReadOnlySession }: UseChatInputOptions): UseCha
     onAttachMenuToggle: setAttachMenuOpen,
     onCancelEdit: submit.cancelEdit,
     onDrop: handleDrop,
-    onPaste: handlePaste,
+    onPaste: event => handlePaste(event).catch(error => notifyError(error, getStrings().chat.filesHandoffFailed)),
     onRecordingPointerCancel: onRecordingPointerEnd,
     onRecordingPointerDown,
     onRecordingPointerUp: onRecordingPointerEnd,

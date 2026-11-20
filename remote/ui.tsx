@@ -1,12 +1,10 @@
-import type { Dispatch, ReactElement, ReactNode, Ref, SetStateAction } from 'react'
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import type { ReactElement, ReactNode, Ref } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { VideoQueueState } from '@protocol'
 
 import { classifyError } from '../shared/error-classification'
 import { uiCopyErrors } from '../shared/ui-copy'
-
-import { ApiError, errorText } from './api'
 
 export function videoQueueText(queue: VideoQueueState): string {
   return {
@@ -14,112 +12,6 @@ export function videoQueueText(queue: VideoQueueState): string {
     rate_limited: '服务繁忙，等待重试',
     blocked: '等待核对生成结果'
   }[queue.state]
-}
-
-const PageState = createContext<{ prefix: string; values: Map<string, unknown> } | null>(null)
-
-function usePageStore(): { prefix: string; values: Map<string, unknown> } {
-  const state = useContext(PageState)
-  if (!state) {
-    throw new Error('页面状态缺少应用上下文')
-  }
-
-  return state
-}
-
-export function PageStateProvider({ children, scope }: { children: ReactNode; scope: string }): ReactElement {
-  const [state] = useState(() => ({ prefix: `remote:${scope}:ui:`, values: new Map<string, unknown>() }))
-
-  return <PageState.Provider value={state}>{children}</PageState.Provider>
-}
-
-export function usePageState<T>(key: string, initial: T, persist = true): [T, Dispatch<SetStateAction<T>>] {
-  const state = usePageStore()
-  const [value, setValue] = useState<T>(() => {
-    if (state.values.has(key)) {
-      return state.values.get(key) as T
-    }
-
-    try {
-      const saved = persist ? sessionStorage.getItem(state.prefix + key) : null
-
-      return saved ? (JSON.parse(saved) as T) : initial
-    } catch {
-      return initial
-    }
-  })
-
-  const valueRef = useRef(value)
-  valueRef.current = value
-  const update = useCallback<Dispatch<SetStateAction<T>>>(
-    action => {
-      const next = typeof action === 'function' ? (action as (previous: T) => T)(valueRef.current) : action
-      valueRef.current = next
-      state.values.set(key, next)
-
-      if (persist) {
-        try {
-          sessionStorage.setItem(state.prefix + key, JSON.stringify(next))
-        } catch {
-          // 浏览器存储不可用时仍保留当前登录期间的草稿。
-        }
-      }
-      setValue(next)
-    },
-    [key, persist, state]
-  )
-
-  return [value, update]
-}
-
-export function usePageScroll(key: string, ready: boolean): void {
-  const state = usePageStore()
-
-  useEffect(() => {
-    const content = document.querySelector<HTMLElement>('.content')
-    if (!content || !ready) {
-      return
-    }
-    const storageKey = state.prefix + `scroll:${key}`
-    let position = state.values.get(storageKey)
-    if (position === undefined) {
-      try {
-        position = Number(sessionStorage.getItem(storageKey) ?? 0)
-      } catch {
-        position = 0
-      }
-    }
-    const save = () => {
-      state.values.set(storageKey, content.scrollTop)
-      try {
-        sessionStorage.setItem(storageKey, String(content.scrollTop))
-      } catch {
-        // 保留内存中的阅读位置。
-      }
-    }
-    const frame = requestAnimationFrame(() => {
-      content.scrollTop = typeof position === 'number' && Number.isFinite(position) ? position : 0
-      content.addEventListener('scroll', save, { passive: true })
-    })
-
-    return () => {
-      cancelAnimationFrame(frame)
-      content.removeEventListener('scroll', save)
-    }
-  }, [key, ready, state])
-}
-
-export function useAlive(): () => boolean {
-  const alive = useRef(true)
-  useEffect(() => {
-    alive.current = true
-
-    return () => {
-      alive.current = false
-    }
-  }, [])
-
-  return useCallback(() => alive.current, [])
 }
 
 export function focusAfterRender(selector: string): void {
@@ -131,157 +23,12 @@ export function focusAfterRender(selector: string): void {
   })
 }
 
-export function useAssetSubmission(
-  key: string,
-  onCheck: () => Promise<void>
-): {
-  check: () => Promise<void>
-  clearSubmission: () => void
-  reconciled: boolean
-  submit: <Result>(task: () => Promise<Result>) => Promise<Result>
-  submitted: boolean
-} {
-  const alive = useAlive()
-  const [submitted, setSubmitted] = usePageState(`${key}.submitted`, false)
-  const [reconciled, setReconciled] = useState(false)
-
-  const submit = async <Result,>(task: () => Promise<Result>): Promise<Result> => {
-    setSubmitted(true)
-    setReconciled(false)
-    try {
-      return await task()
-    } catch (failure) {
-      if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-        setSubmitted(false)
-      }
-      throw failure
-    }
-  }
-  const check = async () => {
-    await onCheck()
-    if (alive()) {
-      setReconciled(true)
-    }
-  }
-
-  return { check, clearSubmission: () => setSubmitted(false), reconciled, submit, submitted }
-}
-
-export function AssetResultRecovery({
-  onCheck,
-  onContinue,
-  reconciled
-}: {
-  onCheck: () => Promise<void>
-  onContinue: () => void
-  reconciled: boolean
-}): ReactElement {
-  return (
-    <div className="creation-status">
-      <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
-      <div className="button-row">
-        <button onClick={onCheck} type="button">
-          刷新结果
-        </button>
-        <button disabled={!reconciled} onClick={onContinue} type="button">
-          已核对，继续调整
-        </button>
-      </div>
-    </div>
-  )
-}
-
-export function useTask(): {
-  busy: boolean
-  error: string
-  run: (task: () => Promise<void>) => Promise<void>
-  runLatest: (task: () => Promise<void>) => Promise<void>
-} {
-  const current = useAlive()
-  const lock = useRef(false)
-  const queuedRead = useRef<(() => Promise<void>) | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  const run = useCallback(
-    async (task: () => Promise<void>) => {
-      if (lock.current || !current()) {
-        return
-      }
-
-      lock.current = true
-      setBusy(true)
-      setError('')
-
-      try {
-        let next: (() => Promise<void>) | null = task
-
-        while (next && current()) {
-          queuedRead.current = null
-
-          try {
-            await next()
-          } catch (failure) {
-            if (current() && !(failure instanceof DOMException && failure.name === 'AbortError')) {
-              setError(errorText(failure))
-            }
-          }
-
-          next = queuedRead.current
-        }
-      } finally {
-        lock.current = false
-        queuedRead.current = null
-
-        if (current()) {
-          setBusy(false)
-        }
-      }
-    },
-    [current]
-  )
-
-  const runLatest = useCallback(
-    async (task: () => Promise<void>) => {
-      if (lock.current) {
-        queuedRead.current = task
-
-        return
-      }
-
-      await run(task)
-    },
-    [run]
-  )
-
-  return { busy, error, run, runLatest }
-}
-
 export function pauseMedia(except?: HTMLMediaElement): void {
   document.querySelectorAll<HTMLMediaElement>('audio,video').forEach(media => {
     if (media !== except) {
       media.pause()
     }
   })
-}
-
-export function useVisiblePolling(
-  enabled: boolean,
-  load: () => Promise<void>,
-  runLatest: (task: () => Promise<void>) => Promise<void>
-): void {
-  useEffect(() => {
-    if (!enabled) {
-      return
-    }
-    const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void runLatest(load)
-      }
-    }, 5000)
-
-    return () => clearInterval(timer)
-  }, [enabled, load, runLatest])
 }
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }): ReactElement {
@@ -395,6 +142,36 @@ export function AssetSteps({
         </li>
       ))}
     </ol>
+  )
+}
+
+export function SectionNav<Id extends string>({
+  label,
+  items,
+  selected,
+  onSelect,
+  unread
+}: {
+  label: string
+  items: readonly { id: Id; title: string }[]
+  selected: Id
+  onSelect: (id: Id) => void
+  unread?: Partial<Record<Id, boolean>>
+}): ReactElement {
+  return (
+    <nav aria-label={label} className="companion-nav">
+      {items.map(item => (
+        <button
+          aria-current={selected === item.id ? 'page' : undefined}
+          key={item.id}
+          onClick={() => onSelect(item.id)}
+          type="button"
+        >
+          {item.title}
+          {unread?.[item.id] && <i aria-label="有未读内容" className="tab-unread" />}
+        </button>
+      ))}
+    </nav>
   )
 }
 

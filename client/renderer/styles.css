@@ -671,13 +671,11 @@ html[data-role='main'][data-effect='clear'][data-palette='night'] .theme-tile.is
   z-index: 2;
 }
 
-
 .liquid-glass-overlay {
   background: var(--ui-overlay);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid var(--ui-line-standard);
-
 
   box-shadow:
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.28),
@@ -709,19 +707,6 @@ html[data-role='main'][data-effect='clear'][data-palette='day'] .bg-surface-card
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     0 10px 24px -12px rgba(70, 96, 124, 0.16);
-}
-
-.settings-header-scrim {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--ui-window-fill) 85%, transparent) 0%,
-    color-mix(in srgb, var(--ui-window-fill) 40%, transparent) 70%,
-    transparent 100%
-  );
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  mask-image: linear-gradient(180deg, black 0%, black 72%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, black 0%, black 72%, transparent 100%);
 }
 
 /* ── liquid-glass 类 ── */
@@ -783,7 +768,6 @@ html[data-effect='clear'] .liquid-glass-pill:hover {
   background: rgba(var(--glass-tint-rgb), 0.42);
   border-color: rgba(255, 255, 255, 0.7);
 }
-
 
 /* ── 主窗口清透模式 ── */
 
@@ -941,7 +925,6 @@ html.no-blur .theme-tile {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
-
 
 /* 原语层给交互控件加 pointer；组件不必再硬编码 cursor-pointer。显式 cursor 工具类仍在 utilities 层优先。 */
 @layer base {

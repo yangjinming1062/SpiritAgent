@@ -22,14 +22,7 @@ import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $surfaceRole } from '@/shared/store/surfaces'
 import { $uiStateError, $uiStateReady, $uiStateRetry } from '@/shared/store/ui-state'
-import {
-  type AppNavigationTarget,
-  composeNavigation,
-  type MainUiStateData,
-  type MainUiStateSnapshot,
-  type PageFocus,
-  type UiStateRequest
-} from '@ipc/contracts'
+import { type MainUiStateData, type MainUiStateSnapshot, type UiStateRequest } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
 const UI_STATE_HANDOFFS = [
@@ -47,35 +40,7 @@ const UI_STATE_HANDOFFS = [
 export function installAppUiStateSync(): () => void {
   const mainView = $surfaceRole.get() !== 'sprite'
   const bridge = shellApi().uiState
-  const search = new URLSearchParams(window.location.search)
-  const hashTarget = readAppNavigationHash()
-  const searchSession = search.get('sessionId')
-
-  // 启动地址携带的定位参数优先于账户快照；没有地址目标时不覆盖已恢复的位置。
-  const withSearchFocus = (target: AppNavigationTarget): AppNavigationTarget => {
-    const focus: Record<string, string | undefined> = { ...target.focus }
-
-    for (const key of ['sessionId', 'messageKey', 'pursuitId', 'outfitId', 'sceneId', 'visualId']) {
-      const value = search.get(key)
-
-      if (value) {
-        focus[key] = value
-      }
-    }
-
-    return composeNavigation(target.location, focus as PageFocus)
-  }
-
-  const initialTarget = hashTarget
-    ? withSearchFocus(hashTarget)
-    : searchSession
-      ? composeNavigation(
-          { page: 'chat' },
-          { page: 'chat', sessionId: searchSession, messageKey: search.get('messageKey') ?? undefined }
-        )
-      : null
-
-  let initialTargetConsumed = false
+  let initialTarget = readAppNavigationHash()
   let disposed = false
   let authSessionId: string | null = null
   let appliedRevision = -1
@@ -124,6 +89,7 @@ export function installAppUiStateSync(): () => void {
     snapshot: MainUiStateSnapshot,
     identity: string,
     token: number,
+    target = snapshot.navigation,
     selectedSessionId = snapshot.conversation.selectedSessionId
   ): Promise<void> {
     assertLive(identity, token)
@@ -138,15 +104,15 @@ export function installAppUiStateSync(): () => void {
       throw new Error('界面状态所属账户或版本已失效。')
     }
 
-    await conversationUiHandoff.apply(snapshot.conversation)
-    await lifeUiHandoff.apply(snapshot.life)
-    await diaryUiHandoff.apply(snapshot.diary)
-    await visualsUiHandoff.apply(snapshot.visuals)
-    await actionsUiHandoff.apply(snapshot.actions)
-    await appearanceUiHandoff.apply(snapshot.appearance)
-    await sceneUiHandoff.apply(snapshot.scene)
-    await wardrobeDesignUiHandoff.apply(snapshot.wardrobeDesign)
-    await companionEditorsUiHandoff.apply(snapshot.companionEditors)
+    conversationUiHandoff.apply(snapshot.conversation)
+    lifeUiHandoff.apply(snapshot.life)
+    diaryUiHandoff.apply(snapshot.diary)
+    visualsUiHandoff.apply(snapshot.visuals)
+    actionsUiHandoff.apply(snapshot.actions)
+    appearanceUiHandoff.apply(snapshot.appearance)
+    sceneUiHandoff.apply(snapshot.scene)
+    wardrobeDesignUiHandoff.apply(snapshot.wardrobeDesign)
+    companionEditorsUiHandoff.apply(snapshot.companionEditors)
 
     if (selectedSessionId) {
       await restoreConversationSelection(selectedSessionId)
@@ -155,7 +121,7 @@ export function installAppUiStateSync(): () => void {
     }
 
     assertLive(identity, token)
-    await applyAppNavigation(snapshot.navigation)
+    await applyAppNavigation(target)
     assertLive(identity, token)
     appliedRevision = snapshot.revision
   }
@@ -207,27 +173,30 @@ export function installAppUiStateSync(): () => void {
     loading = (async () => {
       if (mainView) {
         const snapshot = await bridge.get(identity)
-        const explicitTarget = initialTargetConsumed ? null : initialTarget
+        assertLive(identity, token)
+        const explicitTarget = initialTarget
 
         const explicitSession = explicitTarget?.focus.page === 'chat' ? explicitTarget.focus.sessionId : undefined
 
         if (snapshot) {
-          await apply(snapshot, identity, token, explicitSession ?? snapshot.conversation.selectedSessionId)
-        } else if (explicitSession) {
-          await restoreConversationSelection(explicitSession)
-        }
-
-        assertLive(identity, token)
-
-        if (!initialTargetConsumed) {
-          if (initialTarget) {
-            await applyAppNavigation(initialTarget)
+          await apply(
+            snapshot,
+            identity,
+            token,
+            explicitTarget ?? snapshot.navigation,
+            explicitSession ?? snapshot.conversation.selectedSessionId
+          )
+        } else if (explicitTarget) {
+          if (explicitSession) {
+            await restoreConversationSelection(explicitSession)
           }
 
           assertLive(identity, token)
-          initialTargetConsumed = true
+          await applyAppNavigation(explicitTarget)
         }
 
+        assertLive(identity, token)
+        initialTarget = null
         await bridge.ready(identity, snapshot?.revision ?? 0)
       }
 
@@ -250,6 +219,10 @@ export function installAppUiStateSync(): () => void {
     const identity = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
 
     if (authSessionId !== identity) {
+      if (authSessionId) {
+        initialTarget = null
+      }
+
       authSessionId = identity
       appliedRevision = -1
       initialize()

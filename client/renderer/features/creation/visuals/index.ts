@@ -1,5 +1,5 @@
 export type { VisualReceiptBody, VisualsListQuery } from './api'
-export { actionsApi, visualsApi } from './api'
+export { visualsApi } from './api'
 export {
   $ambientLoopChoice,
   $failedStageMedia,
@@ -52,19 +52,5 @@ export {
   $visualsPresentationError,
   $visualsTotal
 } from './state'
-export type {
-  ActionClipKind,
-  ActionDefinition,
-  ActionLibraryGroup,
-  ActionMediaEntry,
-  ActionReviewStatus,
-  VisualActualSnapshot,
-  VisualDetail,
-  VisualItem,
-  VisualJob,
-  VisualJobCommand,
-  VisualMediaKind,
-  VisualPlayCommand,
-  VisualsPresentation
-} from './types'
+export type { VisualActualSnapshot, VisualPlayCommand, VisualsPresentation } from './types'
 export { visualsUiHandoff } from './ui-handoff'

@@ -2,8 +2,9 @@ import type { ReactElement } from 'react'
 
 import type { RemoteApi } from './api'
 import { MemoryView } from './Memory'
+import { usePageState } from './page-state'
 import { Profile } from './Profile'
-import { PageHeader, usePageState } from './ui'
+import { PageHeader, SectionNav } from './ui'
 import { Voice } from './Voice'
 
 type Section = 'memory' | 'profile' | 'voice'
@@ -21,18 +22,7 @@ export function Companion({ api, refresh }: { api: RemoteApi; refresh: number })
 
   return (
     <div className="page companion-page">
-      <nav aria-label="伙伴分类" className="companion-nav">
-        {ITEMS.map(item => (
-          <button
-            aria-current={section === item.id ? 'page' : undefined}
-            key={item.id}
-            onClick={() => setSection(item.id)}
-            type="button"
-          >
-            {item.title}
-          </button>
-        ))}
-      </nav>
+      <SectionNav items={ITEMS} label="伙伴分类" onSelect={setSection} selected={section} />
       {section === 'profile' ? (
         <>
           <PageHeader subtitle="名字、性格和你们的相处方式" title="伙伴资料" />

@@ -7,8 +7,7 @@ import {
 } from './companion-editor-state'
 
 export const companionEditorsUiHandoff: UiStateHandoff<'companionEditors'> = {
-  key: 'companionEditors',
   revision: $companionEditors,
-  capture: () => captureCompanionEditorUiSnapshot(),
-  apply: snapshot => applyCompanionEditorUiSnapshot(snapshot)
+  capture: captureCompanionEditorUiSnapshot,
+  apply: applyCompanionEditorUiSnapshot
 }

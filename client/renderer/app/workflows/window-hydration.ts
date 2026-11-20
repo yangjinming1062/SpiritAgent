@@ -1,14 +1,19 @@
-import { useStore } from '@nanostores/react'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 import { hydratePersona, hydratePortrait } from '@/features/character'
-import { $chatSessionId, ensureCompanionSession, setChatSession, switchSession } from '@/features/conversation'
+import {
+  $chatSessionId,
+  $companionSessionId,
+  ensureCompanionSession,
+  findConversationRuntime,
+  setChatSession,
+  switchSession
+} from '@/features/conversation'
 import { hydrateCreationActivity } from '@/features/creation'
 import { hydrateScene } from '@/features/creation/environment'
 import { hydrateDiaryUnread } from '@/features/life/diary'
 import { hydratePostsUnread } from '@/features/life/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { $uiStateReady } from '@/shared/store/ui-state'
 
@@ -32,44 +37,15 @@ export function useMainWindowHydration({
   foreground,
   errorLabel
 }: MainWindowHydration): void {
-  const beginAsync = useAsyncGuard()
+  const ready = authenticated && uiStateReady && gatewayState === 'open'
+  useWindowSession(accountId, ready, errorLabel)
 
   useEffect(() => {
-    if (!authenticated || !uiStateReady || gatewayState !== 'open') {
-      return
+    if (ready) {
+      void hydrateScene()
+      void hydrateCreationActivity()
     }
-
-    void hydrateScene()
-    void hydrateCreationActivity()
-    const accountCurrent = beginAsync()
-    let disposed = false
-    const isLive = (): boolean => !disposed && accountCurrent() && $uiStateReady.get()
-    void ensureCompanionSession()
-      .then(async sessionId => {
-        if (!isLive()) {
-          return
-        }
-
-        if (sessionId && !$chatSessionId.get()) {
-          setChatSession(sessionId)
-        }
-
-        const selected = $chatSessionId.get()
-
-        if (selected) {
-          await switchSession(selected)
-        }
-      })
-      .catch(error => {
-        if (isLive()) {
-          notifyError(error, errorLabel)
-        }
-      })
-
-    return () => {
-      disposed = true
-    }
-  }, [authenticated, uiStateReady, accountId, gatewayState, beginAsync, errorLabel])
+  }, [accountId, ready])
 
   // 未读补查：网关连通或界面可见时各查一次；同一轮不重复触发，避免在途结果被自己作废。
   useEffect(() => {
@@ -83,7 +59,7 @@ export function useMainWindowHydration({
 }
 
 interface DesktopWindowHydration {
-  authenticated: boolean
+  accountId: string | null
   gatewayState: string
   uiStateReady: boolean
   errorLabel: string
@@ -91,16 +67,15 @@ interface DesktopWindowHydration {
 
 // 桌面窗口承载多个页面：登录后补齐人物、场景与未读，联网后再恢复陪伴会话。
 export function useDesktopWindowHydration({
-  authenticated,
+  accountId,
   gatewayState,
   uiStateReady,
   errorLabel
 }: DesktopWindowHydration): void {
-  const gateway = useStore($gateway)
-  const initialized = useRef(false)
+  useWindowSession(accountId, !!accountId && gatewayState === 'open' && uiStateReady, errorLabel)
 
   useEffect(() => {
-    if (!authenticated) {
+    if (!accountId) {
       return
     }
 
@@ -110,37 +85,50 @@ export function useDesktopWindowHydration({
     void hydrateCreationActivity()
     void hydratePostsUnread()
     void hydrateDiaryUnread()
-  }, [authenticated, gatewayState])
+  }, [accountId, gatewayState])
+}
 
+function useWindowSession(accountId: string | null, ready: boolean, errorLabel: string): void {
+  const beginAsync = useAsyncGuard()
   useEffect(() => {
-    if (gatewayState !== 'open' || !uiStateReady) {
+    if (!ready) {
       return
     }
 
+    const accountCurrent = beginAsync()
     let disposed = false
-    void ensureCompanionSession()
-      .then(id => {
-        if (disposed || !id) {
-          return
-        }
+    const isLive = (): boolean => !disposed && accountCurrent() && $uiStateReady.get()
 
-        if (!initialized.current) {
-          initialized.current = true
-          const target = new URLSearchParams(window.location.search).get('sessionId')
+    const restore = async () => {
+      const known = $companionSessionId.get()
 
-          const selected = target || $chatSessionId.get() || id
-          setChatSession(selected)
-          void switchSession(selected)
-        }
-      })
-      .catch(error => {
-        if (!disposed) {
-          notifyError(error, errorLabel)
-        }
-      })
+      const companion =
+        known && findConversationRuntime(known)?.$historyHydrated.get() ? known : await ensureCompanionSession()
+
+      if (!isLive()) {
+        return
+      }
+
+      if (companion && !$chatSessionId.get()) {
+        setChatSession(companion)
+      }
+
+      const selected = $chatSessionId.get()
+
+      // 已水合会话的断线恢复归网关；窗口只补首次选择缺少的基线。
+      if (selected && !findConversationRuntime(selected)?.$historyHydrated.get()) {
+        await switchSession(selected)
+      }
+    }
+
+    void restore().catch(error => {
+      if (isLive()) {
+        notifyError(error, errorLabel)
+      }
+    })
 
     return () => {
       disposed = true
     }
-  }, [gateway, gatewayState, uiStateReady, errorLabel])
+  }, [accountId, ready, beginAsync, errorLabel])
 }

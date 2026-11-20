@@ -21,9 +21,9 @@ import {
   LoadingBlock,
   SettingCard
 } from '@/ui'
+import type { VisualDetail, VisualJob, VisualJobCommand } from '@protocol'
 
 import { loadVisualDetail } from './library'
-import { type VisualDetail, type VisualJob, type VisualJobCommand } from './types'
 import { VisualImportAnalysis } from './visual-import-analysis'
 import { VisualJobRow } from './visual-job-row'
 import { formatDuration, isAdvancingState, isPendingState } from './visual-labels'

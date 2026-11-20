@@ -3,7 +3,8 @@ import type { ReactElement } from 'react'
 import type { RemoteApi, RemoteGateway } from './api'
 import { DiaryView, Posts } from './Feed'
 import { LifeSummary } from './LifeSummary'
-import { PageHeader, usePageState } from './ui'
+import { usePageState } from './page-state'
+import { PageHeader, SectionNav } from './ui'
 
 type Section = 'diary' | 'now' | 'posts'
 
@@ -28,26 +29,18 @@ export function Life({
   unread: { feed: boolean; diary: boolean }
 }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('life.section', 'now')
-  const section = ITEMS.some(item => item.id === savedSection) ? savedSection : 'now'
-  const active = ITEMS.find(item => item.id === section) ?? ITEMS[0]
+  const active = ITEMS.find(item => item.id === savedSection) ?? ITEMS[0]
+  const section = active.id
 
   return (
     <div className="page life-page">
-      <nav aria-label="生活分类" className="companion-nav">
-        {ITEMS.map(item => (
-          <button
-            aria-current={section === item.id ? 'page' : undefined}
-            key={item.id}
-            onClick={() => setSection(item.id)}
-            type="button"
-          >
-            {item.title}
-            {((item.id === 'posts' && unread.feed) || (item.id === 'diary' && unread.diary)) && (
-              <i aria-label="有未读内容" className="tab-unread" />
-            )}
-          </button>
-        ))}
-      </nav>
+      <SectionNav
+        items={ITEMS}
+        label="生活分类"
+        onSelect={setSection}
+        selected={section}
+        unread={{ posts: unread.feed, diary: unread.diary }}
+      />
       <PageHeader subtitle={active.subtitle} title={active.title} />
       {section === 'now' ? (
         <LifeSummary api={api} refresh={refresh} />

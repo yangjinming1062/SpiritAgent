@@ -1,11 +1,3 @@
-export function newRequestId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 export async function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
@@ -31,4 +23,27 @@ export async function copyText(text: string): Promise<void> {
       focused.focus({ preventScroll: true })
     }
   }
+}
+
+export async function readImage(
+  file: File
+): Promise<{ base64: string; type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; url: string }> {
+  const type = (['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const).find(value => value === file.type)
+  if (!type) {
+    throw new Error('请选择 PNG、JPEG、WebP 或 GIF 图片')
+  }
+
+  if (file.size > 6 * 1024 * 1024) {
+    throw new Error('图片超过 6 MB，请缩小后上传')
+  }
+
+  const url = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () =>
+      typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片无法读取'))
+    reader.onerror = () => reject(new Error('图片无法读取'))
+    reader.readAsDataURL(file)
+  })
+
+  return { base64: url.slice(url.indexOf(',') + 1), type, url }
 }

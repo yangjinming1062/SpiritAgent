@@ -21,4 +21,3 @@ export const VOICE_PRESETS = [
   '活力男声',
   '少年音'
 ] as const
-export const USER_GENDER_PRESETS = ['女', '男', '其他', '不愿说'] as const

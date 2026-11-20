@@ -15,7 +15,8 @@ import { compareResourceIds } from '../shared/resource-id'
 
 import type { RemoteApi, RemoteGateway } from './api'
 import { errorText } from './api'
-import { Notice, timestamp, useAlive, useTask } from './ui'
+import { useAlive, useTask } from './tasks'
+import { Notice, timestamp } from './ui'
 
 interface FeedbackState {
   feedback: Record<string, TopicFeedbackSnapshot>

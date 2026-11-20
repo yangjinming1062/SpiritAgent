@@ -1,29 +1,16 @@
 import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import { requestResource } from '@/shared/lib/resource-request'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
+import type { ActionDefinition, ActionLibraryGroup } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
-import { type ActionDefinition, type ActionLibraryGroup, actionsApi } from '../visuals'
+import { creationSubmitter } from '../creation-request'
 
 import { refreshActionActivity } from './activity-store'
 
-function newRequestId(): string {
-  return typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `action:${Date.now()}:${Math.random()}`
-}
-
-// 待确认的请求身份按设计内容保存：响应丢失后沿用同一个键，后端不会重复登记。
-const createRequests = definePersistedAtom<{ ids: Record<string, string> }>({
-  key: 'da.actions.createRequests',
-  fallback: { ids: {} },
-  isPersistable: (value): value is { ids: Record<string, string> } =>
-    typeof value === 'object' &&
-    value !== null &&
-    'ids' in value &&
-    typeof value.ids === 'object' &&
-    value.ids !== null &&
-    Object.values(value.ids).every(id => typeof id === 'string')
-})
+const submitCreation = creationSubmitter('da.actions.createRequests')
 
 function createGroupState() {
   return {
@@ -89,7 +76,9 @@ export async function refreshActions(
   state.loading.set(true)
 
   try {
-    const list = await actionsApi.list({ group, query: search || undefined, cursor: cursor ?? undefined, limit: 50 })
+    const list = await requestResource('companion_actions.list_actions', {
+      query: { group, query: search || undefined, cursor: cursor ?? undefined, limit: 50 }
+    })
 
     if (!scope() || currentEpoch !== epoch || revision !== state.revision) {
       return
@@ -139,21 +128,18 @@ export async function interpretAction(
   description: string,
   actionId?: string
 ): Promise<ApiSchemas['ActionInterpretation']> {
-  return actionsApi.interpret({ description, action_id: actionId ?? null })
+  return requestResource('companion_actions.interpret_action', { body: { description, action_id: actionId ?? null } })
 }
 
 /** 用户确认后才登记；同一份设计复用请求身份，重试不会产生第二个动作。 */
 export async function createAction(design: Record<string, unknown>): Promise<ActionDefinition> {
   const scope = captureAuthScope()
-  const key = JSON.stringify(design)
-  const requestId = createRequests.get().ids[key] ?? newRequestId()
-  createRequests.set({ ids: { ...createRequests.get().ids, [key]: requestId } })
-  const action = await actionsApi.create({ request_id: requestId, design })
+
+  const action = await submitCreation(design, request_id =>
+    requestResource('companion_actions.create_action', { body: { request_id, design } })
+  )
 
   if (scope?.()) {
-    const pending = { ...createRequests.get().ids }
-    delete pending[key]
-    createRequests.set({ ids: pending })
     await refreshActionGroups()
   }
 
@@ -166,7 +152,11 @@ export async function updateAction(
   expectedUpdatedAt: string
 ): Promise<ActionDefinition> {
   const scope = captureAuthScope()
-  const action = await actionsApi.update(actionId, { design, expected_updated_at: expectedUpdatedAt })
+
+  const action = await requestResource('companion_actions.update_action', {
+    path: { action_id: actionId },
+    body: { design, expected_updated_at: expectedUpdatedAt }
+  })
 
   if (scope?.()) {
     await refreshActionGroups()
@@ -177,7 +167,10 @@ export async function updateAction(
 
 export async function retryActionReview(action: ActionDefinition): Promise<void> {
   const scope = captureAuthScope()
-  await actionsApi.review(action.id, action.updated_at)
+  await requestResource('companion_actions.retry_review', {
+    path: { action_id: action.id },
+    body: { expected_updated_at: action.updated_at }
+  })
 
   if (scope?.()) {
     await refreshActionGroups()
@@ -186,7 +179,7 @@ export async function retryActionReview(action: ActionDefinition): Promise<void>
 
 export async function deleteAction(actionId: string): Promise<void> {
   const scope = captureAuthScope()
-  await actionsApi.remove(actionId)
+  await requestResource('companion_actions.delete_action', { path: { action_id: actionId } })
 
   if (scope?.()) {
     await refreshActionGroups()

@@ -4,9 +4,9 @@ import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
 import { authedResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { createUnreadMirror } from '@/shared/lib/unread-mirror'
-import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { isRecord } from '../../../../../shared/is-record'
 
 export interface DiaryEntry {
   body: string

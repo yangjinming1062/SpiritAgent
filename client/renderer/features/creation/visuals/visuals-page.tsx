@@ -25,6 +25,7 @@ import {
   SettingsContent,
   StatusToggle
 } from '@/ui'
+import type { VisualItem, VisualJob, VisualJobCommand } from '@protocol'
 
 import { showVisualJobActivity } from '../../../../../shared/visuals'
 import { $actions, refreshActions } from '../actions'
@@ -52,7 +53,6 @@ import {
   $visualsPresentation,
   $visualsTotal
 } from './state'
-import { type VisualItem, type VisualJob, type VisualJobCommand } from './types'
 import { VisualCreatePanel } from './visual-create-panel'
 import { VisualDetailView } from './visual-detail-view'
 import { VisualJobRow } from './visual-job-row'

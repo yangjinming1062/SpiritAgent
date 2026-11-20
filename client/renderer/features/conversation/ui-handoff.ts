@@ -7,8 +7,7 @@ import {
 } from './conversation-view'
 
 export const conversationUiHandoff: UiStateHandoff<'conversation'> = {
-  key: 'conversation',
   revision: $mainConversationDraftRevision,
-  capture: () => exportMainConversationDraftSnapshot(),
-  apply: snapshot => importMainConversationDraftSnapshot(snapshot)
+  capture: exportMainConversationDraftSnapshot,
+  apply: importMainConversationDraftSnapshot
 }

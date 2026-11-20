@@ -27,7 +27,6 @@ export {
   RELATIONSHIP_PRESETS,
   SPEAKING_STYLE_PRESETS,
   SPECIES_PRESETS,
-  USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from './persona-presets'
 export { $persona, applyPersonaResponse, hydratePersona } from './persona-store'

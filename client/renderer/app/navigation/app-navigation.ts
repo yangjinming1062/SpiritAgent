@@ -89,10 +89,10 @@ function writeHash(target: AppNavigationTarget): void {
 }
 
 export function getAppNavigation(): AppNavigationTarget {
-  return composeNavigation(location.$atom.get(), pageFocus.get())
+  return $appNavigationTarget.get()
 }
 
-async function apply(target: AppNavigationTarget, updateHash = true): Promise<void> {
+export async function applyAppNavigation(target: AppNavigationTarget, updateHash = true): Promise<void> {
   const next = normalizeAppNavigation(target)
   location.replace(next.location)
   pageFocus.set(next.focus)
@@ -113,12 +113,8 @@ async function apply(target: AppNavigationTarget, updateHash = true): Promise<vo
   }
 }
 
-export function applyAppNavigation(target: AppNavigationTarget, updateHash = true): Promise<void> {
-  return apply(target, updateHash)
-}
-
 export function openChat(focus: Omit<Extract<PageFocus, { page: 'chat' }>, 'page'> = {}): Promise<void> {
-  return apply(composeNavigation({ page: 'chat' }, { page: 'chat', ...focus }))
+  return applyAppNavigation({ location: { page: 'chat' }, focus: { page: 'chat', ...focus } })
 }
 
 /** 进入伙伴主会话：已知会话时直接定位，未加载时才拉取；打不开时抛出可提示的错误。 */
@@ -138,24 +134,22 @@ export function openLife(
   section: LifeSection = DEFAULT_SECTION.life,
   focus: Omit<Extract<PageFocus, { page: 'life' }>, 'page'> = {}
 ): Promise<void> {
-  return apply(composeNavigation({ page: 'life', section }, { page: 'life', ...focus }))
+  return applyAppNavigation({ location: { page: 'life', section }, focus: { page: 'life', ...focus } })
 }
 
 export function openCreation(
   section: CreationSection = DEFAULT_SECTION.creation,
   focus: Omit<Extract<PageFocus, { page: 'creation' }>, 'page'> = {}
 ): Promise<void> {
-  return apply(composeNavigation({ page: 'creation', section }, { page: 'creation', ...focus }))
+  return applyAppNavigation({ location: { page: 'creation', section }, focus: { page: 'creation', ...focus } })
 }
 
 export function openCompanion(section: CompanionSection = DEFAULT_SECTION.companion): Promise<void> {
-  return apply(composeNavigation({ page: 'companion', section }, { page: 'companion' }))
+  return applyAppNavigation({ location: { page: 'companion', section }, focus: { page: 'companion' } })
 }
 
 export function openSettings(section: SettingsSection = DEFAULT_SECTION.settings, tab?: SettingsTab): Promise<void> {
-  const next = tab ? { page: 'settings' as const, section, tab } : { page: 'settings' as const, section }
-
-  return apply(composeNavigation(next, { page: 'settings' }))
+  return applyAppNavigation({ location: { page: 'settings', section, tab }, focus: { page: 'settings' } })
 }
 
 export function setAppPage(page: AppPage): void {
@@ -193,7 +187,7 @@ export function initAppNavigation(): () => void {
     const target = readAppNavigationHash()
 
     if (target) {
-      void apply(target, false).catch(error => log.warn('app-navigation', 'navigation failed', error))
+      void applyAppNavigation(target, false).catch(error => log.warn('app-navigation', 'navigation failed', error))
     }
   }
 

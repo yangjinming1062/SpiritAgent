@@ -1,45 +1,50 @@
-import { IconDeviceTv, IconHome, IconShirt, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 
 import { Actions } from './Actions'
 import type { RemoteApi } from './api'
-import { Assets } from './Assets'
-import { usePageState } from './ui'
+import { usePageState } from './page-state'
+import { SceneLibrary } from './SceneLibrary'
+import { SectionNav } from './ui'
 import { Visuals } from './Visuals'
-
-type Section = 'action' | 'outfit' | 'scene' | 'visuals'
+import { Wardrobe } from './Wardrobe'
 
 const ITEMS = [
-  { id: 'visuals', title: '影像', icon: IconDeviceTv },
-  { id: 'outfit', title: '造型', icon: IconShirt },
-  { id: 'scene', title: '环境', icon: IconHome },
-  { id: 'action', title: '动作', icon: IconSparkles }
+  { id: 'visuals', title: '影像' },
+  { id: 'outfit', title: '造型' },
+  { id: 'scene', title: '环境' },
+  { id: 'action', title: '动作' }
 ] as const
 
-/** 创作页签：与桌面同一套入口顺序；分区随会话保存，切走再回来不丢创作位置。 */
-export function Creation({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
-  const [section, setSection] = usePageState<Section>('creation.section', 'visuals')
+export type CreationSection = (typeof ITEMS)[number]['id']
 
+export function useCreationSection() {
+  const [savedSection, setSection] = usePageState<CreationSection>('creation.section', 'visuals')
+  const section = ITEMS.find(item => item.id === savedSection)?.id ?? ITEMS[0].id
+  return [section, setSection] as const
+}
+
+export function Creation({
+  api,
+  refresh,
+  section,
+  onSelect
+}: {
+  api: RemoteApi
+  refresh: number
+  section: CreationSection
+  onSelect: (section: CreationSection) => void
+}): ReactElement {
   return (
     <div className="page creation-page">
-      <nav aria-label="创作分类" className="companion-nav">
-        {ITEMS.map(item => (
-          <button
-            aria-current={section === item.id ? 'page' : undefined}
-            key={item.id}
-            onClick={() => setSection(item.id)}
-            type="button"
-          >
-            {item.title}
-          </button>
-        ))}
-      </nav>
+      <SectionNav items={ITEMS} label="创作分类" onSelect={onSelect} selected={section} />
       {section === 'visuals' ? (
-        <Visuals api={api} onOpenSection={setSection} refresh={refresh} />
+        <Visuals api={api} onOpenSection={onSelect} refresh={refresh} />
       ) : section === 'action' ? (
         <Actions api={api} refresh={refresh} />
+      ) : section === 'scene' ? (
+        <SceneLibrary api={api} refresh={refresh} />
       ) : (
-        <Assets api={api} key={section} kind={section} refresh={refresh} />
+        <Wardrobe api={api} refresh={refresh} />
       )}
     </div>
   )

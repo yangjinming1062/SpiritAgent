@@ -36,7 +36,6 @@ export {
   navigationHash,
   normalizeAppLocation,
   normalizeAppNavigation,
-  normalizePageFocus,
   parseNavigationHash,
   SETTINGS_SECTIONS,
   SETTINGS_TABS

@@ -7,51 +7,42 @@ import { uiCopy } from '../shared/ui-copy'
 export { ApiError } from '../shared/errors'
 export type { GatewayEvent } from '../shared/gateway'
 
-import type { RemoteSession } from './types'
-
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : uiCopy.operationFailed
 }
 
 export class RemoteApi implements ApiTransport {
-  private csrf = ''
-  private controller = new AbortController()
-  onExpired: () => void = () => {}
+  private readonly controller = new AbortController()
+  private readonly transport: ApiTransport
 
-  authenticate(session: RemoteSession): void {
-    this.clear()
-    this.csrf = session.csrf_token
+  constructor(
+    csrf = '',
+    readonly onExpired: () => void = () => {}
+  ) {
+    this.transport = createHttpClient({
+      fetch: (url, init) => fetch(url, init),
+      credentials: 'same-origin',
+      defaultTimeoutMs: 180_000,
+      headers: () => new Headers(csrf ? { 'X-CSRF-Token': csrf } : undefined)
+    })
   }
 
-  clear(): void {
+  close(): void {
     this.controller.abort()
-    this.controller = new AbortController()
-    this.csrf = ''
   }
 
-  async invoke<Operation extends ApiOperationKey>(
-    operation: Operation,
-    ...args: ApiArguments<Operation>
-  ): Promise<ApiResponse<Operation>> {
-    const controller = this.controller
+  async invoke<K extends ApiOperationKey>(operation: K, ...args: ApiArguments<K>): Promise<ApiResponse<K>> {
+    const { signal } = this.controller
+    const [input, options] = args
     try {
-      const transport = createHttpClient({
-        fetch: (input, options) =>
-          fetch(input, {
-            ...options,
-            signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
-          }),
-        credentials: 'same-origin',
-        defaultTimeoutMs: 180_000,
-        headers: () => new Headers(this.csrf ? { 'X-CSRF-Token': this.csrf } : undefined)
+      const value = await this.transport.invoke<K>(operation, input ?? {}, {
+        ...options,
+        signal: options?.signal ? AbortSignal.any([options.signal, signal]) : signal
       })
-      const value = await transport.invoke(operation, ...args)
-      if (controller.signal.aborted) {
-        throw new DOMException('账户已切换', 'AbortError')
-      }
+      signal.throwIfAborted()
       return value
     } catch (error) {
-      if (controller.signal.aborted) {
+      if (signal.aborted) {
         throw new ApiError(
           null,
           {
@@ -63,7 +54,7 @@ export class RemoteApi implements ApiTransport {
           { cause: error }
         )
       }
-      if (error instanceof ApiError && error.isLoginExpired && this.csrf) {
+      if (error instanceof ApiError && error.isLoginExpired) {
         this.onExpired()
       }
       throw error
@@ -176,27 +167,4 @@ export class RemoteGateway {
     this.stopped = true
     this.connection.close()
   }
-}
-
-export async function readImage(
-  file: File
-): Promise<{ base64: string; type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'; url: string }> {
-  const type = (['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const).find(value => value === file.type)
-  if (!type) {
-    throw new Error('请选择 PNG、JPEG、WebP 或 GIF 图片')
-  }
-
-  if (file.size > 6 * 1024 * 1024) {
-    throw new Error('图片超过 6 MB，请缩小后上传')
-  }
-
-  const url = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () =>
-      typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('图片无法读取'))
-    reader.onerror = () => reject(new Error('图片无法读取'))
-    reader.readAsDataURL(file)
-  })
-
-  return { base64: url.slice(url.indexOf(',') + 1), type, url }
 }

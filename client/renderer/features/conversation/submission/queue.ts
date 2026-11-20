@@ -5,7 +5,7 @@ import { getStrings } from '@/shared/strings'
 import { errorMessage, sleep } from '@runtime'
 
 import { ApiError } from '../../../../../shared/errors'
-import { isRecord } from '../../../../../shared/gateway'
+import { isRecord } from '../../../../../shared/is-record'
 import { submitConversationTurn } from '../chat-requests'
 import type { PendingPromptItem } from '../chat-runtime-types'
 import { $chatDraftFromUndo, FLUSH_DEBOUNCE_MS } from '../conversation-state'

@@ -1,6 +1,6 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
-import { type DesktopSurfaceOpenPayload, IPC, navigationHash, normalizeAppNavigation } from '@ipc/contracts'
+import { type DesktopSurfaceOpenPayload, IPC, navigationHash } from '@ipc/contracts'
 import { clamp, errorMessage } from '@runtime'
 
 import { sendToWindow } from '../shared/utils'
@@ -31,7 +31,10 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
 } {
   function surfaceLoadUrl(payload?: DesktopSurfaceOpenPayload): string {
     const url = new URL(deps.rendererUrlFor('main', deps.seedTheme()))
-    url.hash = navigationHash(normalizeAppNavigation(payload))
+
+    if (payload) {
+      url.hash = navigationHash(payload)
+    }
 
     return url.toString()
   }

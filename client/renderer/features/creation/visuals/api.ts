@@ -1,13 +1,5 @@
-import { captureAuthScope } from '@/shared/lib/authed-api'
 import { requestResource } from '@/shared/lib/resource-request'
-import { definePersistedAtom } from '@/shared/lib/storage'
-
-import type { ApiSchemas } from '../../../../../shared/api.generated'
-
 import type {
-  ActionDefinition,
-  ActionLibraryGroup,
-  ActionListResponse,
   ActionMediaListResponse,
   PlaybackReceiptKind,
   VisualDetail,
@@ -15,51 +7,19 @@ import type {
   VisualJobCommandRequest,
   VisualJobListResponse,
   VisualListResponse,
-  VisualMediaKind,
-  VisualPlayCommand,
   VisualPresentationUpdate,
-  VisualRegenerateRequest,
-  VisualsPresentation
-} from './types'
+  VisualRegenerateRequest
+} from '@protocol'
 
-const creationRequests = definePersistedAtom<{ ids: Record<string, string> }>({
-  key: 'da.visuals.creationRequests',
-  fallback: { ids: {} },
-  isPersistable: (value): value is { ids: Record<string, string> } =>
-    typeof value === 'object' &&
-    value !== null &&
-    'ids' in value &&
-    typeof value.ids === 'object' &&
-    value.ids !== null &&
-    Object.values(value.ids).every(id => typeof id === 'string')
-})
+import type { ApiOperation } from '../../../../../shared/api'
+import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { creationSubmitter } from '../creation-request'
 
-async function submitCreation<T>(key: string, submit: (requestId: string) => Promise<T>): Promise<T> {
-  const scope = captureAuthScope()
-  const requestId = creationRequests.get().ids[key] ?? crypto.randomUUID()
-  creationRequests.set({ ids: { ...creationRequests.get().ids, [key]: requestId } })
-  const result = await submit(requestId)
+import type { VisualPlayCommand, VisualsPresentation } from './types'
 
-  if (scope?.()) {
-    const pending = { ...creationRequests.get().ids }
-    delete pending[key]
-    creationRequests.set({ ids: pending })
-  }
+const submitCreation = creationSubmitter('da.visuals.creationRequests')
 
-  return result
-}
-
-export interface VisualsListQuery {
-  query?: string
-  media_kind?: VisualMediaKind
-  outfit_id?: string
-  scene_id?: string
-  action_id?: string
-  source?: string
-  cursor?: string
-  include_total?: boolean
-  limit?: number
-}
+export type VisualsListQuery = ApiOperation<'companion_visuals.list_visuals'>['query']
 
 /** 播放回执：status 为实际回执状态，receipt_kind 区分完整图片、视频与窗口静态投影。 */
 export interface VisualReceiptBody {
@@ -76,7 +36,7 @@ export const visualsApi = {
     requestResource('companion_visuals.interpret_visual', { body }),
   /** 统一创建入口：同一份草稿复用同一个 request_id，重试不会产生第二个工作项。 */
   create: (draft: Record<string, unknown>): Promise<VisualJob> =>
-    submitCreation(JSON.stringify(draft), request_id =>
+    submitCreation(draft, request_id =>
       requestResource('companion_visuals.create_visual', { body: { request_id, draft } })
     ),
   upload: (
@@ -121,25 +81,4 @@ export const visualsApi = {
       path: { visual_id: visualId },
       query: { version, origin, ...(lifeRevision !== undefined ? { life_revision: lifeRevision } : {}) }
     })
-}
-
-export const actionsApi = {
-  list: (
-    query: { query?: string; cursor?: string; limit?: number; group?: ActionLibraryGroup } = {}
-  ): Promise<ActionListResponse> => requestResource('companion_actions.list_actions', { query }),
-  get: (actionId: string): Promise<ActionDefinition> =>
-    requestResource('companion_actions.get_action', { path: { action_id: actionId } }),
-  interpret: (body: ApiSchemas['ActionInterpretRequest']): Promise<ApiSchemas['ActionInterpretation']> =>
-    requestResource('companion_actions.interpret_action', { body }),
-  create: (body: ApiSchemas['ActionCreateRequest']): Promise<ActionDefinition> =>
-    requestResource('companion_actions.create_action', { body }),
-  update: (actionId: string, body: ApiSchemas['ActionUpdateRequest']): Promise<ActionDefinition> =>
-    requestResource('companion_actions.update_action', { path: { action_id: actionId }, body }),
-  review: (actionId: string, expectedUpdatedAt: string): Promise<ActionDefinition> =>
-    requestResource('companion_actions.retry_review', {
-      path: { action_id: actionId },
-      body: { expected_updated_at: expectedUpdatedAt }
-    }),
-  remove: (actionId: string): Promise<void> =>
-    requestResource('companion_actions.delete_action', { path: { action_id: actionId } })
 }

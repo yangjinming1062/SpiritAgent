@@ -1576,16 +1576,6 @@ dd {
   color: var(--accent-soft-text);
   font-size: var(--fs-body-sm);
 }
-.asset-detail fieldset .tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-4);
-}
-.asset-detail fieldset .tag-row label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
 .asset-detail fieldset label {
   display: flex;
   align-items: center;
@@ -1593,11 +1583,6 @@ dd {
   margin-top: var(--sp-3);
   color: inherit;
   font-size: var(--fs-body-sm);
-}
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
 }
 .reference-image {
   width: 80px;
@@ -1623,32 +1608,6 @@ dd {
 }
 .recovery-item .pill {
   margin-left: var(--sp-2);
-}
-.visuals-entry {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  width: 100%;
-  margin-bottom: var(--sp-5);
-  padding: var(--sp-4);
-  text-align: left;
-  background: var(--surface-card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-1);
-}
-.visuals-entry span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.visuals-entry strong {
-  color: var(--text-strong);
-  font-size: var(--fs-body-sm);
-}
-.visuals-entry small {
-  color: var(--text-faint);
-  font-size: var(--fs-meta-xs);
 }
 .visual-list {
   margin: 0;

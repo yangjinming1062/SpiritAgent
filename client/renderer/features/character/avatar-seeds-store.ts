@@ -8,8 +8,9 @@ import {
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
+
 // 激活形象的种子图本地缓存（头像 / 全身种子）：生成、确认与水合时写入并持久化，弹窗直接读本地缓存；原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
-import { isRecord } from '@client-shared/is-record'
+import { isRecord } from '../../../../shared/is-record'
 
 import { resolvePortraitUrl } from './avatar-image'
 

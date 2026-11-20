@@ -9,7 +9,8 @@ import {
   emptyArchiveSearch
 } from '../shared/archive-search'
 
-import { Notice, useTask } from './ui'
+import { useTask } from './tasks'
+import { Notice } from './ui'
 
 export function ArchiveSearchPanel<T extends { search: ApiSchemas['SearchStatus'] }>({
   value,

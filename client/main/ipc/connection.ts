@@ -4,7 +4,7 @@ import { type DesktopApiOperationKey, IPC, type IpcInvokeContract, type SpiritAg
 
 import { type ApiArguments, apiErrorFromResponse } from '../../../shared/api'
 import { ApiError } from '../../../shared/errors'
-import { isRecord } from '../../../shared/gateway'
+import { isRecord } from '../../../shared/is-record'
 import type { DesktopGateway } from '../backend/gateway'
 import type { BackendHttp } from '../backend/http'
 import { assertApiOperationAllowed } from '../security/api-allowlist'

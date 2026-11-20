@@ -28,7 +28,6 @@ import {
   SECTION_TITLE
 } from '@/ui'
 import type { CompanionMemoryDraft } from '@client-shared/ipc/ui-state'
-import { isRecord } from '@client-shared/is-record'
 import type {
   MemoryItem,
   MemoryListResponse,
@@ -36,6 +35,8 @@ import type {
   MemoryProfileUpdateRequest,
   UserProfileField
 } from '@protocol'
+
+import { isRecord } from '../../../../shared/is-record'
 
 import { $companionEditors, completeMemoryDraft, editMemoryDraft, setMemoryDraft } from './companion-editor-state'
 

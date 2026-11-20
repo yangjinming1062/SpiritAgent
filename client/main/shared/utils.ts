@@ -14,14 +14,6 @@ export function fileExists(filePath: string): boolean {
   }
 }
 
-export function directoryExists(filePath: string): boolean {
-  try {
-    return fs.statSync(filePath).isDirectory()
-  } catch {
-    return false
-  }
-}
-
 // 守护 webContents.send：关闭/重载期间窗口可能已销毁。channel 只用 `IpcEventChannel`（主→渲单向），不联合 `IpcSendChannel`（渲染→主）。
 export function sendToWindow<C extends IpcEventChannel>(
   mainWindow: BrowserWindow | null | undefined,

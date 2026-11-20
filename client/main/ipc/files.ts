@@ -122,7 +122,7 @@ export function registerFilesIpc({
       return
     }
 
-    // 路径须已由 preload getPathForFile 或 selectPaths 注册；此处不自授白名单。
+    // 路径须已由 preload 或 selectPaths 注册；此处不自授白名单。
     if (pendingFeedIdentity !== authSessionId) {
       clearPendingFeed()
     }

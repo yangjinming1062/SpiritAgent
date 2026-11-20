@@ -5,6 +5,7 @@ import { $dayPhase } from '@/shared/lib/day-phase'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $presentation } from '@/shared/store/presentation'
+import type { VisualDetail, VisualJob, VisualJobCommand, VisualPresentationUpdate } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 
@@ -30,14 +31,7 @@ import {
   receiptQueues,
   visualsState
 } from './state'
-import type {
-  VisualDetail,
-  VisualJob,
-  VisualJobCommand,
-  VisualPlayCommand,
-  VisualPresentationUpdate,
-  VisualsPresentation
-} from './types'
+import type { VisualPlayCommand, VisualsPresentation } from './types'
 
 export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   const scope = captureAuthScope()

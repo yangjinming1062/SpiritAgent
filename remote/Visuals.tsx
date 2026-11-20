@@ -9,24 +9,12 @@ import { showVisualJobActivity, visualJobCommands } from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
+import { AssetResultRecovery, useAssetSubmission } from './asset-submission'
+import { useLibraryPages } from './library-pages'
 import { MediaReviewButton } from './MediaReviewButton'
-import {
-  AssetResultRecovery,
-  Empty,
-  focusAfterRender,
-  LibraryCard,
-  Media,
-  Notice,
-  PageHeader,
-  timestamp,
-  useAlive,
-  useAssetSubmission,
-  usePageScroll,
-  usePageState,
-  useTask,
-  useVisiblePolling,
-  videoQueueText
-} from './ui'
+import { usePageScroll, usePageState } from './page-state'
+import { requireCurrentRead, useAlive, useTask, useVisiblePolling } from './tasks'
+import { Empty, focusAfterRender, LibraryCard, Media, Notice, PageHeader, timestamp, videoQueueText } from './ui'
 import { VisualAnalysis } from './VisualAnalysis'
 import { VisualCreate } from './VisualCreate'
 
@@ -148,6 +136,7 @@ function VisualDetailPanel({
 }): ReactElement {
   const { run, busy, error } = useTask()
   const [feedback, setFeedback] = usePageState(`visual.${visual.id}.feedback`, '')
+  const alive = useAlive()
   const [showOriginal, setShowOriginal] = useState(Boolean(visual.analysis))
   const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`visual.${visual.id}`, onChanged)
   const jobs = visual.jobs
@@ -201,17 +190,17 @@ function VisualDetailPanel({
             <button
               disabled={busy || submitted}
               onClick={() =>
-                run(() =>
-                  submit(async () => {
-                    await api.invoke('companion_visuals.regenerate_visual', {
+                run(async () => {
+                  await submit(() =>
+                    api.invoke('companion_visuals.regenerate_visual', {
                       path: { visual_id: visual.id },
                       body: { expected_version: visual.version, feedback: feedback.trim() || null }
                     })
+                  )
+                  if (alive()) {
                     setFeedback('')
-                    await onChanged()
-                    clearSubmission()
-                  })
-                )
+                  }
+                })
               }
               type="button"
             >
@@ -352,9 +341,6 @@ export function Visuals({
 }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
-  const [rows, setRows] = useState<VisualItem[]>([])
-  const [hasMore, setHasMore] = useState(false)
-  const nextCursor = useRef<string | null>(null)
   const [jobs, setJobs] = useState<VisualJob[]>([])
   const [currentVisualId, setCurrentVisualId] = useState<string | null>(null)
   // 详情随组件生命周期，切 tab 即回列表；筛选与会话级草稿保留在 usePageState。
@@ -362,7 +348,10 @@ export function Visuals({
   const [query, setQuery] = usePageState('visuals.query', '')
   const [mediaKind, setMediaKind] = usePageState<'all' | VisualMediaKind>('visuals.mediaKind', 'all')
   const [source, setSource] = usePageState('visuals.source', '')
-  const [loaded, setLoaded] = useState(false)
+  const { rows, hasMore, loaded, read, save } = useLibraryPages<VisualItem>(
+    JSON.stringify([query, mediaKind, source]),
+    30
+  )
   const revision = useRef(0)
   const selectedId = selected?.id
   usePageScroll(`visuals.${selectedId ?? `list.${query}`}`, loaded)
@@ -371,14 +360,17 @@ export function Visuals({
     async (append = false) => {
       const version = ++revision.current
       const [list, jobList, presentation, detail] = await Promise.all([
-        api.invoke('companion_visuals.list_visuals', {
-          query: {
-            limit: 30,
-            media_kind: mediaKind === 'all' ? undefined : mediaKind,
-            cursor: append ? (nextCursor.current ?? undefined) : undefined,
-            query: query.trim() || undefined,
-            source: source.trim() || undefined
-          }
+        read(append, async (cursor, limit) => {
+          const { visuals: rows, next_cursor } = await api.invoke('companion_visuals.list_visuals', {
+            query: {
+              limit,
+              cursor,
+              media_kind: mediaKind === 'all' ? undefined : mediaKind,
+              query: query.trim() || undefined,
+              source: source.trim() || undefined
+            }
+          })
+          return { rows, next_cursor }
         }),
         api.invoke('companion_visuals.list_visual_jobs', {}),
         api.invoke('companion_visuals.get_presentation', {}),
@@ -392,21 +384,15 @@ export function Visuals({
           : null
       ])
 
-      if (alive() && revision.current === version) {
-        setRows(previous =>
-          append
-            ? [...previous, ...list.visuals.filter(item => !previous.some(existing => existing.id === item.id))]
-            : list.visuals
-        )
-        setHasMore(list.has_more)
-        nextCursor.current = list.next_cursor
+      if (alive()) {
+        requireCurrentRead(version, revision.current)
+        save(list)
         setJobs(jobList.jobs.filter(showVisualJobActivity))
         setCurrentVisualId(presentation.current_visual?.id ?? null)
-        setLoaded(true)
         setSelected(previous => (previous?.id === selectedId ? detail : previous))
       }
     },
-    [alive, api, mediaKind, query, selectedId, setSelected, source]
+    [alive, api, mediaKind, query, read, save, selectedId, source]
   )
 
   useEffect(() => {
@@ -443,8 +429,6 @@ export function Visuals({
               aria-label="按名称筛选影像"
               onChange={event => {
                 revision.current++
-                setRows([])
-                nextCursor.current = null
                 setQuery(event.target.value)
               }}
               placeholder="按名称筛选"
@@ -469,7 +453,6 @@ export function Visuals({
                 <select
                   onChange={event => {
                     revision.current++
-                    nextCursor.current = null
                     setMediaKind(event.target.value === 'all' ? 'all' : (event.target.value as VisualMediaKind))
                   }}
                   value={mediaKind}
@@ -484,7 +467,6 @@ export function Visuals({
                 <input
                   onChange={event => {
                     revision.current++
-                    nextCursor.current = null
                     setSource(event.target.value)
                   }}
                   placeholder="衣柜、环境或动作名称"

@@ -5,10 +5,13 @@ import type { VisualDetail, VisualInterpretation } from '@protocol'
 
 import { composeDescribedInput } from '../shared/described-input'
 import { InterpretationGuard } from '../shared/interpretation-guard'
+import { newRequestId } from '../shared/request-id'
 import { isStaleDraftError } from '../shared/visuals'
 
 import { ApiError, type RemoteApi } from './api'
-import { AssetSteps, Notice, useAlive, usePageState, useTask } from './ui'
+import { usePageState } from './page-state'
+import { useAlive, useTask } from './tasks'
+import { AssetSteps, Notice } from './ui'
 
 type Intent = 'photo' | 'video' | 'motion'
 
@@ -110,7 +113,7 @@ export function VisualCreate({
       return
     }
 
-    const request_id = studio.requestId ?? crypto.randomUUID()
+    const request_id = studio.requestId ?? newRequestId()
     patch({ requestId: request_id })
 
     try {

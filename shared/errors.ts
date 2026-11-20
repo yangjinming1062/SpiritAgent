@@ -1,3 +1,4 @@
+import { isRecord } from './is-record'
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 /** 校验值可安全 JSON 序列化；ancestors 记录在途对象，循环引用按非法处理而不是递归溢出。 */
@@ -26,10 +27,6 @@ export function isJsonValue(value: unknown, ancestors = new Set<object>()): valu
   ancestors.delete(value)
 
   return valid
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export interface BusinessError {

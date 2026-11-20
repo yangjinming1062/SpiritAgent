@@ -1,10 +1,10 @@
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { ApiError } from '../../../../../shared/errors'
+import { isRecord } from '../../../../../shared/is-record'
 
 import type { VisualReceiptBody } from './api'
 import { visualsApi } from './api'

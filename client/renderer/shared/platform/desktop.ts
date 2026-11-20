@@ -1,4 +1,4 @@
-import type { DesktopBackgroundBridge, DesktopBridge, DesktopFileBridge } from '@client-shared/ipc/bridge'
+import type { DesktopBackgroundBridge, DesktopBridge } from '@client-shared/ipc/bridge'
 import type { DesktopApiOperationKey, DesktopApiResult, SpiritAgentApiRequest } from '@ipc/contracts'
 
 import type { ApiResponse } from '../../../../shared/api'
@@ -120,4 +120,7 @@ export const desktopEvents = (): EventPort => window.spiritagent
 export const activityHost = (): Pick<RunnerPort, 'runnerInvoke'> & Pick<ShellPort, 'sprite'> => window.spiritagent
 
 export const backgroundMedia = (): DesktopBackgroundBridge | undefined => window.desktopBackground
-export const desktopFilePaths = (): DesktopFileBridge | undefined => window.spiritagentWebUtils
+
+export async function resolveDroppedFiles(files: FileList | File[] | null | undefined): Promise<string[]> {
+  return files?.length ? window.spiritagent.getDroppedPaths(Array.from(files)) : []
+}

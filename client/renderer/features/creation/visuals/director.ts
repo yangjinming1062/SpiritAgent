@@ -8,7 +8,8 @@ import {
 } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
-import { isRecord } from '@client-shared/is-record'
+
+import { isRecord } from '../../../../../shared/is-record'
 
 import {
   $performance,

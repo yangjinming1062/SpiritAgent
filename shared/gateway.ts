@@ -1,5 +1,6 @@
 import { type ApiOperations, EVENT_POLICIES, type GatewayEventPayloads, type RpcOperations } from './api.generated'
 import { ApiError } from './errors'
+import { isRecord } from './is-record'
 export { isJsonValue } from './errors'
 export type { JsonValue } from './errors'
 
@@ -43,10 +44,6 @@ export interface GatewaySocket {
   close(code?: number, reason?: string): void
   addEventListener(type: string, listener: (event: GatewaySocketEvent) => void): void
   removeEventListener(type: string, listener: (event: GatewaySocketEvent) => void): void
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export type ConnectionState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'

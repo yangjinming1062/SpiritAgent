@@ -14,116 +14,34 @@ import {
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ApiResponse, HttpCallOptions } from '../shared/api'
+import type { ApiResponse } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
-import { eventsAfterSnapshot, isRecord } from '../shared/gateway'
+import { eventsAfterSnapshot } from '../shared/gateway'
+import { isRecord } from '../shared/is-record'
 import { callCopy, CallTranscriptPage, formatCallDuration, LiveCallPage, useCallView } from '../shared/realtime-call-ui'
+import { newRequestId } from '../shared/request-id'
 import { compareResourceIds, isResourceId } from '../shared/resource-id'
 import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
-import { ApiError, errorText, readImage } from './api'
-import { newRequestId } from './browser'
-import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
-import { useRemoteRealtimeCall } from './realtime-call-service'
-import { TopicFeedbackProvider, TopicLink } from './TopicLink'
-import type {
-  ActiveTurn,
-  ChatAttachment,
-  CompanionBubble,
-  SessionInfo,
-  SessionMessage,
-  SystemPresetSummary
-} from './types'
+import { ApiError, errorText } from './api'
+import { readImage } from './browser'
 import {
-  Empty,
-  FileInput,
-  ListSkeleton,
-  Media,
-  Notice,
-  PageHeader,
-  pauseMedia,
-  timestamp,
-  useAlive,
-  useTask,
-  videoQueueText
-} from './ui'
-
-interface PendingPrompt {
-  id: string
-  text: string
-  attachments: ChatAttachment[]
-  retry?: string
-  replace?: string
-}
-
-function readPendingPrompt(key: string): PendingPrompt | null {
-  const stored = sessionStorage.getItem(key)
-
-  if (stored === null) {
-    return null
-  }
-
-  const value: unknown = JSON.parse(stored)
-
-  if (
-    !isRecord(value) ||
-    typeof value.id !== 'string' ||
-    typeof value.text !== 'string' ||
-    !Array.isArray(value.attachments) ||
-    (value.retry !== undefined && !isResourceId(value.retry)) ||
-    (value.replace !== undefined && !isResourceId(value.replace))
-  ) {
-    throw new Error('待确认的消息记录无法读取，请核对会话后重新登录')
-  }
-
-  const attachments: ChatAttachment[] = value.attachments.map((attachment: unknown) => {
-    if (
-      !isRecord(attachment) ||
-      (attachment.type !== 'image' && attachment.type !== 'video' && attachment.type !== 'audio') ||
-      typeof attachment.url !== 'string'
-    ) {
-      throw new Error('待确认的消息附件无法读取，请核对会话后重新登录')
-    }
-
-    return { type: attachment.type, url: attachment.url }
-  })
-
-  return {
-    id: value.id,
-    text: value.text,
-    attachments,
-    retry: isResourceId(value.retry) ? value.retry : undefined,
-    replace: isResourceId(value.replace) ? value.replace : undefined
-  }
-}
-
-async function readTurnReceipt(api: RemoteApi, turn: TurnReference, options?: HttpCallOptions) {
-  try {
-    return await api.invoke(
-      'sessions.get_turn',
-      { path: { session_id: turn.sessionId, request_id: turn.requestId } },
-      options
-    )
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) {
-      return null
-    }
-    throw error
-  }
-}
-
-export function clearChatState(): void {
-  try {
-    for (const key of Object.keys(sessionStorage)) {
-      if (/^remote:\d+:\d+:(?:submission|cancellation):/.test(key)) {
-        sessionStorage.removeItem(key)
-      }
-    }
-  } catch {
-    // 存储受限不能阻止撤销连接和释放录音。
-  }
-}
+  activeReplyIsPersisted,
+  advanceTurn,
+  commandHistory,
+  mergeMessages,
+  type PendingPrompt,
+  readPendingPrompt,
+  readTurnReceipt
+} from './chat-state'
+import { Bubble, Message } from './ChatMessage'
+import { useRemoteRealtimeCall } from './realtime-call-service'
+import { useAlive, useTask } from './tasks'
+import { TopicFeedbackProvider } from './TopicLink'
+import type { ActiveTurn, ChatAttachment, SessionInfo, SessionMessage, SystemPresetSummary } from './types'
+import { Empty, FileInput, ListSkeleton, Media, Notice, PageHeader, pauseMedia, timestamp } from './ui'
+import { useVoiceRecording } from './use-voice-recording'
 
 export function Chat({
   api,
@@ -142,6 +60,7 @@ export function Chat({
 }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
+  const { run: readList, runLatest: refreshList, busy: listBusy, error: listError } = useTask()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [sessionNextCursor, setSessionNextCursor] = useState<string | null>(null)
   const sessionListRevision = useRef(0)
@@ -181,14 +100,12 @@ export function Chat({
   attachmentsRef.current = attachments
   const [failure, setFailure] = useState('')
   const [retryMessage, setRetryMessage] = useState<string | null>(null)
-  const [recording, setRecording] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const recordingUnavailable =
-    location.protocol !== 'https:'
-      ? '录音需要 HTTPS 连接'
-      : !window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder
-        ? '当前浏览器不支持录音'
-        : ''
+  const { recording, transcribing, recordingUnavailable, recordVoice, releaseRecording } = useVoiceRecording(
+    api,
+    selected,
+    url => setAttachments(previous => [...previous, { type: 'audio', url }]),
+    setFailure
+  )
   const selectedSession = selected ? sessions.find(session => session.id === selected) : undefined
   const realtimeCall = useRemoteRealtimeCall({
     api,
@@ -230,10 +147,6 @@ export function Chat({
   const applyEvent = useRef<(event: GatewayEvent) => void>(() => {})
   const listRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const recorder = useRef<MediaRecorder | null>(null)
-  const stream = useRef<MediaStream | null>(null)
-  const recordingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const recordingRevision = useRef(0)
   const pending = useRef<PendingPrompt | null>(null)
   const settledRequests = useRef(new Set<string>())
   const finishCancellation = useRef<
@@ -297,44 +210,6 @@ export function Chat({
     [alive, draftKey, promptKey]
   )
 
-  const releaseRecording = useCallback(() => {
-    recordingRevision.current++
-    clearTimeout(recordingTimer.current)
-
-    if (recorder.current && recorder.current.state !== 'inactive') {
-      recorder.current.onstop = null
-
-      try {
-        recorder.current.stop()
-      } catch (failure) {
-        console.warn('录音停止失败', errorText(failure))
-      }
-    }
-
-    stream.current?.getTracks().forEach(track => track.stop())
-    stream.current = null
-    recorder.current = null
-    if (alive()) {
-      setRecording(false)
-      setTranscribing(false)
-    }
-  }, [alive])
-
-  useEffect(() => {
-    const hidden = () => {
-      if (document.visibilityState !== 'visible') {
-        releaseRecording()
-      }
-    }
-
-    document.addEventListener('visibilitychange', hidden)
-
-    return () => {
-      document.removeEventListener('visibilitychange', hidden)
-      releaseRecording()
-    }
-  }, [releaseRecording])
-
   const loadSessions = useCallback(
     async (cursor: string | null = null) => {
       const revision = ++sessionListRevision.current
@@ -352,14 +227,31 @@ export function Chat({
     [api, alive]
   )
 
+  const loadListHead = useCallback(async () => {
+    await loadSessions()
+
+    if (!metadataLoaded.current) {
+      const [main, catalog] = await Promise.all([
+        api.invoke('sessions.get_main_session'),
+        api.invoke('resource_catalog.get_presets')
+      ])
+
+      if (alive()) {
+        setMainId(main.session_id)
+        setPresets(catalog.presets)
+        metadataLoaded.current = true
+      }
+    }
+  }, [alive, api, loadSessions])
+
   const scheduleListRefresh = useCallback(() => {
     if (listRefreshTimer.current === undefined) {
       listRefreshTimer.current = setTimeout(() => {
         listRefreshTimer.current = undefined
-        void runLatest(() => loadSessions())
+        void refreshList(loadListHead)
       }, 200)
     }
-  }, [loadSessions, runLatest])
+  }, [loadListHead, refreshList])
 
   const resume = useCallback(
     async (id: string) => {
@@ -461,12 +353,20 @@ export function Chat({
     [alive, api, cancellationKey, cancellations, confirmPrompt, gateway, promptKey, userId, device]
   )
 
+  const rememberSettled = (id: string) => {
+    const seen = settledRequests.current
+    seen.add(id)
+    if (seen.size > 500) {
+      const oldest = seen.values().next()
+      if (!oldest.done) {
+        seen.delete(oldest.value)
+      }
+    }
+  }
+
   finishCancellation.current = async (receipt, turn, error) => {
     setStoppingId(current => (current === turn.requestId ? null : current))
-    settledRequests.current.add(turn.requestId)
-    if (settledRequests.current.size > 500) {
-      settledRequests.current.delete(settledRequests.current.values().next().value!)
-    }
+    rememberSettled(turn.requestId)
     if (sessionStorage.getItem(cancellationKey(turn.sessionId)) === turn.requestId) {
       sessionStorage.removeItem(cancellationKey(turn.sessionId))
     }
@@ -494,27 +394,15 @@ export function Chat({
   }
 
   useEffect(() => {
-    void runLatest(async () => {
-      await loadSessions()
+    void refreshList(loadListHead)
+  }, [refresh, refreshList, loadListHead])
 
-      if (!metadataLoaded.current) {
-        const [main, catalog] = await Promise.all([
-          api.invoke('sessions.get_main_session'),
-          api.invoke('resource_catalog.get_presets')
-        ])
-
-        if (alive()) {
-          setMainId(main.session_id)
-          setPresets(catalog.presets)
-          metadataLoaded.current = true
-        }
-      }
-
-      if (selectedRef.current) {
-        await resume(selectedRef.current)
-      }
-    })
-  }, [refresh, loadSessions, resume, alive, runLatest, api])
+  useEffect(() => {
+    const id = selectedRef.current
+    if (id) {
+      void runLatest(() => resume(id))
+    }
+  }, [refresh, resume, runLatest])
 
   applyEvent.current = event => {
     const sessionId = event.session_id
@@ -581,7 +469,7 @@ export function Chat({
       scheduleListRefresh()
     } else if (event.type === 'session.state' && event.payload.running === false) {
       if (event.payload.request_id) {
-        settledRequests.current.add(event.payload.request_id)
+        rememberSettled(event.payload.request_id)
       }
       if (
         event.payload.status === 'completed' &&
@@ -774,121 +662,6 @@ export function Chat({
     }
   }
 
-  const recordVoice = async () => {
-    if (recording && recorder.current) {
-      recorder.current.stop()
-
-      return
-    }
-
-    if (recordingUnavailable) {
-      setFailure(recordingUnavailable)
-      return
-    }
-
-    releaseRecording()
-    pauseMedia()
-    const revision = recordingRevision.current
-    const id = selectedRef.current
-    if (!id) {
-      setFailure('请先选择会话')
-      return
-    }
-    const microphone = await navigator.mediaDevices.getUserMedia({
-      audio: true
-    })
-
-    if (!alive() || revision !== recordingRevision.current || id !== selectedRef.current) {
-      microphone.getTracks().forEach(track => track.stop())
-
-      return
-    }
-
-    stream.current = microphone
-
-    const format = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(value =>
-      MediaRecorder.isTypeSupported(value)
-    )
-
-    let media: MediaRecorder
-
-    try {
-      media = new MediaRecorder(microphone, format ? { mimeType: format } : undefined)
-    } catch (failure) {
-      releaseRecording()
-      throw failure
-    }
-    recorder.current = media
-    const chunks: Blob[] = []
-
-    media.ondataavailable = event => {
-      if (event.data.size > 0) {
-        chunks.push(event.data)
-      }
-    }
-
-    media.onstop = () => {
-      clearTimeout(recordingTimer.current)
-
-      if (!alive() || revision !== recordingRevision.current || id !== selectedRef.current) {
-        microphone.getTracks().forEach(track => track.stop())
-
-        return
-      }
-
-      recorder.current = null
-      stream.current = null
-      microphone.getTracks().forEach(track => track.stop())
-      setRecording(false)
-      setTranscribing(true)
-      const form = new FormData()
-      form.append(
-        'file',
-        new Blob(chunks, { type: media.mimeType }),
-        media.mimeType.includes('mp4') ? 'recording.m4a' : 'recording.webm'
-      )
-      form.append('session_id', id)
-      void api
-        .invoke('media.upload_chat_audio', { body: form })
-        .then(result => {
-          if (alive() && revision === recordingRevision.current && id === selectedRef.current) {
-            setAttachments(previous => [...previous, { type: 'audio', url: result.url }])
-          }
-        })
-        .catch(failure => {
-          if (alive() && revision === recordingRevision.current) {
-            setFailure(errorText(failure))
-          }
-        })
-        .finally(() => {
-          if (alive() && revision === recordingRevision.current) {
-            setTranscribing(false)
-          }
-        })
-    }
-
-    media.onerror = () => {
-      if (alive() && revision === recordingRevision.current) {
-        releaseRecording()
-        setFailure('录音失败，请重新录制')
-      }
-    }
-
-    try {
-      media.start()
-    } catch (failure) {
-      releaseRecording()
-      throw failure
-    }
-
-    setRecording(true)
-    recordingTimer.current = setTimeout(() => {
-      if (media.state === 'recording') {
-        media.stop()
-      }
-    }, 60_000)
-  }
-
   if (!selected) {
     const mainSession = sessions.find(session => session.id === mainId)
     const listed = sessions.filter(session => session.kind !== 'special')
@@ -909,7 +682,7 @@ export function Chat({
           subtitle="无论在哪里，都能继续聊下去"
           title="聊天"
         />
-        {error ? <Notice>{error}</Notice> : null}
+        {(error || listError) && <Notice>{error || listError}</Notice>}
         {showCreate ? (
           <section className="card">
             <h3>新建对话</h3>
@@ -986,15 +759,15 @@ export function Chat({
         {sessionNextCursor !== null ? (
           <button
             className="load-more"
-            disabled={busy}
-            onClick={() => run(() => loadSessions(sessionNextCursor))}
+            disabled={busy || listBusy}
+            onClick={() => readList(() => loadSessions(sessionNextCursor))}
             type="button"
           >
             更多会话
           </button>
         ) : null}
-        {listed.length === 0 && busy ? <ListSkeleton /> : null}
-        {listed.length === 0 && !busy ? (
+        {listed.length === 0 && (busy || listBusy) ? <ListSkeleton /> : null}
+        {listed.length === 0 && !busy && !listBusy ? (
           <Empty title="从一句话开始">直接和伙伴聊聊，或点击右上角开始一段新对话。</Empty>
         ) : null}
       </div>
@@ -1374,195 +1147,5 @@ export function Chat({
         )}
       </div>
     </TopicFeedbackProvider>
-  )
-}
-
-function Message({
-  message,
-  api,
-  refresh,
-  userId,
-  device,
-  onReplaceBubble,
-  replace,
-  replacing,
-  replaceDisabled
-}: {
-  message: SessionMessage
-  api: RemoteApi
-  refresh: () => void
-  userId: string
-  device: string
-  onReplaceBubble: (bubbleIndex: number, bubble: CompanionBubble) => void
-  replace?: () => void
-  replacing?: boolean
-  replaceDisabled?: boolean
-}): ReactElement {
-  let content = typeof message.content === 'string' ? message.content : ''
-
-  let parts: unknown[] = []
-
-  if (message.content_type === 'multimodal_v1' && typeof message.content === 'string') {
-    try {
-      const decoded: unknown = JSON.parse(message.content)
-
-      if (Array.isArray(decoded)) {
-        parts = decoded
-        content = ''
-      }
-    } catch {
-      // 无法解析的历史内容保留原文，不能丢弃消息。
-    }
-  }
-
-  return (
-    <div className={`message ${message.role}`}>
-      <div className="bubble">
-        {message.content_type === 'companion_reply' ? (
-          message.bubbles.map((bubble, index) => (
-            <Bubble
-              bubble={bubble}
-              key={index}
-              refresh={refresh}
-              voice={{
-                progressKey: `remote:${userId}:${device}:voice:${message.id}:${index}`,
-                regenerate: async () => {
-                  const next = await api.invoke('sessions.retry_voice_bubble', {
-                    path: { message_id: message.id, bubble_index: index }
-                  })
-                  onReplaceBubble(index, next)
-                }
-              }}
-            />
-          ))
-        ) : (
-          <>
-            {content ? <p>{content}</p> : null}
-            {parts.map((part: unknown, index) =>
-              isRecord(part) && part.type === 'input_text' && typeof part.text === 'string' ? (
-                <p key={index}>{part.text}</p>
-              ) : isRecord(part) && part.type === 'input_image' && typeof part.image_url === 'string' ? (
-                <Media key={index} refresh={refresh} type="image" url={part.image_url} />
-              ) : isRecord(part) && part.type === 'input_video' && typeof part.video_url === 'string' ? (
-                <Media key={index} refresh={refresh} type="video" url={part.video_url} />
-              ) : isRecord(part) && part.type === 'input_audio' && typeof part.audio_url === 'string' ? (
-                <div key={index}>
-                  <Media refresh={refresh} type="audio" url={part.audio_url} />
-                  {typeof part.transcript === 'string' ? <p>{part.transcript}</p> : null}
-                </div>
-              ) : null
-            )}
-            {message.media?.map((media, index) => (
-              <Media key={index} refresh={refresh} type={media.type} url={media.url} />
-            ))}
-          </>
-        )}
-        {message.reasoning ? (
-          <details className="reasoning">
-            <summary>思考过程</summary>
-            {message.reasoning}
-          </details>
-        ) : null}
-        {replace ? (
-          <button className="subtle" disabled={replaceDisabled} onClick={replace} type="button">
-            {replacing ? '正在换一个回答…' : '换一个回答'}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function Bubble({
-  bubble,
-  refresh,
-  voice
-}: {
-  bubble: CompanionBubble
-  refresh: () => void
-  /** 已持久化消息里的语音气泡：携带播放进度键与重新生成入口。 */
-  voice?: { progressKey: string; regenerate: () => Promise<void> }
-}): ReactElement {
-  const { run, busy, error } = useTask()
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const savedSecond = useRef(-1)
-
-  if (bubble.type === 'text') {
-    return <p>{bubble.text}</p>
-  }
-
-  if (bubble.type === 'link') {
-    return <TopicLink bubble={bubble} key={bubble.topic_id} />
-  }
-
-  if (bubble.type === 'voice') {
-    const audio = bubble.audio
-
-    return (
-      <div className="voice-bubble">
-        <p>{bubble.text}</p>
-        {audio ? (
-          <audio
-            controls
-            onEnded={() => {
-              if (voice) {
-                localStorage.setItem(voice.progressKey, String(audio.duration))
-              }
-            }}
-            onError={refresh}
-            onLoadedMetadata={() => {
-              const saved = voice ? Number(localStorage.getItem(voice.progressKey)) : 0
-
-              if (audioRef.current && Number.isFinite(saved) && saved < audioRef.current.duration) {
-                audioRef.current.currentTime = saved
-              }
-            }}
-            onPause={() => {
-              if (audioRef.current && voice) {
-                localStorage.setItem(voice.progressKey, String(audioRef.current.currentTime))
-              }
-            }}
-            onPlay={event => {
-              pauseMedia(event.currentTarget)
-            }}
-            onTimeUpdate={() => {
-              const current = audioRef.current
-
-              if (current && voice && Math.floor(current.currentTime) !== savedSecond.current) {
-                savedSecond.current = Math.floor(current.currentTime)
-                localStorage.setItem(voice.progressKey, String(current.currentTime))
-              }
-            }}
-            preload="none"
-            ref={audioRef}
-            src={audio.url}
-          />
-        ) : voice ? (
-          <button className="subtle" disabled={busy} onClick={() => run(voice.regenerate)} type="button">
-            重新生成语音
-          </button>
-        ) : (
-          <span className="muted">语音暂不可用</span>
-        )}
-        {error ? <Notice>{error}</Notice> : null}
-      </div>
-    )
-  }
-
-  return bubble.status === 'ready' && bubble.url ? (
-    <Media refresh={refresh} type={bubble.type} url={bubble.url} />
-  ) : (
-    <div className="media-pending">
-      <span>
-        {bubble.type === 'video' ? '视频' : '图片'} ·{' '}
-        {bubble.video_queue
-          ? videoQueueText(bubble.video_queue)
-          : bubble.status === 'pending'
-            ? '正在制作'
-            : bubble.status === 'result_unknown'
-              ? '正在核对原任务'
-              : bubble.error || '本次制作未完成'}
-      </span>
-    </div>
   )
 }

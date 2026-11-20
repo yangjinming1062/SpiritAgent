@@ -3,10 +3,10 @@ import type React from 'react'
 import { MediaReviewButton } from '@/features/media-review'
 import { useStrings } from '@/shared/strings'
 import { BTN_SUBTLE, CreationFeedback, type CreationFeedbackState } from '@/ui'
+import type { VisualJob, VisualJobCommand } from '@protocol'
 
 import { visualJobCommands } from '../../../../../shared/visuals'
 
-import type { VisualJob, VisualJobCommand } from './types'
 import type { VisualsCopy } from './visual-labels'
 import { visualJobLabel } from './visual-labels'
 

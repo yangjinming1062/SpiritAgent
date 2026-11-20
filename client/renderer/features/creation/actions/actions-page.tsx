@@ -7,6 +7,7 @@ import { RENDERER_TIMINGS } from '@/shared/constants'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { failureText } from '@/shared/lib/ipc-error'
+import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
@@ -33,16 +34,10 @@ import {
 } from '@/ui'
 import { LibraryToolbar } from '@/ui/asset-library-header'
 import type { ActionComposerSnapshot } from '@ipc/contracts'
+import type { ActionDefinition, ActionLibraryGroup, ActionMediaEntry } from '@protocol'
 
 import { composeDescribedInput } from '../../../../../shared/described-input'
-import {
-  $visualsPresentation,
-  type ActionDefinition,
-  type ActionLibraryGroup,
-  type ActionMediaEntry,
-  actionsApi,
-  visualsApi
-} from '../visuals'
+import { $visualsPresentation, visualsApi } from '../visuals'
 import { $presentedOutfit, hydrateWardrobe } from '../wardrobe'
 
 import { $actionsUi, beginActionInterpretation, updateActionsComposer } from './actions-state'
@@ -166,8 +161,7 @@ function ActionsPageContent(): React.JSX.Element {
 
     setQuery('')
     const scope = captureAuthScope()
-    void actionsApi
-      .get(actionId)
+    void requestResource('companion_actions.get_action', { path: { action_id: actionId } })
       .then(action => {
         if (scope?.() && focusConsumedRef.current === navigationRevision) {
           setFocusTarget(action)

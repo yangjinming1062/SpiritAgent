@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 
 import { UI_THEME_URL_PARAM } from '@ipc/contracts'
 
-import { directoryExists, fileExists } from '../shared/utils'
+import { fileExists } from '../shared/utils'
 
 function unpackedPathFor(filePath: string): string {
   return filePath.replace(/app\.asar(?=$|[\\/])/, 'app.asar.unpacked')
@@ -22,63 +22,11 @@ export function createAppIconResolver(appRoot: string): () => null | string {
   return () => candidates.find(fileExists) || null
 }
 
-interface RendererPathsDeps {
-  appRoot: string
-  devServer?: null | string
-  isPackaged: boolean
-  rememberLog: (chunk: string) => void
-}
-
-/** 渲染层 HTML 定位：dev server → appRoot/dist → SPIRITAGENT_DESKTOP_WEB_DIST → asar.unpacked/dist；都缺失时记日志并返回首个候选。 */
-export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLog }: RendererPathsDeps) {
-  function resolveWebDist(): string {
-    const override = process.env.SPIRITAGENT_DESKTOP_WEB_DIST
-
-    if (override && directoryExists(path.resolve(override))) {
-      return path.resolve(override)
-    }
-
-    const unpackedDist = path.join(unpackedPathFor(appRoot), 'dist')
-
-    if (directoryExists(unpackedDist)) {
-      return unpackedDist
-    }
-
-    const fallback = path.join(appRoot, 'dist')
-
-    if (isPackaged && /app\.asar(?=$|[\\/])/.test(fallback) && !directoryExists(fallback)) {
-      rememberLog(
-        `[web-dist] renderer dist resolved to an asar-internal path that ` +
-          `is not a real directory: ${fallback}. Renderer pages will fail to load. ` +
-          'Ensure dist/** is unpacked (asarUnpack) or set SPIRITAGENT_DESKTOP_WEB_DIST.'
-      )
-    }
-
-    return fallback
-  }
-
-  function resolveRendererHtml(htmlFileName: string): string {
-    const candidates = [path.join(appRoot, 'dist', htmlFileName), path.join(resolveWebDist(), htmlFileName)]
-    const found = candidates.find(fileExists)
-
-    if (found) {
-      return found
-    }
-
-    rememberLog(
-      `[renderer] ${htmlFileName} not found — the desktop app was packaged without a ` +
-        'renderer bundle. Tried: ' +
-        candidates.join(', ') +
-        '. Rebuild via the Tauri SpiritAgent-Setup installer.'
-    )
-
-    return candidates[0]
-  }
-
-  /** 入口页文件名与窗口角色同名。 */
-  function rendererUrlFor(role: 'main' | 'sprite' | 'desktop' | 'desktop-background', theme?: string): string {
+// app.getAppPath() 在开发版与 asar 包内都指向应用根，构建产物统一位于 dist。
+export function createRendererUrl(appRoot: string, devServer?: string | null) {
+  return function rendererUrlFor(role: 'main' | 'sprite' | 'desktop' | 'desktop-background', theme?: string): string {
     const htmlFile = `${role}.html`
-    const url = devServer ? new URL(`${devServer}/${htmlFile}`) : pathToFileURL(resolveRendererHtml(htmlFile))
+    const url = devServer ? new URL(`${devServer}/${htmlFile}`) : pathToFileURL(path.join(appRoot, 'dist', htmlFile))
 
     if (theme) {
       url.searchParams.set(UI_THEME_URL_PARAM, theme)
@@ -86,6 +34,4 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
 
     return url.toString()
   }
-
-  return { rendererUrlFor }
 }

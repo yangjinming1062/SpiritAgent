@@ -4,10 +4,9 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } fro
 import { $companionSessionId, clearExternalAttachment, pushExternalAttachment } from '@/features/conversation'
 import { openWhisper } from '@/features/conversation'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { log } from '@/shared/lib/log'
-import { shellApi } from '@/shared/platform/desktop'
+import { currentClearEpoch } from '@/shared/lib/storage'
+import { resolveDroppedFiles, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
@@ -280,10 +279,11 @@ export function SpriteStage({
   }, [])
 
   // 文件投喂：纯媒体进轻语，含非媒体文件时整批进入主对话。
-  const handleDrop = (fileList: FileList | null | undefined): void => {
-    const paths = resolveDroppedFiles(fileList)
+  const handleDrop = async (fileList: FileList): Promise<void> => {
+    const epoch = currentClearEpoch()
+    const paths = await resolveDroppedFiles(fileList)
 
-    if (paths.length === 0) {
+    if (!paths.length || epoch !== currentClearEpoch() || !mountRef.current) {
       return
     }
 
@@ -311,16 +311,11 @@ export function SpriteStage({
 
     const sessionId = $companionSessionId.get() ?? undefined
     // 文件经账户信箱交给主对话，仍由原文件白名单裁决访问。
-    void shellApi()
-      .chat.setPendingFeed(paths, auth.snapshot.sessionId)
-      .catch((error: unknown) => {
-        log.warn('sprite-stage', 'Dropped files handoff failed', error)
-        notifyError(error, getStrings().chat.filesHandoffFailed)
-      })
-      .then(() =>
-        isCurrent() ? requestOpenSurface({ location: { page: 'chat' }, focus: { page: 'chat', sessionId } }) : undefined
-      )
-      .catch((error: unknown) => log.warn('sprite-stage', 'Could not open main window', error))
+    await shellApi().chat.setPendingFeed(paths, auth.snapshot.sessionId)
+
+    if (isCurrent()) {
+      await requestOpenSurface({ location: { page: 'chat' }, focus: { page: 'chat', sessionId } })
+    }
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {
@@ -523,7 +518,7 @@ export function SpriteStage({
         onDrop={e => {
           e.preventDefault()
 
-          handleDrop(e.dataTransfer.files)
+          void handleDrop(e.dataTransfer.files).catch(error => notifyError(error, getStrings().chat.filesHandoffFailed))
         }}
         onLostPointerCapture={onPointerInterrupted}
         onPointerCancel={onPointerInterrupted}

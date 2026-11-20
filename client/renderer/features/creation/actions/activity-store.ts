@@ -1,9 +1,9 @@
 import { atom } from 'nanostores'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-
-import { type ActionDefinition, actionsApi } from '../visuals'
+import type { ActionDefinition } from '@protocol'
 
 /** 动作待处理摘要：只读投影，不驱动列表分页与搜索，任务状态以服务端为准。 */
 export interface ActionActivityEntry {
@@ -11,9 +11,7 @@ export interface ActionActivityEntry {
   status: ActionDefinition['status']
 }
 
-const entries = atom<ActionActivityEntry[]>([])
-
-export const $actionActivity = entries
+export const $actionActivity = atom<ActionActivityEntry[]>([])
 
 let epoch = 0
 
@@ -29,12 +27,14 @@ export async function refreshActionActivity(): Promise<void> {
     return
   }
 
-  const currentEpoch = epoch
+  const currentEpoch = ++epoch
   let cursor: string | undefined
   const collected: ActionActivityEntry[] = []
 
   for (let page = 0; page < 5; page += 1) {
-    const list = await actionsApi.list({ group: 'not_in_library', cursor, limit: 100 })
+    const list = await requestResource('companion_actions.list_actions', {
+      query: { group: 'not_in_library', cursor, limit: 100 }
+    })
 
     if (!scope() || epoch !== currentEpoch) {
       return
@@ -49,12 +49,12 @@ export async function refreshActionActivity(): Promise<void> {
     cursor = list.next_cursor
   }
 
-  entries.set(collected)
+  $actionActivity.set(collected)
 }
 
 export function resetActionActivity(): void {
   epoch += 1
-  entries.set([])
+  $actionActivity.set([])
 }
 
 registerStorageClearHandler(resetActionActivity)

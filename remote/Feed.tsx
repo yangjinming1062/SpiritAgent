@@ -8,13 +8,15 @@ import {
   archiveSearchQuery,
   emptyArchiveSearch
 } from '../shared/archive-search'
-import { isRecord } from '../shared/gateway'
+import { isRecord } from '../shared/is-record'
 
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
+import { usePageScroll, usePageState } from './page-state'
+import { useAlive, useTask } from './tasks'
 import type { Diary, Post } from './types'
-import { Empty, Media, Notice, timestamp, useAlive, usePageScroll, usePageState, useTask } from './ui'
+import { Empty, Media, Notice, timestamp } from './ui'
 
 // 没有游标与 has_more：整页返回表示可能还有更早的日记。
 const DIARY_PAGE_SIZE = 100

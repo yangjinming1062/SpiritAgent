@@ -1,4 +1,6 @@
-import type { ChatAttachment, SessionMessage } from '@protocol'
+import type { SessionMessage } from '@protocol'
+
+import { multimodalParts } from '../../../../shared/message-content'
 
 import type { ChatMessageBody, ChatSessionKind, SessionSettings } from './chat-runtime-types'
 
@@ -39,56 +41,21 @@ export function extractMessageContent(m: SessionMessage): Pick<ChatMessageBody, 
     return { text: m.content }
   }
 
-  let parsed: unknown
+  const parts = multimodalParts(m.content)
 
-  try {
-    parsed = JSON.parse(m.content)
-  } catch {
+  if (!parts) {
     return { text: m.content }
   }
 
-  if (!Array.isArray(parsed)) {
-    return { text: m.content.trim() }
-  }
+  const text = parts
+    .filter(part => part.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+    .trim()
 
-  const parts: unknown[] = parsed
-  const texts: string[] = []
-  const attachments: ChatAttachment[] = []
+  const attachments = m.role === 'user' ? parts.filter(part => part.type !== 'text') : []
 
-  for (const part of parts) {
-    if (!part || typeof part !== 'object' || !('type' in part)) {
-      continue
-    }
-
-    if (part.type === 'input_text' && 'text' in part && typeof part.text === 'string') {
-      texts.push(part.text)
-    } else if (m.role === 'user') {
-      if (part.type === 'input_image' && 'image_url' in part && typeof part.image_url === 'string' && part.image_url) {
-        attachments.push({ type: 'image', url: part.image_url })
-      } else if (
-        part.type === 'input_video' &&
-        'video_url' in part &&
-        typeof part.video_url === 'string' &&
-        part.video_url
-      ) {
-        attachments.push({ type: 'video', url: part.video_url })
-      } else if (
-        part.type === 'input_audio' &&
-        'audio_url' in part &&
-        typeof part.audio_url === 'string' &&
-        part.audio_url
-      ) {
-        attachments.push({
-          type: 'audio',
-          url: part.audio_url,
-          ...('duration' in part && typeof part.duration === 'number' ? { duration: part.duration } : {}),
-          ...('transcript' in part && typeof part.transcript === 'string' ? { transcript: part.transcript } : {})
-        })
-      }
-    }
-  }
-
-  return { text: texts.join('\n').trim(), attachments: attachments.length ? attachments : undefined }
+  return { text, attachments: attachments.length ? attachments : undefined }
 }
 
 export function splitUserText(text: string): string[] {

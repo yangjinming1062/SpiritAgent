@@ -58,7 +58,7 @@ export function DesktopRoot(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const { unreadReveal, reveal, clearReveal } = useDesktopNavigation(t.chat)
   useDesktopWindowHydration({
-    authenticated: auth.kind === 'authenticated',
+    accountId: auth.kind === 'authenticated' ? auth.snapshot.accountId : null,
     gatewayState,
     uiStateReady,
     errorLabel: t.chat

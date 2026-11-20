@@ -139,7 +139,9 @@ function WhisperPositioner({
     <div
       className="fixed z-40 flex flex-col overflow-hidden rounded-2xl border border-line-hairline bg-surface-card/85 shadow-2xl backdrop-blur-glass backdrop-saturate-180"
       onDragOver={e => {
-        e.preventDefault()
+        if (e.dataTransfer.types.includes('Files')) {
+          e.preventDefault()
+        }
       }}
       onDrop={onDrop}
       ref={containerRef}

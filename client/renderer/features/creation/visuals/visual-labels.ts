@@ -1,6 +1,5 @@
 import type { Dictionary } from '@/shared/strings'
-
-import type { VisualJob } from './types'
+import type { VisualJob } from '@protocol'
 
 export type VisualsCopy = Dictionary['visuals']
 

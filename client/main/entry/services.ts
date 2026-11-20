@@ -41,7 +41,7 @@ import { createDesktopPresentation, type DesktopPresentation } from '../lifecycl
 import { applyAppIdentity, createMenu } from '../lifecycle/menu'
 import { createOpenExternalUrl } from '../lifecycle/open-external-url'
 import { applyChromiumSwitches } from '../lifecycle/platform'
-import { createAppIconResolver, createRendererPaths } from '../lifecycle/renderer-paths'
+import { createAppIconResolver, createRendererUrl } from '../lifecycle/renderer-paths'
 import { acquireSingleInstance } from '../lifecycle/single-instance'
 import { createSpriteWindowFactory } from '../lifecycle/sprite-window'
 import { createSurfaceCompanionPreferences } from '../lifecycle/surface-companion'
@@ -182,13 +182,7 @@ export function createEntryServices(): EntryServices {
 
   const seedUiTheme = (): string | undefined => uiThemeFromConfig(runnerConfigStore.read())
 
-  const { rendererUrlFor } = createRendererPaths({
-    appRoot,
-    devServer,
-    isPackaged,
-    rememberLog
-  })
-
+  const rendererUrlFor = createRendererUrl(appRoot, devServer)
   const getAppIconPath = createAppIconResolver(appRoot)
 
   applyAppIdentity(app, appName)

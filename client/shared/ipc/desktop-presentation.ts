@@ -1,3 +1,4 @@
+import { isRecord } from '../../../shared/is-record'
 import { isResourceId } from '../../../shared/resource-id'
 export type PresentationMode = 'window' | 'desktop'
 
@@ -268,10 +269,6 @@ export const DEFAULT_NAVIGATION: AppNavigationTarget = {
   focus: { page: 'chat' }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function matches<T extends string>(values: readonly T[], value: unknown): value is T {
   return values.some(item => item === value)
 }
@@ -307,11 +304,11 @@ export function normalizeAppLocation(raw: unknown): AppLocation {
   }
 }
 
-export function normalizePageFocus(raw: unknown, location: AppLocation): PageFocus {
+function normalizePageFocus(raw: unknown, location: AppLocation): PageFocus {
   const value = isRecord(raw) ? raw : {}
 
   if (value.page !== location.page) {
-    return { page: location.page } as PageFocus
+    return { page: location.page }
   }
 
   switch (location.page) {
@@ -335,7 +332,7 @@ export function normalizePageFocus(raw: unknown, location: AppLocation): PageFoc
       }
 
     default:
-      return { page: location.page } as PageFocus
+      return { page: location.page }
   }
 }
 
@@ -350,7 +347,7 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   const value = isRecord(raw) ? raw : {}
   const location = normalizeAppLocation(value.location)
 
-  return composeNavigation(location, (value.focus ?? undefined) as PageFocus | undefined)
+  return { location, focus: normalizePageFocus(value.focus, location) }
 }
 
 /** 导航 query 的唯一读写表：页面决定该页允许携带哪些定位键。 */
@@ -409,7 +406,7 @@ export function parseNavigationHash(hash: string): AppNavigationTarget | null {
     }
   }
 
-  return composeNavigation(location, focus as PageFocus)
+  return { location, focus: normalizePageFocus(focus, location) }
 }
 
 export interface StageActivity {

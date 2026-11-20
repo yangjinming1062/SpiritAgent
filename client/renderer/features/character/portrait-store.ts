@@ -9,7 +9,8 @@ import {
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
-import { isRecord } from '@client-shared/is-record'
+
+import { isRecord } from '../../../../shared/is-record'
 
 import { resolvePortraitUrl } from './avatar-image'
 import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'

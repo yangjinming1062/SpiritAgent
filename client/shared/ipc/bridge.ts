@@ -1,185 +1,230 @@
-import type { DesktopApiInvoke, IpcEventContract, IpcInvokeContract, IpcSendContract } from './contracts'
+import {
+  type DesktopApiInvoke,
+  IPC,
+  type IpcEventContract,
+  type IpcInvokeContract,
+  type IpcSendContract
+} from './contracts'
 
-type AsyncIpc<T extends (...args: never[]) => unknown> = (...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>
+type EventChannel = keyof IpcEventContract
+type Listener<C extends EventChannel> = (event: unknown, ...payload: IpcEventContract[C]) => void
 
-type EventSubscription<K extends keyof IpcEventContract> = IpcEventContract[K] extends [infer P]
-  ? (callback: (payload: P) => void) => () => void
-  : (callback: () => void) => () => void
+interface PreloadIpc {
+  invoke(channel: keyof IpcInvokeContract, ...args: unknown[]): Promise<unknown>
+  send(channel: keyof IpcSendContract, ...args: unknown[]): void
+  on<C extends EventChannel>(channel: C, listener: Listener<C>): void
+  removeListener<C extends EventChannel>(channel: C, listener: Listener<C>): void
+}
 
-export interface DesktopBridge {
-  platform: string
-  uiState: {
-    get: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:get']>
-    update: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:update']>
-    ready: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:ready']>
-    inputBusy: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:input-busy']>
-    reply: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:reply']>
-    onRequest: EventSubscription<'spiritagent:ui-state:request'>
-  }
-  presentation: {
-    setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
-    getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
-    requestAccessibility: AsyncIpc<IpcInvokeContract['spiritagent:presentation:request-accessibility']>
-    setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
-    setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>
-    reportReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:report-ready']>
-    focus: AsyncIpc<IpcInvokeContract['spiritagent:presentation:focus']>
-    heartbeat: AsyncIpc<IpcInvokeContract['spiritagent:presentation:heartbeat']>
-    hostReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:host-ready']>
-    setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>
-    setTrayLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-tray-layout']>
-    stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
-    onChanged: EventSubscription<'spiritagent:presentation:changed'>
-    onPointerPosition: EventSubscription<'spiritagent:presentation:pointer-position'>
-    onBackgroundPlayback: EventSubscription<'spiritagent:presentation:background-playback'>
-  }
-  dock: {
-    getState: AsyncIpc<IpcInvokeContract['spiritagent:dock:get-state']>
-    catalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:catalog']>
-    catalogIcons: AsyncIpc<IpcInvokeContract['spiritagent:dock:catalog-icons']>
-    addFromCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-catalog']>
-    addFromFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-files']>
-    addDroppedFiles: (files: File[]) => Promise<Awaited<ReturnType<IpcInvokeContract['spiritagent:dock:add-dropped']>>>
-    activate: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate']>
-    activateCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate-catalog']>
-    closeWindows: AsyncIpc<IpcInvokeContract['spiritagent:dock:close-windows']>
-    pin: AsyncIpc<IpcInvokeContract['spiritagent:dock:pin']>
-    reorder: AsyncIpc<IpcInvokeContract['spiritagent:dock:reorder']>
-    remove: AsyncIpc<IpcInvokeContract['spiritagent:dock:remove']>
-    repairWithCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-catalog']>
-    repairWithFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-files']>
-    tasks: AsyncIpc<IpcInvokeContract['spiritagent:dock:tasks']>
-    activateTask: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate-task']>
-    onChanged: EventSubscription<'spiritagent:dock:changed'>
-  }
-  desktop: {
-    accounts: AsyncIpc<IpcInvokeContract['spiritagent:desktop:accounts']>
-    switchAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:switch-account']>
-    addAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:add-account']>
-    removeAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:remove-account']>
-    quit: AsyncIpc<IpcInvokeContract['spiritagent:desktop:quit']>
-    onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
-  }
-  gatewayPresence: AsyncIpc<IpcInvokeContract['spiritagent:gateway:presence']>
-  gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
-  voiceConnect: AsyncIpc<IpcInvokeContract['spiritagent:voice:connect']>
-  voiceSend: AsyncIpc<IpcInvokeContract['spiritagent:voice:send']>
-  voiceClose: AsyncIpc<IpcInvokeContract['spiritagent:voice:close']>
-  voiceBusy: AsyncIpc<IpcInvokeContract['spiritagent:voice:busy']>
-  onVoiceEvent: EventSubscription<'spiritagent:voice:event'>
-  onGatewayStateChanged: EventSubscription<'spiritagent:gateway:state-changed'>
-  onGatewayEvent: EventSubscription<'spiritagent:gateway:event'>
-  activate: AsyncIpc<IpcInvokeContract['spiritagent:auth:activate']>
-  refreshSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:refresh']>
-  logout: AsyncIpc<IpcInvokeContract['spiritagent:auth:logout']>
-  getSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:get-session']>
-  api: DesktopApiInvoke
-  /** 把后端服务的二进制资产以 data URL 的形式取回；仅查本地缓存时未命中返回 null。 */
-  apiAsset: AsyncIpc<IpcInvokeContract['spiritagent:api:asset']>
-  /** 原始字节避免大体积媒体的 base64 膨胀。 */
-  apiAssetBuffer: AsyncIpc<IpcInvokeContract['spiritagent:api:asset-buffer']>
-  sessionHistory: {
-    get: AsyncIpc<IpcInvokeContract['spiritagent:session-history:get']>
-    save: AsyncIpc<IpcInvokeContract['spiritagent:session-history:save']>
-    remove: AsyncIpc<IpcInvokeContract['spiritagent:session-history:remove']>
-  }
-  voicePlayback: {
-    get: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:get']>
-    update: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:update']>
-    remove: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:remove']>
-    onChanged: EventSubscription<'spiritagent:voice-playback:changed'>
-  }
-  readFileDataUrl: AsyncIpc<IpcInvokeContract['spiritagent:readFileDataUrl']>
-  /** 聊天图片附件读取：超限降采样重编码，产出可直接发送的 data URL。 */
-  readImageForAttach: AsyncIpc<IpcInvokeContract['spiritagent:readImageForAttach']>
-  /** 聊天视频附件上传：主进程读文件经后端 /api/media/videos 换取会话级附件 URL。 */
-  uploadVideoForAttach: AsyncIpc<IpcInvokeContract['spiritagent:media:video-upload']>
-  selectPaths: AsyncIpc<IpcInvokeContract['spiritagent:selectPaths']>
-  writeClipboard: AsyncIpc<IpcInvokeContract['spiritagent:writeClipboard']>
-  copyImage: AsyncIpc<IpcInvokeContract['spiritagent:copyImage']>
-  saveImage: AsyncIpc<IpcInvokeContract['spiritagent:saveImage']>
-  log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
-  runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
-  runnerGetState: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-state']>
-  setUiTheme: (payload: IpcSendContract['spiritagent:ui-theme'][0]) => void
-  prefs: {
-    applyServerVoice: AsyncIpc<IpcInvokeContract['spiritagent:prefs:apply-server-voice']>
-    set: (payload: IpcSendContract['spiritagent:prefs:set'][0]) => void
-  }
-  shortcuts: {
-    get: AsyncIpc<IpcInvokeContract['spiritagent:shortcuts:get']>
-    onChanged: EventSubscription<'spiritagent:shortcuts:changed'>
-    set: AsyncIpc<IpcInvokeContract['spiritagent:shortcuts:set']>
-  }
-  surface: {
-    open: AsyncIpc<IpcInvokeContract['spiritagent:surface:open']>
-    close: AsyncIpc<IpcInvokeContract['spiritagent:surface:close']>
-    isMaximized: AsyncIpc<IpcInvokeContract['spiritagent:surface:is-maximized']>
-    setCallLayout: AsyncIpc<IpcInvokeContract['spiritagent:surface:call-layout']>
-    maximize: AsyncIpc<IpcInvokeContract['spiritagent:surface:maximize']>
-    minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>
-    getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>
-    setCompanion: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-companion']>
-    companionVisibility: AsyncIpc<IpcInvokeContract['spiritagent:surface:companion-visibility']>
-    setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
-    onChanged: EventSubscription<'spiritagent:surface:changed'>
-    onNavigate: EventSubscription<'spiritagent:surface:navigate'>
-  }
-  chat: {
-    onPendingFeed: EventSubscription<'spiritagent:chat:pending-feed'>
-    setPendingFeed: AsyncIpc<IpcInvokeContract['spiritagent:chat:set-pending-feed']>
-    takePendingFeed: AsyncIpc<IpcInvokeContract['spiritagent:chat:take-pending-feed']>
-  }
-  runnerConfig: {
-    read: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:read']>
-    patch: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:patch']>
-  }
-  skills: {
-    list: AsyncIpc<IpcInvokeContract['spiritagent:skills:list']>
-    setEnabled: AsyncIpc<IpcInvokeContract['spiritagent:skill:set-enabled']>
-  }
-  toolsets: {
-    list: AsyncIpc<IpcInvokeContract['spiritagent:toolsets:list']>
-    setEnabled: AsyncIpc<IpcInvokeContract['spiritagent:toolset:set-enabled']>
-  }
-  media: {
-    prepareOutput: AsyncIpc<IpcInvokeContract['spiritagent:media:prepare-output']>
-    uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
-    uploadVoiceSample: AsyncIpc<IpcInvokeContract['spiritagent:media:voice-sample-upload']>
-    tts: AsyncIpc<IpcInvokeContract['spiritagent:media:tts']>
-  }
-  sprite: {
-    onDefaultScaleChanged: EventSubscription<'spiritagent:sprite:default-scale-changed'>
-    setDefaultScale: (payload: IpcSendContract['spiritagent:sprite:set-default-scale'][0]) => void
-    hide: AsyncIpc<IpcInvokeContract['spiritagent:sprite:hide']>
-    setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
-    getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>
-    setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
-    moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
-  }
-  onSessionExpired: EventSubscription<'spiritagent:auth:session-expired'>
-  onAuthChanged: EventSubscription<'spiritagent:auth:changed'>
-  onRunnerStatus: EventSubscription<'spiritagent:runner:status'>
-  onTrayActivate: EventSubscription<'spiritagent:tray:activate'>
-  onTrayResetPosition: EventSubscription<'spiritagent:tray:reset-position'>
-  onUiThemeChanged: EventSubscription<'spiritagent:ui-theme-changed'>
-  onPrefsHydrated: EventSubscription<'spiritagent:prefs-hydrated'>
-  getVersion: AsyncIpc<IpcInvokeContract['spiritagent:version']>
-  update: {
-    check: AsyncIpc<IpcInvokeContract['spiritagent:update:check']>
-    download: AsyncIpc<IpcInvokeContract['spiritagent:update:download']>
-    getState: AsyncIpc<IpcInvokeContract['spiritagent:update:get-state']>
-    install: AsyncIpc<IpcInvokeContract['spiritagent:update:install']>
-    onEvent: EventSubscription<'spiritagent:update-event'>
+// 通道在 preload 装配时固定。窗口只拿到下方列出的操作，订阅回调只接收业务载荷。
+function channelBindings(ipc: PreloadIpc) {
+  const request =
+    <C extends keyof IpcInvokeContract>(channel: C) =>
+    (...args: Parameters<IpcInvokeContract[C]>) =>
+      ipc.invoke(channel, ...args) as Promise<Awaited<ReturnType<IpcInvokeContract[C]>>>
+
+  const send =
+    <C extends keyof IpcSendContract>(channel: C) =>
+    (...args: IpcSendContract[C]) =>
+      ipc.send(channel, ...args)
+
+  const subscribe =
+    <C extends EventChannel>(channel: C) =>
+    (callback: (...payload: IpcEventContract[C]) => void) => {
+      const listener: Listener<C> = (_event, ...payload) => callback(...payload)
+      ipc.on(channel, listener)
+
+      return () => {
+        ipc.removeListener(channel, listener)
+      }
+    }
+
+  return { request, send, subscribe }
+}
+
+export function createDesktopBridge(
+  ipc: PreloadIpc,
+  platform: string,
+  getDroppedPaths: (files: File[]) => Promise<string[]>
+) {
+  const { request, send, subscribe } = channelBindings(ipc)
+  const addPaths = request(IPC.invoke.dockAddDropped)
+
+  return {
+    platform,
+    getDroppedPaths,
+    uiState: {
+      get: request(IPC.invoke.uiStateGet),
+      update: request(IPC.invoke.uiStateUpdate),
+      ready: request(IPC.invoke.uiStateReady),
+      inputBusy: request(IPC.invoke.uiStateInputBusy),
+      reply: request(IPC.invoke.uiStateReply),
+      onRequest: subscribe(IPC.event.uiStateRequest)
+    },
+    presentation: {
+      setIgnoreMouseEvents: request(IPC.invoke.presentationSetIgnoreMouseEvents),
+      getState: request(IPC.invoke.presentationGetState),
+      requestAccessibility: request(IPC.invoke.presentationRequestAccessibility),
+      setMode: request(IPC.invoke.presentationSetMode),
+      setDisplay: request(IPC.invoke.presentationSetDisplay),
+      reportReady: request(IPC.invoke.presentationReportReady),
+      focus: request(IPC.invoke.presentationFocus),
+      heartbeat: request(IPC.invoke.presentationHeartbeat),
+      hostReady: request(IPC.invoke.presentationHostReady),
+      setBackground: request(IPC.invoke.presentationSetBackground),
+      setTrayLayout: request(IPC.invoke.presentationSetTrayLayout),
+      stageActivity: request(IPC.invoke.presentationStageActivity),
+      onChanged: subscribe(IPC.event.presentationChanged),
+      onPointerPosition: subscribe(IPC.event.presentationPointerPosition),
+      onBackgroundPlayback: subscribe(IPC.event.backgroundPlayback)
+    },
+    dock: {
+      getState: request(IPC.invoke.dockGetState),
+      catalog: request(IPC.invoke.dockCatalog),
+      catalogIcons: request(IPC.invoke.dockCatalogIcons),
+      addFromCatalog: request(IPC.invoke.dockAddFromCatalog),
+      addFromFiles: request(IPC.invoke.dockAddFromFiles),
+      addDroppedFiles: async (dropped: File[]) => addPaths(await getDroppedPaths(dropped)),
+      activate: request(IPC.invoke.dockActivate),
+      activateCatalog: request(IPC.invoke.dockActivateCatalog),
+      closeWindows: request(IPC.invoke.dockCloseWindows),
+      pin: request(IPC.invoke.dockPin),
+      reorder: request(IPC.invoke.dockReorder),
+      remove: request(IPC.invoke.dockRemove),
+      repairWithCatalog: request(IPC.invoke.dockRepairWithCatalog),
+      repairWithFiles: request(IPC.invoke.dockRepairWithFiles),
+      tasks: request(IPC.invoke.dockTasks),
+      activateTask: request(IPC.invoke.dockActivateTask),
+      onChanged: subscribe(IPC.event.dockChanged)
+    },
+    desktop: {
+      accounts: request(IPC.invoke.desktopAccounts),
+      switchAccount: request(IPC.invoke.desktopSwitchAccount),
+      addAccount: request(IPC.invoke.desktopAddAccount),
+      removeAccount: request(IPC.invoke.desktopRemoveAccount),
+      quit: request(IPC.invoke.desktopQuit),
+      onNavigate: subscribe(IPC.event.desktopNavigate)
+    },
+    gatewayPresence: request(IPC.invoke.gatewayPresence),
+    gatewayGetState: request(IPC.invoke.gatewayGetState),
+    voiceConnect: request(IPC.invoke.voiceConnect),
+    voiceSend: request(IPC.invoke.voiceSend),
+    voiceClose: request(IPC.invoke.voiceClose),
+    voiceBusy: request(IPC.invoke.voiceBusy),
+    onVoiceEvent: subscribe(IPC.event.voiceEvent),
+    onGatewayStateChanged: subscribe(IPC.event.gatewayStateChanged),
+    onGatewayEvent: subscribe(IPC.event.gatewayEvent),
+    activate: request(IPC.invoke.authActivate),
+    refreshSession: request(IPC.invoke.authRefresh),
+    logout: request(IPC.invoke.authLogout),
+    getSession: request(IPC.invoke.authGetSession),
+    api: request(IPC.invoke.api) as DesktopApiInvoke,
+    apiAsset: request(IPC.invoke.apiAsset),
+    apiAssetBuffer: request(IPC.invoke.apiAssetBuffer),
+    sessionHistory: {
+      get: request(IPC.invoke.sessionHistoryGet),
+      save: request(IPC.invoke.sessionHistorySave),
+      remove: request(IPC.invoke.sessionHistoryRemove)
+    },
+    voicePlayback: {
+      get: request(IPC.invoke.voicePlaybackGet),
+      update: request(IPC.invoke.voicePlaybackUpdate),
+      remove: request(IPC.invoke.voicePlaybackRemove),
+      onChanged: subscribe(IPC.event.voicePlaybackChanged)
+    },
+    readFileDataUrl: request(IPC.invoke.readFileDataUrl),
+    readImageForAttach: request(IPC.invoke.readImageForAttach),
+    uploadVideoForAttach: request(IPC.invoke.mediaVideoUpload),
+    selectPaths: request(IPC.invoke.selectPaths),
+    writeClipboard: request(IPC.invoke.writeClipboard),
+    copyImage: request(IPC.invoke.copyImage),
+    saveImage: request(IPC.invoke.saveImage),
+    log: request(IPC.invoke.logEmit),
+    runnerInvoke: request(IPC.invoke.runnerInvoke),
+    runnerGetState: request(IPC.invoke.runnerGetState),
+    setUiTheme: send(IPC.send.uiTheme),
+    prefs: {
+      applyServerVoice: request(IPC.invoke.prefsApplyServerVoice),
+      set: send(IPC.send.prefsSet)
+    },
+    shortcuts: {
+      get: request(IPC.invoke.shortcutsGet),
+      onChanged: subscribe(IPC.event.shortcutsChanged),
+      set: request(IPC.invoke.shortcutsSet)
+    },
+    surface: {
+      open: request(IPC.invoke.surfaceOpen),
+      close: request(IPC.invoke.surfaceClose),
+      isMaximized: request(IPC.invoke.surfaceIsMaximized),
+      setCallLayout: request(IPC.invoke.surfaceCallLayout),
+      maximize: request(IPC.invoke.surfaceMaximize),
+      minimize: request(IPC.invoke.surfaceMinimize),
+      getState: request(IPC.invoke.surfaceGetState),
+      setCompanion: request(IPC.invoke.surfaceSetCompanion),
+      companionVisibility: request(IPC.invoke.surfaceCompanionVisibility),
+      setIgnoreMouseEvents: request(IPC.invoke.surfaceSetIgnoreMouseEvents),
+      onChanged: subscribe(IPC.event.surfaceChanged),
+      onNavigate: subscribe(IPC.event.surfaceNavigate)
+    },
+    chat: {
+      onPendingFeed: subscribe(IPC.event.chatPendingFeed),
+      setPendingFeed: request(IPC.invoke.chatSetPendingFeed),
+      takePendingFeed: request(IPC.invoke.chatTakePendingFeed)
+    },
+    runnerConfig: {
+      read: request(IPC.invoke.runnerConfigRead),
+      patch: request(IPC.invoke.runnerConfigPatch)
+    },
+    skills: {
+      list: request(IPC.invoke.skillsList),
+      setEnabled: request(IPC.invoke.skillSetEnabled)
+    },
+    toolsets: {
+      list: request(IPC.invoke.toolsetsList),
+      setEnabled: request(IPC.invoke.toolsetSetEnabled)
+    },
+    media: {
+      prepareOutput: request(IPC.invoke.mediaPrepareOutput),
+      uploadAudio: request(IPC.invoke.mediaAudioUpload),
+      uploadVoiceSample: request(IPC.invoke.mediaVoiceSampleUpload),
+      tts: request(IPC.invoke.mediaTts)
+    },
+    sprite: {
+      onDefaultScaleChanged: subscribe(IPC.event.spriteDefaultScaleChanged),
+      setDefaultScale: send(IPC.send.spriteSetDefaultScale),
+      hide: request(IPC.invoke.spriteHide),
+      setIgnoreMouseEvents: request(IPC.invoke.spriteSetIgnoreMouseEvents),
+      getPosition: request(IPC.invoke.spriteGetPosition),
+      setPosition: request(IPC.invoke.spriteSetPosition),
+      moveToCursorDisplay: request(IPC.invoke.spriteMoveToCursorDisplay)
+    },
+    onSessionExpired: subscribe(IPC.event.authSessionExpired),
+    onAuthChanged: subscribe(IPC.event.authChanged),
+    onRunnerStatus: subscribe(IPC.event.runnerStatus),
+    onTrayActivate: subscribe(IPC.event.trayActivate),
+    onTrayResetPosition: subscribe(IPC.event.trayResetPosition),
+    onUiThemeChanged: subscribe(IPC.event.uiThemeChanged),
+    onPrefsHydrated: subscribe(IPC.event.prefsHydrated),
+    getVersion: request(IPC.invoke.version),
+    update: {
+      check: request(IPC.invoke.updateCheck),
+      download: request(IPC.invoke.updateDownload),
+      getState: request(IPC.invoke.updateGetState),
+      install: request(IPC.invoke.updateInstall),
+      onEvent: subscribe(IPC.event.updateEvent)
+    }
   }
 }
 
-export interface DesktopBackgroundBridge {
-  ready: () => Promise<void>
-  onMedia: EventSubscription<'spiritagent:background:media'>
-  acknowledge: AsyncIpc<IpcInvokeContract['spiritagent:background:acknowledge']>
+export function createBackgroundBridge(ipc: PreloadIpc) {
+  const { request, subscribe } = channelBindings(ipc)
+
+  return {
+    ready: request(IPC.invoke.backgroundReady),
+    acknowledge: request(IPC.invoke.backgroundAcknowledge),
+    onMedia: subscribe(IPC.event.backgroundMedia)
+  }
 }
 
-export interface DesktopFileBridge {
-  getPathForFile: (file: File) => string
-}
+export type DesktopBridge = ReturnType<typeof createDesktopBridge>
+export type DesktopBackgroundBridge = ReturnType<typeof createBackgroundBridge>

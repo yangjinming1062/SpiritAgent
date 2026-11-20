@@ -6,22 +6,15 @@ import type { ActionClipKind, ActionDefinition, ActionLibraryGroup, ActionReview
 
 import { composeDescribedInput } from '../shared/described-input'
 import { InterpretationGuard } from '../shared/interpretation-guard'
+import { newRequestId } from '../shared/request-id'
 import { isRequestConflictError } from '../shared/visuals'
 
 import { ApiError, errorText, type RemoteApi } from './api'
+import { useLibraryPages } from './library-pages'
+import { usePageScroll, usePageState } from './page-state'
 import { saveWithReadback } from './save-result'
-import {
-  Empty,
-  focusAfterRender,
-  LibraryCard,
-  Notice,
-  PageHeader,
-  useAlive,
-  usePageScroll,
-  usePageState,
-  useTask,
-  useVisiblePolling
-} from './ui'
+import { useAlive, useTask, useVisiblePolling } from './tasks'
+import { Empty, focusAfterRender, LibraryCard, Notice, PageHeader } from './ui'
 
 const REVIEW_STATUS_TEXT: Record<ActionReviewStatus, string> = {
   pending: '待评审',
@@ -161,7 +154,7 @@ function ActionEditor({
         return
       }
 
-      const request_id = composer.requestId ?? crypto.randomUUID()
+      const request_id = composer.requestId ?? newRequestId()
       patch({ requestId: request_id })
       let saved: ActionDefinition
 
@@ -339,19 +332,12 @@ function ActionEditor({
 export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
-  const [rows, setRows] = useState<ActionDefinition[]>([])
-  const [hasMore, setHasMore] = useState(false)
-  const nextCursor = useRef<Record<ActionLibraryGroup, string | null>>({ in_library: null, not_in_library: null })
-  const cache = useRef<Record<ActionLibraryGroup, { rows: ActionDefinition[]; query: string }>>({
-    in_library: { rows: [], query: '' },
-    not_in_library: { rows: [], query: '' }
-  })
   const [group, setGroup] = usePageState<ActionLibraryGroup>('actions.group', 'in_library')
   // 详情与创建视图随组件生命周期，切 tab 即回列表；筛选与编辑草稿保留在 usePageState。
   const [selected, setSelected] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [query, setQuery] = usePageState('actions.query', '')
-  const [loaded, setLoaded] = useState(false)
+  const { rows, hasMore, loaded, read, save } = useLibraryPages<ActionDefinition>(query, 50, group)
   const revision = useRef(0)
   const editingRef = useRef<ActionDefinition | null>(null)
   const [editing, setEditing] = useState<ActionDefinition | null>(null)
@@ -365,40 +351,17 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
   const load = useCallback(
     async (append = false) => {
       const version = ++revision.current
-      const sameQuery = query === cache.current[group].query
-      const previousCursor = nextCursor.current[group]
-      if (!append) {
-        // 刷新期间先停用旧游标；同一查询失败时恢复它。
-        nextCursor.current[group] = null
-      }
-      try {
-        const list = await api.invoke('companion_actions.list_actions', {
-          query: {
-            query: query.trim() || undefined,
-            group,
-            cursor: append ? (nextCursor.current[group] ?? undefined) : undefined
-          }
+      const page = await read(append, async (cursor, limit) => {
+        const { actions: rows, next_cursor } = await api.invoke('companion_actions.list_actions', {
+          query: { query: query.trim() || undefined, group, cursor, limit }
         })
-
-        if (alive() && revision.current === version) {
-          const previous = cache.current[group].rows
-          const updated = append
-            ? [...previous, ...list.actions.filter(row => !previous.some(old => old.id === row.id))]
-            : list.actions
-          cache.current[group] = { rows: updated, query }
-          setRows(updated)
-          setHasMore(list.has_more)
-          nextCursor.current[group] = list.next_cursor
-          setLoaded(true)
-        }
-      } catch (error) {
-        if (alive() && revision.current === version && !append && sameQuery) {
-          nextCursor.current[group] = previousCursor
-        }
-        throw error
+        return { rows, next_cursor }
+      })
+      if (alive() && revision.current === version) {
+        save(page)
       }
     },
-    [alive, api, group, query]
+    [alive, api, group, query, read, save]
   )
 
   useEffect(() => {
@@ -459,9 +422,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               await runLatest(load)
             } else {
               revision.current++
-              setRows([])
-              setLoaded(false)
-              setHasMore(false)
               setGroup(target)
             }
           }}
@@ -492,11 +452,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
                     return
                   }
                   revision.current++
-                  const saved = cache.current[item.id]
-                  const matching = saved.query === query
-                  setRows(matching ? saved.rows : [])
-                  setHasMore(matching && Boolean(nextCursor.current[item.id]))
-                  setLoaded(false)
                   setGroup(item.id)
                 }}
                 type="button"
@@ -510,9 +465,6 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               aria-label="搜索动作"
               onChange={event => {
                 revision.current++
-                setRows([])
-                setHasMore(false)
-                setLoaded(false)
                 setQuery(event.target.value)
               }}
               placeholder="搜索动作"

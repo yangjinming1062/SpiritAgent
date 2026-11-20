@@ -1,7 +1,9 @@
 import { atom } from 'nanostores'
 
+import type { VisualDetail, VisualItem, VisualJob } from '@protocol'
+
 import type { VisualReceiptBody, VisualsListQuery } from './api'
-import type { VisualDetail, VisualItem, VisualJob, VisualPlayCommand, VisualsPresentation } from './types'
+import type { VisualPlayCommand, VisualsPresentation } from './types'
 
 export const $visualsItems = atom<VisualItem[]>([])
 export const $visualsJobs = atom<VisualJob[]>([])

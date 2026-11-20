@@ -1,8 +1,7 @@
 import type { WritableAtom } from 'nanostores'
 
-import { isRecord } from '@client-shared/is-record'
-
 import type { ApiSchemas } from '../../../../shared/api.generated'
+import { isRecord } from '../../../../shared/is-record'
 
 import { apiSucceeded, captureAuthScope } from './authed-api'
 import { authedResource } from './resource-request'

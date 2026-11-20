@@ -11,10 +11,10 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
-import { isRecord } from '@client-shared/is-record'
 import type { ImageReviseMode } from '@protocol'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
+import { isRecord } from '../../../../shared/is-record'
 
 import { parseImageDataUrl, type PickedImage, resolvePortraitUrl } from './avatar-image'
 import { patchAvatarSeeds } from './avatar-seeds-store'

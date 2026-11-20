@@ -1,137 +1,28 @@
-import { IconDeviceTv, IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-
-import { EVENT_POLICIES } from '../shared/api.generated'
-import { type GatewayNetworkEvent, isRecord } from '../shared/gateway'
+import { useEffect, useState } from 'react'
 
 import { ApiError, errorText, RemoteApi, RemoteGateway } from './api'
-import { Chat, clearChatState } from './Chat'
-import { Companion } from './Companion'
-import { Creation } from './Creation'
-import { Life } from './Life'
-import { readTheme, saveTheme, type ThemeChoice } from './theme'
+import { clearChatState } from './chat-state'
+import { PageStateProvider } from './page-state'
 import type { RemoteSession } from './types'
-import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui'
+import { Notice, pauseMedia } from './ui'
+import { Workspace } from './Workspace'
 
-type Tab = 'messages' | 'life' | 'creation' | 'companion' | 'me'
-const api = new RemoteApi()
+type LoginState =
+  | { kind: 'loading' }
+  | { kind: 'disconnected'; error: string }
+  | { kind: 'connected'; account: RemoteSession; api: RemoteApi; gateway: RemoteGateway; logout: () => void }
 
-function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary' | 'posts' | null {
-  switch (type) {
-    case 'companion.post.created':
-    case 'companion.post.comment':
-    case 'companion.post.comment.deleted':
-    case 'companion.posts.read':
-      return 'posts'
-    case 'companion.diary.created':
-    case 'companion.diary.read':
-      return 'diary'
-    case 'memory.changed':
-    case 'companion.scene.updated':
-    case 'companion.outfit.updated':
-    case 'companion.visual_identity.updated':
-    case 'companion.appearance_preparation.updated':
-    case 'companion.topic_feedback.updated':
-    case 'companion.action.updated':
-    case 'companion.visual.updated':
-    case 'companion.voice.updated':
-    case 'companion.life.updated':
-      return 'companion'
-    default:
-      return null
-  }
-}
-
-function takePairingToken(): string | null {
-  const hash = location.hash.slice(1)
-  const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : hash
-  const token = new URLSearchParams(query).get('token')
-
-  if (token) {
-    history.replaceState(null, '', location.pathname)
-  }
-
-  return token
-}
-
-const pairingToken = takePairingToken()
-
-export function App(): ReactElement {
-  const [session, setSession] = useState<RemoteSession | null>(null)
-  const [gateway, setGateway] = useState<RemoteGateway | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [tab, setTab] = useState<Tab>('messages')
-  const [connected, setConnected] = useState(false)
-  const [connectionError, setConnectionError] = useState('')
-  const [refresh, setRefresh] = useState(0)
-  const [unreadRefresh, setUnreadRefresh] = useState(0)
-  const [unread, setUnread] = useState({
-    messages: false,
-    feed: false,
-    diary: false
-  })
-  const tabRef = useRef(tab)
-  tabRef.current = tab
-  const activeGateway = useRef<RemoteGateway | null>(null)
-  const disconnect = useCallback(() => {
-    pauseMedia()
-    activeGateway.current?.close()
-    activeGateway.current = null
-    api.clear()
-  }, [])
-
+export function App({ pairingToken }: { pairingToken: string | null }): ReactElement {
+  const [state, setState] = useState<LoginState>({ kind: 'loading' })
   useEffect(() => {
-    document.querySelector('.content')?.scrollTo({ top: 0 })
-  }, [tab])
-
-  useEffect(() => {
-    let live = true
-    let eventTimer: ReturnType<typeof setTimeout> | undefined
-    let refreshContent = false
-    let refreshUnread = false
-
-    const scheduleRefresh = (content: boolean, unread: boolean) => {
-      refreshContent ||= content
-      refreshUnread ||= unread
-
-      if (eventTimer === undefined) {
-        eventTimer = setTimeout(() => {
-          eventTimer = undefined
-
-          if (live && document.visibilityState === 'visible') {
-            if (refreshContent) {
-              setRefresh(value => value + 1)
-            }
-            if (refreshUnread) {
-              setUnreadRefresh(value => value + 1)
-            }
-          }
-
-          refreshContent = false
-          refreshUnread = false
-        }, 200)
-      }
-    }
-
-    const invalidate = () => {
-      clearChatState()
-      disconnect()
-
-      if (live) {
-        setSession(null)
-        setGateway(null)
-        setError('手机连接已到期。请在电脑的“设置 → 手机访问”重新扫码。')
-      }
-    }
-
-    api.onExpired = invalidate
-
-    const load = async () => {
+    const login = new RemoteApi()
+    let current = true
+    let release = () => {}
+    const connect = async () => {
       try {
-        const next = pairingToken
-          ? await api.invoke('remote.exchange_pairing', {
+        const account = pairingToken
+          ? await login.invoke('remote.exchange_pairing', {
               body: {
                 token: pairingToken,
                 device_name: /iPhone|iPad/.test(navigator.userAgent)
@@ -141,199 +32,56 @@ export function App(): ReactElement {
                     : '网页设备'
               }
             })
-          : await api.invoke('remote.current_remote_session')
-
-        if (!live) {
+          : await login.invoke('remote.current_remote_session')
+        if (!current) {
           return
         }
 
-        api.authenticate(next)
-
-        try {
-          const savedTab = sessionStorage.getItem(`remote:${next.user.id}:${next.device.id}:ui:tab`)
-          setTab(
-            savedTab === 'life' || savedTab === 'creation' || savedTab === 'companion' || savedTab === 'me'
-              ? savedTab
-              : 'messages'
-          )
-        } catch {
-          setTab('messages')
+        const end = (error: string) => {
+          release()
+          clearChatState(account)
+          setState({ kind: 'disconnected', error })
         }
-
-        try {
-          const stored: unknown = JSON.parse(
-            localStorage.getItem(`remote:${next.user.id}:${next.device.id}:unread`) ?? '{}'
-          )
-
-          if (isRecord(stored)) {
-            setUnread({
-              messages: stored.messages === true,
-              feed: stored.feed === true,
-              diary: stored.diary === true
-            })
-          }
-        } catch {
-          setUnread({ messages: false, feed: false, diary: false })
+        const api = new RemoteApi(account.csrf_token, () =>
+          end('手机连接已到期。请在电脑的“设置 → 手机访问”重新扫码。')
+        )
+        const gateway = new RemoteGateway(api)
+        release = () => {
+          api.close()
+          gateway.close()
+          pauseMedia()
         }
-
-        const client = new RemoteGateway(api)
-        activeGateway.current = client
-        client.subscribeState((open, message) => {
-          setConnected(open)
-          setConnectionError(message)
-          if (open && client.lastRecovery?.recovery === 'snapshot_required') {
-            setRefresh(value => value + 1)
-          }
-        })
-        client.subscribeEvent(event => {
-          if (
-            ((event.type === 'message.complete' && !event.payload.decision) || event.type === 'companion.message') &&
-            (tabRef.current !== 'messages' || document.visibilityState !== 'visible')
-          ) {
-            setUnread(previous => ({ ...previous, messages: true }))
-          }
-
-          if (event.type === 'session.snapshot') {
-            return
-          }
-
-          const domain = resourceDomain(event.type)
-          const resource = EVENT_POLICIES[event.type].recovery === 'resource'
-          const mood = event.type === 'companion.mood'
-          const message = event.type === 'companion.message'
-          if ((resource && domain) || mood || message) {
-            scheduleRefresh(
-              ((domain === 'companion' || mood) && tabRef.current === 'companion') ||
-                (domain === 'diary' && tabRef.current === 'life') ||
-                (message && tabRef.current === 'messages'),
-              domain === 'posts' || domain === 'diary'
-            )
-          }
-        })
-        setSession(next)
-        setGateway(client)
-        void client.connect()
+        setState({ kind: 'connected', account, api, gateway, logout: () => end('') })
       } catch (failure) {
-        if (live) {
-          setError(failure instanceof ApiError && failure.status === 401 ? '' : errorText(failure))
-        }
-      } finally {
-        if (live) {
-          setLoading(false)
-        }
-      }
-    }
-
-    void load()
-
-    return () => {
-      live = false
-      clearTimeout(eventTimer)
-      disconnect()
-    }
-  }, [disconnect])
-
-  useEffect(() => {
-    if (session) {
-      try {
-        localStorage.setItem(`remote:${session.user.id}:${session.device.id}:unread`, JSON.stringify(unread))
-      } catch {
-        // 浏览器存储不可用时仍保留本次连接的提醒。
-      }
-    }
-  }, [session, unread])
-
-  useEffect(() => {
-    if (session) {
-      try {
-        sessionStorage.setItem(`remote:${session.user.id}:${session.device.id}:ui:tab`, tab)
-      } catch {
-        // 浏览器关闭存储时仍可正常切换页面。
-      }
-    }
-  }, [session, tab])
-
-  useEffect(() => {
-    if (!session || document.visibilityState !== 'visible') {
-      return
-    }
-
-    let current = true
-    void Promise.allSettled([
-      api.invoke('companion_posts.get_posts_unread'),
-      api.invoke('companion_journal.get_diary_unread')
-    ]).then(([posts, diary]) => {
-      if (!current) {
-        return
-      }
-
-      setUnread(previous => ({
-        ...previous,
-        feed: posts.status === 'fulfilled' ? posts.value.has_unread : previous.feed,
-        diary: diary.status === 'fulfilled' ? diary.value.has_unread : previous.diary
-      }))
-
-      for (const result of [posts, diary]) {
-        if (result.status === 'rejected') {
-          console.warn('远程未读状态校准失败', errorText(result.reason))
+        if (current) {
+          setState({
+            kind: 'disconnected',
+            error: !pairingToken && failure instanceof ApiError && failure.isLoginExpired ? '' : errorText(failure)
+          })
         }
       }
-    })
-
+    }
+    void connect()
     return () => {
       current = false
+      login.close()
+      release()
     }
-  }, [session, refresh, unreadRefresh])
+  }, [pairingToken])
 
-  useEffect(() => {
-    const foreground = () => {
-      if (document.visibilityState === 'visible') {
-        setRefresh(value => value + 1)
-        void activeGateway.current?.connect()
-      } else {
-        pauseMedia()
-      }
-    }
-
-    document.addEventListener('visibilitychange', foreground)
-    window.addEventListener('online', foreground)
-    window.addEventListener('focus', foreground)
-
-    return () => {
-      document.removeEventListener('visibilitychange', foreground)
-      window.removeEventListener('online', foreground)
-      window.removeEventListener('focus', foreground)
-    }
-  }, [])
-
-  useEffect(() => {
-    const back = () => setTab('messages')
-    window.addEventListener('popstate', back)
-
-    return () => window.removeEventListener('popstate', back)
-  }, [])
-
-  const selectTab = (next: Tab) => {
-    setTab(next)
-    if (next === 'messages') {
-      setUnread(previous => ({ ...previous, messages: false }))
-    }
-    pauseMedia()
-  }
-
-  if (!session || !gateway) {
+  if (state.kind !== 'connected') {
     return (
       <main className="connect-page">
         <div className="brand-mark">✦</div>
         <p className="eyebrow">SPIRITAGENT · 远程</p>
-        <h1>{loading ? '正在连接你的伙伴' : '把陪伴带在身边'}</h1>
+        <h1>{state.kind === 'loading' ? '正在连接你的伙伴' : '把陪伴带在身边'}</h1>
         <p className="subtitle">
           在电脑上打开“设置 → 手机访问”，
           <br />
           用手机相机扫描二维码即可连接。
         </p>
-        {error ? <Notice>{error}</Notice> : null}
-        {loading ? (
+        {state.kind === 'disconnected' && state.error && <Notice>{state.error}</Notice>}
+        {state.kind === 'loading' ? (
           <div className="loader" />
         ) : (
           <button className="primary" onClick={() => location.reload()} type="button">
@@ -345,158 +93,11 @@ export function App(): ReactElement {
     )
   }
 
+  const { account, api, gateway, logout } = state
+  const scope = `${account.user.id}:${account.device.id}`
   return (
-    <PageStateProvider
-      key={`${session.user.id}:${session.device.id}`}
-      scope={`${session.user.id}:${session.device.id}`}
-    >
-      <div className="app">
-        <div aria-live="polite" className={`connection ${connected ? '' : 'offline'}`}>
-          {connected ? '已连接' : connectionError || '实时连接正在恢复，已受理的任务会继续运行'}
-        </div>
-        <main className="content">
-          {tab === 'messages' ? (
-            <Chat
-              api={api}
-              connected={connected}
-              device={session.device.id}
-              gateway={gateway}
-              refresh={refresh}
-              userId={session.user.id}
-            />
-          ) : tab === 'life' ? (
-            <Life
-              api={api}
-              gateway={gateway}
-              onRead={() => setUnreadRefresh(value => value + 1)}
-              refresh={refresh}
-              unread={{ feed: unread.feed, diary: unread.diary }}
-            />
-          ) : tab === 'creation' ? (
-            <Creation api={api} refresh={refresh} />
-          ) : tab === 'companion' ? (
-            <Companion api={api} refresh={refresh} />
-          ) : (
-            <Settings
-              api={api}
-              onLogout={() => {
-                clearChatState()
-                disconnect()
-                setSession(null)
-                setGateway(null)
-                setError('')
-              }}
-              session={session}
-            />
-          )}
-        </main>
-        <nav aria-label="主导航" className="bottom-nav">
-          {(
-            [
-              { id: 'messages', label: '聊天', icon: IconMessageCircle },
-              { id: 'life', label: '生活', icon: IconSparkles },
-              { id: 'creation', label: '创作', icon: IconDeviceTv },
-              { id: 'companion', label: '伙伴', icon: IconHeart },
-              { id: 'me', label: '设置', icon: IconSettings }
-            ] as const
-          ).map(item => (
-            <button
-              aria-current={tab === item.id ? 'page' : undefined}
-              className={tab === item.id ? 'selected' : ''}
-              key={item.id}
-              onClick={() => selectTab(item.id)}
-              type="button"
-            >
-              <span>
-                <item.icon size={23} stroke={1.7} />
-                {(item.id === 'messages' && unread.messages) ||
-                (item.id === 'life' && (unread.feed || unread.diary)) ? (
-                  <i aria-label="有未读内容" className="unread-dot" />
-                ) : null}
-              </span>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+    <PageStateProvider key={scope} scope={scope}>
+      <Workspace api={api} gateway={gateway} onLogout={logout} session={account} />
     </PageStateProvider>
-  )
-}
-
-function Settings({
-  api,
-  session,
-  onLogout
-}: {
-  api: RemoteApi
-  session: RemoteSession
-  onLogout: () => void
-}): ReactElement {
-  const task = useTask()
-  const [theme, setTheme] = useState<ThemeChoice>(readTheme)
-
-  return (
-    <div className="page">
-      <PageHeader subtitle="账户与这台手机的连接" title="设置" />
-      <section className="profile-card">
-        <div className="avatar">{session.user.username.slice(0, 1)}</div>
-        <h2>{session.user.username}</h2>
-        <span className="pill">手机已连接</span>
-      </section>
-      <section className="card">
-        <h3>手机连接</h3>
-        <dl>
-          <div>
-            <dt>设备</dt>
-            <dd>{session.device.name}</dd>
-          </div>
-          <div>
-            <dt>有效期</dt>
-            <dd>{new Date(session.device.expires_at).toLocaleDateString('zh-CN')}</dd>
-          </div>
-        </dl>
-        <p className="muted">陪伴和声音偏好可以在电脑的设置中调整。这里退出只断开这台手机。</p>
-      </section>
-      <section className="card">
-        <h3>界面主题</h3>
-        <p className="muted">只影响这台手机上的页面显示。</p>
-        <div aria-label="界面主题" className="section-tabs">
-          {(
-            [
-              { id: 'system', label: '跟随系统' },
-              { id: 'light', label: '日色' },
-              { id: 'dark', label: '夜色' }
-            ] as const
-          ).map(item => (
-            <button
-              aria-pressed={theme === item.id}
-              className={theme === item.id ? 'selected' : ''}
-              key={item.id}
-              onClick={() => {
-                saveTheme(item.id)
-                setTheme(item.id)
-              }}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </section>
-      {task.error ? <Notice>{task.error}</Notice> : null}
-      <button
-        className="danger full"
-        disabled={task.busy}
-        onClick={() =>
-          task.run(async () => {
-            await api.invoke('remote.logout_remote_session')
-            onLogout()
-          })
-        }
-        type="button"
-      >
-        退出手机登录
-      </button>
-    </div>
   )
 }

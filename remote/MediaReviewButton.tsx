@@ -1,8 +1,8 @@
 import type { ReactElement } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
-import type { ApiSchemas } from '../shared/api.generated'
-import { manualMediaRequest, mediaReviewCopy } from '../shared/media-review'
+import { mediaReviewCopy } from '../shared/media-review'
+import { useMediaJobReview } from '../shared/use-media-job-review'
 
 import type { RemoteApi } from './api'
 import { Media } from './ui'
@@ -20,76 +20,14 @@ export function MediaReviewButton(props: ReviewProps): ReactElement {
       <button aria-expanded={open} onClick={() => setOpen(value => !value)} type="button">
         {mediaReviewCopy.zh.showCandidates}
       </button>
-      {open ? <ReviewDetails {...props} /> : null}
+      {open ? <ReviewDetails key={props.jobId} {...props} /> : null}
     </>
   )
 }
 
 function ReviewDetails({ api, jobId, onChanged }: ReviewProps): ReactElement {
-  const [job, setJob] = useState<ApiSchemas['MediaJobView'] | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const epoch = useRef(0)
-  const pending = useRef<ApiSchemas['MediaManualRequest'] | null>(null)
+  const { job, busy, error, approve, regenerate, reload } = useMediaJobReview(api, jobId, onChanged)
   const copy = mediaReviewCopy.zh
-  useEffect(() => {
-    const version = ++epoch.current
-    setJob(null)
-    setBusy(false)
-    setError('')
-    pending.current = null
-    void api
-      .invoke('media.get_media_job', { path: { job_id: jobId } })
-      .then(value => {
-        if (epoch.current === version) {
-          setJob(value)
-        }
-      })
-      .catch(cause => {
-        if (epoch.current === version) {
-          setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      })
-    return () => {
-      epoch.current = version + 1
-    }
-  }, [api, jobId])
-  const run = async (slot?: number, action?: 'approve' | 'regenerate', candidateId?: string): Promise<void> => {
-    if (busy) {
-      return
-    }
-    const version = epoch.current
-    setBusy(true)
-    setError('')
-    try {
-      let updated: ApiSchemas['MediaJobView']
-      if (job && slot !== undefined && action) {
-        const body = manualMediaRequest(job, slot, action, candidateId, pending.current)
-        pending.current = body
-        updated = await api.invoke('media.manually_handle_media', { path: { job_id: jobId }, body })
-        pending.current = null
-      } else {
-        updated = await api.invoke('media.get_media_job', { path: { job_id: jobId } })
-      }
-      if (epoch.current !== version) {
-        return
-      }
-      setJob(updated)
-      await onChanged?.()
-    } catch (cause) {
-      if (epoch.current === version) {
-        setError(cause instanceof Error ? cause.message : String(cause))
-        const refreshed = await api.invoke('media.get_media_job', { path: { job_id: jobId } }).catch(() => null)
-        if (epoch.current === version && refreshed) {
-          setJob(refreshed)
-        }
-      }
-    } finally {
-      if (epoch.current === version) {
-        setBusy(false)
-      }
-    }
-  }
   const editable = job && ['paused', 'failed'].includes(job.state) && !job.complete
   return (
     <span aria-busy={busy || (!job && !error)} className="media-review-panel">
@@ -125,7 +63,7 @@ function ReviewDetails({ api, jobId, onChanged }: ReviewProps): ReactElement {
                   slot.delivered ||
                   slot.status === 'succeeded'
                 }
-                onClick={() => void run(slot.slot, 'approve', candidate.id)}
+                onClick={() => approve(slot.slot, candidate.id)}
                 type="button"
               >
                 {busy ? copy.working : copy.approve}
@@ -134,7 +72,7 @@ function ReviewDetails({ api, jobId, onChanged }: ReviewProps): ReactElement {
           ))}
           {!slot.candidates.length ? <span>{copy.noCandidate}</span> : null}
           {slot.can_regenerate ? (
-            <button disabled={busy || !editable} onClick={() => void run(slot.slot, 'regenerate')} type="button">
+            <button disabled={busy || !editable} onClick={() => regenerate(slot.slot)} type="button">
               {busy ? copy.working : copy.regenerate}
             </button>
           ) : null}
@@ -144,7 +82,7 @@ function ReviewDetails({ api, jobId, onChanged }: ReviewProps): ReactElement {
       {error ? (
         <span role="alert">
           {error}
-          <button disabled={busy} onClick={() => void run()} type="button">
+          <button disabled={busy} onClick={reload} type="button">
             {copy.reload}
           </button>
         </span>

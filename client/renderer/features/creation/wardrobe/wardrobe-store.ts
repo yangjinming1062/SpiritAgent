@@ -8,9 +8,9 @@ import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import { isRecord } from '@client-shared/is-record'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { isRecord } from '../../../../../shared/is-record'
 import { isResourceId } from '../../../../../shared/resource-id'
 
 type OutfitStatus = ApiSchemas['OutfitResponse']['status']

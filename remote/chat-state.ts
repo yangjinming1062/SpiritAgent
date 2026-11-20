@@ -1,7 +1,10 @@
+import type { HttpCallOptions } from '../shared/api'
+import { isRecord } from '../shared/is-record'
 import { compareResourceIds, isResourceId } from '../shared/resource-id'
+import type { TurnReference } from '../shared/turn-cancellation'
 
-import type { GatewayEvent } from './api'
-import type { ActiveTurn, SessionMessage } from './types'
+import { ApiError, type GatewayEvent, type RemoteApi } from './api'
+import type { ActiveTurn, ChatAttachment, RemoteSession, SessionMessage } from './types'
 
 function emptyTurn(): ActiveTurn {
   return {
@@ -47,6 +50,10 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
     case 'message.delta': {
       const turn = previous ?? emptyTurn()
       return { ...turn, text: turn.text + event.payload.text }
+    }
+    case 'message.reasoning.delta': {
+      const turn = previous ?? emptyTurn()
+      return { ...turn, reasoning: turn.reasoning + event.payload.text }
     }
     case 'message.bubble': {
       const turn = previous ?? emptyTurn()
@@ -103,4 +110,81 @@ export function activeReplyIsPersisted(turn: ActiveTurn | null, messages: Sessio
         message.content_type === 'companion_reply'
     )
   )
+}
+
+export interface PendingPrompt {
+  id: string
+  text: string
+  attachments: ChatAttachment[]
+  retry?: string
+  replace?: string
+}
+
+export function readPendingPrompt(key: string): PendingPrompt | null {
+  const stored = sessionStorage.getItem(key)
+
+  if (stored === null) {
+    return null
+  }
+
+  const value: unknown = JSON.parse(stored)
+
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.text !== 'string' ||
+    !Array.isArray(value.attachments) ||
+    (value.retry !== undefined && !isResourceId(value.retry)) ||
+    (value.replace !== undefined && !isResourceId(value.replace))
+  ) {
+    throw new Error('待确认的消息记录无法读取，请核对会话后重新登录')
+  }
+
+  const attachments: ChatAttachment[] = value.attachments.map((attachment: unknown) => {
+    if (
+      !isRecord(attachment) ||
+      (attachment.type !== 'image' && attachment.type !== 'video' && attachment.type !== 'audio') ||
+      typeof attachment.url !== 'string'
+    ) {
+      throw new Error('待确认的消息附件无法读取，请核对会话后重新登录')
+    }
+
+    return { type: attachment.type, url: attachment.url }
+  })
+
+  return {
+    id: value.id,
+    text: value.text,
+    attachments,
+    retry: isResourceId(value.retry) ? value.retry : undefined,
+    replace: isResourceId(value.replace) ? value.replace : undefined
+  }
+}
+
+export async function readTurnReceipt(api: RemoteApi, turn: TurnReference, options?: HttpCallOptions) {
+  try {
+    return await api.invoke(
+      'sessions.get_turn',
+      { path: { session_id: turn.sessionId, request_id: turn.requestId } },
+      options
+    )
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null
+    }
+    throw error
+  }
+}
+
+export function clearChatState(account: RemoteSession): void {
+  const prefix = `remote:${account.user.id}:${account.device.id}:`
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith(prefix + 'submission:') || key.startsWith(prefix + 'cancellation:')) {
+        sessionStorage.removeItem(key)
+      }
+    }
+  } catch {
+    // 存储受限不能阻止撤销连接和释放录音。
+  }
 }

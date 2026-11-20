@@ -21,7 +21,6 @@ import {
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
-  type VisualMediaKind,
   visualPerformancePorts,
   type VisualPlayCommand
 } from '@/features/creation/visuals'
@@ -33,6 +32,7 @@ import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
+import type { VisualMediaKind } from '@protocol'
 
 function hasTerminalReceipt(statuses: ReadonlySet<ReceiptStatus> | undefined): boolean {
   return statuses !== undefined && [...statuses].some(status => status !== 'started')

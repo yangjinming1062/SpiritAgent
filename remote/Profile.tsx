@@ -4,13 +4,15 @@ import { useCallback, useEffect, useState } from 'react'
 import type { PersonaEditableField, PersonaResponse } from '@protocol'
 
 import type { ApiResponse } from '../shared/api'
-import { isRecord } from '../shared/gateway'
+import { isRecord } from '../shared/is-record'
 import { uiCopy } from '../shared/ui-copy'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
+import { usePageScroll, usePageState } from './page-state'
 import { saveWithReadback } from './save-result'
-import { Media, Notice, useAlive, usePageScroll, usePageState, useTask, useVisiblePolling } from './ui'
+import { useAlive, useTask, useVisiblePolling } from './tasks'
+import { Media, Notice } from './ui'
 
 const FIELD_LABELS: Record<PersonaEditableField, string> = {
   name: '名字',

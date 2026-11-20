@@ -1,8 +1,8 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
+import { isRecord } from '../../../shared/is-record'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
 import type { MotionPlanInputs } from '../../../shared/visuals'
-import { isRecord } from '../is-record'
 
 export interface LifeUiSnapshot {
   search: ArchiveSearchState

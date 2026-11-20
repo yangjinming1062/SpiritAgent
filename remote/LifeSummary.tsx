@@ -13,7 +13,8 @@ import { lifeStepStatus } from '../shared/life-trajectory'
 import type { RemoteApi } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
 import { LifeEpisodeCard, LifeReading, LifeResultPreviews, LifeTimeline } from './LifeTrajectory'
-import { Notice, usePageState } from './ui'
+import { usePageState } from './page-state'
+import { Notice } from './ui'
 
 const statuses = { all: '全部', active: '进行中', paused: '已暂停', completed: '已完成', abandoned: '已放下' }
 type PursuitFilter = keyof typeof statuses

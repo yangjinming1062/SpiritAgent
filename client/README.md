@@ -73,7 +73,7 @@
 
 ## 契约与验证
 
-[bridge.ts](shared/ipc/bridge.ts) 定义普通、背景和文件桥，preload 用 `satisfies` 校验实现；renderer 只经 [desktop.ts](renderer/shared/platform/desktop.ts) 的窄接口消费。修改通道须同步主进程与实际消费者，覆盖换号、断连、迟到回包及资源释放。
+[bridge.ts](shared/ipc/bridge.ts) 按 IPC 契约装配普通桥与背景桥，并从实际暴露的方法推导窗口类型。拖入文件在主进程登记后交付。renderer 只经 [desktop.ts](renderer/shared/platform/desktop.ts) 的窄接口消费。修改通道须同步主进程与实际消费者，覆盖换号、断连、迟到回包及资源释放。
 
 ## 远程网页
 

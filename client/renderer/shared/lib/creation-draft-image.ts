@@ -1,4 +1,4 @@
-import { isRecord } from '@client-shared/is-record'
+import { isRecord } from '../../../../shared/is-record'
 
 import { log } from './log'
 import {
