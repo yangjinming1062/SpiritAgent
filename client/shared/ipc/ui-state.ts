@@ -1,49 +1,8 @@
 import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/archive-search'
 import { isRecord } from '../../../shared/is-record'
-import { isLifeReaderState, type LifeReaderState } from '../../../shared/life-reader-state'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
 import type { MotionPlanInputs } from '../../../shared/visuals'
-
-interface LegacyLifeUiSnapshot {
-  search: ArchiveSearchState
-  status: 'all' | 'active' | 'paused' | 'completed' | 'abandoned'
-  pursuitPage: number
-  pursuitCursors: (string | null)[]
-  eventPage: number
-  topicId?: string | null
-  scrollTop: number
-}
-
-export type LifeUiSnapshot = LifeReaderState | LegacyLifeUiSnapshot
-
-export function isLifeUiSnapshot(value: unknown): value is LifeUiSnapshot {
-  if (isLifeReaderState(value)) {
-    return true
-  }
-
-  return (
-    isRecord(value) &&
-    isArchiveSearchState(value.search) &&
-    (value.status === 'all' ||
-      value.status === 'active' ||
-      value.status === 'paused' ||
-      value.status === 'completed' ||
-      value.status === 'abandoned') &&
-    [value.pursuitPage, value.eventPage].every(
-      page => typeof page === 'number' && Number.isSafeInteger(page) && page >= 0
-    ) &&
-    Array.isArray(value.pursuitCursors) &&
-    typeof value.pursuitPage === 'number' &&
-    value.pursuitPage < value.pursuitCursors.length &&
-    value.pursuitCursors[0] === null &&
-    value.pursuitCursors.every(cursor => cursor === null || typeof cursor === 'string') &&
-    (value.topicId === undefined || value.topicId === null || isResourceId(value.topicId)) &&
-    typeof value.scrollTop === 'number' &&
-    Number.isFinite(value.scrollTop) &&
-    value.scrollTop >= 0
-  )
-}
 
 export interface DiaryUiSnapshot {
   search: ArchiveSearchState
@@ -156,7 +115,7 @@ export interface StudioUiSnapshot {
 }
 
 export interface VisualsUiSnapshot {
-  studio?: StudioUiSnapshot
+  studio: StudioUiSnapshot
   analysisNotes?: Record<string, string>
   analysisSelections?: Record<string, string>
   query: string
@@ -189,7 +148,7 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     Array.isArray(value.cursors) &&
     value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
     value.page < value.cursors.length &&
-    (value.studio === undefined || isStudioUiSnapshot(value.studio)) &&
+    isStudioUiSnapshot(value.studio) &&
     (value.analysisNotes === undefined ||
       (isRecord(value.analysisNotes) && Object.values(value.analysisNotes).every(note => typeof note === 'string'))) &&
     (value.analysisSelections === undefined ||

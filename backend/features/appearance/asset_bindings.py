@@ -38,7 +38,12 @@ async def sync_appearance_assets(db: AsyncSession, user_id: int) -> None:
             continue
         owner_key, fields = descriptor
         state = inspect(row)
-        if row not in db.new and not any(state.attrs[field].history.has_changes() for field in fields):
+        missing_outfit_asset = isinstance(row, CompanionOutfit) and bool(row.fullbody_url) and row.asset_id is None
+        if (
+            row not in db.new
+            and not missing_outfit_asset
+            and not any(state.attrs[field].history.has_changes() for field in fields)
+        ):
             continue
         paths = asset_paths([getattr(row, field) for field in fields], user_id)
         if isinstance(row, AvatarAsset):

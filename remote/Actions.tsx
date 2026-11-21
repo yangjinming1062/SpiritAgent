@@ -64,18 +64,6 @@ const ACTION_DESIGN_KEYS = [
   'reason'
 ] as const
 
-/** 按 ActionAssetView 的对外字段名读取设计值；字段缺失时用视图里的既有语义兜底。 */
-function designValue(design: Record<string, unknown>, key: (typeof ACTION_DESIGN_KEYS)[number]): unknown {
-  const value = design[key]
-
-  // 允许触发缺省时由视图按默认触发方式投影；其余缺省值与后端默认一致，读回比较不受影响。
-  if (value === undefined && key === 'allowed_triggers') {
-    return ['chat', 'manual']
-  }
-
-  return value
-}
-
 /** 字段值相等：列表字段按逐项内容比较，其余用严格相等。 */
 function sameDesignValue(latest: unknown, design: unknown): boolean {
   if (Array.isArray(latest) && Array.isArray(design)) {
@@ -87,7 +75,13 @@ function sameDesignValue(latest: unknown, design: unknown): boolean {
 
 /** 写入结果核对：视图与提交设计在全部定义字段上一致，才确认写入已生效。 */
 function actionDesignApplied(latest: ActionDefinition, design: Record<string, unknown>): boolean {
-  return ACTION_DESIGN_KEYS.every(key => sameDesignValue(latest[key], designValue(design, key)))
+  return ACTION_DESIGN_KEYS.every(key => {
+    const value = design[key]
+    // 服务端把显式空列表保存为默认触发方式。
+    const expected =
+      key === 'allowed_triggers' && Array.isArray(value) && value.length === 0 ? ['chat', 'manual'] : value
+    return sameDesignValue(latest[key], expected)
+  })
 }
 
 /** 动作编辑：新建与修改都从一句描述开始，先看整理结果再保存并评审。 */
@@ -135,7 +129,7 @@ function ActionEditor({
             refinement: '',
             requestId: null,
             preview: { draft: result.draft, summary: result.summary, details: result.details },
-            expectedUpdatedAt: result.expected_updated_at ?? composer.expectedUpdatedAt
+            expectedUpdatedAt: result.expected_updated_at
           })
         }
       } catch (failure) {
@@ -159,11 +153,15 @@ function ActionEditor({
       let saved: ActionDefinition
 
       if (action) {
+        const expectedUpdatedAt = composer.expectedUpdatedAt
+        if (!expectedUpdatedAt) {
+          throw new Error('动作草稿缺少版本，请重新整理后保存')
+        }
         saved = await saveWithReadback({
           write: () =>
             api.invoke('companion_actions.update_action', {
               path: { action_id: action.id },
-              body: { design: plan.draft, expected_updated_at: composer.expectedUpdatedAt ?? action.updated_at }
+              body: { design: plan.draft, expected_updated_at: expectedUpdatedAt }
             }),
           read: () => api.invoke('companion_actions.get_action', { path: { action_id: action.id } }),
           matches: latest => actionDesignApplied(latest, plan.draft),

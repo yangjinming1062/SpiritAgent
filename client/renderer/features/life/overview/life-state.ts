@@ -2,12 +2,11 @@ import { atom } from 'nanostores'
 import type { SetStateAction } from 'react'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-import { isLifeUiSnapshot, type LifeUiSnapshot } from '@ipc/contracts'
 
 import {
   initialLifeReader,
+  isLifeReaderState,
   type LifeReaderState,
-  restoreLifeReader,
   visitLife
 } from '../../../../../shared/life-reader-state'
 
@@ -35,11 +34,10 @@ export function exportLifeUiSnapshot(): LifeReaderState {
   return structuredClone($lifeUi.get())
 }
 
-export function importLifeUiSnapshot(snapshot: LifeUiSnapshot, navigation?: number): void {
-  if (isLifeUiSnapshot(snapshot)) {
-    const next = 'frames' in snapshot ? snapshot : restoreLifeReader(snapshot)
+export function importLifeUiSnapshot(snapshot: LifeReaderState, navigation?: number): void {
+  if (isLifeReaderState(snapshot)) {
     restoredNavigation = navigation
-    $lifeUi.set(structuredClone(next))
+    $lifeUi.set(structuredClone(snapshot))
     $lifeUiRestoreRevision.set($lifeUiRestoreRevision.get() + 1)
   }
 }

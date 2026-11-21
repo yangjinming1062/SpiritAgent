@@ -1,4 +1,4 @@
-import { type ArchiveSearchState, emptyArchiveSearch, isArchiveSearchState } from './archive-search'
+import { type ArchiveSearchState, isArchiveSearchState } from './archive-search'
 import { isRecord } from './is-record'
 import { isResourceId } from './resource-id'
 
@@ -99,35 +99,4 @@ export function isLifeReaderState(value: unknown): value is LifeReaderState {
         return false
     }
   })
-}
-
-// 旧双栏界面的显式搜索、主题和事项筛选迁入对应的阅读视图。
-export function restoreLifeReader({
-  topicId,
-  search = emptyArchiveSearch(),
-  eventPage = 0,
-  scrollTop = 0,
-  status = 'active',
-  pursuitPage = 0
-}: {
-  topicId?: string | null
-  search?: ArchiveSearchState
-  eventPage?: number
-  scrollTop?: number
-  status?: PursuitFilter
-  pursuitPage?: number
-}): LifeReaderState {
-  let state = initialLifeReader()
-  if (isResourceId(topicId)) {
-    state = visitLife(state, { kind: 'topic', id: topicId })
-  }
-  state.frames[state.frames.length - 1].page = eventPage
-  if (search.applied || Object.values(search.draft).some(Boolean)) {
-    state = visitLife(state, { kind: 'search', search })
-  } else if (!topicId && (status !== 'active' || pursuitPage > 0)) {
-    state = visitLife(state, { kind: 'pursuits', status })
-    state.frames[state.frames.length - 1].page = pursuitPage
-  }
-  state.frames[state.frames.length - 1].scrollTop = scrollTop
-  return state
 }

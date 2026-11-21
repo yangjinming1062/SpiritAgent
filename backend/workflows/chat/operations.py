@@ -237,18 +237,11 @@ def chat_operations(
                 details={"requires_confirmation": True, "command": cmd.name},
             )
 
-        args_raw = params.get("args")
-        args_list: list[str] = []
-        if isinstance(args_raw, list):
-            args_list = [str(arg) for arg in args_raw]
-        elif isinstance(args_raw, str):
-            args_list = args_raw.split()
-
         ctx = SlashCommandContext(
             session_id=runtime.session_id,
             user_id=user_id,
             runtime=runtime,
-            args=args_list,
+            args=params.get("args", []),
             client_context=actor.execution_context,
         )
 

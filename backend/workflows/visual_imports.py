@@ -141,9 +141,7 @@ async def _load_context(work: ImportWork) -> None:
         async with SESSION_LOCAL() as db:
             context.language = resolve_language(await get_user_setting(db, work.user_id, "language"))
             identity = await load_visual_identity(db, work.user_id)
-            avatar = (
-                await avatar_snapshot(db, work.user_id, identity.avatar_id) if identity and identity.avatar_id else None
-            )
+            avatar = await avatar_snapshot(db, work.user_id, identity.avatar_id) if identity is not None else None
             await db.commit()
         if avatar and resolve_asset_reference(avatar.seed_fullbody_url) and resolve_asset_reference(avatar.asset_url):
             context.identity = identity

@@ -24,7 +24,7 @@ import { composeDescribedInput } from '../../../../../shared/described-input'
 import { isStaleDraftError } from '../../../../../shared/visuals'
 
 import { visualsApi } from './api'
-import { $visualsUi, beginStudioInterpretation, EMPTY_STUDIO, updateStudio } from './visuals-state'
+import { $visualsUi, beginStudioInterpretation, updateStudio } from './visuals-state'
 
 type Intent = 'photo' | 'video' | 'motion'
 
@@ -63,7 +63,7 @@ export function VisualCreatePanel({
   const v = strings.visuals
   const ui = useStore($visualsUi)
 
-  const studio = ui.studio ?? { ...EMPTY_STUDIO, mode: 'describe' as const }
+  const studio = ui.studio
   const uploadMode = studio.mode === 'upload'
 
   const preview = studio.preview as VisualInterpretation | null

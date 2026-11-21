@@ -225,7 +225,6 @@ class LifeStatePublicView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: ResourceId
-    narrative: str | None
     activity_kind: FactType
     activity_type: ActivityType
     activity_started_at: datetime | None
@@ -330,25 +329,6 @@ class PersonalWorkView(LifeEventView):
     creation_brief: dict[str, Any]
 
 
-class LifeEventPublicView(LifeResultView):
-    """用户生活接口的事件投影；事实细节只进入内部模型上下文。"""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: ResourceId
-    event_key: str
-    kind: str
-    source: str
-    subject: Literal["companion", "user", "system"]
-    fact_type: FactType = "execution"
-    narrative: str | None = None
-    occurred_at: datetime
-    pursuit_id: ResourceId | None
-    step_id: ResourceId | None
-    result_ref: dict
-    is_meaningful: bool
-
-
 class LifeContext(BaseModel):
     """所有伙伴推理共同读取的生活快照。"""
 
@@ -422,12 +402,6 @@ class LifePursuitListResponse(BaseModel):
 
 class LifePursuitPublicListResponse(BaseModel):
     items: list[LifePursuitPublicView] = Field(default_factory=list)
-    has_more: bool
-    next_cursor: str | None
-
-
-class LifeEventPublicListResponse(BaseModel):
-    items: list[LifeEventPublicView] = Field(default_factory=list)
     has_more: bool
     next_cursor: str | None
 

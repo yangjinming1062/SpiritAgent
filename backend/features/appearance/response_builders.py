@@ -1,3 +1,5 @@
+from infrastructure.assets.asset_store import signed_companion_asset_url
+
 from features.appearance.avatar_service import re_sign_bare_path
 from features.appearance.models import AvatarAsset, CompanionOutfit
 from features.appearance.schemas import AvatarAssetResponse, OutfitResponse
@@ -23,5 +25,5 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
 def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
     """外观行转接口响应；立绘路径在响应出口重签名。"""
     return OutfitResponse.model_validate(outfit, from_attributes=True).model_copy(
-        update={"fullbody_url": re_sign_bare_path(outfit.fullbody_url) or ""}
+        update={"fullbody_url": signed_companion_asset_url(outfit.fullbody_url) or ""}
     )

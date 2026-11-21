@@ -32,7 +32,6 @@ DEFAULT_MOCK_PERSONA: dict[str, str] = {
     "name": "露娜 (Luna)",
     "personality": "活泼、好奇心强、贴心且偶尔有点小傲娇，说话真诚直接",
     "speaking_style": "自然亲切，常用轻快的语气，习惯用简短生动的句子",
-    "appearance": "银白色长发配猫耳，深蓝色眼眸，身穿浅色宽松连帽衫",
     "relationship": "陪伴在侧的知心好友与工作助手",
     "biological_type": "猫娘",
     "gender": "女性",
@@ -86,7 +85,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
                 db,
                 user_id,
                 language=language,
-                action_view=await build_action_view(db, user_id),
+                action_view=await build_action_view(user_id),
             )
             if preset_id == "companion"
             else ""
@@ -122,9 +121,9 @@ def assemble_debug_prompt(
     message_sent_at: Any | None = None,
 ) -> dict[str, Any]:
     from datetime import datetime
-    from types import SimpleNamespace
 
     from features.companion.persona_service import render_extras
+    from features.conversation.snapshots import MessageSnapshot
     from infrastructure.ai.responses import approx_responses_tokens
     from infrastructure.text import ensure_utc, utc_now
     from runtime.client_context import ChatRequestClientContext
@@ -176,14 +175,21 @@ def assemble_debug_prompt(
     if db_data is not None and db_data.get("environment_prompt"):
         instructions += "\n\n" + db_data["environment_prompt"]
 
-    # 走生产装配：mock Message 让陪伴预设带上日期分界与时刻提示。
+    # 用会话快照走生产装配，保留陪伴预设的日期分界与时刻提示。
     if message_sent_at is not None:
         parsed = datetime.fromisoformat(message_sent_at) if isinstance(message_sent_at, str) else message_sent_at
         sent_at = ensure_utc(parsed)
     else:
         sent_at = ensure_utc(utc_now())
-    mock_msg = SimpleNamespace(
+    mock_msg = MessageSnapshot(
         id=1,
+        conversation_id=1,
+        prompt_tokens=0,
+        completion_tokens=0,
+        turn_duration_ms=0,
+        media_json=None,
+        reasoning_content=None,
+        summary_through_message_id=None,
         subtype=None,
         role="user",
         content=message_text,
@@ -260,7 +266,7 @@ def format_human_readable(result: dict[str, Any]) -> str:
     lines.append(separator)
     for tool in result["tools"]:
         name = schema_name(tool)
-        desc = (tool.get("description") or tool.get("function", {}).get("description", "")).strip()
+        desc = tool["description"].strip()
         lines.append(f"  • {name}: {desc[:80]}...")
     lines.append("")
 
@@ -317,7 +323,6 @@ def main() -> int:
         default=DEFAULT_MOCK_PERSONA["speaking_style"],
         help="说话风格",
     )
-    parser.add_argument("--appearance", default=DEFAULT_MOCK_PERSONA["appearance"], help="外貌描述")
     parser.add_argument(
         "--relationship",
         default=DEFAULT_MOCK_PERSONA["relationship"],
@@ -383,7 +388,6 @@ def main() -> int:
         "name": args.persona_name,
         "personality": args.personality,
         "speaking_style": args.speaking_style,
-        "appearance": args.appearance,
         "relationship": args.relationship,
         "biological_type": args.species,
         "gender": args.gender,

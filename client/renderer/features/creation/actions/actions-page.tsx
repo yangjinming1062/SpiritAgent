@@ -323,7 +323,7 @@ function ActionsPageContent(): React.JSX.Element {
                 summary: result.summary,
                 details: result.details
               },
-              expectedUpdatedAt: result.expected_updated_at ?? current.expectedUpdatedAt
+              expectedUpdatedAt: result.expected_updated_at
             }
           : current
       )
@@ -342,11 +342,19 @@ function ActionsPageContent(): React.JSX.Element {
       return
     }
 
+    const { actionId, expectedUpdatedAt, preview } = composer
     void run(
-      async () =>
-        composer.actionId
-          ? updateAction(composer.actionId, composer.preview!.draft, composer.expectedUpdatedAt ?? '')
-          : createAction(composer.preview!.draft),
+      () => {
+        if (!actionId) {
+          return createAction(preview.draft)
+        }
+
+        if (!expectedUpdatedAt) {
+          throw new Error(studio.invalidated)
+        }
+
+        return updateAction(actionId, preview.draft, expectedUpdatedAt)
+      },
       { failure: t.saveFailed, key: 'save' }
     )?.then(action => {
       if (action) {
@@ -383,13 +391,7 @@ function ActionsPageContent(): React.JSX.Element {
   }
 
   const openEditor = (action: ActionDefinition): void => {
-    updateActionsComposer({
-      actionId: action.id,
-      expectedUpdatedAt: action.updated_at,
-      description: '',
-      refinement: '',
-      preview: null
-    })
+    updateActionsComposer({ ...EMPTY_COMPOSER, actionId: action.id })
   }
 
   const focusRowRef = (node: HTMLDivElement | null): void => {

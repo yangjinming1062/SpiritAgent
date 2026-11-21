@@ -108,7 +108,7 @@ export function VisualsPage(): React.JSX.Element {
 
   const authenticated = auth.kind === 'authenticated'
   const detailVisible = selectedId !== null
-  const composerOpen = (ui.studio?.mode ?? 'idle') !== 'idle'
+  const composerOpen = ui.studio.mode !== 'idle'
 
   useEffect(() => {
     if (!authenticated) {

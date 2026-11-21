@@ -17,8 +17,6 @@ from .schemas import (
     EVIDENCE_EVENTS_PER_PURSUIT,
     PUBLISHED_ENTRY_KINDS,
     UNRESOLVED_STEP_STATES,
-    LifeEventPublicListResponse,
-    LifeEventPublicView,
     LifeEventView,
     LifePursuitEvidence,
     LifePursuitListResponse,
@@ -188,18 +186,11 @@ async def visible_completion_results(db: AsyncSession, user_id: int, pursuit_ids
     return {key: {"evidence_count": len(results), "results": results} for key, results in grouped.items()}
 
 
-async def project_public_completions(
-    db: AsyncSession, user_id: int, views: Sequence[LifePursuitView | LifeEventView]
-) -> None:
-    targets = []
-    for item in views:
-        if isinstance(item, LifePursuitView) and item.status == "completed":
-            targets.append((item, item.id))
-        elif isinstance(item, LifeEventView) and item.kind == "life.pursuit.completed":
-            targets.append((item, item.pursuit_id))
-    visible = await visible_completion_results(db, user_id, {key for _, key in targets if key is not None})
-    for item, key in targets:
-        item.result_ref = visible[key] if key is not None else {"evidence_count": 0, "results": []}
+async def project_public_completions(db: AsyncSession, user_id: int, pursuits: Sequence[LifePursuitView]) -> None:
+    completed = [pursuit for pursuit in pursuits if pursuit.status == "completed"]
+    visible = await visible_completion_results(db, user_id, {pursuit.id for pursuit in completed})
+    for pursuit in completed:
+        pursuit.result_ref = visible[pursuit.id]
 
 
 def pursuit_view(row: LifePursuit) -> LifePursuitView:
@@ -409,35 +400,6 @@ async def list_pursuits(
         items=items,
         has_more=more,
         next_cursor=encode_timestamp_cursor(rows[-1].updated_at, rows[-1].id) if more else None,
-    )
-
-
-async def list_public_events(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    pursuit_id: int | None = None,
-    cursor: str | None = None,
-    limit: int = 20,
-) -> LifeEventPublicListResponse:
-    where = [LifeEvent.user_id == user_id, LifeEvent.shared_with_user.is_(True)]
-    if pursuit_id is not None:
-        where.append(LifeEvent.pursuit_id == pursuit_id)
-    if position := decode_timestamp_cursor(cursor):
-        where.append(tuple_(LifeEvent.occurred_at, LifeEvent.id) < position)
-    rows = list(
-        await db.scalars(
-            select(LifeEvent).where(*where).order_by(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()).limit(limit + 1)
-        )
-    )
-    more = len(rows) > limit
-    rows = rows[:limit]
-    items = [event_view(row) for row in rows]
-    await project_public_completions(db, user_id, items)
-    return LifeEventPublicListResponse(
-        items=[LifeEventPublicView.model_validate(item) for item in items],
-        has_more=more,
-        next_cursor=encode_timestamp_cursor(rows[-1].occurred_at, rows[-1].id) if more else None,
     )
 
 

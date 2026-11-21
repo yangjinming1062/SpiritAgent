@@ -1,10 +1,10 @@
+import type { LifeReaderState } from '../../../../shared/life-reader-state'
 import type { AppNavigationTarget } from '../desktop-presentation'
 import type {
   ActionsUiSnapshot,
   AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
-  LifeUiSnapshot,
   MainConversationDraftSnapshot,
   SceneUiSnapshot,
   VisualsUiSnapshot,
@@ -15,7 +15,7 @@ export type DesktopSurfaceOpenPayload = AppNavigationTarget
 
 export interface MainUiStateData {
   navigation: AppNavigationTarget
-  life: LifeUiSnapshot
+  life: LifeReaderState
   diary: DiaryUiSnapshot
   conversation: MainConversationDraftSnapshot
   visuals: VisualsUiSnapshot

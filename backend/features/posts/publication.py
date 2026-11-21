@@ -219,7 +219,7 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
     def parse_output(value: Any) -> PostPlan | None:
         plan = parse_post_decision(value)
         if plan is not None:
-            uses = plan.excerpt_uses or []
+            uses = plan.excerpt_uses
             ids = [str(use.excerpt_id) for use in uses]
             available = {item["id"] for item in payload["selected_life_excerpts"]}
             if (

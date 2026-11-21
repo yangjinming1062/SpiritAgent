@@ -79,7 +79,6 @@ export type {
   AppearanceUiSnapshot,
   CompanionEditorUiSnapshot,
   DiaryUiSnapshot,
-  LifeUiSnapshot,
   SceneMotionDraft,
   SceneMotionPlan,
   SceneUiSnapshot,
@@ -94,7 +93,6 @@ export {
   isAppearanceUiSnapshot,
   isCompanionEditorUiSnapshot,
   isDiaryUiSnapshot,
-  isLifeUiSnapshot,
   isSceneUiSnapshot,
   isVisualsUiSnapshot,
   isWardrobeDesignUiSnapshot

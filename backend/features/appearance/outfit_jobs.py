@@ -64,7 +64,6 @@ async def create_outfit_job(user_id: int, description: str, request: LifeStepReq
                 description=description,
                 checkpoint={
                     "identity": identity.model_dump(mode="json"),
-                    "identity_revision": identity.revision,
                     "identity_path": avatar.seed_fullbody_url,
                 },
             )

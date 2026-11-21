@@ -8,7 +8,13 @@ from contextlib import asynccontextmanager
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, read_asset_data_uri
+from infrastructure.assets.asset_store import (
+    build_data_uri,
+    outfit_asset_directory,
+    read_asset_data_uri,
+    unlink_companion_asset,
+)
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
@@ -25,12 +31,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import user_is_active
-from features.appearance.asset_bindings import commit_appearance
+from features.appearance.asset_bindings import commit_appearance, flush_appearance
 from features.appearance.avatar_service import (
     FULLBODY_ASPECT,
     FULLBODY_SIZE,
     AvatarGenerationError,
-    delete_portrait_file,
     get_active_avatar,
     get_avatar_job_lock,
     persist_portrait_bytes,
@@ -348,7 +353,7 @@ async def _generate_outfit_fullbody(
     finally:
         if not retained and save_progress is None:
             for path in paths:
-                await asyncio.to_thread(delete_portrait_file, path)
+                await asyncio.to_thread(unlink_companion_asset, path)
 
 
 async def _outfit_requirement(user_id: int, source: OutfitSource) -> str:
@@ -421,16 +426,14 @@ async def _commit_outfit_draft_image(
 
 
 @asynccontextmanager
-async def _draft_swap(db: AsyncSession, user_id: int, *, new_url: str, original_url: str) -> AsyncIterator[None]:
+async def _draft_swap(db: AsyncSession, user_id: int, *, new_url: str) -> AsyncIterator[None]:
     """换草稿文件生命周期：失败回收新图；成功后回收旧图并触发资产清理。"""
     try:
         yield
     except BaseException:
         await db.rollback()
-        delete_portrait_file(new_url)
+        unlink_companion_asset(new_url)
         raise
-    if original_url != new_url and original_url.startswith("temp-media/"):
-        delete_portrait_file(original_url)
     await cleanup_user_assets(user_id)
 
 
@@ -463,24 +466,12 @@ async def create_outfit_draft(
         raise OutfitStateError("外观编号分配失败")
     await commit_appearance(db, user_id)
     if job_id is not None:
-        if progress.get("identity") and not await visual_identity_is_current(
-            db, user_id, VisualIdentitySnapshot.model_validate(progress["identity"])
-        ):
+        frozen = VisualIdentitySnapshot.model_validate(progress["identity"])
+        if frozen != identity or not await visual_identity_is_current(db, user_id, frozen):
             raise OutfitContinuationBlocked("原任务身份已失效，候选与草稿已保留")
-        if (
-            progress.get("identity_revision", identity.revision) != identity.revision
-            or progress.get("identity_path", avatar.seed_fullbody_url) != avatar.seed_fullbody_url
-        ):
+        if progress["identity_path"] != avatar.seed_fullbody_url:
             raise OutfitStateError("角色身份已变化，不能继续原制作")
-        await save_outfit_progress(
-            user_id,
-            job_id,
-            outfit_id=outfit_id,
-            identity_revision=identity.revision,
-            identity_path=avatar.seed_fullbody_url,
-            identity=identity.model_dump(mode="json"),
-            paths={avatar.seed_fullbody_url},
-        )
+        await save_outfit_progress(user_id, job_id, outfit_id=outfit_id, paths={avatar.seed_fullbody_url})
     await _require_outfit_matting(user_id)
 
     source = OutfitSource(
@@ -540,7 +531,7 @@ async def create_outfit_draft(
             )
             db.add(outfit)
             if job_id is not None:
-                await db.flush()
+                await flush_appearance(db, user_id)
                 creation = await db.get(OutfitCreationJob, job_id)
                 if creation is None or creation.user_id != user_id:
                     raise OutfitStateError("原造型制作任务已失效")
@@ -554,9 +545,9 @@ async def create_outfit_draft(
             await commit_appearance(db, user_id)
     except BaseException:
         await db.rollback()
-        delete_portrait_file(ref_path)
+        unlink_companion_asset(ref_path)
         if job_id is None:
-            delete_portrait_file(draft_url)
+            unlink_companion_asset(draft_url)
         raise
     await db.refresh(outfit)
     return outfit
@@ -617,7 +608,7 @@ async def regenerate_outfit_draft(
         selection=ProviderSelection(origin=source.generation_origin, mode="current" if mode == "edit" else "next"),
     )
 
-    async with _draft_swap(db, user_id, new_url=draft_url, original_url=original_url), get_avatar_job_lock(user_id):
+    async with _draft_swap(db, user_id, new_url=draft_url), get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
         if outfit is None or outfit.status != original_status or outfit.fullbody_url != original_url:
             raise OutfitStateError("外观已发生变化，请刷新后重试")
@@ -653,6 +644,9 @@ async def confirm_outfit(
         if outfit.status != "draft":
             raise OutfitStateError("仅草稿可以确认")
         original_url = outfit.fullbody_url
+        asset_path = parse_companion_asset_path(original_url)
+        if asset_path is None or asset_path[0] != user_id:
+            raise OutfitDraftUnavailableError("外观草稿图片无法读取，请重新生成")
         original_source = outfit.source_json
         OutfitSource.model_validate(original_source)
         await commit_appearance(db, user_id)
@@ -664,12 +658,7 @@ async def confirm_outfit(
         except VideoProcessError as exc:
             logger.warning("outfit transparency validation failed", extra={"user_id": user_id}, exc_info=True)
             raise OutfitError(str(exc)) from exc
-        persisted: str | None = None
         try:
-            if original_url.startswith("temp-media/"):
-                persisted = await persist_portrait_bytes(
-                    user_id, draft[0], "image/png", directory=outfit_asset_directory(outfit_id)
-                )
             outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
             if (
                 outfit is None
@@ -678,7 +667,6 @@ async def confirm_outfit(
                 or outfit.source_json != original_source
             ):
                 raise OutfitStateError("外观已发生变化，请刷新后重试")
-            outfit.fullbody_url = persisted or original_url
             if creation_job_id is not None:
                 creation = await db.get(OutfitCreationJob, creation_job_id, with_for_update=True)
                 if (
@@ -731,7 +719,6 @@ async def confirm_outfit(
             await commit_appearance(db, user_id)
         except BaseException:
             await db.rollback()
-            delete_portrait_file(persisted)
             raise
     schedule_outfit_description(user_id, outfit.id)
     await db.refresh(outfit)
@@ -840,7 +827,7 @@ async def adopt_outfit_draft_image(
             await commit_appearance(db, user_id)
     except BaseException:
         await db.rollback()
-        delete_portrait_file(fullbody_url)
+        unlink_companion_asset(fullbody_url)
         raise
     await db.refresh(outfit)
     return outfit
@@ -853,7 +840,7 @@ async def adopt_outfit_regenerate_image(
     outfit = await _require_outfit_draft(db, user_id, outfit_id)
     original_url = outfit.fullbody_url
     identity, identity_path, fullbody_url = await _prepare_adopted_outfit_image(db, user_id, data)
-    async with _draft_swap(db, user_id, new_url=fullbody_url, original_url=original_url), get_avatar_job_lock(user_id):
+    async with _draft_swap(db, user_id, new_url=fullbody_url), get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
         if outfit is None or outfit.status != "draft" or outfit.fullbody_url != original_url:
             raise OutfitStateError("外观已发生变化，请刷新后重试")
@@ -887,8 +874,6 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
     # 删除提交后再停止任务和清理文件；提交失败时外观仍完整可用。
     await _DESCRIBE.cancel_and_wait((user_id, outfit_id))
     await cleanup_asset_directories(user_id, [directory])
-    if outfit.fullbody_url.startswith("temp-media/"):
-        delete_portrait_file(outfit.fullbody_url)
 
 
 def schedule_outfit_description(user_id: int, outfit_id: int) -> None:

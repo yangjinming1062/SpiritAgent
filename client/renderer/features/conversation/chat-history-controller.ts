@@ -107,7 +107,7 @@ export function createChatHistoryController(
   }
 
   // 用从后端加载的会话替换面板的聊天记录；其他窗口可能正在连发或等待提交确认，历史修订不能删掉未落库的输入。
-  function hydrateEditedChatMessages(messages: SessionMessage[]): void {
+  function hydrateEditedChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo): void {
     forgetDeletedVoiceMessages(messages)
     state.historyEditRevision++
     const pendingIds = new Set($pendingPromptBatch.get().map(item => item.messageId))
@@ -123,7 +123,7 @@ export function createChatHistoryController(
     const previousBodies = $chatMessageBodies.get()
 
     $chatTurnInFlight.set(true)
-    hydrateChatMessages(messages)
+    hydrateChatMessages(messages, info)
 
     for (const item of pendingRows) {
       $chatMessageBodies.setKey(item.id, previousBodies[item.id])
@@ -173,8 +173,13 @@ export function createChatHistoryController(
     commitHistory(projectHistory(messages), info)
   }
 
-  function applyRemoteSnapshot(snapshot: Partial<SessionSnapshot>, historySync?: ConversationHistorySync): boolean {
-    if (!isCurrent() || !Array.isArray(snapshot.messages)) {
+  function applyRemoteSnapshot(snapshot: SessionSnapshot, historySync?: ConversationHistorySync): boolean {
+    if (
+      !isCurrent() ||
+      !Array.isArray(snapshot.messages) ||
+      !snapshot.info ||
+      !Number.isSafeInteger(snapshot.history_revision)
+    ) {
       return false
     }
 
@@ -186,17 +191,14 @@ export function createChatHistoryController(
       return false
     }
 
-    const historyChanged =
-      snapshot.history_revision !== undefined && snapshot.history_revision !== (state.serverHistoryRevision ?? 0)
-
-    if (historyChanged) {
-      hydrateEditedChatMessages(snapshot.messages)
+    if (snapshot.history_revision !== state.serverHistoryRevision) {
+      hydrateEditedChatMessages(snapshot.messages, snapshot.info)
     } else if (!hydrateSyncedChatMessages(snapshot.messages, snapshot.info, historySync ?? captureHistorySync())) {
       return false
     }
 
-    restoreActiveTurn(snapshot.active_turn, snapshot.info?.running)
-    state.serverHistoryRevision = snapshot.history_revision ?? state.serverHistoryRevision
+    restoreActiveTurn(snapshot.active_turn, snapshot.info.running)
+    state.serverHistoryRevision = snapshot.history_revision
     const last = snapshot.last_submission
 
     if (last && !['accepted', 'running'].includes(last.status)) {
@@ -213,7 +215,7 @@ export function createChatHistoryController(
         .get()
         .findLast(item => item.role === 'user' && item.backendMessageId !== undefined)
 
-      if (latestUser?.backendMessageId && last.message_ids?.includes(latestUser.backendMessageId)) {
+      if (latestUser?.backendMessageId && last.message_ids.includes(latestUser.backendMessageId)) {
         bindTrailingUserMessageIds(last.message_ids, last.request_id)
 
         if (state.submission.unconfirmedSubmission?.requestId === last.request_id) {
@@ -239,7 +241,7 @@ export function createChatHistoryController(
     return true
   }
 
-  function restoreActiveTurn(snapshot?: ActiveTurnSnapshot | null, running = false): void {
+  function restoreActiveTurn(snapshot: ActiveTurnSnapshot | null, running: boolean): void {
     if (!isCurrent()) {
       return
     }
@@ -275,7 +277,7 @@ export function createChatHistoryController(
       return
     }
 
-    mergePersistedUserMessages(snapshot.messages ?? [], snapshot.request_id, snapshot.message_ids)
+    mergePersistedUserMessages(snapshot.messages, snapshot.request_id, snapshot.message_ids)
     const assistantMessageId = snapshot.assistant_message_id
 
     if (isResourceId(assistantMessageId)) {
@@ -396,7 +398,6 @@ export function createChatHistoryController(
     replaceAssistantReplyMessage,
     hydrateChatMessages,
     applyRemoteSnapshot,
-    restoreActiveTurn,
     resetChatMessages,
     captureHistorySync,
     hydrateSyncedChatMessages

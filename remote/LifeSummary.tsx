@@ -1,15 +1,7 @@
 import { type SetStateAction, useCallback, useMemo } from 'react'
 
-import { emptyArchiveSearch, isArchiveSearchState } from '../shared/archive-search'
 import { LifeReader } from '../shared/life-reader'
-import {
-  initialLifeReader,
-  isLifeReaderState,
-  type LifeReaderState,
-  type PursuitFilter,
-  pursuitFilters,
-  restoreLifeReader
-} from '../shared/life-reader-state'
+import { initialLifeReader, isLifeReaderState, type LifeReaderState } from '../shared/life-reader-state'
 import type { ReadLife } from '../shared/use-life-reader-data'
 
 import type { RemoteApi } from './api'
@@ -19,17 +11,7 @@ import { usePageState } from './page-state'
 const scrollContainer = (root: HTMLElement) => root.closest<HTMLElement>('main.content')
 
 export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number }) {
-  const [oldTopic] = usePageState<string | null>('life.topic', null)
-  const [oldSearch] = usePageState('life.search', emptyArchiveSearch())
-  const [oldStatus] = usePageState<PursuitFilter>('life.status', 'active')
-  const [saved, save] = usePageState(
-    'life.reader',
-    restoreLifeReader({
-      topicId: oldTopic,
-      search: isArchiveSearchState(oldSearch) ? oldSearch : undefined,
-      status: pursuitFilters.includes(oldStatus) ? oldStatus : undefined
-    })
-  )
+  const [saved, save] = usePageState('life.reader', initialLifeReader())
   const state = isLifeReaderState(saved) ? saved : initialLifeReader()
   const setState = useCallback(
     (action: SetStateAction<LifeReaderState>) => {

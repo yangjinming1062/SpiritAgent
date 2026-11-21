@@ -5,7 +5,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "baseline"
+revision: str = "0001"
 down_revision: str | None = None
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
@@ -269,6 +269,36 @@ def upgrade() -> None:
         sa.UniqueConstraint("user_id", "system_preset_id", "activity_date", name="uq_topic_batch_scope_date"),
     )
     op.create_index(op.f("ix_companion_topic_batches_user_id"), "companion_topic_batches", ["user_id"], unique=False)
+    op.create_index(
+        "ix_topic_batches_collecting",
+        "companion_topic_batches",
+        ["user_id", "activity_date"],
+        postgresql_where=sa.text("status = 'collecting'"),
+    )
+    op.create_table(
+        "companion_topic_candidates",
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
+        sa.Column("batch_id", sa.BigInteger(), nullable=False),
+        sa.Column("candidate_key", sa.String(length=128), nullable=False),
+        sa.Column("content", postgresql.JSONB(), nullable=False),
+        sa.Column("detailed", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("reviewed", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("selection", postgresql.JSONB(none_as_null=True), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["batch_id"],
+            ["companion_topic_batches.id"],
+            name=op.f("companion_topic_candidates_batch_id_fkey"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("companion_topic_candidates_pkey")),
+        sa.UniqueConstraint("batch_id", "candidate_key", name="uq_topic_candidate_source"),
+    )
+    op.create_index(
+        "ix_topic_candidates_pending",
+        "companion_topic_candidates",
+        ["batch_id", "id"],
+        postgresql_where=sa.text("NOT reviewed"),
+    )
     op.create_table(
         "conversations",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -973,6 +1003,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("reply_not_before", sa.DateTime(timezone=True), nullable=True),
         sa.Column("reply_followup", sa.Text(), nullable=True),
+        sa.Column("reply_expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(
             "(role = 'companion') = (reply_status = 'none')", name=op.f("ck_entry_comments_entry_comment_delivery")
         ),
@@ -3138,8 +3169,8 @@ def downgrade() -> None:
             action_definitions, admin_sessions, appearance_assets, appearance_image_jobs,
             appearance_preparation_jobs, assets, avatar_assets, companion_entries,
             companion_fullbody_candidates, companion_intents, companion_outfits, companion_rhythms,
-            companion_scenes, companion_topic_batches, companion_topic_feedback, companion_topic_usages,
-            companion_topics, conversations, cron_jobs, custom_voices, diary_search_index, entry_assets,
+            companion_scenes, companion_topic_batches, companion_topic_candidates, companion_topic_feedback,
+            companion_topic_usages, companion_topics, conversations, cron_jobs, custom_voices, diary_search_index, entry_assets,
             entry_comments, entry_links, fullbody_review_jobs, image_gen_jobs, job_assets, job_requests, jobs,
             library_works, life_action_admissions, life_event_search_index, life_events, life_growth,
             life_pursuits, life_states, life_steps, login_records, media_continuations, media_manual_operations,

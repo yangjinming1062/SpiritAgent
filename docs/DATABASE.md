@@ -1,6 +1,6 @@
 # 数据库设计与关系图
 
-本文解释实体拆分、关系约束、删除与查询设计。字段定位见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和[迁移序列](../backend/alembic/versions)为准。跨模块行为由 [PROTOCOL](PROTOCOL.md)定义。
+本文解释实体拆分、关系约束、删除与查询设计。字段定位见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，完整结构以 [ORM 注册](../backend/bootstrap/models.py)和[完整基线](../backend/alembic/versions/0001_baseline.py)为准。跨模块行为由 [PROTOCOL](PROTOCOL.md)定义。
 
 数据库使用 PostgreSQL、`vector` 和 `pg_trgm`；部署版本与单实例条件见 [Backend](../backend/README.md#docker-compose-部署)及[运行时边界](ARCHITECTURE.md#部署与运行时边界)。下图只保留解释所有权、循环或恢复所需的关系，箭头由引用方向指向目标，省略重复用户外键和普通文件关联；不是第二份完整 schema。
 

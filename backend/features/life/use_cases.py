@@ -22,7 +22,6 @@ from .queries import (
     event_view,
     get_life_state_view,
     get_pursuit,
-    list_public_events,
     list_pursuits,
     project_public_completions,
     pursuit_view,
@@ -33,7 +32,6 @@ from .queries import (
 from .schemas import (
     LifeDecisionRequest,
     LifeEventInput,
-    LifeEventPublicListResponse,
     LifeEventView,
     LifePursuitDetail,
     LifePursuitListResponse,
@@ -77,7 +75,6 @@ async def read_public_state(user_id: int) -> LifeStatePublicView:
         latest = (await list_trajectory(db, user_id, limit=1)).items
         view = LifeStatePublicView.model_validate(state)
         view.latest_episode = latest[0] if latest else None
-        view.narrative = view.latest_episode.narrative if view.latest_episode else None
         if not state.activity_shared_with_user:
             view.activity_kind, view.activity_type, view.activity_started_at = "virtual_activity", "idle", None
         if state.active_pursuit_id is not None and not await shared_pursuit_ids(db, user_id, {state.active_pursuit_id}):
@@ -212,13 +209,6 @@ async def read_public_pursuit(user_id: int, pursuit_id: int) -> LifePursuitPubli
 async def read_pursuits(user_id: int, *, status: str | None, cursor: str | None, limit: int) -> LifePursuitListResponse:
     async with SESSION_LOCAL() as db:
         return await list_pursuits(db, user_id, status=status, cursor=cursor, limit=limit)
-
-
-async def read_public_events(
-    user_id: int, *, pursuit_id: int | None, cursor: str | None, limit: int
-) -> LifeEventPublicListResponse:
-    async with SESSION_LOCAL() as db:
-        return await list_public_events(db, user_id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
 
 
 _PURSUIT_OPERATIONS = frozenset(

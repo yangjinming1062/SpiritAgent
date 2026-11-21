@@ -125,15 +125,10 @@ def _view_linked_file(name: str, skill_dir: Path, file_path: str) -> dict[str, A
         }
 
 
-def _parse_tags(tags_value: Any) -> list[str]:
-    if not tags_value:
+def _metadata_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
         return []
-    if isinstance(tags_value, list):
-        return [str(t).strip() for t in tags_value if t]
-    val = str(tags_value).strip()
-    if val.startswith("[") and val.endswith("]"):
-        val = val[1:-1]
-    return [t.strip().strip("\"'") for t in val.split(",") if t.strip()]
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _is_disabled(name: str, category: str | None, disabled: set[str]) -> bool:
@@ -258,10 +253,6 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
             return _view_linked_file(name, skill_dir, file_path)
 
         spiritagent_meta = get_spiritagent_metadata(parsed_frontmatter)
-        tags = _parse_tags(spiritagent_meta.get("tags") or parsed_frontmatter.get("tags", ""))
-        related_skills = _parse_tags(
-            spiritagent_meta.get("related_skills") or parsed_frontmatter.get("related_skills", "")
-        )
         linked_files = _linked_files(skill_dir)
 
         # path 按技能所在根目录取相对路径（根可能是共享技能目录或当前学习域目录）。
@@ -271,8 +262,8 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
             "success": True,
             "name": parsed_frontmatter.get("name", skill_md.parent.name),
             "description": get_skill_description(parsed_frontmatter),
-            "tags": tags,
-            "related_skills": related_skills,
+            "tags": _metadata_strings(spiritagent_meta.get("tags")),
+            "related_skills": _metadata_strings(spiritagent_meta.get("related_skills")),
             "content": content,
             "path": rel_path,
             "skill_dir": str(skill_dir),

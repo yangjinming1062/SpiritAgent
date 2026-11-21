@@ -171,6 +171,12 @@ GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Ba
 
 跨端契约同时发布 Backend、Client 与 Remote。切换前停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入。版本说明需要的模型配置见下节。
 
+切换至单一基线 `0001` 时，空库直接启动。若存量库已完整执行原修订 `0002`，停旧服务后在目标库执行下列 SQL，确认返回一行 `0001` 并提交事务后再启动新版。
+
+```sql
+UPDATE alembic_version SET version_num = '0001' WHERE version_num = '0002' RETURNING version_num;
+```
+
 ## Release notes
 
 [gen_release_notes.py](gen_release_notes.py)按版本排序寻找前一 tag，或接受显式起点；用实际 tag 替换示例：

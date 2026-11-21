@@ -231,7 +231,7 @@ export function createConversationState(sessionId: string | null) {
     submission,
     historyEditRevision: 0,
     historyReplacementRevision: 0,
-    serverHistoryRevision: undefined as number | undefined
+    serverHistoryRevision: 0
   }
 }
 

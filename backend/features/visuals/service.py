@@ -364,8 +364,6 @@ async def regenerate_visual(
         snapshot = visual_snapshot(item)
         if snapshot.source.analysis_pending:
             raise VisualStateError("影像内容尚未整理完成，请先完成分析")
-        if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
-            raise VisualStateError("这份影像的角色资料已删除，请用当前角色重新制作")
         if snapshot.source.kind == "scene" and item.media_kind == "image":
             raise VisualStateError("环境静态图片是环境素材本身，请在环境库中重做")
         source_image = _source_image(item)

@@ -33,7 +33,7 @@ from features.media.review_views import (
     single_slot_review_view,
 )
 
-from .asset_bindings import commit_appearance
+from .asset_bindings import commit_appearance, flush_appearance
 from .avatar_service import read_portrait_bytes, validate_transparent_portrait
 from .identity import visual_identity_is_current
 from .models import AvatarAsset, CompanionOutfit, OutfitCreationJob, OutfitSource
@@ -161,11 +161,8 @@ async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | 
         if (
             frozen is None
             or not await visual_identity_is_current(db, wait.user_id, VisualIdentitySnapshot.model_validate(frozen))
-            or (
-                avatar is None
-                or avatar.identity_revision != progress.get("identity_revision")
-                or avatar.seed_fullbody_url != progress.get("identity_path")
-            )
+            or avatar is None
+            or avatar.seed_fullbody_url != progress.get("identity_path")
         ):
             row.error = "原任务身份已失效，候选已保留，不能按当前身份采纳"
             return None
@@ -201,7 +198,7 @@ async def continue_outfit_creation(db: AsyncSession, wait: MediaWait) -> dict | 
             status="draft",
         )
         db.add(outfit)
-        await db.flush()
+        await flush_appearance(db, wait.user_id)
     else:
         outfit.fullbody_url, outfit.source_json, outfit.status = candidate.path, source.dump(), "draft"
     row.result_outfit_id, row.state, row.stage = outfit_id, "succeeded", "complete"

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Collection, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from weakref import WeakValueDictionary
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
@@ -31,7 +31,7 @@ from infrastructure.video_processing.desktop import sample_desktop_video_frames
 from infrastructure.video_processing.face_detail import review_face_details
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from infrastructure.video_processing.motion_review import video_motion_profile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
@@ -100,21 +100,28 @@ class _VideoJobParams(BaseModel):
     request_scope: str | None = None
     duration: int
     resolution: str
-    reference_images: tuple[str, ...] = ()
+    reference_images: tuple[Annotated[str, Field(min_length=1)], ...]
     reference_guidance: str = ""
     aspect_ratio: str | None
     identity_reference_path: str | None
     identity_snapshot: VisualIdentitySnapshot | None
-    identity_reference_role: CharacterReferenceRole = "portrait"
+    identity_reference_role: CharacterReferenceRole
     goal: str
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     asset_directory: str
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "_VideoJobParams":
+        has_identity = self.identity_snapshot is not None
+        if has_identity != bool(self.identity_reference_path) or (has_identity and not self.reference_images):
+            raise ValueError("出镜视频须同时冻结身份版本、身份来源和送检参考图")
+        return self
 
     @property
     def required_dimensions(self) -> tuple[str, ...]:
         return (
             ("identity", "goal", "quality", "opening")
-            if self.identity_snapshot or self.identity_reference_path
+            if self.identity_snapshot is not None
             else ("goal", "quality", "opening")
         )
 
@@ -400,8 +407,6 @@ async def prepare_video_job(
     include_upscaled: bool = True,
 ) -> VideoJobSnapshot:
     """冻结能力与请求，在调用方事务内创建任务；提交供应商之前必须提交事务。"""
-    if identity is not None and (not identity_reference_path or not reference_images):
-        raise ValueError("Self video requires an identity reference and snapshot")
     chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     compatible = _compatible_video_configs(
         chain,
@@ -417,12 +422,6 @@ async def prepare_video_job(
     if not asset_directory:
         # 空串同缺省处理：按任务创建日冻结，不能把空目录写进任务参数落成根目录平铺。
         asset_directory = dated_asset_directory(utc_now(), await resolve_user_timezone(db, user_id) or "UTC")
-    frozen_references = await freeze_image_references(
-        {f"ref{index}": value for index, value in enumerate(reference_images)},
-        user_id=user_id,
-        generation_id=state.generation_id,
-        directory=asset_directory,
-    )
     params = _VideoJobParams(
         goal=goal or prompt,
         task=task,
@@ -430,7 +429,7 @@ async def prepare_video_job(
         duration=duration,
         asset_directory=asset_directory,
         resolution=resolution,
-        reference_images=tuple(frozen_references.values()),
+        reference_images=reference_images,
         reference_guidance=reference_guidance,
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
@@ -438,6 +437,13 @@ async def prepare_video_job(
         identity_reference_role=identity_reference_role,
         asset_generation_id=state.generation_id,
     )
+    frozen_references = await freeze_image_references(
+        {f"ref{index}": value for index, value in enumerate(params.reference_images)},
+        user_id=user_id,
+        generation_id=state.generation_id,
+        directory=asset_directory,
+    )
+    params.reference_images = tuple(frozen_references.values())
     job = VideoGenJob(
         user_id=user_id,
         conversation_id=int(session_id) if session_id is not None else None,
@@ -701,10 +707,8 @@ async def _evaluate_stored_video(job_id: int) -> str:
 
     before_submit = partial(_require_video_review_call, job_id, user_id)
 
-    needs_identity = params.identity_snapshot is not None or params.identity_reference_path is not None
-    reference_paths = params.reference_images or (
-        (params.identity_reference_path,) if params.identity_reference_path else ()
-    )
+    needs_identity = params.identity_snapshot is not None
+    reference_paths = params.reference_images
     frozen_references: tuple[str, ...] = ()
     if needs_identity and entry.evidence:
         identity_images = await read_review_evidence(entry.evidence)
@@ -721,9 +725,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
         details = await asyncio.to_thread(review_face_details, samples.frames, samples.times_seconds)
         face_details = tuple((time, build_data_uri(detail, "image/webp")) for time, detail in details)
     if needs_identity and (identity_decision is None or identity_decision.verdict not in {"pass", "fail"}):
-        roles = character_reference_roles(
-            params.identity_reference_role if params.reference_images else "fullbody", len(frozen_references) > 1
-        )
+        roles = character_reference_roles(params.identity_reference_role, len(frozen_references) > 1)
         identity = await review_character_frames_with_references(
             user_id,
             frozen_references,

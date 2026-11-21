@@ -121,7 +121,7 @@ class SessionCompressionResult(BaseModel):
 
 class CommandDispatchRequest(BusinessRequest):
     command: str = Field(min_length=1)
-    args: list[str | int | float] | str | None = None
+    args: list[str] = Field(default_factory=list)
     confirmed: bool = False
 
 

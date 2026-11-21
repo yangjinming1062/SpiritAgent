@@ -11,8 +11,7 @@ CharacterReferenceRole = Literal["portrait", "fullbody"]
 class VisualIdentitySnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # 分组恢复未导入身份时保留脱离当前身份的快照，禁止旧任务冒用目标账户形象。
-    avatar_id: ResourceId | None
+    avatar_id: ResourceId
     revision: int = Field(ge=1)
 
 

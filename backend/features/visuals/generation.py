@@ -460,8 +460,6 @@ async def _job_inputs(user_id: int, job_id: int, generation_id: str) -> JobInput
         if progress is None or progress.generation_id != generation_id or job.state not in {"queued", "running"}:
             raise LlmCallBlockedError("影像制作任务已经失效")
         snapshot = visual_snapshot(job)
-        if snapshot.source.kind in ("actor", "cinematic") and snapshot.source.identity.avatar_id is None:
-            raise LlmCallBlockedError("制作引用的角色资料已删除")
         db.expunge(job)
         return JobInputs(job=job, snapshot=snapshot, progress=progress)
 
@@ -722,26 +720,6 @@ async def resolve_visual_video_plan(
     )
 
 
-def _review_basis_stale(
-    inputs: ReviewedImageInput, progress: VisualJobProgress, snapshot: ActorClipSource | CinematicSource
-) -> bool:
-    """旧进度按编辑底图或派生造型图检查过；换冻结参考基准后，旧结论不能约束新检查。"""
-    if inputs.image_edit:
-        return (
-            inputs.identity_reference == inputs.reference_image
-            or inputs.identity_secondary_reference is None
-            or (
-                snapshot.kind == "cinematic"
-                and not (inputs.review_environment_reference_image or inputs.environment_reference_image)
-            )
-        )
-    return (
-        snapshot.identity_reference_role == "fullbody"
-        and progress.aligned_outfit_path is not None
-        and inputs.identity_secondary_reference is None
-    )
-
-
 async def _prepare_pose(
     user_id: int,
     job: VisualJob,
@@ -872,9 +850,14 @@ async def _prepare_pose(
         if progress.image_chain_json
         else ImageChainState()
     )
-    reference_mode = snapshot.identity_reference_mode
-    if isinstance(state.inputs, ReviewedImageInput) and _review_basis_stale(state.inputs, progress, snapshot):
-        raise VisualCreationError("原任务参考或要求已变化；候选已保留，请另建制作或评估请求", "evidence_invalid")
+    if state.inputs is not None and (
+        not isinstance(state.inputs, ReviewedImageInput)
+        or state.inputs.identity_reference != identity
+        or state.inputs.identity_secondary_reference != identity_outfit
+        or state.inputs.review_environment_reference_image != environment
+        or state.inputs.identity_reference_mode != snapshot.identity_reference_mode
+    ):
+        raise VisualCreationError("原任务的检查参考与冻结素材不符，候选已保留", "evidence_invalid")
 
     async def save_image(value: ImageChainState) -> None:
         progress.image_chain_json = value.model_dump_json()
@@ -907,7 +890,7 @@ async def _prepare_pose(
             review_environment_reference_image=environment,
             identity_reference=identity,
             identity_secondary_reference=identity_outfit,
-            identity_reference_mode=reference_mode,
+            identity_reference_mode=snapshot.identity_reference_mode,
             image_edit=editing,
             goal_review="required",
             size=f"{image_width}x{image_height}",

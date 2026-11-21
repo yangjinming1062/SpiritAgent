@@ -5,21 +5,19 @@ import { isVisualsUiSnapshot, type StudioUiSnapshot, type VisualsUiSnapshot } fr
 
 import { InterpretationGuard } from '../../../../../shared/interpretation-guard'
 
-export const EMPTY_STUDIO: StudioUiSnapshot = {
-  mode: 'idle',
-  intent: 'photo',
-  description: '',
-  preview: null,
-  refinement: ''
-}
-
 const FALLBACK: VisualsUiSnapshot = {
   query: '',
   mediaKind: 'all',
   source: '',
   page: 0,
   cursors: [null],
-  studio: { ...EMPTY_STUDIO }
+  studio: {
+    mode: 'idle',
+    intent: 'photo',
+    description: '',
+    preview: null,
+    refinement: ''
+  }
 }
 
 // 影像筛选与制作草稿是会话级状态：跨切页保留、换号清空，不落盘；详情随组件生命周期。
@@ -38,8 +36,8 @@ export function updateVisualsUi(patch: Partial<Omit<VisualsUiSnapshot, 'studio'>
 /** 制作草稿唯一写入口：任何变化都推进整理修订，在途整理的响应不落地。 */
 export function updateStudio(next: Partial<StudioUiSnapshot>): void {
   interpretation.revise()
-  const studio = ui.get().studio ?? { ...EMPTY_STUDIO }
-  ui.set({ ...ui.get(), studio: { ...studio, ...next } })
+  const state = ui.get()
+  ui.set({ ...state, studio: { ...state.studio, ...next } })
 }
 
 /** 发起一次影像描述整理，返回响应回来时的落地校验。 */

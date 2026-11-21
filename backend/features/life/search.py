@@ -17,8 +17,8 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from .actions import ReadingResultView
 from .models import LifeEvent, LifeEventSearchIndex, LifeStep
 from .prompts import life_content_payload
-from .queries import event_view, project_public_completions, step_view
-from .schemas import LifeEventPublicView, LifeEventView, LifeTrajectoryEntry
+from .queries import event_view, step_view
+from .schemas import LifeEventView, LifeTrajectoryEntry
 from .trajectory import trajectory_entries, trajectory_scope
 
 LIFE_SEARCH_WORKER = SearchIndexWorker(
@@ -35,17 +35,8 @@ class LifeRecallItem(LifeEventView):
         return f"{event}\n{self.reading_result.model_dump_json()}" if self.reading_result else event
 
 
-class LifeSearchItem(LifeEventPublicView):
-    reading_result: ReadingResultView | None = None
-
-
 class LifeRecallResponse(BaseModel):
     items: list[LifeRecallItem]
-    search: SearchStatus
-
-
-class LifeSearchResponse(BaseModel):
-    items: list[LifeSearchItem]
     search: SearchStatus
 
 
@@ -162,32 +153,6 @@ async def recall_life(
             limit=limit,
         )
         return LifeRecallResponse(items=await _recall_items(db, user_id, rows), search=status)
-
-
-async def search_life(
-    user_id: int,
-    *,
-    query: str = "",
-    date_from: date | None = None,
-    date_to: date | None = None,
-    pursuit_id: int | None = None,
-    limit: int = 20,
-) -> LifeSearchResponse:
-    async with SESSION_LOCAL() as db:
-        rows, status = await _search_events(
-            db,
-            user_id,
-            query=query,
-            date_from=date_from,
-            date_to=date_to,
-            pursuit_id=pursuit_id,
-            trajectory_only=False,
-            shared_only=True,
-            limit=limit,
-        )
-        items = await _recall_items(db, user_id, rows)
-        await project_public_completions(db, user_id, items)
-        return LifeSearchResponse.model_validate(LifeRecallResponse(items=items, search=status), from_attributes=True)
 
 
 async def search_trajectory(

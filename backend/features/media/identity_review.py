@@ -352,18 +352,16 @@ requirement 逐字摘出原目标中相应的起始要求。明确满足填 pass
 存疑或未通过时，correction_instruction 给出用于生成单幅开场图的正向要求，保留场地、取景、主体、目光及与物件的关系。其余填空。"""
 
 
-async def review_video_opening(
+async def _review_video_opening(
     config: UserLlmConfig,
     goal: str,
     evidence: ReviewEvidence,
     *,
+    policy: str,
+    context: dict,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[OpeningStateReview | None, ReviewServiceStatus]:
-    context = json.loads(evidence.context_json)
     entries = evidence.images
-    if "goal_quality" in context:
-        context = context["goal_quality"]
-        entries = tuple(e for e in entries if e.role.startswith("goal_quality."))
     count, times = context["reference_count"], context["frame_times_seconds"]
     selected = [*entries[:count], entries[count]]
     for i, time in enumerate(context.get("face_detail_times_seconds", ())):
@@ -385,7 +383,7 @@ async def review_video_opening(
     try:
         result = await call_llm_json(
             config,
-            context.get("opening_state_policy", _OPENING_STATE_POLICY),
+            policy,
             {"goal": goal, "reference_count": count},
             schema=OpeningStateReview.model_json_schema(),
             schema_name="video_opening_state",
@@ -522,7 +520,9 @@ async def review_media_quality(
             return result
 
         quality_context = json.loads(evidence.context_json)
-        quality_context.pop("opening_state_policy", None)
+        opening_policy = quality_context.pop("opening_state_policy", None)
+        if frame_times_seconds and (not isinstance(opening_policy, str) or not opening_policy.strip()):
+            raise ValueError("视频检查证据缺少冻结的首帧判断策略")
         result = await call_llm_json(
             config,
             evidence.policy_prompt,
@@ -541,8 +541,13 @@ async def review_media_quality(
         opening = previous.opening if previous else None
         status: ReviewServiceStatus = "complete"
         if frame_times_seconds and (opening is None or opening.verdict == "review"):
-            opening, status = await review_video_opening(
-                config, generation_prompt, evidence, before_submit=before_submit
+            opening, status = await _review_video_opening(
+                config,
+                generation_prompt,
+                evidence,
+                policy=opening_policy,
+                context=quality_context,
+                before_submit=before_submit,
             )
         steps = previous.steps_before_stop if previous else None
         step_requirement = previous.step_requirement if previous else None

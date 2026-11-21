@@ -215,7 +215,7 @@ LLM、媒体、语音、向量及素材传输等待结果或明确错误，不�
 
 ### Slash 命令
 
-Slash 元动作走 `POST /api/sessions/{session_id}/commands`，不交给 LLM。`GET /api/commands` 返回名称、别名、说明和确认标记；注册与实现见 [slash_commands](../backend/features/conversation/slash_commands.py)，执行与确认由会话业务操作校验。
+Slash 元动作走 `POST /api/sessions/{session_id}/commands`，由服务端命令处理器执行。客户端在 `args` 字符串数组中保留解析出的参数及其顺序。`GET /api/commands` 返回名称、别名、说明和确认标记；注册与实现见 [slash_commands](../backend/features/conversation/slash_commands.py)，执行与确认由会话业务操作校验。
 
 `//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不作为普通回合提交。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话，成功后历史为空且不显示成功提示，消息删除与列表刷新通知同事务提交，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
 

@@ -5,15 +5,13 @@ from typing import Annotated
 
 from fastapi import HTTPException, Path, Query
 from features.life.schemas import (
-    LifeEventPublicListResponse,
     LifePursuitPublicDetail,
     LifePursuitPublicListResponse,
     LifeStatePublicView,
     LifeTrajectoryListResponse,
 )
-from features.life.search import LifeSearchResponse, LifeTrajectorySearchResponse, search_life, search_trajectory
+from features.life.search import LifeTrajectorySearchResponse, search_trajectory
 from features.life.use_cases import (
-    read_public_events,
     read_public_pursuit,
     read_public_pursuits,
     read_public_state,
@@ -74,27 +72,6 @@ async def search_life_trajectory(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get(
-    "/events/search",
-    response_model=LifeSearchResponse,
-    openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
-)
-async def search_life_events(
-    user: CurrentUser,
-    q: Annotated[str, Query(max_length=1000)] = "",
-    date_from: date | None = None,
-    date_to: date | None = None,
-    pursuit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
-) -> LifeSearchResponse:
-    try:
-        return await search_life(
-            user.id, query=q, date_from=date_from, date_to=date_to, pursuit_id=pursuit_id, limit=limit
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @router.get("", response_model=LifeStatePublicView, openapi_extra=_IDENTITIES)
 async def get_life(user: CurrentUser) -> LifeStatePublicView:
     return await read_public_state(user.id)
@@ -121,16 +98,3 @@ async def get_life_pursuit(
     if result is None:
         raise HTTPException(status_code=404, detail="未找到持续事项")
     return result
-
-
-@router.get("/events", response_model=LifeEventPublicListResponse, openapi_extra=_IDENTITIES)
-async def get_life_events(
-    user: CurrentUser,
-    pursuit_id: Annotated[ResourceId | None, Query(gt=0, le=POSTGRES_INT8_MAX)] = None,
-    cursor: Annotated[str | None, Query(max_length=512)] = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
-) -> LifeEventPublicListResponse:
-    try:
-        return await read_public_events(user.id, pursuit_id=pursuit_id, cursor=cursor, limit=limit)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc

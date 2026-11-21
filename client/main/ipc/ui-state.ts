@@ -9,7 +9,6 @@ import {
   isAppearanceUiSnapshot,
   isCompanionEditorUiSnapshot,
   isDiaryUiSnapshot,
-  isLifeUiSnapshot,
   isSceneUiSnapshot,
   isVisualsUiSnapshot,
   isWardrobeDesignUiSnapshot,
@@ -21,6 +20,8 @@ import {
   type UiStateReply,
   type UiStateRequest
 } from '@ipc/contracts'
+
+import { isLifeReaderState } from '../../../shared/life-reader-state'
 
 interface UiStateOptions {
   accountId: () => string | null
@@ -40,7 +41,7 @@ interface WaitingReply {
 }
 
 function stateData(raw: MainUiStateData): MainUiStateData {
-  if (!isLifeUiSnapshot(raw?.life)) {
+  if (!isLifeReaderState(raw?.life)) {
     throw new Error('生活页状态无效。')
   }
 
