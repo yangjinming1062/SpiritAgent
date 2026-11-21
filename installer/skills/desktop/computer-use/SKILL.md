@@ -40,15 +40,8 @@ supported text fields, dropdowns, and sliders. Focus the intended field
 before typing. For a trimmed element list, narrow the app or increase
 `max_elements`; `mode="ax"` avoids an unnecessary image.
 
-## Input and authorization
+## Authorization
 
-- Windows uses the real mouse and keyboard. Clicks on a covered target
-  can land on another window; raise the target with `focus_app`
-  and `bring_to_front=true` when needed, then capture again. `type` and
-  `key` require the target in front. Raising it interrupts the user.
-- macOS sends input in the background when the app supports it; raising
-  windows and dragging are unavailable. Follow the platform reference
-  when input is refused.
 - Stay within the user's task and authorization. Permission changes and
   payments need explicit authorization; leave password and 2FA prompts
   to the user. Never enter passwords, API keys, card numbers, or secrets.

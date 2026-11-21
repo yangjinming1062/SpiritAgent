@@ -4,7 +4,7 @@
 
 ## 按改动选择验证
 
-命令默认在仓库根运行。按变化选择专项检查，提交前执行完整入口：
+按改动选择专项检查，提交前执行完整入口：
 
 ```bash
 uv tool run --python 3.13 pre-commit run -a
@@ -27,8 +27,6 @@ uv tool run --python 3.13 pre-commit run -a
 协议修改后用 `generate_protocol.py` 更新生成契约；它同时核对 Backend 与 Runner 预设清单，`--check` 只查漂移。构建可能修改版本清单与构建信息，检查最终差异，并区分静态、构建与真实运行证据。
 
 ## 持续生活验收
-
-以下是验收方法，不是已有运行结论。
 
 完成伙伴引导并配置所需模型与能力，记录代码版本、时区、平台与供应商。首轮可连续观察七个本地日；未覆盖跨日、等待或恢复时延长观察，不能只以天数达标。选择可核对来源或成果的生活目标，不每天人工下发步骤冒充自主推进。
 
@@ -169,13 +167,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_package.py
 
 GitHub 安装包与应用内更新分开交付。Windows 更新 ZIP 需上传 Backend 管理端，由该后端分发；macOS 当前 DMG 不能当作同类更新 ZIP。CI 的签名 Secret 解释和私钥边界归 [签名配置](release-keys/README.md)，工作流不执行平台证书签名与 macOS 公证。
 
-跨端契约同时发布 Backend、Client 与 Remote。切换前停止新任务并收敛在途工作；存量数据库变化需新增迁移。核对记录、关联、素材与草稿后开放写入。版本说明需要的模型配置见下节。
-
-切换至单一基线 `0001` 时，空库直接启动。若存量库已完整执行原修订 `0002`，停旧服务后在目标库执行下列 SQL，确认返回一行 `0001` 并提交事务后再启动新版。
-
-```sql
-UPDATE alembic_version SET version_num = '0001' WHERE version_num = '0002' RETURNING version_num;
-```
+涉及跨端契约时同步发布 Backend、Client 与 Remote。切换前停止受理新任务、收敛在途工作；数据库按[配置与迁移](../backend/README.md#配置与迁移)准备。核对记录、关联、素材与草稿后再开放写入。
 
 ## Release notes
 

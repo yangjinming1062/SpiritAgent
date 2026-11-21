@@ -16,13 +16,9 @@
 
 ## 进程与代码边界
 
-[main](main/README.md) 持有凭据、连接、窗口、Runner 与磁盘资源；[renderer](renderer/README.md) 持有会话投影、页面草稿和呈现。渲染层按 `app`（窗口与装配）、`features`（页面与状态自治）、`ui`（无业务组件）、`shared`（基础能力）分层；功能内部用相对路径，跨功能只经对方 `index.ts`，页面由 `app` 装配。主窗口与交互桌面共用页面，背景窗口只消费受限媒体桥。平台宿主通过主进程统一端口接入，不拥有业务状态。
+[主进程](main/README.md)持有凭据、连接、窗口、Runner 与磁盘资源；[渲染层](renderer/README.md)持有页面草稿和会话投影。主窗口与交互桌面共用页面，背景窗口只消费受限媒体桥。平台宿主不拥有业务状态。
 
-`shared/ipc` 是 main、preload 与 renderer 共用的契约；`main/shared` 是主进程内部叶子层，两者不混用。主进程不导入依赖窗口环境的 `renderer/shared`。main / preload 由 tsup 构建，renderer 由 Vite 构建，产物边界见[主进程包边界](main/README.md#包边界)。
-
-## 连接与设备就绪
-
-主进程持有账户唯一聊天 WS，窗口通过类型化 IPC 请求和订阅；关窗不释放连接或已受理调用。账户网关、恢复和工具同步由主进程统一处理。
+`shared/ipc` 是 main、preload 与 renderer 的共同契约；`main/shared` 仅供主进程使用。
 
 ## 窗口与主题
 

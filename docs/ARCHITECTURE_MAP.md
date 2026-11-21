@@ -14,15 +14,12 @@ flowchart LR
     subgraph Cloud[Linux Docker]
         Backend[Backend web 单实例]
         DB[(PostgreSQL 与资产存储)]
-        Provider[模型与媒体供应商]
         Backend <--> DB
-        Backend <--> Provider
     end
+    Backend <--> Provider[配置的模型与媒体服务]
     Client <-->|业务 HTTP、事件与设备 WS| Backend
     Mobile[手机浏览器 Remote] <-->|设备 Cookie、HTTP 与 WS| Backend
 ```
-
-进程职责、状态权威与信任边界见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 ## 后端分层与模块
 
@@ -65,8 +62,6 @@ flowchart TD
     BOOT -.装配.-> RT
 ```
 
-依赖方向与边界检查见 [ARCHITECTURE](ARCHITECTURE.md#依赖方向) 与 [Backend](../backend/README.md#模块依赖边界)；各业务模块入口见 [Backend 任务入口](../backend/README.md#任务入口)。
-
 ## 客户端、Remote 与 Runner
 
 ```mermaid
@@ -94,8 +89,6 @@ flowchart LR
     Remote --- Shared
 ```
 
-主进程准入与资源生命周期见 [client/main](../client/main/README.md)，渲染层分层见 [client/renderer](../client/renderer/README.md)，工具装配见 [Runner](../runner/README.md)，跨端身份与恢复见 [本机工具](PROTOCOL.md#本机工具)。
-
 ## 契约生成与交付构建
 
 ```mermaid
@@ -105,12 +98,12 @@ flowchart LR
     RunnerC[Runner 工具、预设与学习域目录] --> Gen
     Gen --> TS[shared/api.generated.ts]
     Gen --> Gate["--check 漂移门禁"]
-    TS --> Builds[client 与 remote 构建]
+    TS --> DesktopBuild[桌面客户端构建]
+    TS --> RemoteBuild[手机页面构建]
+    RemoteBuild --> BackendImage[Backend 镜像]
     Payload[installer 载荷<br/>桌面包、Runner wheel、技能] --> Setup[Tauri 安装器]
-    Builds --> Payload
+    DesktopBuild --> Payload
 ```
-
-跨端映射与调用语义见 [通信契约](PROTOCOL.md#通道分工)，构建与发布命令见 [Scripts](../scripts/README.md)。
 
 ## 数据与状态存储
 
@@ -122,8 +115,6 @@ flowchart LR
     Runner[Runner] --> Journal[调用日志与技能文件]
     Remote[Remote] --> Session[会话内草稿与上传内存]
 ```
-
-实体关系与删除语义见 [DATABASE](DATABASE.md)，字段归属见 [DATABASE_FIELDS](DATABASE_FIELDS.md)，缓存边界见 [资产访问与缓存](PROTOCOL.md#资产访问与缓存)。
 
 ## 调度与事件交付
 
@@ -139,8 +130,6 @@ flowchart LR
     Emitter[会话 emitter 聊天流] --> WS[网关 WS 交付]
     Outbox --> WS
 ```
-
-档位闸门与交接规则见 [调度](PROTOCOL.md#调度)，事件路由与恢复见 [事件路由](PROTOCOL.md#事件路由)与[序号与恢复](PROTOCOL.md#序号与恢复)。
 
 ## 部署形态
 
@@ -159,5 +148,3 @@ flowchart TD
     Phone[手机浏览器 /remote/] -->|HTTP / WS| Backend
     Admin[管理端 /admin/] --> Backend
 ```
-
-单副本边界、端口与运维见 [部署与运行时边界](ARCHITECTURE.md#部署与运行时边界) 与 [Backend 部署](../backend/README.md#部署与排障)。

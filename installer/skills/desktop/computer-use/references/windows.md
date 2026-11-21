@@ -12,6 +12,7 @@ clicks still hit whatever is visible at that screen position.
 - `focus_app` selects a target without raising it by default. Before
   typing or interacting with a covered target, use
   `focus_app(app="…", bring_to_front=true)`, then capture the app again.
+  Raising a window interrupts the user; `type` and `key` require the target in front.
 - `som` shows numbered UIA elements on the image and in the element list.
   If markings obscure the content, use `vision` for the plain image.
 - Target scrolling with an element or coordinate when possible; without
