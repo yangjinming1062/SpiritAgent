@@ -435,7 +435,7 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
         title: 'My details',
         hint: 'Personal details collected during onboarding; your companion keeps them in mind. Edit or fill them in anytime — after deleting, the entry is forgotten but can be added back later.',
         fields: {
-          user_call_name: 'Call name',
+          user_call_name: 'Name or nickname',
           user_gender: 'Gender',
           user_birthday: 'Birthday',
           user_hobbies: 'Hobbies',

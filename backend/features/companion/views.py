@@ -41,4 +41,4 @@ async def update_persona_view(
     persona = await update_persona(db, user_id, definition, expected_fields=expected_fields)
     mood = await get_life_mood(db, user_id)
     schedule_personality_tag_refresh(persona.user_id, user_id)
-    return _response(persona.is_complete, persona.definition_json, persona.personality_tags_json, mood)
+    return _response(persona.is_complete, load_persona_definition(persona), persona.personality_tags_json, mood)

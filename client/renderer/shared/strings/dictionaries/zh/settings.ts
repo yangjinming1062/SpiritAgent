@@ -407,11 +407,11 @@ export const settings = {
         title: '我的资料',
         hint: '引导时收集的个人资料，伙伴会一直记得。可随时修改或补填；删除后伙伴不再记得该条，之后仍可重新填写。',
         fields: {
-          user_call_name: '称呼',
+          user_call_name: '称呼（姓名或昵称）',
           user_gender: '性别',
           user_birthday: '生日',
-          user_hobbies: '爱好',
-          user_freeform: '补充'
+          user_hobbies: '兴趣爱好',
+          user_freeform: '补充说明'
         }
       },
       maintenanceHint: '伙伴会自行审阅证据和维护记忆，无需你确认。只有有效且未过期的记忆用于互动。',

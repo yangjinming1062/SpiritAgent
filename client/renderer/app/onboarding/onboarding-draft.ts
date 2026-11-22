@@ -74,29 +74,35 @@ export class OnboardingDraft {
     return () => this.active && this.generation === generation && Boolean(scope?.())
   }
 
-  submit(field: QKey, value: string | null): Promise<boolean> {
+  submit(field: QKey, value: string | null): Promise<OnboardingResumeState | null> {
     // 在入队时捕获账户，不能等到前一个请求结束才捕获。
     const isCurrent = this.captureOperation()
 
     const submission = this.submissions.then(async () => {
       if (!isCurrent()) {
-        return false
+        return null
       }
 
       if (this.personaBase && ONBOARDING_PERSONA_FIELDS.some(key => key === field)) {
-        return true
+        return null
       }
 
       try {
-        await requestResource('onboarding.patch_onboarding', { body: { field, value } })
+        const state = await requestResource('onboarding.patch_onboarding', {
+          body: {
+            field,
+            value,
+            ...((field === 'voice' || field === 'voice_setup_skipped') && { include_profile: true })
+          }
+        })
 
-        return isCurrent()
+        return isCurrent() ? state : null
       } catch (error) {
         if (isCurrent()) {
           log.warn('onboarding', `onboarding ${field} failed`, error)
         }
 
-        return false
+        return null
       }
     })
 

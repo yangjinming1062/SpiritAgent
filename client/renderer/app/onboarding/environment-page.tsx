@@ -1,168 +1,143 @@
-import { useEffect, useRef, useState } from 'react'
+import { useStore } from '@nanostores/react'
+import { useEffect, useState } from 'react'
 
 import { pickAvatarImage } from '@/features/character'
-import { adoptSceneImage, createScene, discardSceneCreationIssue } from '@/features/creation/environment'
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { log } from '@/shared/lib/log'
-import { authedResource } from '@/shared/lib/resource-request'
+import {
+  $sceneCreationIssue,
+  $sceneLibrary,
+  createScene,
+  discardSceneCreationIssue,
+  inspectSceneCreationIssue,
+  type SceneCreateInput,
+  SceneCreationCheckActions
+} from '@/features/creation/environment'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { requestResource } from '@/shared/lib/resource-request'
 import { useStrings } from '@/shared/strings'
-import { BTN_SUBTLE, CreationActionBar, CreationWorkspace, INPUT_CLASS } from '@/ui'
+import { BTN_SUBTLE, CreationActionBar, CreationFeedback, CreationWorkspace, INPUT_CLASS } from '@/ui'
 
 import { ONBOARDING_PRIMARY_BUTTON } from './onboarding-components'
 import styles from './onboarding.module.css'
+import { useOnboardingAction } from './use-onboarding-action'
 
 interface EnvironmentPageProps {
-  busy: boolean
-  error: string | null
   onBack: () => void
-  onCompleted: () => void
-  onError: (message: string) => void
-  onBusyChange: (busy: boolean) => void
+  onContinue: (complete: boolean) => void
 }
 
-type ExistingState = 'checking' | 'exists' | 'absent'
+type ExistingState = 'checking' | 'exists' | 'absent' | 'failed'
+
+async function hasScene(): Promise<boolean> {
+  const page = await requestResource('companion_scenes.scene_list_route', { query: { limit: 1 } })
+
+  return page.scenes.length > 0
+}
 
 // 环境步骤复用环境库的创建与上传链路；受理即推进引导，制作在后台完成，维护入口在环境库。
-export function EnvironmentPage({
-  busy,
-  error,
-  onBack,
-  onCompleted,
-  onError,
-  onBusyChange
-}: EnvironmentPageProps): React.JSX.Element {
-  const t = useStrings().onboarding
+export function EnvironmentPage({ onBack, onContinue }: EnvironmentPageProps): React.JSX.Element {
+  const dict = useStrings()
+  const t = dict.onboarding
+  const issue = useStore($sceneCreationIssue)
+  const waiting = issue?.outcome === 'unknown'
+  const { busy, error, setError, run } = useOnboardingAction()
   const [existing, setExisting] = useState<ExistingState>('checking')
   const [notes, setNotes] = useState('')
-  const mountedRef = useRef(true)
+  const begin = useAsyncGuard()
+  const [readAttempt, setReadAttempt] = useState(0)
 
   useEffect(() => {
-    mountedRef.current = true
+    setExisting('checking')
 
-    return () => {
-      mountedRef.current = false
+    if (waiting) {
+      return
     }
-  }, [])
 
-  useEffect(() => {
-    const scope = mountedRef
-
-    void (async () => {
-      try {
-        const result = await authedResource('companion_scenes.read_scene_state')
-        const hasScene = result.ok && result.value !== null && result.value.materials.length > 0
-
-        if (scope.current) {
-          // 已有场景（如重启恢复兜底已建默认场景）时不再重复创建，直接以只读态继续引导。
-          setExisting(hasScene ? 'exists' : 'absent')
+    const isLive = begin()
+    let cancelled = false
+    void hasScene().then(
+      found => {
+        if (!cancelled && isLive()) {
+          setExisting(found ? 'exists' : 'absent')
         }
-      } catch (err) {
-        // 状态读取失败按无场景处理，创建时的服务端约束仍会兜底（409 时提示继续）。
-        if (scope.current) {
-          log.warn('onboarding', 'scene state read failed', err)
-          setExisting('absent')
+      },
+      () => {
+        if (!cancelled && isLive()) {
+          setExisting('failed')
         }
       }
-    })()
-  }, [])
+    )
 
-  const finish = (): void => {
-    if (mountedRef.current) {
-      onCompleted()
+    return () => {
+      cancelled = true
+    }
+  }, [begin, readAttempt, waiting])
+
+  const continueAfterChoice = async (useDefault: boolean, isLive: () => boolean): Promise<void> => {
+    if (!isLive()) {
+      return
+    }
+
+    // 素材已受理后，即使进度回执丢失，重试也只需确认这一步。
+    if (!useDefault) {
+      setExisting('exists')
+    }
+
+    const state = await requestResource('onboarding.patch_onboarding', {
+      body: { field: useDefault ? 'environment_skipped' : 'environment_complete', value: 'true' }
+    })
+
+    if (!isLive()) {
+      return
+    }
+
+    if (state.complete || state.next_field === 'user_profile') {
+      onContinue(state.complete)
+    } else {
+      setError(t.saveFailed)
     }
   }
 
-  const submitDescribe = async (): Promise<void> => {
-    const trimmed = notes.trim()
+  const submitScene = async (body: SceneCreateInput, isLive: () => boolean): Promise<void> => {
+    const result = await createScene(body)
 
-    if (!trimmed) {
-      onError(t.environmentNotesRequired)
+    if (!isLive()) {
+      return
+    }
+
+    if (result.kind === 'failed') {
+      if (result.outcome === 'rejected') {
+        discardSceneCreationIssue()
+        setError(result.message)
+      }
 
       return
     }
 
-    onBusyChange(true)
-    onError('')
-
-    try {
-      const result = await createScene({ notes: trimmed })
-
-      // created=已受理；unavailable=互斥/已有任务，环境已存在或已在途，直接继续；failed=就地报错保留输入。
-      // 引导期用户看不到环境库的失败提醒，rejected 的提醒就地消费后丢弃，避免残留到之后首次打开环境库。
-      if (result.kind === 'failed') {
-        if (result.outcome === 'rejected') {
-          discardSceneCreationIssue()
-        }
-
-        onError(result.message)
-      } else {
-        finish()
+    if (result.kind === 'unavailable' && !(await hasScene())) {
+      if (isLive()) {
+        setError(t.environmentCreateFailed)
       }
-    } finally {
-      if (mountedRef.current) {
-        onBusyChange(false)
-      }
+
+      return
     }
+
+    await continueAfterChoice(false, isLive)
   }
 
-  const submitUpload = async (): Promise<void> => {
+  const submitUpload = async (isLive: () => boolean): Promise<void> => {
     const picked = await pickAvatarImage(t.environmentPickTitle)
 
-    if (!picked) {
+    if (!picked || !isLive()) {
       return
     }
 
     if ('error' in picked) {
-      onError(picked.error)
+      setError(picked.error)
 
       return
     }
 
-    onBusyChange(true)
-    onError('')
-
-    try {
-      const sceneId = await adoptSceneImage({ base64: picked.image.base64 })
-
-      if (sceneId) {
-        finish()
-      } else {
-        onError(t.environmentCreateFailed)
-      }
-    } catch (err) {
-      onError(backendDetailMessage(err, t.environmentCreateFailed))
-      log.warn('onboarding', 'environment upload failed', err)
-    } finally {
-      if (mountedRef.current) {
-        onBusyChange(false)
-      }
-    }
-  }
-
-  const submitSkip = async (): Promise<void> => {
-    onBusyChange(true)
-    onError('')
-
-    try {
-      const result = await authedResource('onboarding.patch_onboarding', {
-        body: { field: 'environment_skipped', value: 'true' }
-      })
-
-      if (result.ok) {
-        finish()
-      } else {
-        onError(t.environmentSkipFailed)
-      }
-    } catch (err) {
-      if (mountedRef.current) {
-        onError(backendDetailMessage(err, t.environmentSkipFailed))
-        log.warn('onboarding', 'environment skip failed', err)
-      }
-    } finally {
-      if (mountedRef.current) {
-        onBusyChange(false)
-      }
-    }
+    await submitScene({ source: 'analysis', image: picked.image.base64 }, isLive)
   }
 
   return (
@@ -173,7 +148,6 @@ export function EnvironmentPage({
             <button className={BTN_SUBTLE} disabled={busy} onClick={onBack} type="button">
               {t.stepVoice}
             </button>
-            <span className="ml-auto" />
           </div>
         </CreationActionBar>
       }
@@ -183,28 +157,69 @@ export function EnvironmentPage({
           <h2 className={styles.questionTitle}>{t.environmentTitle}</h2>
           <p className="text-xs leading-relaxed text-body">{t.environmentHint}</p>
         </div>
-        {existing === 'checking' && <p className="text-xs text-muted">{t.environmentChecking}</p>}
-        {existing === 'exists' && (
+        {waiting ? (
+          <CreationFeedback
+            actions={
+              <SceneCreationCheckActions
+                checking={busy}
+                issue={issue}
+                onCheck={() =>
+                  void run(async live => {
+                    if (!(await inspectSceneCreationIssue()) && live()) {
+                      setError(dict.living.scene.loadFailed)
+                    }
+                  })
+                }
+              />
+            }
+            description={
+              issue.inspected
+                ? `${$sceneLibrary.get().length ? t.environmentExists : t.environmentNotFound} ${dict.creation.inspectionHint}`
+                : dict.living.scene.submissionUnknown
+            }
+            state="unknown"
+            title={dict.creation.unknown}
+          />
+        ) : (
+          existing === 'checking' && <p className="text-xs text-muted">{t.environmentChecking}</p>
+        )}
+        {!waiting && existing === 'failed' && (
+          <div className="space-y-2">
+            <p className="text-sm text-danger-fg" role="alert">
+              {t.environmentReadFailed}
+            </p>
+            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setReadAttempt(n => n + 1)} type="button">
+              {t.reload}
+            </button>
+          </div>
+        )}
+        {!waiting && existing === 'exists' && (
           <div className="space-y-3">
             <p className="text-xs leading-relaxed text-body">{t.environmentExists}</p>
-            <button className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`} disabled={busy} onClick={finish} type="button">
+            <button
+              className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
+              disabled={busy}
+              onClick={() => void run(live => continueAfterChoice(false, live))}
+              type="button"
+            >
               {t.environmentContinue}
             </button>
           </div>
         )}
-        {existing === 'absent' && (
+        {!waiting && existing === 'absent' && (
           <div className="space-y-4">
             <label className="block space-y-1.5 text-xs text-body" htmlFor="onboarding-environment-notes">
               <span>{t.environmentNotesLabel}</span>
               <textarea
                 className={INPUT_CLASS}
+                disabled={busy}
                 id="onboarding-environment-notes"
                 maxLength={500}
                 onChange={event => {
                   setNotes(event.target.value)
 
                   if (error) {
-                    onError('')
+                    setError('')
                   }
                 }}
                 placeholder={t.environmentNotesPlaceholder}
@@ -215,22 +230,29 @@ export function EnvironmentPage({
             <div className={styles.navigation}>
               <button
                 className={`ml-auto ${ONBOARDING_PRIMARY_BUTTON}`}
-                disabled={busy}
-                onClick={() => void submitDescribe()}
+                disabled={busy || !notes.trim()}
+                onClick={() => void run(live => submitScene({ source: 'generate', notes: notes.trim() }, live))}
                 type="button"
               >
                 {t.environmentGenerate}
               </button>
             </div>
             <div className={styles.navigation}>
-              <button className={BTN_SUBTLE} disabled={busy} onClick={() => void submitUpload()} type="button">
+              <button className={BTN_SUBTLE} disabled={busy} onClick={() => void run(submitUpload)} type="button">
                 {t.environmentUpload}
-              </button>
-              <button className={BTN_SUBTLE} disabled={busy} onClick={() => void submitSkip()} type="button">
-                {t.environmentSkip}
               </button>
             </div>
           </div>
+        )}
+        {!waiting && (existing === 'absent' || existing === 'failed') && (
+          <button
+            className={BTN_SUBTLE}
+            disabled={busy}
+            onClick={() => void run(live => continueAfterChoice(true, live))}
+            type="button"
+          >
+            {t.environmentSkip}
+          </button>
         )}
         {error && (
           <p className="text-xs text-danger-fg" role="alert">

@@ -7,6 +7,7 @@ export type Phase =
   | 'fullbody-reference'
   | 'voice'
   | 'environment'
+  | 'user_profile'
 
 export type VoiceStage = 'describe' | 'catalog'
 
@@ -26,6 +27,10 @@ interface BackIntent {
 }
 
 export function computeBackTransition(state: BackState, characterQuestionsCount: number): BackIntent | null {
+  if (state.phase === 'user_profile') {
+    return { phase: 'environment' }
+  }
+
   if (state.phase === 'environment') {
     return { phase: 'voice', voiceStage: 'catalog' }
   }

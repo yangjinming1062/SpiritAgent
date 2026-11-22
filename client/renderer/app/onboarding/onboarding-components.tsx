@@ -16,23 +16,26 @@ export const ONBOARDING_PRIMARY_BUTTON =
   'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40'
 
 export function OnboardingProgress({ step }: { step: number }): React.JSX.Element {
-  const t = useStrings().onboarding
+  const dict = useStrings()
+  const t = dict.onboarding
 
   return (
     <ol aria-label={t.progressAria} className={styles.progress} data-onboarding-drag-handle="">
-      {[t.steps.meet, t.steps.confirm, t.steps.voice, t.steps.environment].map((label, index) => (
-        <li
-          aria-current={step === index ? 'step' : undefined}
-          className={styles.step}
-          data-state={step === index ? 'current' : step > index ? 'complete' : 'upcoming'}
-          key={label}
-        >
-          <span aria-hidden="true" className={styles.stepMarker}>
-            {step > index ? <Check className="size-3.5" /> : index + 1}
-          </span>
-          <span className={styles.stepLabel}>{label}</span>
-        </li>
-      ))}
+      {[t.steps.meet, t.steps.confirm, t.steps.voice, t.steps.environment, dict.settings.memory.profile.title].map(
+        (label, index) => (
+          <li
+            aria-current={step === index ? 'step' : undefined}
+            className={styles.step}
+            data-state={step === index ? 'current' : step > index ? 'complete' : 'upcoming'}
+            key={label}
+          >
+            <span aria-hidden="true" className={styles.stepMarker}>
+              {step > index ? <Check className="size-3.5" /> : index + 1}
+            </span>
+            <span className={styles.stepLabel}>{label}</span>
+          </li>
+        )
+      )}
     </ol>
   )
 }

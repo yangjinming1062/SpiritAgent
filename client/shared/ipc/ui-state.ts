@@ -31,6 +31,17 @@ export interface CompanionMemoryDraft {
   baseVersion: number
 }
 
+export function isCompanionMemoryDraft(draft: unknown): draft is CompanionMemoryDraft {
+  return (
+    isRecord(draft) &&
+    typeof draft.content === 'string' &&
+    typeof draft.baseContent === 'string' &&
+    typeof draft.baseVersion === 'number' &&
+    Number.isSafeInteger(draft.baseVersion) &&
+    draft.baseVersion >= 0
+  )
+}
+
 export interface CompanionMemoryBrowser {
   status: NonNullable<MemoryListRequest['status']>
   query: string
@@ -63,14 +74,6 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
   const persona = value.persona
   const memory = value.memory
 
-  const validDraft = (draft: unknown): boolean =>
-    isRecord(draft) &&
-    typeof draft.content === 'string' &&
-    typeof draft.baseContent === 'string' &&
-    typeof draft.baseVersion === 'number' &&
-    Number.isSafeInteger(draft.baseVersion) &&
-    draft.baseVersion >= 0
-
   const validFields = (fields: unknown, keys: string[], nullable = false): boolean =>
     isRecord(fields) && keys.every(key => typeof fields[key] === 'string' || (nullable && fields[key] === null))
 
@@ -99,9 +102,9 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
         browser.scrollTop >= 0
     ) &&
     isRecord(memory.drafts) &&
-    Object.values(memory.drafts).every(validDraft) &&
+    Object.values(memory.drafts).every(isCompanionMemoryDraft) &&
     isRecord(memory.profileDrafts) &&
-    Object.values(memory.profileDrafts).every(validDraft)
+    Object.values(memory.profileDrafts).every(isCompanionMemoryDraft)
   )
 }
 

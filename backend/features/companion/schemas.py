@@ -6,6 +6,7 @@ from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from features.media.voice_contracts import CustomVoiceSummary
+from features.memory.profile_fields import MemoryProfileChange
 
 _PERSONA_JSON_MAX_LEN: int = 32 * 1024
 PersonaEditableField = Literal[
@@ -61,6 +62,14 @@ class OnboardingStateResponse(BaseModel):
     next_field: str | None = None
     complete: bool = False
     persona_complete: bool
+    profile_outcome: Literal["saved", "skipped"] | None
+
+
+class OnboardingProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["save", "skip"]
+    changes: list[MemoryProfileChange] = Field(default_factory=list, max_length=5)
 
 
 class CompanionOperationResponse(BaseModel):

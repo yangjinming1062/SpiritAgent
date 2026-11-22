@@ -1,15 +1,11 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
-import { MAX_USER_TEXT } from '@/features/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
-import { gatewayApi } from '@/shared/platform/desktop'
-import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import {
@@ -18,9 +14,7 @@ import {
   confirmAction,
   CreationActionBar,
   CreationFeedback,
-  DatePicker,
   ErrorBanner,
-  FIELD_LABEL,
   HINT_TEXT,
   INPUT_CLASS,
   OverflowMenu,
@@ -28,145 +22,34 @@ import {
   SECTION_TITLE
 } from '@/ui'
 import type { CompanionMemoryDraft } from '@client-shared/ipc/ui-state'
-import type {
-  MemoryItem,
-  MemoryListResponse,
-  MemoryProfileChange,
-  MemoryProfileUpdateRequest,
-  UserProfileField
-} from '@protocol'
-
-import { isRecord } from '../../../../shared/is-record'
+import type { MemoryItem } from '@protocol'
 
 import { $companionEditors, completeMemoryDraft, editMemoryDraft, setMemoryDraft } from './companion-editor-state'
-
-export function useMemoryChanged(presetId: string, refresh: () => Promise<void>): void {
-  const gateway = useStore($gateway)
-  const beginGuard = useAsyncGuard()
-  useEffect(() => {
-    if (!gateway) {
-      return
-    }
-
-    const isLive = beginGuard()
-
-    const onEvent = (event: GatewayEvent): void => {
-      if (
-        isLive() &&
-        event.type === 'memory.changed' &&
-        isRecord(event.payload) &&
-        event.payload.system_preset_id === presetId
-      ) {
-        void refresh()
-      }
-    }
-
-    return gatewayApi().onGatewayEvent(({ event }) => onEvent(event))
-  }, [beginGuard, gateway, presetId, refresh])
-}
-
-interface ProfileField {
-  key: UserProfileField
-  multiline?: boolean
-  date?: boolean
-}
-
-const PROFILE_FIELDS: readonly ProfileField[] = [
-  { key: 'user_call_name' },
-  { key: 'user_gender' },
-  { key: 'user_birthday', date: true },
-  { key: 'user_hobbies', multiline: true },
-  { key: 'user_freeform', multiline: true }
-]
+import {
+  confirmProfileChanges,
+  conflictingProfileFields,
+  PROFILE_FIELDS,
+  profileChanges,
+  profileChangesMatch,
+  UserProfileForm,
+  useUserProfileRows
+} from './user-profile-form'
 
 export function UserProfileSection(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
   const p = t.profile
   const drafts = useStore($companionEditors).memory.profileDrafts
-  const [rows, setRows] = useState<MemoryItem[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { rows, setRows, loading, load, loadError } = useUserProfileRows()
   const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   const [savedHint, setSavedHint] = useState<string | null>(null)
   const [editingExtra, setEditingExtra] = useState<string | null>(null)
   const begin = useAsyncGuard()
-  const requestId = useRef(0)
-
-  const load = useCallback(
-    async (background = false): Promise<MemoryItem[] | null> => {
-      const isLive = begin()
-      const generation = ++requestId.current
-
-      if (!background) {
-        setLoading(true)
-      }
-
-      setHint(null)
-
-      try {
-        const all: MemoryItem[] = []
-        let cursor: string | null = null
-
-        do {
-          const result: MemoryListResponse = await requestResource('resource_catalog.get_memories', {
-            query: {
-              kind: 'user_profile',
-              status: 'active',
-              system_preset_id: 'companion',
-              cursor,
-              limit: 100
-            }
-          })
-
-          if (!isLive() || generation !== requestId.current || result.system_preset_id !== 'companion') {
-            return null
-          }
-
-          all.push(...result.memories)
-          cursor = result.next_cursor ?? null
-
-          if (!result.memories.length) {
-            break
-          }
-        } while (cursor)
-
-        setRows(all)
-
-        return all
-      } catch (error) {
-        if (isLive() && generation === requestId.current) {
-          setHint(t.loadFailedHint)
-          notifyError(error, t.loadFailedToast)
-        }
-
-        return null
-      } finally {
-        if (isLive() && generation === requestId.current) {
-          setLoading(false)
-        }
-      }
-    },
-    [begin, t.loadFailedHint, t.loadFailedToast]
-  )
-
-  useEffect(() => {
-    void load()
-
-    return () => {
-      requestId.current += 1
-    }
-  }, [load])
-
-  const refresh = useCallback(async (): Promise<void> => {
-    await load(true)
-  }, [load])
-
-  useMemoryChanged('companion', refresh)
-  const rowOf = (field: ProfileField): MemoryItem | undefined => rows?.find(row => row.slot_key === field.key)
-  const changed = PROFILE_FIELDS.filter(field => !!drafts[field.key])
-  const conflicts = changed.filter(field => drafts[field.key]?.baseVersion !== (rowOf(field)?.content_version ?? 0))
-  const extras = rows?.filter(row => !PROFILE_FIELDS.some(field => field.key === row.slot_key)) ?? []
+  const changes = profileChanges(drafts)
+  const changed = PROFILE_FIELDS.filter(key => drafts[key])
+  const conflicts = conflictingProfileFields(rows, drafts)
+  const extras = rows?.filter(row => !PROFILE_FIELDS.some(key => key === row.slot_key)) ?? []
 
   const saveProfile = async (): Promise<void> => {
     const isLive = begin()
@@ -176,23 +59,7 @@ export function UserProfileSection(): React.ReactElement {
       return
     }
 
-    const changes: MemoryProfileChange[] = changed.map(field => ({
-      field: field.key,
-      value: drafts[field.key].content.trim() || null,
-      expected_version: drafts[field.key].baseVersion
-    }))
-
-    const cleared = changed.filter(field => !drafts[field.key].content.trim() && drafts[field.key].baseVersion !== 0)
-
-    if (
-      cleared.length &&
-      !(await confirmAction({
-        title: dict.settings.persona.profileForgetTitle,
-        description: cleared.map(field => p.fields[field.key]).join('、'),
-        confirmLabel: dict.settings.persona.profileForgetAndSave,
-        variant: 'destructive'
-      }))
-    ) {
+    if (!(await confirmProfileChanges(changes))) {
       return
     }
 
@@ -209,7 +76,7 @@ export function UserProfileSection(): React.ReactElement {
         body: {
           system_preset_id: 'companion',
           changes
-        } satisfies MemoryProfileUpdateRequest
+        }
       })
 
       if (!isCurrent()) {
@@ -219,9 +86,9 @@ export function UserProfileSection(): React.ReactElement {
       for (const field of changed) {
         completeMemoryDraft(
           'profileDrafts',
-          field.key,
-          drafts[field.key],
-          result.memories.find(row => row.slot_key === field.key)
+          field,
+          drafts[field],
+          result.memories.find(row => row.slot_key === field)
         )
       }
 
@@ -239,20 +106,19 @@ export function UserProfileSection(): React.ReactElement {
           return
         }
 
-        const confirmed =
-          !!latest &&
-          changed.every(
-            field =>
-              (latest.find(row => row.slot_key === field.key)?.content ?? '') === drafts[field.key].content.trim()
+        if (
+          latest &&
+          profileChangesMatch(
+            latest,
+            changed.map(field => ({ field, value: drafts[field].content.trim() }))
           )
-
-        if (confirmed && latest) {
+        ) {
           for (const field of changed) {
             completeMemoryDraft(
               'profileDrafts',
-              field.key,
-              drafts[field.key],
-              latest.find(row => row.slot_key === field.key)
+              field,
+              drafts[field],
+              latest.find(row => row.slot_key === field)
             )
           }
 
@@ -407,7 +273,16 @@ export function UserProfileSection(): React.ReactElement {
           </span>
         ) : null}
       </div>
-      {hint ? <ErrorBanner message={hint} onRetry={() => void load()} retryLabel={dict.common.retry} /> : null}
+      {hint || loadError ? (
+        <ErrorBanner
+          message={hint || loadError || ''}
+          onRetry={() => {
+            setHint(null)
+            void load()
+          }}
+          retryLabel={dict.common.retry}
+        />
+      ) : null}
       {loading ? (
         <p className={HINT_TEXT}>{t.loading}</p>
       ) : !rows ? null : (
@@ -415,85 +290,15 @@ export function UserProfileSection(): React.ReactElement {
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pb-1 pr-1">
             <div className="liquid-glass-card rounded-2xl p-4">
               <p className={cn(HINT_TEXT, 'mb-3 max-w-xl')}>{p.hint}</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {PROFILE_FIELDS.map(field => {
-                  const row = rowOf(field)
-                  const value = drafts[field.key]?.content ?? row?.content ?? ''
-
-                  const onChange = (next: string): void => {
-                    setSavedHint(null)
-                    setMemoryDraft('profileDrafts', field.key, editMemoryDraft(drafts[field.key], next, row))
-                  }
-
-                  return (
-                    <div className={cn('block', field.multiline && 'sm:col-span-2')} key={field.key}>
-                      <label className={FIELD_LABEL} htmlFor={`profile-${field.key}`}>
-                        {p.fields[field.key]}
-                      </label>
-                      {field.date ? (
-                        <DatePicker
-                          clearLabel={dict.common.clear}
-                          disabled={busy}
-                          id={`profile-${field.key}`}
-                          onChange={onChange}
-                          placeholder={dict.common.pickDate}
-                          value={value}
-                        />
-                      ) : field.multiline ? (
-                        <textarea
-                          className={INPUT_CLASS}
-                          disabled={busy}
-                          id={`profile-${field.key}`}
-                          maxLength={MAX_USER_TEXT}
-                          onChange={event => onChange(event.target.value)}
-                          rows={3}
-                          value={value}
-                        />
-                      ) : (
-                        <input
-                          className={INPUT_CLASS}
-                          disabled={busy}
-                          id={`profile-${field.key}`}
-                          maxLength={MAX_USER_TEXT}
-                          onChange={event => onChange(event.target.value)}
-                          value={value}
-                        />
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-              {conflicts.length > 0 ? (
-                <div className="mt-3 space-y-2 rounded-xl border border-line-hairline p-3">
-                  <p className="text-[11px] text-warning">{dict.settings.persona.profileConflictHint}</p>
-                  <dl className="space-y-1">
-                    {conflicts.map(field => (
-                      <div key={field.key}>
-                        <dt className={HINT_TEXT}>{p.fields[field.key]}</dt>
-                        <dd className="whitespace-pre-wrap break-words text-[13px] text-body">
-                          {rowOf(field)?.content || '—'}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    onClick={() => {
-                      for (const field of conflicts) {
-                        setMemoryDraft('profileDrafts', field.key, {
-                          ...drafts[field.key],
-                          baseContent: rowOf(field)?.content ?? '',
-                          baseVersion: rowOf(field)?.content_version ?? 0
-                        })
-                      }
-                    }}
-                    type="button"
-                  >
-                    {dict.common.keepMyEdits}
-                  </button>
-                </div>
-              ) : null}
+              <UserProfileForm
+                busy={busy}
+                drafts={drafts}
+                onEdit={(key, value) => {
+                  setSavedHint(null)
+                  setMemoryDraft('profileDrafts', key, value)
+                }}
+                rows={rows}
+              />
             </div>
             {extras.map(row => {
               const key = `extra:${row.id}`
@@ -552,7 +357,7 @@ export function UserProfileSection(): React.ReactElement {
                 disabled={busy || !changed.length}
                 onClick={() => {
                   for (const field of PROFILE_FIELDS) {
-                    setMemoryDraft('profileDrafts', field.key, undefined)
+                    setMemoryDraft('profileDrafts', field, undefined)
                   }
                 }}
                 type="button"

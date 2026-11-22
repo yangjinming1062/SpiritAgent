@@ -23,7 +23,8 @@ import {
 } from './companion-editor-state'
 import { memoryCountBucket, MemoryItemCard } from './memory-item'
 import { MemoryRecallFilters, type MemorySectionId, MemoryToolbar } from './memory-toolbar'
-import { useMemoryChanged, UserProfileSection } from './user-profile-section'
+import { useMemoryChanged } from './use-memory-changed'
+import { UserProfileSection } from './user-profile-section'
 
 const PAGE_SIZE = 20
 

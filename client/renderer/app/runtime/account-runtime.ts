@@ -6,6 +6,8 @@ import { desktopEvents } from '@/shared/platform/desktop'
 import { applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 
+import { onboardingProfileDraft } from '../onboarding/profile-draft'
+
 export function createAccountLifecycleRuntime() {
   let disposed = false
   let started = false
@@ -47,6 +49,10 @@ export function createAccountLifecycleRuntime() {
     unresolved = typeof complete !== 'boolean'
 
     if (!unresolved) {
+      if (complete) {
+        onboardingProfileDraft.reset()
+      }
+
       setCompanionLifecycle(complete ? 'ready' : 'onboarding')
     }
   }

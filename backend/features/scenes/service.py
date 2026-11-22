@@ -1009,7 +1009,7 @@ def _initial_scene_notes(persona: PersonaSnapshot) -> str:
 async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
     async with SESSION_LOCAL() as db:
         persona = await persona_snapshot(db, user_id)
-        if persona is None or not persona.is_complete:
+        if persona is None or not persona.is_complete or persona.definition_json.get("environment_skipped") != "true":
             return None
         if await db.scalar(select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)):
             return None

@@ -37,6 +37,11 @@ export function resolveResumeTarget(nextField: string | null | undefined): Resum
     case 'fullbody-reference':
       return { phase: 'fullbody-reference' }
 
+    case 'environment':
+
+    case 'user_profile':
+      return { phase: nextField, qIndex: 0, imageSealed: true }
+
     case 'voice':
       return { phase: 'voice', voiceStage: 'catalog', qIndex: 0, imageSealed: true }
     default: {

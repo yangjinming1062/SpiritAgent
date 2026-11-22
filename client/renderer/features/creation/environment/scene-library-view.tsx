@@ -5,7 +5,6 @@ import { usePanelAction } from '@/shared/hooks/use-panel-action'
 import { RefreshCw, Sparkles } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 import {
-  BTN_PRIMARY,
   BTN_SUBTLE,
   HINT_TEXT,
   LibraryStatusBanner,
@@ -17,7 +16,8 @@ import {
 } from '@/ui'
 import { AssetLibraryCard, AssetLibraryGrid } from '@/ui/asset-library-card'
 
-import { $sceneCreationIssue, finishSceneCreationWait, PAGE_SIZE, type SceneAsset, type ScenePolicy } from './scene'
+import { $sceneCreationIssue, PAGE_SIZE, type SceneAsset, type ScenePolicy } from './scene'
+import { SceneCreationCheckActions } from './scene-creation-check-actions'
 
 interface SceneLibraryViewProps {
   entries: SceneAsset[]
@@ -115,23 +115,7 @@ export function SceneLibraryView({
                 state: 'unknown',
                 title: strings.creation.unknown,
                 description: creationIssue.inspected ? strings.creation.inspectionHint : t.submissionUnknown,
-                actions: (
-                  <>
-                    <button className={BTN_SUBTLE} disabled={checking} onClick={checkStatus} type="button">
-                      {checking ? strings.common.loading : t.inspectLibrary}
-                    </button>
-                    {creationIssue.inspected ? (
-                      <button
-                        className={BTN_PRIMARY}
-                        disabled={checking}
-                        onClick={() => finishSceneCreationWait(creationIssue)}
-                        type="button"
-                      >
-                        {strings.creation.finishWaiting}
-                      </button>
-                    ) : null}
-                  </>
-                )
+                actions: <SceneCreationCheckActions checking={checking} issue={creationIssue} onCheck={checkStatus} />
               }
             : null,
           task

@@ -70,7 +70,7 @@
 - 未读确认取所属视图的可见性。动态、日记各自消费服务端镜像；[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 仅对合格舞台发气泡或声音，不可见消息仍进入未读，工作会话不跳入轻语。
 - 错误分类经根 `error-classification.ts`，显示经 `ipc-error.ts`；业务正文错误用 `notifyError`。与状态相关的错误行内显示，动作失败用 toast，同一失败不重复呈现。
 
-引导 flow 只装配导航及未提交表单，`onboarding-draft.ts` 串行保存并按服务端 `next_field` 恢复，本地编辑优先。读取失败暂停重试，不能当作新引导覆盖。头像和声音各自持有异步制作状态。
+引导 flow 装配导航，`onboarding-draft.ts` 串行保存并按服务端 `next_field` 恢复，本地编辑优先。读取失败暂停重试，不能当作新引导覆盖。头像和声音各自持有异步制作状态。末页复用记忆页的资料表单，未提交字段及编辑起点版本按账户保存在本机，服务端确认完成后清理草稿。
 
 制作组件只展示业务方提供的阶段和恢复动作，不发请求、不推测进度。`CreationWorkspace` 分离正文与操作区，`CreationFeedback` 避免重复按钮阶段，`CreationActionBar` 不自行吸附；确认与焦点由 `use-dialog-focus` 和 `ConfirmDialog` 管理。未知结果的本地等待结束不代表服务端取消。
 

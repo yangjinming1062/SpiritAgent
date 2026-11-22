@@ -31,6 +31,7 @@ export {
   regenerateScene,
   reloadSceneImage,
   type SceneAsset,
+  type SceneCreateInput,
   type SceneMutationIssue,
   type ScenePolicy,
   setScenePolicy,
@@ -38,4 +39,5 @@ export {
 } from './scene'
 
 export { SceneBackdrop } from './scene-backdrop'
+export { SceneCreationCheckActions } from './scene-creation-check-actions'
 export { sceneUiHandoff } from './ui-handoff'

@@ -241,7 +241,11 @@ Slash 元动作走 `POST /api/sessions/{session_id}/commands`，由服务端命�
 | 素材和影像 | [scenes](../backend/entrypoints/http/routes/companion_scenes.py)、[actions](../backend/entrypoints/http/routes/companion_actions.py)、[visuals](../backend/entrypoints/http/routes/companion_visuals.py) |
 | 生活与内容 | [life](../backend/entrypoints/http/routes/companion_life.py)、[posts](../backend/entrypoints/http/routes/companion_posts.py)、[journal](../backend/entrypoints/http/routes/companion_journal.py) |
 
-引导以服务端状态和已有资产恢复，完成条件归 [DESIGN](DESIGN.md#认识伙伴)。声音之后的环境步骤复用环境创建接口（描述/上传走用户创建链路），跳过经引导字段触发默认初始场景；初始场景不由视觉观察或默认造型就绪触发。
+引导以服务端状态和已有资产恢复，完成条件归 [DESIGN](DESIGN.md#认识伙伴)。支持资料步骤的服务端始终返回 `profile_outcome`，尚无决定时为 `null`。新桌面遇到缺少该字段的旧服务端时，已完成账户直接进入产品，待引导账户提示升级服务端。旧桌面首次确认声音时沿用原完成条件。
+
+桌面确认声音或暂用文字时通过引导 PATCH 携带 `include_profile=true`，后续步骤依次为 `environment` 和 `user_profile`。环境描述、上传复用环境创建接口。受理或沿用库中已有记录后确认 `environment_complete`，后台制作失败可在原素材上重试。默认环境由 `environment_skipped` 登记，启动恢复也须核对该决定。
+
+`PUT /api/companion/onboarding/profile` 接收保存或跳过决定。保存按编辑起点版本整批更新当前账户陪伴预设的资料，跳过只记录决定。资料决定、引导完成和首次问候意图同事务提交。回执丢失时按原决定和提交内容核对服务端状态与最新资料。引导恢复与生活调度使用同一完成条件。
 
 ### 头像、全身与确认
 

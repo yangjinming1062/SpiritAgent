@@ -1,11 +1,13 @@
 """人设持久化 JSON 的共享读取契约。"""
 
+ONBOARDING_PROFILE_STEP = "onboarding_profile_step"
+
 
 def parse_persona_definition(raw: dict[str, str] | None) -> dict[str, str]:
     value = raw or {}
     if not isinstance(value, dict):
         return {}
-    return {key: item for key, item in value.items() if isinstance(item, str)}
+    return {key: item for key, item in value.items() if key != ONBOARDING_PROFILE_STEP and isinstance(item, str)}
 
 
 def visual_persona_definition(definition: dict[str, str]) -> dict[str, str]:

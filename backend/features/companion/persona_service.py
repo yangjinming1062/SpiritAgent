@@ -10,18 +10,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.appearance_ports import read_appearance_readiness
-from features.companion.definition import parse_persona_definition
+from features.companion.definition import ONBOARDING_PROFILE_STEP, parse_persona_definition
 from features.companion.first_greeting import enqueue_first_greeting, schedule_first_greeting_claim
 from features.companion.models import Persona
 from features.companion.prompts import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXTS
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.repository import get_or_create_persona_row
 from features.companion.scene_ports import ensure_initial_scene
-from features.companion.schemas import OnboardingStateResponse
+from features.companion.schemas import OnboardingProfileRequest, OnboardingStateResponse
 from features.conversation.bootstrap import ensure_main_conversation_for_user
-from features.memory.memory_bootstrap import record_user_profile
+from features.memory.contracts import MemoryConflictError
+from features.memory.memory_admin import apply_user_profile
+from features.memory.memory_bootstrap import read_user_profile, record_user_profile
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS
-from features.memory.profile_fields import validate_profile_birthday
+from features.memory.profile_fields import USER_PROFILE_FIELDS, validate_profile_birthday
 
 logger = get_logger(__name__)
 
@@ -32,16 +34,6 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(_REQUIRED_FIELDS + _OPTIONAL_FIELDS)
 _MAX_FIELD_LEN: int = 500
 _EDITABLE_FIELDS = frozenset(
     {"name", "personality", "relationship", "speaking_style", "age", "occupation", "background"}
-)
-
-_USER_PROFILE_FIELDS = frozenset(
-    {
-        "user_call_name",
-        "user_gender",
-        "user_birthday",
-        "user_hobbies",
-        "user_freeform",
-    }
 )
 
 _ONBOARDING_FIELDS = _KNOWN_FIELDS | {
@@ -120,7 +112,7 @@ def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
     for key, value in definition.items():
         if not key.startswith("user_"):
             continue
-        if key not in _USER_PROFILE_FIELDS:
+        if key not in USER_PROFILE_FIELDS:
             raise PersonaValidationError("unknown user profile field", key)
         if value is not None and not isinstance(value, str):
             raise PersonaValidationError(f"persona.{key} must be a string", key)
@@ -174,6 +166,8 @@ async def update_persona(
     for voice_field in ("voice", "voice_setup_skipped", "environment_skipped"):
         if current_draft.get(voice_field):
             cleaned[voice_field] = current_draft[voice_field]
+    if ONBOARDING_PROFILE_STEP in persona.definition_json:
+        cleaned[ONBOARDING_PROFILE_STEP] = persona.definition_json[ONBOARDING_PROFILE_STEP]
     persona.definition_json = cleaned
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
@@ -210,16 +204,19 @@ def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAG
     return "\n".join(lines)
 
 
-def _state(
-    persona: Persona, answers: dict[str, str], next_field: str | None, complete: bool
-) -> OnboardingStateResponse:
+def _state(persona: Persona, answers: dict[str, str], next_field: str | None) -> OnboardingStateResponse:
+    step = persona.definition_json.get(ONBOARDING_PROFILE_STEP)
     return OnboardingStateResponse(
-        answers=answers, next_field=next_field, complete=complete, persona_complete=persona.is_complete
+        answers=answers,
+        next_field=next_field,
+        complete=next_field is None,
+        persona_complete=persona.is_complete,
+        profile_outcome=step if step in ("saved", "skipped") else None,
     )
 
 
 async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona, draft: dict[str, str]) -> str | None:
-    """返回必需的引导步骤；声音已选择或用户明确暂时使用文字后可完成。"""
+    """桌面恢复和生活调度共用同一完成条件。旧引导没有资料阶段标记。"""
     if not persona.is_complete:
         return _next_character_step(draft)
     if not persona.is_portrait_confirmed:
@@ -231,6 +228,9 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
         return "fullbody-reference"
     if not draft.get("voice") and draft.get("voice_setup_skipped") != "true":
         return "voice"
+    profile_step = persona.definition_json.get(ONBOARDING_PROFILE_STEP)
+    if profile_step in ("environment", "user_profile"):
+        return profile_step
     return None
 
 
@@ -257,16 +257,20 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStat
     draft = load_persona_definition(persona)
     next_step = await _next_onboarding_step(db, user_id, persona, draft)
     if next_step is None:
-        return _state(persona, {}, None, True)
-    return _state(persona, draft, next_step, False)
+        return _state(persona, {}, None)
+    return _state(persona, draft, next_step)
 
 
 async def submit_onboarding_field(
-    db: AsyncSession, user_id: int, field: str, value: str | None
+    db: AsyncSession, user_id: int, field: str, value: str | None, *, include_profile: bool = False
 ) -> OnboardingStateResponse:
     """保存建档草稿、声音选择和默认环境决定。"""
-    if field not in _ONBOARDING_FIELDS:
+    if field not in _ONBOARDING_FIELDS and field != "environment_complete":
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
+    if include_profile and field not in ("voice", "voice_setup_skipped"):
+        raise PersonaValidationError("资料步骤须在确认声音时登记。", field)
+    if field == "environment_complete" and value != "true":
+        raise PersonaValidationError("environment_complete must be true", field)
     if field in ("voice_setup_skipped", "environment_skipped") and value not in (None, "true"):
         raise PersonaValidationError(f"{field} must be true or null", field)
     persona = await get_or_create_persona_row(db, user_id)
@@ -276,38 +280,54 @@ async def submit_onboarding_field(
         if field in ("voice", "voice_setup_skipped"):
             draft = load_persona_definition(persona)
             pending_step = await _next_onboarding_step(db, user_id, persona, draft)
+            if include_profile and pending_step not in ("voice", "environment", "user_profile", None):
+                raise PersonaValidationError("请先确认伙伴形象。", field)
             if value and value.strip():
                 draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
                 draft.pop("voice_setup_skipped" if field == "voice" else "voice", None)
             else:
                 draft.pop(field, None)
+            step = persona.definition_json.get(ONBOARDING_PROFILE_STEP)
+            voice_confirmed = bool(draft.get("voice") or draft.get("voice_setup_skipped") == "true")
+            if include_profile and voice_confirmed and pending_step == "voice" and step is None:
+                step = "environment"
+            if step:
+                draft[ONBOARDING_PROFILE_STEP] = step
             persona.definition_json = draft
-            completed = pending_step == "voice" and bool(
-                draft.get("voice") or draft.get("voice_setup_skipped") == "true"
-            )
+            completed = pending_step == "voice" and voice_confirmed and step is None
             if completed:
                 await enqueue_first_greeting(db, user_id)
             await db.commit()
             if completed:
                 schedule_first_greeting_claim(user_id)
             next_step = await _next_onboarding_step(db, user_id, persona, draft)
-            return _state(persona, draft, next_step, next_step is None)
+            return _state(persona, load_persona_definition(persona), next_step)
         # 跳过环境步骤即用户决定使用默认初始场景；标记先落库，默认场景创建失败不阻断引导，由启动恢复重试。
-        if field == "environment_skipped":
-            draft = load_persona_definition(persona)
-            if value == "true":
-                draft["environment_skipped"] = "true"
-            else:
-                draft.pop("environment_skipped", None)
+        if field in ("environment_skipped", "environment_complete"):
+            draft = dict(persona.definition_json)
+            step = draft.get(ONBOARDING_PROFILE_STEP)
+            if step in ("saved", "skipped"):
+                return await get_onboarding_state(db, user_id)
+            if field == "environment_complete" and step is None:
+                raise PersonaValidationError("请先完成声音步骤。", field)
+            use_default = field == "environment_skipped" and value == "true"
+            schedule_default = use_default and (step is None or draft.get("environment_skipped") != "true")
+            if field == "environment_skipped":
+                if use_default:
+                    draft[field] = "true"
+                else:
+                    draft.pop(field, None)
+            if step == "environment" and value == "true":
+                draft[ONBOARDING_PROFILE_STEP] = "user_profile"
             persona.definition_json = draft
             await db.commit()
-            if value == "true":
+            if schedule_default:
                 try:
                     await ensure_initial_scene(user_id)
                 except Exception:
                     logger.warning("default initial scene not scheduled", extra={"user_id": user_id}, exc_info=True)
             next_step = await _next_onboarding_step(db, user_id, persona, draft)
-            return _state(persona, draft, next_step, next_step is None)
+            return _state(persona, load_persona_definition(persona), next_step)
         raise PersonaValidationError(
             f"onboarding field {field!r} cannot be edited after persona is finalized; use PUT /api/companion/persona",
             field,
@@ -326,4 +346,39 @@ async def submit_onboarding_field(
         draft.pop(field, None)
     persona.definition_json = draft
     await db.commit()
-    return _state(persona, draft, _next_character_step(draft), False)
+    return _state(persona, draft, _next_character_step(draft))
+
+
+async def complete_onboarding_profile(
+    db: AsyncSession, user_id: int, request: OnboardingProfileRequest
+) -> OnboardingStateResponse:
+    if request.decision == "skip" and request.changes:
+        raise PersonaValidationError("跳过资料时不能提交修改。")
+    persona = await get_or_create_persona_row(db, user_id)
+    await db.refresh(persona, with_for_update=True)
+    draft = load_persona_definition(persona)
+    next_step = await _next_onboarding_step(db, user_id, persona, draft)
+    scope = MemoryScope(user_id, "companion")
+    if next_step is None:
+        # 回执丢失时核对真实结果。另一个窗口的收尾不能覆盖后来在资料页做的修改。
+        if request.decision == "save":
+            saved = await read_user_profile(db, scope)
+            if persona.definition_json.get(ONBOARDING_PROFILE_STEP) != "saved" or any(
+                saved.get(change.field, "") != (change.value or "").strip() for change in request.changes
+            ):
+                raise MemoryConflictError("引导已完成，请在「我的资料」核对并维护最新内容。")
+        return _state(persona, {}, None)
+    if next_step != "user_profile":
+        raise PersonaConflictError("请先完成之前的引导步骤。")
+    if request.decision == "save":
+        rows = await apply_user_profile(db, scope, request.changes, source="onboarding")
+        if not any(row.slot_key in USER_PROFILE_FIELDS and row.content for row in rows):
+            raise PersonaValidationError("请填写至少一项资料，或选择暂时跳过。")
+    persona.definition_json = {
+        **persona.definition_json,
+        ONBOARDING_PROFILE_STEP: "saved" if request.decision == "save" else "skipped",
+    }
+    await enqueue_first_greeting(db, user_id)
+    await db.commit()
+    schedule_first_greeting_claim(user_id)
+    return _state(persona, {}, None)

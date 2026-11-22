@@ -51,10 +51,6 @@ export interface SceneMutationIssue {
   pending: boolean
 }
 export type SceneWire = ApiSchemas['SceneResponse']
-export interface SceneGenerationInput {
-  notes?: string
-  image?: string
-}
 
 export const $sceneLibrary = atom<SceneAsset[]>([])
 export const $sceneDetails = atom<Record<string, SceneAsset>>({})

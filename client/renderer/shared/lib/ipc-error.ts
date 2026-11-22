@@ -16,6 +16,10 @@ export function isClientErrorIpc(error: unknown): boolean {
   return status !== null && status >= 400 && status < 500
 }
 
+export function isUncertainMutationIpc(error: unknown): boolean {
+  return !isClientErrorIpc(error) || ipcErrorStatus(error) === 408
+}
+
 export function backendDetailMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.business.message : fallback
 }

@@ -282,6 +282,7 @@ export function ScenePage(): React.JSX.Element {
 
     try {
       const result = await createScene({
+        source: 'generate',
         notes: input.notes.trim() || undefined,
         ...(input.reference ? { image: input.reference.base64 } : {})
       })

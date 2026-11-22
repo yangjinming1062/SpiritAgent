@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.life.queries import get_life_mood
 
+from .definition import parse_persona_definition
 from .models import Persona
 from .query_contracts import PersonaSnapshot
 from .repository import get_or_create_persona_row
@@ -15,6 +16,7 @@ async def _snapshot(db: AsyncSession, row: Persona) -> PersonaSnapshot:
     return PersonaSnapshot.model_validate(
         {
             **{key: getattr(row, key) for key in PersonaSnapshot.model_fields if key != "current_mood"},
+            "definition_json": parse_persona_definition(row.definition_json),
             "current_mood": mood,
         }
     )

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -78,87 +79,95 @@ async def list_memories(
 
 
 async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileChange]) -> list[MemoryListItem]:
+    async with SESSION_LOCAL() as db:
+        result = await apply_user_profile(db, scope, changes, source="manual")
+        await db.commit()
+        return result
+
+
+async def apply_user_profile(
+    db: AsyncSession, scope: MemoryScope, changes: list[MemoryProfileChange], *, source: Literal["manual", "onboarding"]
+) -> list[MemoryListItem]:
+    """在调用方事务内核对版本并更新资料，引导可与完成决定一同提交。"""
     if scope.system_preset_id != "companion":
         raise ValueError("User profile is only available for the companion preset")
     if len({change.field for change in changes}) != len(changes):
         raise ValueError("Each profile field may only be changed once")
     values = {change.field: validate_profile_value(change.field, change.value) for change in changes}
-    async with SESSION_LOCAL() as db:
-        await memory_write_lock(db, scope)
-        rows = list(await db.scalars(select(Memory).where(scope_filter(scope), Memory.kind == "user_profile")))
-        slots = {row.slot_key: row for row in rows}
-        now = utc_now()
-        current = {
-            key: row
-            for key, row in slots.items()
-            if row.status == "active" and (row.expires_at is None or row.expires_at > now)
+    await memory_write_lock(db, scope)
+    rows = list(await db.scalars(select(Memory).where(scope_filter(scope), Memory.kind == "user_profile")))
+    slots = {row.slot_key: row for row in rows}
+    now = utc_now()
+    current = {
+        key: row
+        for key, row in slots.items()
+        if row.status == "active" and (row.expires_at is None or row.expires_at > now)
+    }
+    for change in changes:
+        row = current.get(change.field)
+        if (row.content_version if row is not None else 0) != change.expected_version:
+            raise MemoryConflictError("这条资料已在其他设备更新，请刷新后核对再保存。")
+    changed_rows = []
+    forgotten_ids = []
+    revised = [slots[change.field] for change in changes if values[change.field] and change.field in slots]
+    old_evidence = await load_evidence(db, [row.id for row in revised])
+    revisions = [
+        {
+            "user_id": scope.user_id,
+            "memory_id": row.id,
+            "content_version": row.content_version,
+            "snapshot": memory_record(row, old_evidence[row.id]).model_dump(mode="json"),
+            "replaced_at": now,
         }
-        for change in changes:
-            row = current.get(change.field)
-            if (row.content_version if row is not None else 0) != change.expected_version:
-                raise MemoryConflictError("这条资料已在其他设备更新，请刷新后核对再保存。")
-        changed_rows = []
-        forgotten_ids = []
-        revised = [slots[change.field] for change in changes if values[change.field] and change.field in slots]
-        old_evidence = await load_evidence(db, [row.id for row in revised])
-        revisions = [
-            {
-                "user_id": scope.user_id,
-                "memory_id": row.id,
-                "content_version": row.content_version,
-                "snapshot": memory_record(row, old_evidence[row.id]).model_dump(mode="json"),
-                "replaced_at": now,
-            }
-            for row in revised
-            if row.status != "forgotten"
-        ]
-        for change in changes:
-            row = slots.get(change.field)
-            value = values[change.field]
-            if not value:
-                if row is not None:
-                    forget_record(row)
-                    forgotten_ids.append(row.id)
-                continue
-            if row is None:
-                row = Memory(
-                    user_id=scope.user_id,
-                    system_preset_id=scope.system_preset_id,
-                    kind="user_profile",
-                    slot_key=change.field,
-                    content_version=1,
-                )
-                db.add(row)
-                rows.append(row)
-            else:
-                row.content_version += 1
-            row.content, row.context, row.tags = value, CONTEXT_LABELS[change.field], ["user_profile"]
-            row.source_kind, row.basis, row.status, row.usage = "manual", "explicit", "active", "contextual"
-            row.source_conversation_id, row.source_batch_id, row.expires_at, row.reviewed_at = None, None, None, None
-            row.reason, row.updated_at = "", now
-            changed_rows.append(row)
-        await db.flush()
-        await clear_memory_details(db, forgotten_ids, suppress=True)
-        await save_revisions(db, revisions)
-        await clear_memory_details(
-            db, [row.id for row in changed_rows if row.content_version > 1], suppress=False, keep_revisions=True
-        )
-        if changes:
-            if forgotten_ids or revised:
-                await clear_derived_companion_reflection(db, scope)
-            emit_ws_event(
-                db,
+        for row in revised
+        if row.status != "forgotten"
+    ]
+    for change in changes:
+        row = slots.get(change.field)
+        value = values[change.field]
+        if not value:
+            if row is not None:
+                forget_record(row)
+                forgotten_ids.append(row.id)
+            continue
+        if row is None:
+            row = Memory(
                 user_id=scope.user_id,
-                event_type="memory.changed",
-                payload={"system_preset_id": scope.system_preset_id},
+                system_preset_id=scope.system_preset_id,
+                kind="user_profile",
+                slot_key=change.field,
+                content_version=1,
             )
-        result = [
-            memory_list_item(row)
-            for row in rows
-            if row.status == "active" and (row.expires_at is None or row.expires_at > now)
-        ]
-        await db.commit()
-        return result
+            db.add(row)
+            rows.append(row)
+        else:
+            row.content_version += 1
+        row.content, row.context = value, CONTEXT_LABELS[change.field]
+        row.tags = ["onboarding", "user_profile"] if source == "onboarding" else ["user_profile"]
+        row.source_kind, row.basis, row.status, row.usage = source, "explicit", "active", "contextual"
+        row.source_conversation_id, row.source_batch_id, row.expires_at, row.reviewed_at = None, None, None, None
+        row.reason, row.updated_at = "", now
+        changed_rows.append(row)
+    await db.flush()
+    await clear_memory_details(db, forgotten_ids, suppress=True)
+    await save_revisions(db, revisions)
+    await clear_memory_details(
+        db, [row.id for row in changed_rows if row.content_version > 1], suppress=False, keep_revisions=True
+    )
+    if changes:
+        if forgotten_ids or revised:
+            await clear_derived_companion_reflection(db, scope)
+        emit_ws_event(
+            db,
+            user_id=scope.user_id,
+            event_type="memory.changed",
+            payload={"system_preset_id": scope.system_preset_id},
+        )
+    return [
+        memory_list_item(row)
+        for row in rows
+        if row.status == "active" and (row.expires_at is None or row.expires_at > now)
+    ]
 
 
 async def update_memory(

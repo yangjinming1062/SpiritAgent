@@ -134,8 +134,9 @@ export interface ApiSchemas {
   "ModelModalityInput": "text" | "image" | "audio" | "video" | "embeddings"
   "NightlyActivityLogItem": { "id": string; "user_id": string; "target_date": string; "status": string; "summary": (string | null); "payload": ({ [key: string]: unknown } | null); "created_at": (string | null); "updated_at": (string | null) }
   "NightlyActivityLogListResponse": { "items": Array<ApiSchemas["NightlyActivityLogItem"]> }
-  "OnboardingPatchRequest": { "field": string; "value"?: (string | null) }
-  "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean; "persona_complete": boolean }
+  "OnboardingPatchRequest": { "field": string; "value"?: (string | null); "include_profile"?: boolean }
+  "OnboardingProfileRequest": { "decision": "save" | "skip"; "changes"?: Array<ApiSchemas["MemoryProfileChange"]> }
+  "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean; "persona_complete": boolean; "profile_outcome": ("saved" | "skipped" | null) }
   "OpeningStateReview": { "verdict": "pass" | "review" | "fail"; "reason": string; "requirement": string; "correction_instruction": string }
   "OutfitAdoptRequest": { "source": "analysis"; "description"?: (string | null); "image": string; "content_type"?: (string | null) }
   "OutfitCreateRequest": { "source": "generate"; "description"?: (string | null); "image"?: (string | null); "content_type"?: (string | null) }
@@ -547,6 +548,7 @@ export interface ApiOperations {
   "voices.delete_voice_operation": { path: { "operation_id": string }; query: Record<string, never>; body: undefined; input: { path: { "operation_id": string }; query?: never; body?: never }; response: ApiSchemas["VoiceCancelResponse"] }
   "onboarding.get_onboarding": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["OnboardingStateResponse"] }
   "onboarding.patch_onboarding": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OnboardingPatchRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OnboardingPatchRequest"] }; response: ApiSchemas["OnboardingStateResponse"] }
+  "onboarding.put_onboarding_profile": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["OnboardingProfileRequest"]; input: { path?: never; query?: never; body: ApiSchemas["OnboardingProfileRequest"] }; response: ApiSchemas["OnboardingStateResponse"] }
   "config.get_config": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["DesktopConfigResponse"] }
   "config.put_config": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["DesktopConfigPutRequest"]; input: { path?: never; query?: never; body: ApiSchemas["DesktopConfigPutRequest"] }; response: ApiSchemas["DesktopConfigResponse"] }
   "media.upload_voice_reference": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body: FormData }; response: ApiSchemas["VoiceSampleResponse"] }
@@ -2061,6 +2063,17 @@ export const API_OPERATIONS = {
   "onboarding.patch_onboarding": {
     "path": "/api/companion/onboarding",
     "method": "PATCH",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "desktop"
+    ],
+    "wait_for_model": false,
+    "ipc": true
+  },
+  "onboarding.put_onboarding_profile": {
+    "path": "/api/companion/onboarding/profile",
+    "method": "PUT",
     "encoding": "json",
     "response": "json",
     "identities": [

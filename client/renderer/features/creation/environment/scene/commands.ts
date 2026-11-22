@@ -1,5 +1,5 @@
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { isUncertainMutationIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { type ResourceArguments } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
@@ -17,7 +17,6 @@ import {
   type SceneCreationIssue,
   type SceneCreationResult,
   sceneError,
-  type SceneGenerationInput,
   sceneIO,
   type SceneMutationIssue,
   type ScenePolicy,
@@ -137,7 +136,9 @@ export function updateSceneMutationIssue(
   $sceneMutationIssues.set(next)
 }
 
-export async function createScene(input: SceneGenerationInput = {}): Promise<SceneCreationResult> {
+export type SceneCreateInput = ApiOperation<'companion_scenes.create_scene'>['body']
+
+export async function createScene(body: SceneCreateInput): Promise<SceneCreationResult> {
   if (
     sceneIO.submitting ||
     $sceneTaskStatus.get() !== 'none' ||
@@ -148,16 +149,11 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
   }
 
   const epoch = currentClearEpoch()
-  let requestStarted = false
   sceneIO.submitting = true
   $sceneCreationIssue.set(null)
 
   try {
-    requestStarted = true
-
-    const row = await sceneRequest('companion_scenes.create_scene', {
-      body: { ...input, source: 'generate' }
-    })
+    const row = await sceneRequest('companion_scenes.create_scene', { body })
 
     if (epoch === currentClearEpoch()) {
       $pendingScene.set(toScene(row, row.url || ''))
@@ -178,7 +174,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
       const issue: SceneCreationIssue = {
         kind: 'failed',
         message: sceneError(error),
-        outcome: !requestStarted || isClientErrorIpc(error) ? 'rejected' : 'unknown',
+        outcome: isUncertainMutationIpc(error) ? 'unknown' : 'rejected',
         inspected: false
       }
 
@@ -196,7 +192,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Sce
 }
 
 export async function prepareScenePrompt(
-  input: Pick<SceneGenerationInput, 'notes'>
+  input: ApiOperation<'companion_scenes.post_scene_prompt'>['body']
 ): Promise<{ id: string; prompt: string }> {
   const row = await mutate('companion_scenes.post_scene_prompt', { body: input })
 

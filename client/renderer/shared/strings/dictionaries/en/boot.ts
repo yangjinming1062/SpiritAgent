@@ -23,6 +23,15 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
       voice: 'Choose a voice',
       environment: 'Set the scene'
     },
+    profileHint:
+      'All fields are optional. You can add or edit these details later in Companion → Memories → My details.',
+    profileSave: 'Save and start',
+    profileSkip: 'Skip for now',
+    profileCheckPending:
+      'Your submission could not be confirmed. Check your saved details when the connection returns.',
+    profileAlreadyComplete:
+      'Setup is complete. You can review your saved details here and edit them later in My details.',
+    enterApp: 'Get started',
     progressAria: 'Getting to know your companion',
     voiceTitle: 'Choose a voice for your companion',
     nextVoice: 'Continue choosing a voice',
@@ -42,6 +51,8 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
     refineAction: 'Refine',
     saveFailed: 'Could not save your answers. Try again.',
     resumeFailed: 'Could not read your saved progress. Try again.',
+    backendUpgradeRequired:
+      'This server version does not support My details during setup. Update the server, then retry.',
     retrying: 'Retrying…',
     stepVoice: 'Choose a voice',
     portraitPreviewHint: 'Preview and confirm your avatar',
@@ -80,17 +91,17 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
     environmentTitle: 'Set the scene for your companion',
     environmentHint:
       'Describe the space your companion lives in, or upload a picture you like as the starting scene. You can also start with the default scene and change it later in Scenes.',
+    environmentReadFailed: 'Could not load your scenes. Try again or use the default scene.',
     environmentChecking: 'Checking your scenes…',
-    environmentExists: 'A scene is already being prepared or is ready. You can manage it later under “Scenes”.',
+    environmentExists: 'Your scene library has a scene. Continue setup, then open Scenes to check the result or retry.',
+    environmentNotFound: 'No record of this submission was found in your scene library.',
     environmentContinue: 'Continue',
     environmentNotesLabel: 'Describe the scene you want',
     environmentNotesPlaceholder: 'For example: a sunlit wooden cabin with a bamboo grove outside the window…',
-    environmentNotesRequired: 'Write a few words first, or pick another option',
     environmentGenerate: 'Generate from description',
     environmentUpload: 'Upload a picture',
     environmentSkip: 'Use the default scene',
     environmentPickTitle: 'Choose a scene picture',
-    environmentCreateFailed: 'The scene could not be created. Try again.',
-    environmentSkipFailed: 'Your choice could not be saved. Try again.'
+    environmentCreateFailed: 'The scene could not be created. Try again.'
   }
 }

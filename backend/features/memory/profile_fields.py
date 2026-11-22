@@ -2,13 +2,14 @@
 
 import re
 from datetime import date
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS
 
 UserProfileField = Literal["user_call_name", "user_gender", "user_birthday", "user_hobbies", "user_freeform"]
+USER_PROFILE_FIELDS = frozenset(get_args(UserProfileField))
 _BIRTHDAY_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 

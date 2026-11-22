@@ -148,7 +148,7 @@ export function SpriteWindow(): React.JSX.Element {
   return (
     <>
       {activationOpen && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
-      {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
+      {showOnboarding && <OnboardingFlow key={auth.snapshot.accountId} onCompleted={onOnboardingComplete} />}
       <SpriteStage
         hidden={!showCompanion || surfaceOpen}
         onContextMenu={e => {

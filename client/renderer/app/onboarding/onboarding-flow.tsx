@@ -21,6 +21,8 @@ import { DraggableDialog, ONBOARDING_PRIMARY_BUTTON, OnboardingProgress } from '
 import { OnboardingDraft, type OnboardingPersonaConflict } from './onboarding-draft'
 import { CHARACTER_QUESTIONS, mergeResumeAnswers, resolveResumeTarget, VOICE_QUESTION } from './onboarding-questions'
 import { PortraitPages } from './portrait-pages'
+import { onboardingProfileDraft } from './profile-draft'
+import { ProfilePage } from './profile-page'
 import { QuestionPage } from './question-page'
 import {
   advanceStage,
@@ -59,8 +61,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [characterSaving, setCharacterSaving] = useState(false)
-  const [environmentBusy, setEnvironmentBusy] = useState(false)
-  const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
+  const [resumeState, setResumeState] = useState<'reading' | 'failed' | 'upgrade' | 'ok' | 'retrying'>('reading')
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const resumedRef = useRef(false)
   const savingCharacterRef = useRef(false)
@@ -95,18 +96,18 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const portraitRef = useLatestRef(portrait)
 
   useEffect(() => {
-    if (!isQuestionPhase || !question) {
+    if (resumeState !== 'ok' || !isQuestionPhase || !question) {
       return
     }
 
     setInput(answersRef.current[question.key] ?? '')
     setHint(null)
     ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
-  }, [isQuestionPhase, question, answersRef])
+  }, [isQuestionPhase, question, answersRef, resumeState])
 
   // 草稿读取失败暂停作答；连通后只恢复一次，取消的读取可在重连时继续。
   useEffect(() => {
-    if (resumedRef.current || gatewayState !== 'open') {
+    if (resumedRef.current) {
       return
     }
 
@@ -137,14 +138,22 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           return
         }
 
-        setResumeState('ok')
-
         if (state.complete) {
+          onboardingProfileDraft.reset()
           void saveCreationDraftImage('avatar', null)
           onCompletedRef.current()
 
           return
         }
+
+        if (state.profile_outcome === undefined) {
+          resumedRef.current = false
+          setResumeState('upgrade')
+
+          return
+        }
+
+        setResumeState('ok')
 
         if (state.answers) {
           const savedAnswers = state.answers
@@ -262,6 +271,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
+    setHint(null)
     setStage(current => backStage(current, backIntent))
   }
 
@@ -316,21 +326,48 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return false
     }
 
-    setStage(current => ({ ...current, phase: 'environment', qIndex: 0 }))
+    if (saved.complete) {
+      finish()
+    } else {
+      setStage(current => ({
+        ...current,
+        phase: saved.next_field === 'user_profile' ? 'user_profile' : 'environment',
+        qIndex: 0
+      }))
+    }
 
     return true
   }
 
+  const finish = (): void => {
+    onboardingProfileDraft.reset()
+    portrait.updateRefImage(null)
+    onCompletedRef.current()
+  }
+
   const progressStep =
-    phase === 'q-character' || phase === 'background' ? 0 : phase === 'voice' ? 2 : phase === 'environment' ? 3 : 1
+    phase === 'q-character' || phase === 'background'
+      ? 0
+      : phase === 'voice'
+        ? 2
+        : phase === 'environment'
+          ? 3
+          : phase === 'user_profile'
+            ? 4
+            : 1
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
       <DraggableDialog>
         <OnboardingProgress step={progressStep} />
-        {resumeState !== 'ok' && (
+        {resumeState === 'reading' && (
+          <p className="py-2 text-center text-sm text-body" role="status">
+            {strings.common.loading}
+          </p>
+        )}
+        {(resumeState === 'failed' || resumeState === 'upgrade' || resumeState === 'retrying') && (
           <div className="py-2 text-center">
-            <p className="text-sm text-body">{t.resumeFailed}</p>
+            <p className="text-sm text-body">{resumeState === 'upgrade' ? t.backendUpgradeRequired : t.resumeFailed}</p>
             <button
               className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
               disabled={resumeState === 'retrying'}
@@ -411,17 +448,20 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         )}
         {phase === 'environment' && (
           <EnvironmentPage
-            busy={environmentBusy}
-            error={hint}
             onBack={onBack}
-            onBusyChange={setEnvironmentBusy}
-            onCompleted={() => {
-              portrait.updateRefImage(null)
-              onCompletedRef.current()
+            onContinue={complete => {
+              if (complete) {
+                finish()
+
+                return
+              }
+
+              setHint(null)
+              setStage(current => ({ ...current, phase: 'user_profile' }))
             }}
-            onError={message => setHint(message)}
           />
         )}
+        {phase === 'user_profile' && <ProfilePage onBack={onBack} onCompleted={finish} />}
       </DraggableDialog>
     </div>
   )
