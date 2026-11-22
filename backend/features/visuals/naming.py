@@ -23,8 +23,9 @@ from features.accounts.locking import lock_account
 from features.configuration.settings.values import get_user_setting
 
 from .models import VisualItem
-from .prompts import VISUAL_TITLE
+from .prompts import VISUAL_TITLE, visual_content_prompt
 from .repository import notify_visuals_updated
+from .schemas import VisualCatalogTitle
 
 _PENDING: dict[int, dict[int, int | None]] = {}
 _TASKS = TaskScope("visuals.naming")
@@ -35,13 +36,14 @@ logger = get_logger(__name__)
 class _VisualTitle(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00]*$", strict=True)
+    title: VisualCatalogTitle = Field(pattern=r"^[^\x00]*$", strict=True)
 
 
 @dataclass(frozen=True)
 class _NamingInput:
     user_id: int
     visual_id: int
+    asset_kind: str
     image_path: str
     version: int
     language: str
@@ -64,6 +66,7 @@ async def _naming_input(db: AsyncSession, user_id: int, visual_id: int) -> _Nami
     return _NamingInput(
         user_id=user_id,
         visual_id=visual_id,
+        asset_kind=row.asset_kind,
         image_path=image_path,
         version=row.version,
         language=resolve_language(await get_user_setting(db, user_id, "language")),
@@ -92,7 +95,7 @@ async def _name_visual(user_id: int, visual_id: int, attempted: set[_NamingInput
 
     result = await vision_chat_json(
         user_id,
-        VISUAL_TITLE,
+        visual_content_prompt(VISUAL_TITLE, expected.asset_kind),
         {"output_language": expected.language},
         response_model=_VisualTitle,
         schema_name="visual_title",

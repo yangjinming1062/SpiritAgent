@@ -32,6 +32,18 @@ VISUAL_MAX_EDGE = 65536
 
 VisualMediaKind = Literal["image", "video"]
 VisualAssetKind = Literal["actor", "scene", "cinematic"]
+VisualCatalogTitle = Annotated[
+    str,
+    Field(min_length=1, max_length=160, description="便于检索的主体造型、姿态或地点短名。省略衬底和拍摄条件。"),
+]
+VisualCatalogDescription = Annotated[
+    str,
+    Field(
+        max_length=1500,
+        description="用一个短句写出足以辨认主体或地点的可见特征。单独主体只写造型、姿态、表情或用物，"
+        "句中不得夹带背景颜色、幕布、透明效果等衬底信息。真实场所可保留标志性环境细节。",
+    ),
+]
 VisualCreationSource = Literal["user_requested", "autonomous", "base_preparation"]
 ActionClipKind = Literal["once", "loop"]
 VisualJobState = Literal["queued", "running", "paused", "succeeded", "failed", "cancelled", "unknown"]
@@ -282,8 +294,8 @@ class ImportObservation(BaseModel):
 class ImportUnderstanding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=160)
-    description: str = Field(min_length=1, max_length=1500)
+    title: VisualCatalogTitle
+    description: VisualCatalogDescription = Field(min_length=1)
     asset_kind: VisualAssetKind
     identity_match: Literal["same", "different", "uncertain", "absent"]
     identity_reason: str = Field(min_length=1, max_length=600)

@@ -132,6 +132,7 @@ from .prompts import (
     VISUAL_VIDEO_FRAME_DESCRIPTION,
     VISUAL_VIDEO_IDENTITY_REVIEW,
     VISUAL_VIDEO_REVIEW,
+    visual_content_prompt,
     visual_source_reference_prompt,
 )
 from .publication import PublishedVisual, publish_opening_result, publish_visual_result
@@ -154,6 +155,8 @@ from .schemas import (
     RejectedVisualVideo,
     SceneMediaSource,
     VisualAsset,
+    VisualAssetKind,
+    VisualCatalogDescription,
     VisualJobProgress,
     VisualJobState,
     VisualMediaKind,
@@ -176,7 +179,7 @@ class VisualMotionScript(BaseModel):
     feasible: bool = Field(strict=True)
     reason: str = Field(max_length=200)
     motion_prompt: str = Field(max_length=2000)
-    visual_description: str = Field(max_length=1500)
+    visual_description: VisualCatalogDescription
     outfit_description: str = Field(max_length=1200)
     failure_kind: Literal["image", "duration", "unsupported", None] = None
     minimum_duration_seconds: int | None = Field(default=None, gt=0, le=600, strict=True)
@@ -202,7 +205,7 @@ class VisualMotionScript(BaseModel):
 class VisualVideoFrameDescription(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    description: str = Field(max_length=1500)
+    description: VisualCatalogDescription
     outfit_description: str = Field(max_length=1200)
 
 
@@ -1070,7 +1073,7 @@ async def _prepare_motion(
 
     script = await vision_chat_json(
         user_id,
-        VISUAL_MOTION_DESIGN,
+        visual_content_prompt(VISUAL_MOTION_DESIGN, snapshot.kind),
         {
             "action": progress.action_description,
             "requirements": snapshot.requirements,
@@ -1377,7 +1380,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
     await _save_progress(user_id, job.id, progress, stage="review")
 
 
-async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress) -> None:
+async def _describe_frame(
+    user_id: int, job_id: int, progress: VisualJobProgress, *, asset_kind: VisualAssetKind
+) -> None:
     if progress.visual_description and progress.outfit_description is not None:
         return
     async with SESSION_LOCAL() as db:
@@ -1398,7 +1403,7 @@ async def _describe_frame(user_id: int, job_id: int, progress: VisualJobProgress
     try:
         description = await vision_chat_json(
             user_id,
-            VISUAL_VIDEO_FRAME_DESCRIPTION,
+            visual_content_prompt(VISUAL_VIDEO_FRAME_DESCRIPTION, asset_kind),
             {},
             response_model=VisualVideoFrameDescription,
             schema_name="visual_video_frame_description",
@@ -1703,7 +1708,7 @@ async def _prepare_scene_motion(
 
     script = await vision_chat_json(
         user_id,
-        SCENE_MOTION_DESIGN,
+        visual_content_prompt(SCENE_MOTION_DESIGN, source.kind),
         {
             "requirements": scene_motion_requirements(source),
             "feedback": job.feedback,
@@ -1878,7 +1883,7 @@ async def _review_video_candidate(
     if not allow_model_steps:
         raise GenerationWorkPaused
     if progress.outfit_description is None:
-        await _describe_frame(user_id, job.id, progress)
+        await _describe_frame(user_id, job.id, progress, asset_kind=snapshot.kind)
     evaluate = _evaluate_scene_candidate if snapshot.source.kind == "scene" else _evaluate_candidate
     try:
         await evaluate(user_id, job, progress)
@@ -2142,7 +2147,7 @@ async def _prepare_visual_inputs(
         if job.target_kind == "image":
             # 图片成品同样提供桌面与动态读取的画面描述；描述不可用时不阻断发布。
             if allow_model_steps:
-                await _describe_frame(user_id, job_id, progress)
+                await _describe_frame(user_id, job_id, progress, asset_kind=snapshot.kind)
             await _save_progress(user_id, job_id, progress, stage="review")
             await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
             return True
