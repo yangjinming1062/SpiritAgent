@@ -5,6 +5,8 @@ from datetime import datetime
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict
 
+from .definition import visual_persona_definition
+
 
 class PersonaSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, from_attributes=True)
@@ -20,3 +22,12 @@ class PersonaSnapshot(BaseModel):
     current_mood: str | None
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def performance_context(self) -> dict[str, str]:
+        traits = visual_persona_definition(self.definition_json)
+        if not traits and self.personality_tags_json:
+            traits["personality"] = "、".join(self.personality_tags_json)
+        if self.current_mood:
+            traits["current_mood"] = self.current_mood
+        return traits

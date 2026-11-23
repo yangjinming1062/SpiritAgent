@@ -2,7 +2,11 @@
 
 import asyncio
 import hashlib
+import json
+import math
 from functools import lru_cache
+from io import BytesIO
+from itertools import batched, groupby
 from pathlib import Path
 
 from infrastructure.ai.providers._reference import resolve_reference_bytes
@@ -12,8 +16,16 @@ from infrastructure.assets.asset_store import (
     save_image_chain_input_asset_async,
     sniff_media_ext,
 )
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .review_contracts import ReviewEvidence, ReviewImage, review_context
+
+FACE_SEQUENCE_LABEL = "面部同屏对照，每行 R 是原始身份依据，编号为成片相应时刻"
+FACE_MOTION_LABEL = "同一镜头的面部运动，每行 M 为原表演、F 为交付候选，列标注实际秒数"
+FACE_DETAIL_PREFIX = "候选视频面部局部，"
+_OVERVIEW_GROUP_SIZE = 12
+_MAX_SINGLE_VIEWS = 4
+_OVERVIEW_LABELS = ("候选视频全帧，从左到右逐行对应 ", "候选视频同刻面部局部，从左到右逐行对应 ")
 
 
 def review_image_labels(
@@ -25,7 +37,7 @@ def review_image_labels(
         *(f"参考图 {index + 1}（创作依据，不属于候选画面或视频时间轴）" for index in range(reference_count)),
         *(f"候选视频全帧，时间 {time:g} 秒" for time in times),
         *(f"候选画面 {index + 1}" for index in range(candidate_count) if not times),
-        *(f"候选视频面部局部，取自 {time:g} 秒全帧（同一时刻，不是新镜头）" for time in detail_times),
+        *(f"{FACE_DETAIL_PREFIX}取自 {time:g} 秒全帧（同一时刻，不是新镜头）" for time in detail_times),
     )
 
 
@@ -66,14 +78,125 @@ async def freeze_review_evidence(
     )
 
 
-def _read_image(entry: ReviewImage) -> str:
+def _verified_image(entry: ReviewImage) -> tuple[bytes, str]:
     resolved = resolve_asset_reference(entry.path)
     if resolved is None:
         raise ValueError("检查证据无法读取")
     data = resolved[0].read_bytes()
     if hashlib.sha256(data).hexdigest() != entry.sha256:
         raise ValueError("检查证据已变化")
-    return build_data_uri(data, resolved[1])
+    return data, resolved[1]
+
+
+def _read_image(entry: ReviewImage) -> str:
+    return build_data_uri(*_verified_image(entry))
+
+
+def _timed_view(entry: ReviewImage) -> str:
+    if entry.role.startswith("候选视频全帧，时间 "):
+        return "全帧"
+    return "同刻面部局部" if entry.role.startswith(FACE_DETAIL_PREFIX) else ""
+
+
+def _timeline_sheet(items: tuple[ReviewImage, ...], kind: str) -> tuple[str, str]:
+    columns = math.ceil(math.sqrt(len(items)))
+    size = min(400 if kind == "全帧" else 240, 1280 // columns)
+    times = []
+    with Image.new("RGB", (columns * size, ((len(items) + columns - 1) // columns) * (size + 25)), "#edeae6") as sheet:
+        draw = ImageDraw.Draw(sheet)
+        font = ImageFont.load_default(size=17)
+        for index, entry in enumerate(items):
+            prefix = "候选视频全帧，时间 " if kind == "全帧" else FACE_DETAIL_PREFIX + "取自 "
+            time = float(entry.role.removeprefix(prefix).split(" 秒", 1)[0])
+            times.append(f"{time:g}")
+            x, y = (index % columns) * size, (index // columns) * (size + 25)
+            with (
+                Image.open(BytesIO(_verified_image(entry)[0])) as source,
+                ImageOps.contain(source, (size, size), Image.Resampling.LANCZOS) as tile,
+            ):
+                sheet.paste(
+                    tile,
+                    (x + (size - tile.width) // 2, y + 24 + (size - tile.height) // 2),
+                    tile.getchannel("A") if "A" in tile.getbands() else None,
+                )
+            draw.text((x + 6, y + 2), f"{time:.2f} s", fill="#202020", font=font)
+        with BytesIO() as buf:
+            sheet.save(buf, format="WEBP", lossless=True)
+            return build_data_uri(
+                buf.getvalue(), "image/webp"
+            ), f"候选视频{kind}，从左到右逐行对应 {'、'.join(times)} 秒"
+
+
+async def freeze_video_overview(user_id: int, evidence: ReviewEvidence, *, retry: bool = False) -> ReviewEvidence:
+    """逐格原件与专项索引保留原位，整体送检使用带时间标记的相邻画面。"""
+    context = json.loads(evidence.context_json)
+    previous = context.get("video_overview_indices")
+    has_sequence = "face_sequence_index" in context
+    if len(evidence.images) <= _MAX_SINGLE_VIEWS and not has_sequence:
+        return evidence
+    images = list(evidence.images)
+    if (
+        retry
+        and previous is not None
+        and context.get("video_overview_group_size", 4) < _OVERVIEW_GROUP_SIZE
+        and len(previous) > _MAX_SINGLE_VIEWS
+    ):
+        # 旧四格布局可能耗尽整段复核的输出预算。只从同次冻结的原图重排，原始专项索引保持有效。
+        first_sheet = next(
+            (i for i, entry in enumerate(images) if entry.role.startswith(_OVERVIEW_LABELS)), len(images)
+        )
+        images = images[:first_sheet]
+        previous = None
+    # 主体头部锚点使用实际首帧的归一化坐标，送检时须保留该帧的独立画布。
+    anchor_frame = context.get("reference_frame_count") if context.get("isolated_subject") else None
+    # 整体检查可看成片的整段五官时序。不把制作底片、重复的同刻裁片当作额外成片交给它。
+    indices = previous if previous is not None else list(range(len(images)))
+    if anchor_frame is not None and anchor_frame not in indices:
+        indices = [*indices[:anchor_frame], anchor_frame, *indices[anchor_frame:]]
+    if has_sequence:
+        indices = [
+            i
+            for i in indices
+            if i != context.get("face_motion_index")
+            and not (
+                images[i].role.startswith(FACE_DETAIL_PREFIX) or images[i].role.startswith("候选视频同刻面部局部，")
+            )
+        ]
+    if previous is None and len(indices) > _MAX_SINGLE_VIEWS:
+        retained = []
+        for kind, entries in groupby(indices, key=lambda i: "" if i == anchor_frame else _timed_view(images[i])):
+            for group in batched(entries, _OVERVIEW_GROUP_SIZE):
+                if not kind or len(group) == 1:
+                    retained.extend(group)
+                    continue
+                uri, label = await asyncio.to_thread(_timeline_sheet, tuple(images[i] for i in group), kind)
+                packed = await freeze_review_evidence(
+                    user_id, (uri,), prompt=evidence.policy_prompt, context={}, labels=(label,)
+                )
+                retained.append(len(images))
+                images.extend(packed.images)
+        indices = retained
+        context["video_overview_group_size"] = _OVERVIEW_GROUP_SIZE
+    if indices == previous or (previous is None and len(indices) == len(evidence.images)):
+        return evidence
+    context["video_overview_indices"] = indices
+    return evidence.model_copy(update={"images": tuple(images), "context_json": review_context(context)})
+
+
+def video_overview(evidence: ReviewEvidence) -> ReviewEvidence:
+    context = json.loads(evidence.context_json)
+    context.pop("video_overview_group_size", None)
+    indices = context.pop("video_overview_indices", None)
+    if indices is None:
+        return evidence
+    if not indices or any(type(index) is not int or not 0 <= index < len(evidence.images) for index in indices):
+        raise ValueError("视频送检顺序与证据不一致")
+    context.pop("face_motion_index", None)
+    if "face_sequence_index" in context:
+        context["face_sequence_index"] = indices.index(context["face_sequence_index"])
+    return evidence.model_copy(
+        update={"images": tuple(evidence.images[i] for i in indices), "context_json": review_context(context)}
+    )
 
 
 async def read_review_evidence(evidence: ReviewEvidence) -> tuple[str, ...]:

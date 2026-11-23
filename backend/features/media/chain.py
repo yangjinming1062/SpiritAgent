@@ -34,7 +34,7 @@ _VIDEO_FAILURE_COPY: dict[str, str] = {
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频未通过检查，请重新生成",
-    "quality_unavailable": "视频检查暂未完成，可以稍后继续制作",
+    "quality_unavailable": "视频检查暂时无法完成，本次视频未交付",
     "rate_limit": "视频服务繁忙，正在等待重试",
     "queue_stopped": "本次视频制作已结束，请按需重新发起",
 }
@@ -165,10 +165,18 @@ class MediaChainState(BaseModel):
     result_url: str | None = None
     source_path: str | None = None
     queue_request_id: str | None = None
+    refine_character_faces: bool = False
+    face_refinement_by_attempt: dict[int, bool] = Field(default_factory=dict)
+    face_request_id: str | None = None
+    face_motion_source: str | None = None
     receive_only: bool = False
     local_correction: LocalQualityCorrection | None = None
     selections: dict[int, MediaSelection] = Field(default_factory=dict)
     review_retried: bool = False
+
+    @property
+    def active_queue_request(self) -> str | None:
+        return self.face_request_id or self.queue_request_id
 
     def local_seed(self, attempt: int, slot: int = 0) -> int:
         identity = f"{self.generation_id}:{attempt}:{slot}".encode()
@@ -201,7 +209,7 @@ class MediaChainState(BaseModel):
         )
 
     def resume_download(self) -> None:
-        """只接收原尝试的成品，检查结果不能触发补做或供应商回退。"""
+        """封住主候选预算，保留原尝试的已登记阶段与冻结的局部制作计划。"""
         self.receive_only = True
         self.next_index = len(self.providers)
 
@@ -291,7 +299,7 @@ class MediaChainState(BaseModel):
         self.phase = "submitting"
         self.result_url = None
         self.source_path = None
-        self.queue_request_id = None
+        self.queue_request_id = self.face_request_id = self.face_motion_source = None
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
         return self.best_qualified(slot) or next((c for c in self.candidates if c.slot == slot), None)

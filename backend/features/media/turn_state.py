@@ -15,8 +15,10 @@ class ImagePlan:
     subject: Literal["self"] | None = None
     reference_image: str | None = None
     secondary_reference_image: str | None = None
+    pose_goal: str | None = None
     identity_json: str | None = None
     identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
+    performance_context: str = ""
 
 
 @dataclass

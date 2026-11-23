@@ -73,7 +73,7 @@ async def get_video_jobs(db: AsyncSession, user_id: int, job_ids: Collection[int
 
 async def _video_job_snapshots(db: AsyncSession, rows: Collection[VideoGenJob]) -> tuple[VideoJobSnapshot, ...]:
     requests = {
-        row.id: MediaChainState.model_validate(row.checkpoint or {}).queue_request_id
+        row.id: MediaChainState.model_validate(row.checkpoint or {}).active_queue_request
         for row in rows
         if row.state not in {"succeeded", "failed", "cancelled"}
     }

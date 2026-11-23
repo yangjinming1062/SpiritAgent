@@ -32,8 +32,8 @@ _PROGRESSIVE_PRESETS = ("sleep", "wake_up", "look", "smile", "focus", "relax", "
 _ACTOR_SIZE = (1024, 1024)
 _BASE_REQUIREMENTS = "按参考中的实际身体结构表现动作，让动作所需的身体部位和物品在相应时刻可见。"
 _SLEEP_REQUIREMENTS = (
-    "使用可以独立合成的主体画面。选取与实际身体和造型相容的睡姿，让角色直接由地面支撑，"
-    "接触与承重自然，角色全身与附肢入画。构图给醒来后的自然姿态留出空间，保持镜头、大小和位置稳定。"
+    "使用可以独立合成的主体画面。角色按自己的身体、习惯和当前造型选择睡姿，"
+    "让所需的支撑与接触关系成立，全身与附肢入画。给它醒来后的动作留出空间，保持机位与画布稳定。"
 )
 _TASKS = TaskScope("visuals.preparation")
 _STOPPING = False

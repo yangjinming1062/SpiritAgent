@@ -102,6 +102,8 @@ async def _submit_video(
             resolution=resolution,
             reference_images=references,
             reference_guidance=reference_guidance,
+            performance_context=visual_plan.context.performance_context if visual_plan else "",
+            portrait_reference=visual_plan.context.portrait_path if visual_plan else None,
             aspect_ratio=aspect_ratio,
             identity_reference_path=visual_plan.context.fullbody_path if visual_plan is not None else None,
             identity=visual_plan.context.identity if visual_plan is not None else None,

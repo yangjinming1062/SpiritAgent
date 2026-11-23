@@ -24,7 +24,7 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
     ActionPreset(
         key="focus",
         name="专注做事",
-        motion_description="持续专注于阅读、书写、操作电脑等一项工作或创作活动，让人能看懂正在专注做事；具体活动依据实际身体与画面中可用的用品确定。",
+        motion_description="选择这位角色此刻想投入的一项工作或创作，结合其兴趣、身体和可用的用品，让画面看得出它在做什么。",
         clip_kind="loop",
         duration_seconds=6,
         semantic_tags=["working", "reading", "creating"],
@@ -52,7 +52,7 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
         name="安睡",
         motion_description=(
             "呈现已经睡着并安稳休息的状态。沿用起始画面中自然、可靠的身体支撑关系，"
-            "以符合角色身体和气质的轻微动态维持同一睡姿，使首尾平稳衔接。"
+            "休息的姿态与动静依角色自身而定，使首尾平稳衔接。"
         ),
         clip_kind="loop",
         duration_seconds=6,
@@ -67,7 +67,7 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
         key="wake_up",
         name="醒来起身",
         motion_description=(
-            "从实际睡姿自然醒来，缓慢过渡到清醒、能够回应交流的姿态，在同一位置安定下来。"
+            "从实际睡姿过渡到清醒，醒来的方式与节奏由角色自身决定。"
             "保持身体支撑与运动连续，起身幅度由实际身体结构和开始姿态决定。"
         ),
         clip_kind="once",
@@ -83,7 +83,7 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
         key="look",
         interruptible=False,
         name="注意到你",
-        motion_description="让观看者感受到自己被注意到，并收到符合角色性格的友好回应；短暂回应后自然回到原来的状态。",
+        motion_description="呈现这位角色如何注意到对方，是否进一步回应、如何回应由它当下的意愿与情境决定。",
         clip_kind="once",
         duration_seconds=5,
         semantic_tags=["attention", "interaction"],
@@ -123,14 +123,14 @@ ACTION_PRESETS: tuple[ActionPreset, ...] = (
     ActionPreset(
         key="drink",
         name="喝口水",
-        motion_description="用画面中已有的杯子完成一次清楚可辨的饮水活动，结束后妥善放好杯子并自然收束。",
+        motion_description="按这位角色的身体、习惯和现场可用的水源完成一次可辨认的饮水活动。",
         clip_kind="once",
         duration_seconds=8,
         semantic_tags=["drinking"],
         performance_role="reaction",
         motion_intensity="normal",
         use_when=["伙伴自己的日常活动"],
-        avoid_when=["没有杯子", "身体结构不支持拿取或饮用"],
+        avoid_when=["缺少可用水源", "身体结构不支持饮用"],
         allowed_triggers=["periodic", "manual"],
     ),
     ActionPreset(

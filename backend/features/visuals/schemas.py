@@ -622,6 +622,7 @@ class VisualJobProgress(BaseModel):
     outfit_description: str | None = Field(default=None, max_length=1200)
     action_description: str = ""
     creation_plan: VisualCreationPlan | None = None
+    reuse_outfit_pose: bool = Field(default=False, strict=True)
     outfit_crop: OutfitCrop | None = None
     opening_review: OpeningReview | None = None
     repair_reason: str = ""

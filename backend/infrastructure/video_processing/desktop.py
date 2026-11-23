@@ -8,6 +8,8 @@ from pathlib import Path
 from PIL import Image
 
 from infrastructure.media_geometry import centered_crop_box
+from infrastructure.video_processing.face_comparison import face_structure_loss_times
+from infrastructure.video_processing.face_detail import compare_face_sequences, review_face_details
 from infrastructure.video_processing.ffmpeg import (
     VideoProcessError,
     alpha_input_args,
@@ -32,9 +34,10 @@ class DesktopVideoResult:
 class DesktopVideoFrames:
     frames: tuple[bytes, ...]
     times_seconds: tuple[float, ...]
+    face_details: tuple[tuple[float, bytes], ...] = ()
 
 
-def _scene_change_times(src: Path) -> tuple[float, ...]:
+def scene_change_times(src: Path) -> tuple[float, ...]:
     metadata = ffmpeg_stdout(
         [
             "-i",
@@ -64,6 +67,7 @@ def sample_desktop_video_frames(
     background: tuple[int, int, int] | None = None,
     include_opening_transition: bool = False,
     include_scene_changes: bool = False,
+    include_face_details: bool = False,
 ) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
@@ -76,17 +80,19 @@ def sample_desktop_video_frames(
     if include_opening_transition:
         targets.extend(first + offset for offset in (0.25, 0.5) if first + offset < last)
     if include_scene_changes:
-        targets.extend(first + offset for offset in _scene_change_times(src))
+        targets.extend(first + offset for offset in scene_change_times(src))
     indices = sorted({min(range(len(times)), key=lambda index: abs(times[index] - target)) for target in targets})
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
+        display_size = frame.size
         scale = min(1.0, max_edge / max(frame.size))
         width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)
     selector = "+".join(f"eq(n\\,{index})" for index in indices)
     decode_alpha = preserve_alpha or background is not None
+    decoder_args = alpha_input_args(probe_video(src)) if decode_alpha else []
     pixel_format, mode, channels = ("rgba", "RGBA", 4) if decode_alpha else ("rgb24", "RGB", 3)
     raw = ffmpeg_stdout(
         [
-            *(alpha_input_args(probe_video(src)) if decode_alpha else []),
+            *decoder_args,
             "-i",
             str(src),
             "-map",
@@ -118,7 +124,46 @@ def sample_desktop_video_frames(
             else:
                 frame.save(output, format="WEBP", lossless=True)
             frames.append(output.getvalue())
-    return DesktopVideoFrames(tuple(frames), tuple(times[index] - first for index in indices))
+    full_frames = tuple(frames)
+    frame_times = tuple(times[index] - first for index in indices)
+    details = (
+        review_face_details(
+            full_frames,
+            frame_times,
+            source=src,
+            frame_indices=tuple(indices),
+            display_size=display_size,
+            background=background,
+            decoder_args=tuple(decoder_args),
+        )
+        if include_face_details
+        else ()
+    )
+    return DesktopVideoFrames(full_frames, frame_times, details)
+
+
+@dataclass(frozen=True)
+class FaceMotionComparison:
+    image: bytes
+    loss_times: tuple[float, ...]
+
+
+def face_motion_comparison(source: Path, delivered: tuple[tuple[float, bytes], ...]) -> FaceMotionComparison | None:
+    """按成片局部的实际同时刻并列原表演，避免把精修引入的动作当作角色选择。"""
+    original = sample_desktop_video_frames(
+        source, sample_count=9, include_opening_transition=True, include_scene_changes=True, include_face_details=True
+    )
+    original_at = {round(t, 3): pixels for t, pixels in original.face_details}
+    matched = [(t, pixels) for t, pixels in delivered if round(t, 3) in original_at]
+    if len(matched) < 3:
+        return None
+    pairs = [(t, original_at[round(t, 3)], pixels) for t, pixels in matched]
+    loss_times = face_structure_loss_times(pairs)
+    if loss_times:
+        selected = {pairs[0][0], pairs[-1][0], *loss_times}
+        pairs = [row for row in pairs if row[0] in selected]
+    sheets = compare_face_sequences({"M": [(t, m) for t, m, _ in pairs], "F": [(t, f) for t, _, f in pairs]})
+    return FaceMotionComparison(sheets[0], loss_times) if sheets else None
 
 
 def extract_desktop_first_frame(src: Path) -> bytes:

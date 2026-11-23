@@ -94,13 +94,17 @@ async def report(user_id: int, job_id: int | None) -> None:
                         and isinstance(chain, ImageChainState)
                         and chain.pose_correction(item.attempt, slot)[1]
                     )
+                    correction = chain.local_correction if chain.is_correction_attempt(item.attempt) else None
+                    opening_instruction = correction.opening_frame_instruction if correction else None
                     opening_composition = (
                         seed is not None
                         and kind == "media.video"
-                        and chain.needs_pose_correction(item.attempt, slot)
-                        and chain.local_correction.opening_frame_instruction
                         and params["identity_reference_role"] == "portrait"
                         and len(params["reference_images"]) == 2
+                        and (
+                            (opening_instruction and chain.needs_pose_correction(item.attempt, slot))
+                            or (not opening_instruction and params.get("compose_activity_opening"))
+                        )
                     )
                     local = resolve_asset_reference(item.path)
                     candidates.append(
@@ -122,6 +126,7 @@ async def report(user_id: int, job_id: int | None) -> None:
                                     "goal",
                                     "quality",
                                     "motion",
+                                    "face",
                                     "opening",
                                     "steps_before_stop",
                                     "step_requirement",

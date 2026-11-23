@@ -79,6 +79,8 @@ class ReviewedImageInput(BaseModel):
 
     purpose: Literal["character", "plain"] = "character"
     delivery_goal: str | None = None
+    pose_goal: str | None = None
+    review_goal: str | None = None
     prompt: str
     size: str
     aspect_ratio: str | None = None
@@ -155,14 +157,13 @@ class ImageChainState(MediaChainState):
             or self.providers[index].provider != "local"
         ):
             return False, None
-        instruction = self.local_correction.instructions.get(slot)
         if (
-            instruction
+            (inputs.pose_goal or self.local_correction.instructions.get(slot))
             and inputs.identity_reference_mode == "portrait_and_outfit"
             and not inputs.prefer_transparent_background
             and self.providers[index].background != "transparent"
         ):
-            return True, f"{inputs.delivery_goal}。{instruction}"
+            return True, self.generation_prompt(index, inputs.pose_goal or inputs.delivery_goal, slot=slot)
         return True, None
 
     def delivery_dimensions(self) -> tuple[str, ...]:
@@ -426,7 +427,11 @@ async def _complete_images(
             if any(c.review and c.review.status == "blocked" for c in candidates):
                 state.selections[slot] = MediaSelection(mode="not_delivered", reason="检查服务已拦截本次候选")
                 continue
-            if state.unknown_submission() or state.stop_reason in {"content_policy_blocked", "goal_review_blocked"}:
+            if (
+                (isinstance(state.inputs, ReviewedImageInput) and state.inputs.purpose == "character")
+                or state.unknown_submission()
+                or state.stop_reason in {"content_policy_blocked", "goal_review_blocked"}
+            ):
                 candidates = [c for c in candidates if c.review and c.review.model_verdict == "pass"]
             try:
                 choice = await select_delivery(
@@ -540,6 +545,8 @@ async def generate_reviewed_images(
     identity_required: bool = True,
     goal_review: Literal["none", "required"] = "required",
     delivery_goal: str | None = None,
+    pose_goal: str | None = None,
+    review_goal: str | None = None,
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
     store_attempts: int = 3,
@@ -572,6 +579,8 @@ async def generate_reviewed_images(
         inputs = ReviewedImageInput(
             purpose="character" if identity_required else "plain",
             delivery_goal=delivery_goal,
+            pose_goal=(pose_goal or delivery_goal) if identity_required and not image_edit else None,
+            review_goal=review_goal,
             prompt=prompt,
             size=size,
             aspect_ratio=aspect_ratio,
@@ -1025,8 +1034,9 @@ async def _run_image_chain(
                             uri,
                             secondary_uri=identity_secondary_uri,
                             environment_uri=review_environment_uri,
-                            generation_prompt=state.daily_goal or inputs.prompt,
+                            generation_prompt=inputs.review_goal or state.daily_goal or inputs.prompt,
                             identity_reference_mode=inputs.identity_reference_mode,
+                            inspect_activity=bool(inputs.delivery_goal),
                             previous_failure=previous_failure,
                             task=task,
                             before_submit=before_submit,
@@ -1185,6 +1195,10 @@ async def _run_image_chain(
                     else (),
                     recompose_pose=recompose_pose,
                     composition_goal=composition_goal,
+                    pose_goal=inputs.pose_goal if isinstance(inputs, ReviewedImageInput) else None,
+                    independent_layout=isinstance(inputs, ReviewedImageInput)
+                    and bool(inputs.delivery_goal)
+                    and inputs.identity_reference_mode == "portrait_and_outfit",
                     background=background,
                     prefer_transparent_background=isinstance(inputs, ReviewedImageInput)
                     and inputs.prefer_transparent_background,

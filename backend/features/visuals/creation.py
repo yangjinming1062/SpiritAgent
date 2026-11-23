@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from infrastructure.ai.prompt_engineer import vision_chat_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -46,9 +47,12 @@ class _CreationDecision(BaseModel):
     supported: bool = Field(strict=True)
     reason: str = Field(max_length=200)
     plan: VisualCreationPlan | None
+    opening_source: Literal["generate", "outfit"] = Field(description="为活动画新开场，或直接沿用造型原图已有的姿势")
+    reuse_pose_requirement: str = Field(
+        max_length=240, description="原要求中明确沿用参考姿势或只改其取景的原文片段，其余为空。"
+    )
     outfit_crop: OutfitCrop | None = Field(
-        default=None,
-        description="只有 actor 且 reference_mode=sources 时可选。局部景别须给图 2 造型原图的取景框（左上为 0,0，右下为 1,1），包含头部、动作所需部位及余量；原景别合适则留空。",
+        description="复用造型姿势且需局部取景时，给出图 2 的取景框（左上为 0,0，右下为 1,1），包含动作所需部位及余量。",
     )
 
     @model_validator(mode="after")
@@ -64,37 +68,14 @@ class _OpeningRepair(BaseModel):
     opening_description: str = Field(min_length=1, max_length=1800)
 
 
-def _base_idle_plan(
-    snapshot: ActorClipSource | CinematicSource, progress: VisualJobProgress
-) -> VisualCreationPlan | None:
-    """内置待机动作使用确定性的安静状态边界，姿态仍由角色自身决定。"""
-
-    if progress.source != "base_preparation" or snapshot.kind != "actor" or snapshot.action is None:
-        return None
-    if snapshot.action.performance_role != "idle":
-        return None
-    motion = snapshot.action.motion_description
-    personality = str(snapshot.persona.get("personality") or "").strip()
-    temperament = f"体现角色的性格气质（{personality}）" if personality else "体现角色自身的性格气质"
-    return VisualCreationPlan(
-        activity=motion,
-        opening_description=(
-            f"角色全身与所有附肢完整入画，位于干净均匀的纯色幕布前，{temperament}并自然选择一套安静、"
-            "可持续且符合身份、身体结构和当前造型的姿态，重心、支撑和接触关系自然。"
-        ),
-        required_props=[],
-        motion_requirements=(
-            f"{motion} 保持该角色自然安静姿态的首尾连续，运动幅度按角色特征和动作定义安排，"
-            "只保留能从起始姿态自然延续的局部变化。"
-        ),
-    )
-
-
 async def _planning_references(
     snapshot: ActorClipSource | CinematicSource, opening: str | None
 ) -> tuple[tuple[str, ...], str]:
     if opening:
-        image = await asyncio.to_thread(read_valid_image_data_uri, opening)
+        if snapshot.kind == "actor" and snapshot.opening_frame is not None and opening == snapshot.opening_frame.path:
+            image = await asyncio.to_thread(read_visual_reference, opening, snapshot.opening_frame.content_hash)
+        else:
+            image = await asyncio.to_thread(read_valid_image_data_uri, opening)
         if not image:
             raise VisualStateError("活动参考画面无法读取，请重新准备素材")
         return (image,), "图 1 提供实际人物、造型和环境"
@@ -119,35 +100,22 @@ async def ensure_creation_plan(
     *,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
-    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
-        progress.outfit_crop = None
-        progress.creation_plan = VisualCreationPlan(
-            activity=snapshot.action.motion_description,
-            opening_description="沿用透明参考帧中实际可见的睡姿、画幅、位置和身体支撑关系。",
-            required_props=[],
-            motion_requirements="从确认的睡姿开始，在原画面位置恢复清醒并自然安定。",
-        )
-        progress.motion_prompt = ""
-        return
-    base_plan = _base_idle_plan(snapshot, progress)
-    if base_plan is not None:
-        progress.outfit_crop = None
-        progress.creation_plan = base_plan
-        progress.motion_prompt = ""
-        return
     if progress.creation_plan is not None:
         return
-    opening = progress.pose_path or progress.previous_pose_path
+    paired = snapshot.opening_frame if snapshot.kind == "actor" else None
+    opening = paired.path if paired else progress.pose_path or progress.previous_pose_path
     images, reference_roles = await _planning_references(snapshot, opening)
     decision = await vision_chat_json(
         user_id,
         VISUAL_CREATION_PLAN + ("\n" + ACTOR_OPENING_REQUIREMENTS if snapshot.kind == "actor" else ""),
         {
             "reference_mode": "opening" if opening else "sources",
+            "fixed_opening": paired is not None,
             "reference_roles": reference_roles,
             "asset_kind": snapshot.kind,
             "target_dimensions": [progress.target_width, progress.target_height],
             "personality": snapshot.persona.get("personality", ""),
+            "current_mood": snapshot.persona.get("current_mood", ""),
             "character_context": {}
             if progress.source == "base_preparation"
             else (await read_planning_context(user_id, snapshot)).model_dump(),
@@ -161,7 +129,7 @@ async def ensure_creation_plan(
         },
         response_model=_CreationDecision,
         schema_name="visual_creation_plan",
-        preserve_choices=("supported",),
+        preserve_choices=("supported", "opening_source"),
         reference_images=images,
         before_submit=before_submit,
         task=AiTaskKey.visuals,
@@ -169,7 +137,19 @@ async def ensure_creation_plan(
     if not decision.supported:
         raise VisualCreationError(decision.reason or "当前角色或环境不适合这个活动，请更换动作", "activity_unsupported")
     progress.creation_plan = decision.plan
-    progress.outfit_crop = decision.outfit_crop if snapshot.kind == "actor" and not opening else None
+    progress.reuse_outfit_pose = (
+        decision.opening_source == "outfit"
+        and bool(decision.reuse_pose_requirement)
+        and any(
+            decision.reuse_pose_requirement in text
+            for text in (snapshot.requirements, job.feedback, job.video_feedback, progress.action_description)
+            if text
+        )
+        and snapshot.kind == "actor"
+        and snapshot.identity_reference_role == "portrait"
+        and not opening
+    )
+    progress.outfit_crop = decision.outfit_crop if progress.reuse_outfit_pose else None
     progress.motion_prompt = ""
 
 
@@ -181,10 +161,6 @@ async def ensure_opening_repair(
     snapshot: ActorClipSource | CinematicSource,
     before_submit: Callable[[], Awaitable[None]],
 ) -> None:
-    if _base_idle_plan(snapshot, progress) is not None:
-        # 待机姿态由角色身份与性格决定；评审反馈不能把它收窄成统一的手脚位置。
-        progress.repair_description = ""
-        return
     if not progress.repair_reason or progress.repair_description:
         return
     images, reference_roles = await _planning_references(snapshot, progress.previous_pose_path)
@@ -193,6 +169,8 @@ async def ensure_opening_repair(
         VISUAL_OPENING_REPAIR + ("\n" + ACTOR_OPENING_REQUIREMENTS if snapshot.kind == "actor" else ""),
         {
             "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+            "personality": snapshot.persona.get("personality", ""),
+            "current_mood": snapshot.persona.get("current_mood", ""),
             "requirements": snapshot.requirements,
             "user_requirements": job.feedback,
             "video_feedback": job.video_feedback,
@@ -210,13 +188,25 @@ async def ensure_opening_repair(
     progress.repair_description = repair.opening_description
 
 
-def opening_requirements(job: VisualJob, progress: VisualJobProgress) -> str:
+def opening_requirements(job: VisualJob, progress: VisualJobProgress, *, for_review: bool = True) -> str:
     plan = progress.creation_plan
     if plan is None:
         raise VisualStateError("活动制作计划尚未准备好")
     source = visual_snapshot(job).source
     if source.kind not in {"actor", "cinematic"}:
         raise VisualStateError("只有角色影像需要活动起始画面")
+    if not for_review:
+        # 生图直接消费静态场记；原始要求和两类反馈仍按冻结优先级覆盖计划。
+        notes = [progress.repair_description or plan.opening_description]
+        if plan.required_props:
+            notes.append("必要用品：" + "、".join(plan.required_props))
+        updates = (job.feedback, job.video_feedback)
+        if progress.customization_priority == "general":
+            updates = updates[::-1]
+        requirements = [s for s in (progress.action_description, source.requirements, *updates) if s]
+        if requirements:
+            notes.append("活动与制作要求（依次只更新明确涉及的部分，画出开场的瞬间）：" + "\n".join(requirements))
+        return "\n".join(notes)
     return json.dumps(
         {
             "activity": progress.action_description,

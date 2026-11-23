@@ -9,7 +9,14 @@ def quality_failure_message(review: VisualReview | None) -> str | None:
     if review.verdict == "pass":
         return None
     failures: list[str] = []
-    labels = {"identity": "身份", "goal": "画面要求", "quality": "画面质量"}
+    labels = {
+        "identity": "身份",
+        "goal": "画面要求",
+        "quality": "画面质量",
+        "opening": "开场状态",
+        "motion": "动作轨迹",
+        "face": "面部连续性",
+    }
     for name in review.required:
         decision = getattr(review, name)
         if decision is not None and decision.verdict == "pass":

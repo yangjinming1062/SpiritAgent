@@ -2,7 +2,24 @@
 
 from features.media.identity_contracts import CharacterReferenceRole
 
-CHAT_IMAGE_EDIT_PROMPT = "编辑提供的上一版图片。保留已符合要求的主体、构图、身份和造型，结合以下完整目标和历次修正要求，修复仍可见的问题。\n{goal}"
+
+def personal_performance_goal(goal: str, context: str) -> str:
+    """只把当次角色资料用于创作，验收仍读取原始目标。"""
+    if not context:
+        return goal
+    return (
+        f"{goal}\n表演资料：{context}。依据这些特点与此刻的互动，选择这位角色自然会采用的动作与神态。"
+        "以本次明确的动作、身体条件和情境为准。"
+    )
+
+
+def chat_image_edit_prompt(goal: str, performance_context: str, pose_goal: str | None = None) -> str:
+    direction = personal_performance_goal(goal, performance_context)
+    if pose_goal and not performance_context and pose_goal not in goal:
+        # 旧计划将表演资料和动作一起冻结，完整穿戴、修正要求仍以 goal 为准。
+        direction = pose_goal if goal in pose_goal else f"{pose_goal}\n本次完整要求：{goal}"
+    return f"编辑提供的上一版图片。保留已符合要求的主体、构图、身份和造型，结合以下完整目标和历次修正要求，修复仍可见的问题。\n{direction}"
+
 
 REAL_PHOTO_LOOK = (
     "整体是真实相机拍下的照片（photorealistic，未经修图），而不是插画、3D 渲染或 CG 合成：光线来自真实可信的光源，"
@@ -40,19 +57,11 @@ EDIT_VISUAL_STYLE = "画面质感沿用底图；修改区域的线条、纹理�
 PLAIN_IMAGE_TEMPLATE = "{prompt}\n\n" + REAL_PHOTO_LOOK + REAL_PHOTO_FRAMING
 PLAIN_VIDEO_TEMPLATE = "{prompt}\n\n" + REAL_VIDEO_LOOK
 
-SELF_IMAGE_REFERENCE_TEMPLATE = (
-    "绘制这一瞬间：{prompt}\n"
-    "依照这个动作和机位安排取景。身体朝向体现在肩、胯和脚的轮廓，头部转动与视线可独立于躯干。"
-    "让人物的眼睛看向当下活动中实际关注的对象，按需要转动或俯仰头部；面部特征在这一角度可辨。"
-    "涉及持物或倚靠时，手与物的接触、重心和支撑要在画面中成立。\n"
-    "{reference_roles}{outfit}把参考中的同一角色画进这个瞬间，随姿势重画可见的侧面、衣褶、遮挡与光影。"
-    "保留参考中的五官关系、头身与肢体比例、穿戴细节和画风。人物与现场共用光源与透视。"
-)
+SELF_IMAGE_REFERENCE_TEMPLATE = "{reference_roles}{outfit}依照新姿态还原五官和体型，延续画风、服饰细节。现场：{prompt}"
 SELF_IMAGE_OUTFIT_DESCRIPTION = "本次造型：{outfit}。服装、配色、发型发色、妆容、鞋履与配饰以此为准。"
 SELF_IMAGE_CURRENT_OUTFIT = "本次造型沿用身份参考图中可见的服装、配色、发型发色、妆容、鞋履与配饰。"
 SELF_VIDEO_REFERENCE_GUIDANCE = (
-    "为参考图中的同一角色制作视频。{reference_roles}{outfit}"
-    "全程保持对应的身份与本次造型，环境、开场姿态和取景按视频要求安排。" + REFERENCE_LIKENESS
+    "{reference_roles}{outfit}根据活动安排起势、支撑和机位，保持同一角色的五官关系、身体比例、造型和画风。"
 )
 SELF_VIDEO_PORTRAIT_REFERENCE = "图 1 头像决定面容、五官关系、物种和头部特征，不决定身材或服装。"
 SELF_VIDEO_OUTFIT_REFERENCE = "图 2 全身图提供身体比例、肢体结构、固有材质与本次穿戴，不覆盖图 1 的面容。"
@@ -68,6 +77,13 @@ def character_reference_roles(role: CharacterReferenceRole, has_secondary: bool)
     if role == "fullbody":
         return SELF_VIDEO_FULLBODY_REFERENCE + (SELF_VIDEO_STYLING_REFERENCE if has_secondary else "")
     return SELF_VIDEO_PORTRAIT_REFERENCE + (SELF_VIDEO_OUTFIT_REFERENCE if has_secondary else "")
+
+
+def character_shot_roles(role: CharacterReferenceRole, has_secondary: bool) -> str:
+    # 匹配的双参考只需给绘图模型点明分工，避免重复外形清单压过具体动作。
+    if role == "portrait" and has_secondary:
+        return "两图为同一角色。图1提供面容，图2提供身材与本次穿戴，"
+    return character_reference_roles(role, has_secondary)
 
 
 VIDEO_REFERENCE_GUIDANCE = (
@@ -100,16 +116,31 @@ CHARACTER_MEDIA_REVIEW_RULES = (
     + "只返回符合 schema 的 JSON，verdict 取 pass、review 或 fail，reason 用简短中文说明可见依据。"
 )
 QUALITY_CORRECTION_INSTRUCTION = (
-    "correction_instruction 是下一版可直接使用的一句正向画面要求。需要修正时，按原目标具体描述应画出的朝向、"
-    "动作、接触或场景关系；原图的问题只写在 reason 中。全部通过时该字段为空字符串。"
+    "correction_instruction 是下一版可直接使用的一句正向画面要求。动作问题写成能摆出来的关系，例如关注对象在画面哪一侧、"
+    "这个机位看见角色哪一侧，或承重部位怎样接触支撑面。身份、造型或画质问题写清应还原的可见特征。"
+    "原图的问题只写在 reason 中。全部通过时该字段为空字符串。"
+)
+ACTIVITY_POSE_REVIEW = (
+    "涉及角色时，以角色自身为基准判断对象在身前、身后还是手中，再沿脸和目光的实际朝向核对。"
+    "侧拍时，角色正前方的对象可以在画面左侧或右侧。"
+    "需要看物而实际看镜头，不能仅凭物体入画判为符合。判断接触时查看所要求部位的实际外缘与承托面。"
+    "只陈述候选画框里真正可见的部位，指定部位被裁出时不能用参考图补足。"
+    "结合身体结构与活动核对支撑。未指定的姿态只要自然完成本次活动即可，与参考摆得相似或不同本身均不加减分。"
+)
+VIDEO_FACE_DETAIL_REVIEW = (
+    "按角色的实际结构、原画风和目标景深，查看全帧和带时间的同刻面部裁片，比较动作开始、转动途中和停住时实际可见的五官。"
+    "看眼眶与瞳孔是否仍能分开、鼻梁是否自然连续到鼻尖、唇线与下颌是否保持同一面部表面。"
+    "自然眨眼、侧转时远侧五官被遮住、短暂且方向一致的运动模糊可以成立。"
+    "眼鼻嘴位移或融成色块、轮廓拉扯或双影、脸持续失焦以致原有五官无法成形，属于明确的面部质量缺陷。"
+    "首尾清楚、发饰相似或动作正确不能抵消中途的缺陷。用实际时间和部位说明判断。"
 )
 CHARACTER_IMAGE_GOAL_REVIEW = (
     "独立检查最后一张候选的身份、制作目标及自然度。此前图片的职责：{reference_roles}\n"
     + _CHARACTER_MEDIA_IDENTITY_RULES
     + "goal_verdict 核对 generation_prompt 的明确画面要求，包括本次造型、动作、构图及环境。可见符合为 pass，明确偏差为 fail，关键条件无法核对为 review。未要求展示的部位在画外不单独构成问题。"
     "参考职责指定的本次穿戴也属于目标。按要求保留或更换造型，比较可见的服装、发型和标志性配饰；未要求换装却换成另一套穿戴时，目标不合格。"
-    "通过姿态、接触和视线判断所要求的活动。持有道具只能证明持有；活动需要注视道具时，核对目光的实际落点。面部可辨认不要求面向镜头。"
-    "quality_verdict 核对脸部结构、身体连接、支撑接触、重心、遮挡、尺度与画风连续性。五官局部熔合、漂移、肢体拉伸或无要求地更换渲染风格都为 fail，即使仍认得是谁。充分自然为 pass，只在影响本任务判断的可见依据不足时给 review。"
+    + ACTIVITY_POSE_REVIEW
+    + "quality_verdict 核对脸部结构、身体连接、支撑接触、重心、遮挡、尺度与画风连续性。五官局部熔合、漂移、肢体拉伸或无要求地更换渲染风格都为 fail，即使仍认得是谁。充分自然为 pass，只在影响本任务判断的可见依据不足时给 review。"
     "三个维度独立，身份一致不能抵消目标或质量缺陷。saved_decisions 中的 pass/fail 是同一依据下的有效结论，原样保留，并使用 saved_reasons 中已有依据；对其余维度重新读取图片给出判断。"
     "按结构返回三个 verdict、各自对应的 reason 和 correction_instruction。verdict 均为 pass、review 或 fail，三个 reason 分别用不超过 400 字符的非空中文说明依据。"
     + QUALITY_CORRECTION_INSTRUCTION

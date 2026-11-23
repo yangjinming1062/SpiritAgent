@@ -4,6 +4,7 @@
 固定装配已在本地部署验证过的 MiniMax H3 工作流。支持文生视频、首帧/首尾帧、参考图和参考视频。
 """
 
+import asyncio
 import hashlib
 import math
 from dataclasses import replace
@@ -15,6 +16,7 @@ from uuid import uuid4
 import httpx
 from PIL import Image, ImageOps
 
+from infrastructure.ai.media_guidance import CHARACTER_FACE_MOTION
 from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers.base import (
     ProviderConfig,
@@ -24,7 +26,13 @@ from infrastructure.ai.providers.base import (
     VideoJobStatus,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
-from infrastructure.ai.providers.local.image import qwen_image_weights, qwen_opening_nodes
+from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes
+from infrastructure.ai.providers.local.image import (
+    POSE_PLANNING_NODES,
+    qwen_face_anchor,
+    qwen_image_weights,
+    qwen_opening_nodes,
+)
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 
@@ -57,7 +65,24 @@ def _pick(options: list[str], prefixes: tuple[str, ...]) -> str:
     raise ProviderError(f"local video_gen found no model for {prefixes}", status_code=422)
 
 
-def _frames(duration: int) -> int:
+def _h3_weights(
+    unets: list[str], clips: list[str], vaes: list[str], loras: list[str], *, native: bool, detail: bool
+) -> tuple[str, str, str, str, str, int]:
+    variants = _REFERENCE_LORAS if native else _LORA_PREFIXES
+    if detail:
+        variants = tuple(reversed(variants))
+    lora = _pick(loras, tuple(prefix for prefix, _ in variants))
+    return (
+        _pick(unets, _REFERENCE_UNETS if native else _UNET_PREFIXES),
+        _pick(clips, _CLIP_PREFIXES),
+        _pick(vaes, _VIDEO_VAE_PREFIXES),
+        _pick(vaes, _AUDIO_VAE_PREFIXES),
+        lora,
+        next(count for prefix, count in variants if lora.startswith(prefix)),
+    )
+
+
+def local_video_frame_count(duration: int) -> int:
     """复现 H3 工作流的 ``max(5, round(seconds * 24))`` 帧网格表达式。"""
     target = max(5, round(duration * 24))
     return target + (5 - target % 17) % 17
@@ -158,57 +183,66 @@ class LocalVideoGenProvider(VideoGenProvider):
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
 
-    async def _loader_options(self, node_name: str, field: str) -> list[str]:
-        response = await self._client.get(f"/object_info/{node_name}")
-        response.raise_for_status()
-        required = response.json().get(node_name, {}).get("input", {}).get("required", {})
-        spec = required.get(field, [])
-        if not spec:
-            return []
-        if isinstance(spec[0], list):
-            options = spec[0]
-        elif len(spec) > 1 and isinstance(spec[1], dict):
-            options = spec[1].get("options", [])
-        else:
-            options = []
-        return [name for name in options if isinstance(name, str)]
+    async def _model_options(self) -> tuple[list[str], list[str], list[str], list[str]]:
+        unets, clips, vaes, loras = await asyncio.gather(
+            loader_options(self._client, "UNETLoader", "unet_name"),
+            loader_options(self._client, "CLIPLoader", "clip_name"),
+            loader_options(self._client, "VAELoader", "vae_name"),
+            loader_options(self._client, "LoraLoaderModelOnly", "lora_name"),
+        )
+        return unets, clips, vaes, loras
+
+    async def supports_face_refinement(self) -> bool:
+        """导引图和连续运动均可制作时才启用这次底片的可选精修。"""
+        if not self.supports_reference_images:
+            return False
+        try:
+            unets, clips, vaes, loras = await self._model_options()
+            qwen_image_weights(unets, clips, vaes)
+            _h3_weights(unets, clips, vaes, loras, native=False, detail=True)
+        except (httpx.HTTPError, ValueError, ProviderError):
+            logger.info("Local face refinement weights unavailable", exc_info=True)
+            return False
+        return await supports_nodes(
+            self._client,
+            "TextEncodeQwenImage21",
+            "ManualSigmas",
+            "SplitSigmas",
+            "EmptyImage",
+            "ImageCompositeMasked",
+            "MiniMaxH3ImageToVideo",
+            "MiniMaxH3AddGuide",
+        )
 
     async def _resolve_model_files(
         self, req: VideoGenRequest
     ) -> tuple[tuple[str, str, str, str, str, int], tuple[str, str, str] | None]:
-        unets = await self._loader_options("UNETLoader", "unet_name")
-        clips = await self._loader_options("CLIPLoader", "clip_name")
-        vaes = await self._loader_options("VAELoader", "vae_name")
-        loras = await self._loader_options("LoraLoaderModelOnly", "lora_name")
+        unets, clips, vaes, loras = await self._model_options()
         references = bool(req.reference_images or req.reference_videos)
         native = (
             references
+            and not req.face_guide_frames
             and any(name.startswith(_REFERENCE_UNETS) for name in unets)
             and any(name.startswith(prefix) for prefix, _ in _REFERENCE_LORAS for name in loras)
         )
         if req.reference_videos and not native:
             raise ProviderError("参考视频需要 MiniMax H3 Ref2VA 和匹配的 Ref2V Turbo 权重", status_code=422)
-        opening = qwen_image_weights(unets, clips, vaes) if references and not native else None
+        opening = (
+            qwen_image_weights(unets, clips, vaes) if references and not native and req.face_stage != "motion" else None
+        )
         if not references and req.opening_frame_prompt and not (req.first_frame_image or req.last_frame_image):
             try:
                 opening = qwen_image_weights(unets, clips, vaes)
             except ProviderError:
                 # 纯文字视频的纠偏仍可由 H3 直接制作。
                 opening = None
-        unet = _pick(unets, _REFERENCE_UNETS if native else _UNET_PREFIXES)
-        clip, vae, audio_vae = (
-            _pick(clips, _CLIP_PREFIXES),
-            _pick(vaes, _VIDEO_VAE_PREFIXES),
-            _pick(vaes, _AUDIO_VAE_PREFIXES),
-        )
-        variants = _REFERENCE_LORAS if native else _LORA_PREFIXES
-        lora = _pick(loras, tuple(prefix for prefix, _ in variants))
-        steps = next(count for prefix, count in variants if lora.startswith(prefix))
+        files = _h3_weights(unets, clips, vaes, loras, native=native, detail=bool(req.face_stage))
+        unet, clip, vae, audio_vae, lora, steps = files
         logger.info(
             "local video_gen resolved model files",
             extra={"unet": unet, "clip": clip, "video_vae": vae, "audio_vae": audio_vae, "lora": lora},
         )
-        return (unet, clip, vae, audio_vae, lora, steps), opening
+        return files, opening
 
     def available_resolutions(
         self,
@@ -234,6 +268,21 @@ class LocalVideoGenProvider(VideoGenProvider):
         super().validate_request(req)
         if req.noise_seed is not None and (type(req.noise_seed) is not int or not 0 <= req.noise_seed < 2**64):
             raise ProviderError("local video_gen requires an unsigned 64-bit seed", status_code=400)
+        if bool(req.face_guide_frames) != bool(req.face_stage):
+            raise ProviderError("面部制作阶段与导引时间轴不匹配", status_code=400)
+        if req.face_guide_frames:
+            times = req.face_guide_frames
+            if (
+                len(times) < 2
+                or len(times) + int(req.face_stage == "anchors") != len(req.reference_images)
+                or times[0] != 0
+                or times[-1] != local_video_frame_count(req.duration) - 1
+                or times != tuple(sorted(set(times)))
+                or req.resolution != "768P"
+                or req.aspect_ratio != "1:1"
+                or req.reference_videos
+            ):
+                raise ProviderError("面部导引图与原片时间轴不一致", status_code=400)
         if len(req.reference_images) > 9:
             raise ProviderError("local video_gen accepts at most nine reference images", status_code=400)
         if len(req.reference_videos) > 3:
@@ -309,10 +358,11 @@ class LocalVideoGenProvider(VideoGenProvider):
         opening_files: tuple[str, str, str] | None = None,
         hold_names: tuple[str, str] | None = None,
         upscale: bool = False,
+        plan_pose: bool = False,
     ) -> dict[str, dict[str, Any]]:
         unet, clip, video_vae, audio_vae, lora, steps = files
         width, height = self.resolution_size(req.resolution, req.aspect_ratio or "16:9")
-        length = _frames(req.duration)
+        length = local_video_frame_count(req.duration)
         seed = req.noise_seed if req.noise_seed is not None else uuid4().int % (2**63)
         nodes: dict[str, dict[str, Any]] = {
             "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet, "weight_dtype": "default"}},
@@ -354,6 +404,86 @@ class LocalVideoGenProvider(VideoGenProvider):
                 },
             },
         }
+        if req.face_stage == "anchors":
+            if not opening_files:
+                raise ProviderError("局部精修需要原始面容及本地图片模型", status_code=422)
+            # Qwen 与 H3 分别运行；无损导引图写入任务资产后才开始连续运动作业。
+            stills = {
+                "atlas": {
+                    "class_type": "EmptyImage",
+                    "inputs": {"width": 768 * len(req.face_guide_frames), "height": 768, "batch_size": 1, "color": 0},
+                }
+            }
+            canvas = ["atlas", 0]
+            for column, (index, name) in enumerate(zip(req.face_guide_frames, reference_image_names[1:], strict=True)):
+                guide, output = qwen_face_anchor(
+                    name,
+                    reference_image_names[0],
+                    opening_files,
+                    seed=(seed + index) % 2**64,
+                    prefix=f"face_{index}_",
+                    describe=plan_pose,
+                    share_weights=column > 0,
+                    repair_observation=req.face_repair_observation,
+                )
+                stills.update(guide)
+                key = f"place_{index}"
+                stills[key] = {
+                    "class_type": "ImageCompositeMasked",
+                    "inputs": {
+                        "destination": canvas,
+                        "source": output,
+                        "x": 768 * column,
+                        "y": 0,
+                        "resize_source": False,
+                    },
+                }
+                canvas = [key, 0]
+            stills["15"] = {
+                "class_type": "SaveImage",
+                "inputs": {"images": canvas, "filename_prefix": f"video/spiritagent-guides-{uuid4().hex}"},
+            }
+            return stills
+        if req.face_stage == "motion":
+            anchors = []
+            for index, name in zip(req.face_guide_frames, reference_image_names, strict=True):
+                key = f"face_{index}"
+                nodes[key] = {"class_type": "LoadImage", "inputs": {"image": name}}
+                anchors.append([key, 0])
+            nodes["6"]["inputs"].update(
+                clip=["3", 0],
+                vae=["4", 0],
+                prompt=req.prompt,
+                width=width,
+                height=height,
+                length=length,
+                first_frame=anchors[0],
+                last_frame=anchors[-1],
+            )
+            conditioning = ["6", 0]
+            for index, anchor in zip(req.face_guide_frames[1:-1], anchors[1:-1], strict=True):
+                key = f"guide_{index}"
+                nodes[key] = {
+                    "class_type": "MiniMaxH3AddGuide",
+                    "inputs": {
+                        "positive": conditioning,
+                        "latent": ["6", 1],
+                        "vae": ["4", 0],
+                        "image": anchor,
+                        "frame_idx": index,
+                    },
+                }
+                conditioning = [key, 0]
+            nodes["7"]["inputs"]["conditioning"] = conditioning
+            nodes["15"]["inputs"] = {
+                "video": ["14", 0],
+                "filename_prefix": nodes["15"]["inputs"]["filename_prefix"],
+                "format": "mp4",
+                "format.codec": "h264",
+                "format.codec.encoding": "re-encode",
+                "format.codec.encoding.crf": 14,
+            }
+            return nodes
         if opening_files is None and (reference_image_names or reference_video_names):
             nodes["6"] = {
                 "class_type": "MiniMaxH3ReferenceToVideo",
@@ -425,6 +555,9 @@ class LocalVideoGenProvider(VideoGenProvider):
                     height,
                     seed,
                     composition_goal=req.opening_composition_goal,
+                    pose_goal=req.pose_goal,
+                    plan_pose=plan_pose,
+                    compose_activity_opening=req.compose_activity_opening,
                 )
                 nodes.update(opening_nodes)
             nodes["6"]["inputs"]["first_frame"] = output
@@ -436,6 +569,12 @@ class LocalVideoGenProvider(VideoGenProvider):
                 if reference_image_names
                 else "从首帧的现场接续所要求的变化，保持指定的机位、景别和物体与背景的空间关系。"
             )
+            if reference_image_names and req.pose_goal:
+                continuity = (
+                    "沿用开场的现场、角色与拍摄距离，明确指定的运镜按原要求进行。"
+                    + CHARACTER_FACE_MOTION
+                    + "角色、衣饰和现场只随原定动作或机位变化。"
+                )
             nodes["6"]["inputs"]["prompt"] = f"{continuity}\n{req.first_frame_motion or req.prompt}"
         if first_frame_name:
             nodes["16"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
@@ -451,20 +590,24 @@ class LocalVideoGenProvider(VideoGenProvider):
         req = await _adaptive_request(req)
         self.validate_request(req)
         files, opening = await self._resolve_model_files(req)
-        upscale = _UPSCALE_MODEL in await self._loader_options("UpscaleModelLoader", "model_name")
+        upscale = not req.face_stage and _UPSCALE_MODEL in await loader_options(
+            self._client, "UpscaleModelLoader", "model_name"
+        )
         hold_sources = None
         if (
             opening
             and req.observed_hold_images
             and req.reference_images
             and not (req.first_frame_image or req.last_frame_image)
+            and await supports_nodes(self._client, "MiniMaxH3AddGuide")
         ):
-            try:
-                info = await self._client.get("/object_info/MiniMaxH3AddGuide")
-                if info.is_success and "MiniMaxH3AddGuide" in info.json():
-                    hold_sources = req.observed_hold_images
-            except (httpx.HTTPError, ValueError):
-                logger.info("Could not discover H3 motion guides, using the composed opening")
+            hold_sources = req.observed_hold_images
+        plan_pose = bool(
+            opening
+            and req.reference_images
+            and not hold_sources
+            and (req.pose_goal or req.opening_composition_goal or req.face_guide_frames)
+        ) and await supports_nodes(self._client, *POSE_PLANNING_NODES)
         uploaded: dict[str, str] = {}
         for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images, *(hold_sources or ())):
             if reference and reference not in uploaded:
@@ -490,6 +633,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                         opening_files=opening,
                         hold_names=(uploaded[hold_sources[0]], uploaded[hold_sources[1]]) if hold_sources else None,
                         upscale=upscale,
+                        plan_pose=plan_pose,
                     ),
                     "prompt_id": prompt_id,
                 },
@@ -522,19 +666,40 @@ class LocalVideoGenProvider(VideoGenProvider):
         status_str = str(status.get("status_str") or "").lower()
         if status_str == "error":
             messages = status.get("messages") or []
+            for event in reversed(messages) if isinstance(messages, list) else ():
+                if not isinstance(event, (tuple, list)) or len(event) != 2:
+                    continue
+                kind, detail = event
+                if kind == "execution_error" and isinstance(detail, dict) and detail.get("exception_message"):
+                    return VideoJobStatus(
+                        task_id=task_id, status="failed", error=str(detail["exception_message"])[:500]
+                    )
             return VideoJobStatus(task_id=task_id, status="failed", error=str(messages)[:500])
         if not status.get("completed") and status_str not in {"success", "error"}:
             return VideoJobStatus(
                 task_id=task_id,
                 status="queued" if status_str in {"", "pending", "queued"} else "processing",
             )
-        for outputs in (entry.get("outputs") or {}).values():
-            for item in (outputs.get("images") or []) if isinstance(outputs, dict) else ():
-                if isinstance(item, dict) and str(item.get("filename", "")).lower().endswith(".mp4"):
+        recorded = entry.get("prompt")
+        graph = (
+            recorded[2] if isinstance(recorded, list) and len(recorded) > 2 and isinstance(recorded[2], dict) else {}
+        )
+        saver = graph.get("15", {})
+        guides = saver.get("class_type") == "SaveImage" and str(
+            saver.get("inputs", {}).get("filename_prefix", "")
+        ).startswith("video/spiritagent-guides-")
+        suffix = ".png" if guides else ".mp4"
+        outputs = entry.get("outputs") or {}
+        delivered = (outputs.get("15", {}),) if guides else outputs.values()
+        for output in delivered:
+            for item in (output.get("images") or []) if isinstance(output, dict) else ():
+                if isinstance(item, dict) and str(item.get("filename", "")).lower().endswith(suffix):
                     url = _view_url(self.config.base_url, item)
                     if url:
                         return VideoJobStatus(task_id=task_id, status="succeeded", download_url=url)
-        return VideoJobStatus(task_id=task_id, status="failed", error="local video_gen completed without an MP4 output")
+        return VideoJobStatus(
+            task_id=task_id, status="failed", error=f"local video_gen completed without a {suffix} output"
+        )
 
     async def cancel(self, task_id: str) -> Literal["cancelled", "finished", "not_cancellable", "unsupported"]:
         try:

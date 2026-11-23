@@ -30,6 +30,14 @@ class OpeningStateReview(ReviewDecision):
     correction_instruction: str = Field(max_length=400)
 
 
+class FramedOpeningReview(OpeningStateReview):
+    framing_requirement: str = Field(max_length=240, description="逐字摘取从开场生效的明确景别，未指定则填空串。")
+    required_extent: Literal["whole", "partial", "free"] = Field(description="只读原文。须全身、须局部或未限定。")
+    visible_extent: Literal["whole", "partial", "unclear"] = Field(
+        description="只看真正的视频首帧。整个主体在画框内为 whole，画框截断主体为 partial，无法辨认填 unclear。"
+    )
+
+
 class ReviewImage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -95,12 +103,13 @@ class VisualReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reference_basis: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    required: tuple[Literal["identity", "goal", "quality", "opening", "motion"], ...]
+    required: tuple[Literal["identity", "goal", "quality", "opening", "motion", "face"], ...]
     identity: ReviewDecision | None = None
     goal: ReviewDecision | None = None
     quality: ReviewDecision | None = None
-    opening: OpeningStateReview | None = None
+    opening: FramedOpeningReview | OpeningStateReview | None = None
     motion: ReviewDecision | None = None
+    face: ReviewDecision | None = None
     steps_before_stop: int | None = Field(default=None, ge=1, strict=True)
     step_requirement: str | None = Field(default=None, max_length=200)
     correction_instruction: str = Field(default="", max_length=400)
@@ -111,6 +120,10 @@ class VisualReview(BaseModel):
     human_approval: HumanReviewApproval | None = None
 
     @property
+    def face_check_passes(self) -> bool:
+        return self.face.verdict == "pass" if self.face is not None else "face" not in self.required
+
+    @property
     def verdict(self) -> ReviewVerdict:
         if (
             self.status == "complete"
@@ -119,7 +132,8 @@ class VisualReview(BaseModel):
             and self.required
             and (
                 self.human_approval.content_basis_id == self.evidence.content_basis_id
-                and set(self.required).issubset(self.human_approval.dimensions)
+                and self.face_check_passes
+                and set(self.required).difference({"face"}).issubset(self.human_approval.dimensions)
             )
         ):
             return "pass"
@@ -173,10 +187,13 @@ class MediaSelection(BaseModel):
             or review.human_approval is not None
             or (review.motion is not None and review.motion.verdict != "pass")
             or (review.opening is not None and review.opening.verdict != "pass")
+            or not review.face_check_passes
         ):
             return False
         if "identity" in required and review.identity.verdict != "pass":
             return False
+        if "face" in review.required:
+            return self.mode == "passed" and review.model_verdict == "pass"
         return self.mode == "best_available" or review.model_verdict == "pass"
 
 

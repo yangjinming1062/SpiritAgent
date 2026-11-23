@@ -103,6 +103,8 @@ def _restore_image_artifacts(
                     request=frozen.request,
                     prompt=frozen.prompt,
                     goal=frozen.goal,
+                    pose_goal=frozen.pose_goal,
+                    performance_context=frozen.performance_context,
                     size=frozen.size,
                     subject=frozen.subject,
                     reference_image=frozen.reference_image,

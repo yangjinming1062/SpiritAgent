@@ -1,5 +1,6 @@
 """出镜媒体共用的固定身份、本次生成造型及视频参考准备。实际呈现快照提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改素材或影像库。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -12,6 +13,7 @@ from infrastructure.database import SESSION_LOCAL
 from features.appearance.avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError
 from features.appearance.identity import require_visual_identity
 from features.appearance.models import AvatarAsset
+from features.companion.visual_state import persona_snapshot
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_reviewed_images
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.media.prompts import (
@@ -26,7 +28,8 @@ from features.media.prompts import (
     SELF_IMAGE_OUTFIT_DESCRIPTION,
     SELF_IMAGE_REFERENCE_TEMPLATE,
     SELF_VIDEO_REFERENCE_GUIDANCE,
-    character_reference_roles,
+    character_shot_roles,
+    personal_performance_goal,
 )
 from features.visuals.schemas import ActualPresentationSnapshot
 
@@ -40,6 +43,8 @@ class SelfVisualContext:
     outfit_description: str
     outfit_path: str | None
     identity_reference_role: CharacterReferenceRole = "portrait"
+    performance_context: str = ""
+    portrait_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +69,8 @@ async def load_self_visual_context(
         avatar = await db.get(AvatarAsset, identity.avatar_id)
         if avatar is None:
             raise AvatarSourceUnreadableError("角色形象缺失")
+        persona = await persona_snapshot(db, user_id)
+        traits = persona.performance_context if persona else {}
         seed_path = avatar.seed_fullbody_url
         character_frame = presentation.visual_path if presentation.asset_kind in {"actor", "cinematic"} else None
         role: CharacterReferenceRole = (
@@ -100,6 +107,8 @@ async def load_self_visual_context(
             outfit_description=outfit_description,
             outfit_path=outfit_path,
             identity_reference_role=role,
+            performance_context=json.dumps(traits, ensure_ascii=False) if traits else "",
+            portrait_path=avatar.asset_url,
         ),
         override_outfit_description=override,
     )
@@ -114,7 +123,7 @@ def _outfit_instructions(plan: SelfVisualPlan, has_outfit_reference: bool) -> st
 
 def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
     return SELF_IMAGE_REFERENCE_TEMPLATE.format(
-        reference_roles=character_reference_roles(plan.context.identity_reference_role, has_outfit_reference),
+        reference_roles=character_shot_roles(plan.context.identity_reference_role, has_outfit_reference),
         prompt=prompt,
         outfit=_outfit_instructions(plan, has_outfit_reference),
     )
@@ -143,6 +152,7 @@ class SelfImageInputs:
     """一次出镜图片的冻结提示词与参考参数，调用方原样传给生成入口。"""
 
     prompt: str
+    pose_goal: str
     identity: VisualIdentitySnapshot
     reference_image: str
     secondary_reference_image: str | None
@@ -151,8 +161,10 @@ class SelfImageInputs:
 
 def build_self_image_inputs(plan: SelfVisualPlan, prompt: str) -> SelfImageInputs:
     outfit = optional_outfit_image_reference(plan)
+    pose_goal = personal_performance_goal(prompt, plan.context.performance_context)
     return SelfImageInputs(
-        prompt=build_self_image_prompt(plan, prompt, has_outfit_reference=bool(outfit)),
+        prompt=build_self_image_prompt(plan, pose_goal, has_outfit_reference=bool(outfit)),
+        pose_goal=pose_goal,
         identity=plan.context.identity,
         reference_image=plan.context.identity_path,
         secondary_reference_image=outfit,
@@ -234,7 +246,7 @@ async def build_self_video_inputs(plan: SelfVisualPlan, reference_image: str | N
     has_outfit_reference = len(references) > 1
     return SelfVideoInputs(
         reference_guidance=SELF_VIDEO_REFERENCE_GUIDANCE.format(
-            reference_roles=character_reference_roles(identity_reference_role, has_outfit_reference),
+            reference_roles=character_shot_roles(identity_reference_role, has_outfit_reference),
             outfit=_outfit_instructions(plan, has_outfit_reference),
         ),
         references=references,

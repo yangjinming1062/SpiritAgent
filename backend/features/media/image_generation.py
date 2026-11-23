@@ -12,6 +12,7 @@ from infrastructure.ai.error_classifier import (
 )
 from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
+from infrastructure.ai.media_guidance import CHARACTER_ACTIVITY_POSE
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
@@ -227,6 +228,8 @@ async def generate_images(
     noise_seeds: tuple[int, ...] = (),
     recompose_pose: bool = False,
     composition_goal: str | None = None,
+    pose_goal: str | None = None,
+    independent_layout: bool = False,
     background: str | None = None,
     prefer_transparent_background: bool = False,
     aspect_ratio: str | None = None,
@@ -249,10 +252,15 @@ async def generate_images(
             raise ImageGenerationError("第二参考图需要同时提供身份参考图")
 
         def _provider_prompt(provider_name: str) -> str:
+            shot = (
+                f"{prompt}\n{CHARACTER_ACTIVITY_POSE}"
+                if pose_goal and not image_edit and provider_name != "local"
+                else prompt
+            )
             if not prefer_transparent_background:
-                return prompt
+                return shot
             native_alpha = resolve(ServiceType.image_gen, provider_name).supports_transparent_background
-            return prompt + "\n" + (IMAGE_TRANSPARENT_BACKGROUND if native_alpha else IMAGE_OPAQUE_BACKGROUND)
+            return shot + "\n" + (IMAGE_TRANSPARENT_BACKGROUND if native_alpha else IMAGE_OPAQUE_BACKGROUND)
 
         if provider_config is not None:
             provider_cls = resolve(ServiceType.image_gen, provider_config.provider_name)
@@ -285,7 +293,7 @@ async def generate_images(
                     selection=selection,
                 )
                 chain, err = resolved.providers, resolved.error
-            if not err and chain and prefer_transparent_background:
+            if not err and chain and (prefer_transparent_background or pose_goal):
                 chain = [
                     config
                     for config in chain
@@ -318,6 +326,8 @@ async def generate_images(
                     noise_seeds=noise_seeds,
                     recompose_pose=recompose_pose,
                     composition_goal=composition_goal,
+                    pose_goal=pose_goal,
+                    independent_layout=independent_layout,
                     size=size,
                     aspect_ratio=request_aspect,
                     resolution=resolution,

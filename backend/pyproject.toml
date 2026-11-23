@@ -30,6 +30,8 @@ dependencies = [
     "mutagen>=1.48.1",
     # 动作素材透明化的本地 ISNet ONNX 抠像模型
     "onnxruntime>=1.20.0",
+    # 在 CPU 上逐帧配准局部细节和原表演，避开遮挡及错位轮廓
+    "opencv-python-headless>=4.10,<6",
     "twscrape==0.20.1",
     "beautifulsoup4>=4.15.0",
     # 扫码登录的二维码本地渲染；纯 Python，图像输出复用依赖中的 Pillow

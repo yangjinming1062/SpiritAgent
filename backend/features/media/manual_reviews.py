@@ -143,18 +143,19 @@ async def approve_candidate(
     ):
         raise RequestError(status_code=409, message="候选在确认期间发生变化，请刷新")
     report = VisualReview(
-        required=required,
+        required=tuple(dict.fromkeys((*required, "face"))) if previous and "face" in previous.required else required,
         evidence=evidence,
         reference_basis=previous.reference_basis if previous else None,
         identity=previous.identity if previous else None,
         goal=previous.goal if previous else None,
         quality=previous.quality if previous else None,
+        face=previous.face if previous else None,
     )
     report.human_approval = HumanReviewApproval(
         request_id=request.request_id,
         approved_at=utc_now(),
         content_basis_id=evidence.content_basis_id,
-        dimensions=required,
+        dimensions=tuple(name for name in required if name != "face"),
     )
     candidate.review, candidate.evaluated, candidate.excluded = report, True, False
     candidate.evidence = candidate.evidence or (previous.evidence if previous else None)

@@ -78,6 +78,7 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     return ImagePlan(
         request=request.model_dump_json(),
         prompt=inputs.prompt,
+        performance_context=visual_plan.context.performance_context,
         goal="\n".join(filter(None, (request.prompt, request.outfit_override))),
         size=request.aspect_ratio,
         subject="self",
@@ -407,7 +408,12 @@ async def regenerate_chat_image(media_id: str, inspection_id: str, correction: s
         adjustment = CHAT_IMAGE_CORRECTION_PREFIX + json.dumps(
             {"verified_issues": inspection.issues, "correction": correction[:8000]}, ensure_ascii=False
         )
-        plan = replace(original, prompt=original.prompt + adjustment, goal=original.goal + adjustment)
+        plan = replace(
+            original,
+            prompt=original.prompt + adjustment,
+            goal=original.goal + adjustment,
+            pose_goal=original.pose_goal + adjustment if original.pose_goal else None,
+        )
         revised = MediaArtifact(
             uuid4().hex, "image", artifact.goal_id, "pending", parent_media_id=media_id, image_plan=plan
         )

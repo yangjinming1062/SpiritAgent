@@ -16,6 +16,8 @@ class ImageJobParams(BaseModel):
     request: str
     request_scope: str
     goal: str
+    pose_goal: str | None = None
+    performance_context: str = ""
     prompt: str
     size: str
     subject: Literal["self"] | None = None

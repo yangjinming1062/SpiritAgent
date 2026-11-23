@@ -503,7 +503,7 @@ async def job_views(db: AsyncSession, jobs: list[VisualJob]) -> list[VisualJobVi
     requests = {
         job.id: MediaChainState.model_validate_json(
             (job.checkpoint or {}).get("video_chain_json") or "{}"
-        ).queue_request_id
+        ).active_queue_request
         for job in jobs
         if job.state in {"queued", "running", "unknown"}
     }
@@ -782,7 +782,7 @@ async def list_jobs(
             ).mappings()
         )
         requests = {
-            row["id"]: MediaChainState.model_validate_json(row["video_chain_json"] or "{}").queue_request_id
+            row["id"]: MediaChainState.model_validate_json(row["video_chain_json"] or "{}").active_queue_request
             for row in rows[:limit]
             if row["state"] in {"queued", "running", "unknown"}
         }

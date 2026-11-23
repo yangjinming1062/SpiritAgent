@@ -192,7 +192,8 @@ def video_frame_times(path: Path) -> tuple[float, ...]:
             "-of",
             "json",
             str(path),
-        ]
+        ],
+        timeout=FFPROBE_TIMEOUT_SECONDS,
     )
     if proc.returncode != 0:
         raise VideoProcessError("视频帧时间读取失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
@@ -207,10 +208,10 @@ def video_frame_times(path: Path) -> tuple[float, ...]:
     return times
 
 
-def run_ffmpeg(args: list[str], *, label: str) -> None:
+def run_ffmpeg(args: list[str], *, label: str, timeout: float | None = None) -> None:
     """执行一次 ffmpeg；非零退出码统一转 VideoProcessError（stderr 摘要进 internal）。"""
     full = [_binary("ffmpeg"), "-v", "error", "-y", *args]
-    proc = _run(full)
+    proc = _run(full, timeout=timeout)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace")
         logger.warning("ffmpeg %s failed", label, extra={"stderr": stderr[:2000]})

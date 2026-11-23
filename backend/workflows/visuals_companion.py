@@ -140,7 +140,7 @@ async def load_visual_snapshot(
     width, height = target_width, target_height
     if not width or not height:
         width, height = DEFAULT_TARGET
-    persona_definition = visual_persona_definition(load_persona_definition(persona)) if persona is not None else {}
+    persona_definition = persona.performance_context if persona is not None else {}
     shared = {
         "identity": identity,
         "identity_path": avatar.seed_fullbody_url,

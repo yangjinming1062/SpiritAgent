@@ -915,14 +915,19 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
                 raise
         progress.review_only = False
         progress.paused_by_user = False
-        if progress.failure_reason == "result_download_failed":
+        receiving = progress.failure_reason == "result_download_failed"
+        if receiving:
             resume_known_result(progress)
         progress.failure_reason = ""
         job.checkpoint = progress.model_dump(mode="json")
         if await restart_visual_steps(db, user_id, job):
-            job.state, job.stage, job.error = "running", "prepare", None
+            job.state, job.stage, job.error = "running", "download" if receiving else "prepare", None
         else:
-            job.state, job.stage, job.error = "queued", RESUME_WAITING if allow_model_steps else RECOVERY_WAITING, None
+            job.state, job.stage, job.error = (
+                "queued",
+                RESUME_WAITING if allow_model_steps and not receiving else RECOVERY_WAITING,
+                None,
+            )
             await settle_visual_steps(db, user_id, job)
         await notify_visuals_updated(db, user_id)
         view = await job_view(db, job)

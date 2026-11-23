@@ -31,7 +31,7 @@ from .delivery import deliver_image_result
 from .identity_contracts import VisualIdentitySnapshot
 from .image_generation import ImageGenerationError, ImageResultDownloadError, resolve_image_gen_chain
 from .models import ImageGenJob
-from .prompts import CHAT_IMAGE_EDIT_PROMPT
+from .prompts import chat_image_edit_prompt, personal_performance_goal
 from .reference_reader import visual_identity_is_current
 from .review_contracts import MediaSelection, ReviewPendingError
 from .review_evidence import review_media_intact
@@ -134,7 +134,12 @@ async def produce_image_batch(
     parent_media_id: str | None = None,
     parent_image: str | None = None,
 ) -> MediaJobView:
-    fingerprint = hashlib.sha256(repr((asdict(plan), len(media_ids))).encode()).hexdigest()
+    frozen_plan = asdict(plan)
+    if plan.pose_goal is None:
+        frozen_plan.pop("pose_goal")
+    if not plan.performance_context:
+        frozen_plan.pop("performance_context")
+    fingerprint = hashlib.sha256(repr((frozen_plan, len(media_ids))).encode()).hexdigest()
     async with SESSION_LOCAL() as db:
         await lock_domain(db, user_id, f"media.image.request:{request_id}")
         previous = await requested_job_id(db, user_id, request_id, fingerprint)
@@ -151,7 +156,7 @@ async def produce_image_batch(
                 task=task,
                 has_reference=True,
                 image_edit=True,
-                prompt_chars=len(CHAT_IMAGE_EDIT_PROMPT.format(goal=plan.goal)),
+                prompt_chars=len(chat_image_edit_prompt(plan.goal, plan.performance_context, plan.pose_goal)),
             )
             if edits.providers:
                 references["edit"] = parent_image
@@ -162,7 +167,7 @@ async def produce_image_batch(
             directory=directory,
         )
         params = {
-            **asdict(plan),
+            **frozen_plan,
             "reference_image": frozen.get("identity"),
             "secondary_reference_image": frozen.get("outfit"),
             "task": task.value,
@@ -270,7 +275,7 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
         error: str | None = None
         try:
             await generate_reviewed_images(
-                CHAT_IMAGE_EDIT_PROMPT.format(goal=input_params.goal)
+                chat_image_edit_prompt(input_params.goal, input_params.performance_context, input_params.pose_goal)
                 if input_params.edit_reference
                 else input_params.prompt,
                 user_id=user_id,
@@ -291,6 +296,8 @@ async def _run_image_job(user_id: int, job_id: int) -> None:
                 task=AiTaskKey(params["task"]),
                 goal_review="required",
                 delivery_goal=input_params.goal,
+                pose_goal=input_params.pose_goal
+                or personal_performance_goal(input_params.goal, input_params.performance_context),
             )
         except _ImageDeliveryEnded:
             return

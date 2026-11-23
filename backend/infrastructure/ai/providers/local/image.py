@@ -12,6 +12,7 @@ from uuid import uuid4
 import httpx
 from PIL import Image
 
+from infrastructure.ai.media_guidance import CHARACTER_ACTIVITY_POSE
 from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers.base import (
     ImageAsset,
@@ -22,6 +23,7 @@ from infrastructure.ai.providers.base import (
     ProviderError,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
+from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes
 from infrastructure.async_io import cancel_and_wait, settle_task
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
@@ -104,6 +106,57 @@ def composition_noise_seed(seed: int) -> int:
     return seed ^ 451981
 
 
+POSE_PLANNING_NODES = ("TextGenerateV2", "StringConcatenate")
+
+
+_SHOT_DIRECTION = (
+    "从角色自身的性格、此刻状态、真实身体和现场出发，选取正在完成所要求活动的一个瞬间。"
+    "用两句简洁的实拍场记：写清这时正在做什么、注意力落在哪个对象、对象相对身体在哪个位置；"
+    "再写实际接触或承托的位置与能拍清它们的机位。全篇描述同一瞬间，视线落点与当时的活动一致。"
+    "保留明确指定的动作、朝向、人数与取景。只写可见的事实。创作资料："
+)
+
+_OPENING_DIRECTION = (
+    "写第一帧的摄影场记。第一句说明此刻的景别、画面上下边缘截在何处、镜头可见角色哪一侧。"
+    "原文指定的拍摄距离和构图从第一帧就成立，未指定的根据角色与活动选择。"
+    "第二句写这个角色当时在做什么、看向什么，以及在此机位可辨认场地与接触关系的线索；后续事件留给视频。创作资料："
+)
+
+
+def _direct_shot(nodes: dict[str, Any], goal: str, *, direction: str = _SHOT_DIRECTION) -> None:
+    prompt = nodes["4"]["inputs"]["prompt"]
+    nodes["direction"] = {
+        "class_type": "TextGenerateV2",
+        "inputs": {
+            "clip": ["2", 0],
+            "prompt": direction + goal,
+            "max_length": 192,
+            "sampling_mode": "off",
+            "thinking": False,
+        },
+    }
+    nodes["shot"] = {
+        "class_type": "StringConcatenate",
+        "inputs": {"string_a": ["direction", 0], "string_b": prompt, "delimiter": "\n"},
+    }
+    nodes["4"]["inputs"]["prompt"] = ["shot", 0]
+
+
+def _tiled_decode(nodes: dict[str, Any]) -> None:
+    # 两次采样同图运行时，整帧解码可能耗尽显存。
+    nodes["11"] = {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+            "samples": ["10", 0],
+            "vae": ["3", 0],
+            "tile_size": 512,
+            "overlap": 64,
+            "temporal_size": 64,
+            "temporal_overlap": 8,
+        },
+    }
+
+
 def _qwen_graph(
     *,
     prompt: str,
@@ -174,17 +227,59 @@ def _qwen_graph(
 
 
 def _embed_image(
-    nodes: dict[str, Any], prefix: str, *, shared_nodes: tuple[str, ...] = ()
+    nodes: dict[str, Any], prefix: str, *, shared_nodes: tuple[str, ...] = (), shared_prefix: str = ""
 ) -> tuple[dict[str, Any], list[Any]]:
     """把该图的 RGB 输出接入外层工作流，同一提交只返回最终作品。"""
     output, port = nodes.pop("12")["inputs"]["images"]
     for key in shared_nodes:
         del nodes[key]
     for node in nodes.values():
-        for value in node["inputs"].values():
-            if isinstance(value, list) and value[0] not in shared_nodes:
-                value[0] = prefix + value[0]
+        for key, value in node["inputs"].items():
+            if isinstance(value, list):
+                owner = shared_prefix if value[0] in shared_nodes else prefix
+                node["inputs"][key] = [owner + value[0], *value[1:]]
     return {prefix + key: value for key, value in nodes.items()}, [prefix + output, port]
+
+
+def qwen_face_anchor(
+    canvas: str,
+    portrait: str,
+    files: tuple[str, str, str],
+    *,
+    seed: int,
+    prefix: str,
+    describe: bool,
+    share_weights: bool,
+    repair_observation: str | None = None,
+) -> tuple[dict[str, Any], list[Any]]:
+    """以实际局部为采样起点，原参考只补足该角度可见的固有特征。"""
+    prompt = (
+        "图1是这个镜头在这一刻的局部，图2提供同一角色的原貌。保留图1的头部大小和朝向、视线、"
+        "眼睑开合、嘴形、光照、遮挡和环境，在这个角度清楚呈现图2原有的眼型、鼻唇、脸型和固定标记。"
+        "脸的轮廓、耳根与颈部仍处在图1的位置。沿用图1的焦点、景深、光照和遮挡，只精修此刻能看清的结构。"
+    )
+    if repair_observation:
+        prompt += "\n" + repair_observation
+    nodes = _qwen_graph(
+        prompt=prompt,
+        seed=seed,
+        width=768,
+        height=768,
+        image_names=[canvas, portrait],
+        image_edit=True,
+        unet_name=files[0],
+        clip_name=files[1],
+        vae_name=files[2],
+    )
+    if describe:
+        _direct_shot(nodes, "", direction="只观察这张实际画面。一句话记录头朝哪边、视线、眼睑和嘴唇此刻的真实状态。")
+        nodes["direction"]["inputs"]["images.image1"] = ["21", 0]
+    nodes["canvas"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["3", 0]}}
+    nodes["detail_sigmas"] = {"class_type": "SplitSigmas", "inputs": {"sigmas": ["9", 0], "step": 3}}
+    nodes["10"]["inputs"].update(latent_image=["canvas", 0], sigmas=["detail_sigmas", 1])
+    return _embed_image(
+        nodes, prefix, shared_nodes=("1", "2", "3", "8", "9") if share_weights else (), shared_prefix="face_0_"
+    )
 
 
 def _graph(
@@ -200,36 +295,94 @@ def _graph(
     vae_name: str,
     recompose_pose: bool = False,
     composition_goal: str | None = None,
+    pose_goal: str | None = None,
+    plan_pose: bool = False,
+    independent_layout: bool = False,
+    compose_activity_opening: bool = False,
 ) -> dict[str, Any]:
-    """装配普通生成或从造型构图到身份复原的一次纠偏请求。"""
+    """在同一作业内确定拍摄关系；姿态纠偏时由走位样图提供构图和采样起点。"""
     render = partial(
         _qwen_graph, width=width, height=height, unet_name=unet_name, clip_name=clip_name, vae_name=vae_name
     )
-    if not composition_goal or image_edit or len(image_names) < 2:
-        return render(
+    if independent_layout and plan_pose and len(image_names) == 2 and not image_edit:
+        # 用全身造型和角色自己的表演安排现场，再按这个实际角度还原面容。
+        composition_goal = composition_goal or pose_goal
+    opening_from_activity = bool(
+        compose_activity_opening
+        and plan_pose
+        and len(image_names) == 2
+        and pose_goal
+        and not image_edit
+        and not composition_goal
+    )
+    if opening_from_activity:
+        composition_goal = pose_goal
+    if not composition_goal or len(image_names) < 2 or image_edit:
+        nodes = render(
             prompt=prompt, seed=seed, image_names=image_names, image_edit=image_edit, recompose_pose=recompose_pose
         )
+        if pose_goal and image_names and not image_edit:
+            if plan_pose:
+                _direct_shot(nodes, pose_goal)
+            else:
+                nodes["4"]["inputs"]["prompt"] = f"{prompt}\n{CHARACTER_ACTIVITY_POSE}"
+        return nodes
 
-    scene_role = "图2提供现场的环境及光线。" if len(image_names) > 2 else ""
+    scene_role = "图2给出现场环境和光线。" if len(image_names) > 2 else ""
+    guide_prompt = (
+        "按开场场记直接取景，画面上下边缘与所定景别相符。画出此刻的注视方向、身姿和活动所需的接触。"
+        f"图1提供身材、发型与穿戴，按该机位绘制框内可见的部分。环境和布光取自原场景要求，后续动作从这一刻接续。原场景：{composition_goal}"
+        if opening_from_activity
+        else f"把图1中的角色重新画在这次活动现场：{composition_goal}。{scene_role}"
+        "按本次活动摆好身体、物体和机位。保留图1的身材、发型、服饰和鞋履，让衣褶、透视与重心随新的姿态改变。"
+    )
+    if independent_layout and plan_pose:
+        guide_prompt = (
+            "拍摄场记中的同一瞬间。按场记重新画出角色怎样参与活动，让目光落到自己正在关注的对象上，"
+            "物件、操作部位与承托面在该机位中位置相符。图1提供原有身材、发型、穿戴和质地，依当时姿态还原它们。"
+            f"{scene_role}本次活动：{composition_goal}"
+        )
     guide = render(
-        prompt=f"绘制真实现场的一张构图样张。{composition_goal}。完整画出与活动有关的手、物体和视线落点。"
-        f"图1提供本次服装、首饰和发型。将图中角色画在这个现场，按活动重新安排头部朝向、眼睛与道具的位置。{scene_role}",
+        prompt=guide_prompt,
         seed=composition_noise_seed(seed),
         image_names=image_names[1:],
         image_edit=False,
     )
-    # 两次采样使用同一个模型、编码器、VAE、采样器与 sigma 表，避免在视频工作流中重复加载权重。
+    if plan_pose:
+        _direct_shot(
+            guide,
+            composition_goal,
+            direction=_OPENING_DIRECTION if opening_from_activity else _SHOT_DIRECTION,
+        )
+    _tiled_decode(guide)
     guide_nodes, canvas = _embed_image(guide, "composition_", shared_nodes=("1", "2", "3", "8", "9"))
-    scene_role = "图4提供现场的环境及光线。" if len(image_names) > 2 else ""
+    # 造型和环境已在现场画面中；精修面容时再次输入全身原图会把摆拍姿势带回来。
+    refinement = (
+        "在图1的同一瞬间精修角色面容。图2提供脸型、五官和头部固有特征，按照图1既有的头部角度和视线还原这些细节。"
+        "保留图1的身体比例、姿势、与物品和地面的接触、发型穿戴、环境、光线和取景，画面只出现原有主体。"
+    )
     final = render(
-        prompt="以图1为底图，在同一瞬间更换出镜人物。图1决定原有活动、身体姿势、视线落点、手与物体的接触及机位；"
-        "图2给出替换后人物的脸和固有特征，图3给出身体比例、头饰、发型及整体穿戴。将图2中的人物按图1的姿势自然放入同一场景，"
-        f"依照成品目标呈现图3的造型和配色，头和双眼随图1的动作看向相同位置。{scene_role}成品目标是{composition_goal}",
+        prompt=refinement + f"活动要求：{composition_goal}",
         seed=seed,
-        image_names=image_names,
+        image_names=image_names[:1],
         image_edit=True,
         edit_canvas=canvas,
     )
+    if opening_from_activity or (independent_layout and plan_pose):
+        # 精修面容使用同一条场记，原头像提供五官而不改变此刻的注意对象。
+        final["opening_brief"] = {
+            "class_type": "StringConcatenate",
+            "inputs": {
+                "string_a": refinement if opening_from_activity else refinement + f"明确要求：{composition_goal}",
+                "string_b": ["composition_direction", 0],
+                "delimiter": "\n此刻的活动：",
+            },
+        }
+        final["4"]["inputs"]["prompt"] = ["opening_brief", 0]
+    final["layout_latent"] = {"class_type": "VAEEncode", "inputs": {"pixels": canvas, "vae": ["3", 0]}}
+    final["refine_sigmas"] = {"class_type": "SplitSigmas", "inputs": {"sigmas": ["9", 0], "step": 1}}
+    final["10"]["inputs"].update(latent_image=["layout_latent", 0], sigmas=["refine_sigmas", 1])
+    _tiled_decode(final)
     return {**guide_nodes, **final}
 
 
@@ -242,18 +395,29 @@ def qwen_opening_nodes(
     seed: int,
     *,
     composition_goal: str | None = None,
+    pose_goal: str | None = None,
+    plan_pose: bool = False,
+    compose_activity_opening: bool = False,
 ) -> tuple[dict[str, Any], list[Any]]:
     """嵌入同一次视频作业，只把生成的 RGB 画面交给首帧节点，不发布中间图片。"""
     opening = f"绘制以下镜头开拍时的单张完整场景图。\n{prompt}\n"
     if image_names:
         opening += (
             "画出目标指定的起始状态。主体已经在现场，正在进行的活动要从视线落点、身体姿势、手和物体的位置清楚可见，后续动作留给视频。采用目标给出的场地和光线；"
-            "若只描述了人物而没有指定地点，可选有窗光的房间，让墙面、地面或近处陈设形成空间层次，"
+            "未指定地点时，按角色当下的活动选择合适的现场，保持空间、光源和物件位置连贯，"
             "支撑点与接地阴影一致。明确指定纯色或空白背景时使用指定布景。"
         )
+    if image_names and pose_goal:
+        # 先在图片模型的常规画布上保留远景小脸，H3 自行按已选视频档位编码该首帧。
+        scale = min(1024 / min(width, height), 2048 / max(width, height))
+        if scale > 1:
+            width, height = (max(side, int(side * scale) // 32 * 32) for side in (width, height))
     nodes = _graph(
         prompt=opening,
         composition_goal=composition_goal,
+        pose_goal=pose_goal,
+        plan_pose=plan_pose,
+        compose_activity_opening=compose_activity_opening,
         seed=seed,
         width=width,
         height=height,
@@ -287,22 +451,14 @@ class LocalImageGenProvider(ImageGenProvider):
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
         self._model_files: tuple[str, str, str] | None = None
 
-    async def _loader_options(self, node_name: str, field: str) -> list[str]:
-        resp = await self._client.get(f"/object_info/{node_name}")
-        resp.raise_for_status()
-        options = resp.json().get(node_name, {}).get("input", {}).get("required", {}).get(field, [[]])
-        return (
-            [name for name in options[0] if isinstance(name, str)] if options and isinstance(options[0], list) else []
-        )
-
     async def _resolve_model_files(self) -> tuple[str, str, str]:
         if self._model_files is not None:
             return self._model_files
         # 保留原始传输和 HTTP 异常，供上层判定供应商回退
         files = qwen_image_weights(
-            await self._loader_options("UNETLoader", "unet_name"),
-            await self._loader_options("CLIPLoader", "clip_name"),
-            await self._loader_options("VAELoader", "vae_name"),
+            await loader_options(self._client, "UNETLoader", "unet_name"),
+            await loader_options(self._client, "CLIPLoader", "clip_name"),
+            await loader_options(self._client, "VAELoader", "vae_name"),
         )
         self._model_files = files
         logger.info("local image_gen resolved model files", extra={"unet": files[0], "clip": files[1], "vae": files[2]})
@@ -490,6 +646,9 @@ class LocalImageGenProvider(ImageGenProvider):
             and req.background is None
             else None
         )
+        plan_pose = bool(
+            (composition_goal or req.pose_goal) and image_names and not req.image_edit and req.background is None
+        ) and await supports_nodes(self._client, *POSE_PLANNING_NODES)
         assets: list[ImageAsset] = []
         for i in range(count):
             graph = _graph(
@@ -504,6 +663,9 @@ class LocalImageGenProvider(ImageGenProvider):
                 vae_name=vae_name,
                 recompose_pose=req.recompose_pose and bool(req.secondary_reference_image),
                 composition_goal=composition_goal,
+                pose_goal=req.pose_goal,
+                plan_pose=plan_pose,
+                independent_layout=req.independent_layout,
             )
             assets.extend((await self._run_job(graph))[:1])
 

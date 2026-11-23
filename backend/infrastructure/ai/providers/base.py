@@ -210,6 +210,8 @@ class ImageGenRequest:
     noise_seeds: tuple[int, ...] = ()
     recompose_pose: bool = False  # 身份已合格的姿势纠偏可降低造型参考的空间约束
     composition_goal: str | None = None  # 有头像与当前全身造型时，按目标先安排活动再恢复身份细节
+    pose_goal: str | None = None  # 本次出镜活动，供本地模型安排人物、关注对象与机位
+    independent_layout: bool = False  # 首次日常出镜用按活动画出的新构图作为身份还原的画布
 
 
 @dataclass(frozen=True)
@@ -263,6 +265,11 @@ class VideoGenRequest:
     opening_composition_goal: str | None = None  # 本地姿势纠偏的单幅开场，交给头像和造型构图流程
     fixed_ambient_scene: bool = False  # 原目标要求锁定机位和静物布局，仅环境细节流动
     observed_hold_images: tuple[str, str] | None = None  # 原片已拍到的起始姿势和动作到位姿势
+    pose_goal: str | None = None  # 出镜视频的活动，合成开场时只取起始瞬间
+    compose_activity_opening: bool = False  # 匹配的身体与造型可按完整活动提取开场，再校准面容
+    face_guide_frames: tuple[int, ...] = ()  # 原表演的实际帧序号
+    face_stage: Literal["anchors", "motion"] | None = None
+    face_repair_observation: str | None = None  # 上一版有依据的面部缺陷，仅用于同一角色的纠偏
 
 
 @dataclass(frozen=True)
