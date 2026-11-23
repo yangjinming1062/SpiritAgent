@@ -230,6 +230,7 @@ _POLICY_DIAGNOSTIC_CODE = re.compile(
 _POLICY_DIAGNOSTIC_MESSAGES = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
+        r"Content policy violation[.!]?",
         r"(?:(?:Error|BadRequestError)(?: code)?\s*:\s*(?:400\s*-\s*)?)?"
         r"(?:Input|Output|Input or output) data may contain inappropriate content\."
         r"(?:\s*For details, see:\s*https://help\.aliyun\.com/zh/model-studio/error-code/?#inappropriate-content\.?)?",

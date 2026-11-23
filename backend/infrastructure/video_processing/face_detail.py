@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from io import BytesIO
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
+from infrastructure.video_processing.face_timeline import FaceBox, FaceTransition, face_timeline_evidence
 from infrastructure.video_processing.ffmpeg import VideoProcessError, ffmpeg_stdout
 
 logger = get_logger(__name__)
@@ -136,72 +138,102 @@ def _native_face_crop(
 
 def review_face_details(
     frames: tuple[bytes, ...],
-    frame_times: tuple[float, ...],
+    times: tuple[float, ...],
     *,
-    source: Path | None = None,
-    frame_indices: tuple[int, ...] = (),
-    display_size: tuple[int, int] | None = None,
+    source: Path,
+    frame_indices: tuple[int, ...],
+    display_size: tuple[int, int],
+    preserve_alpha: bool = False,
     background: tuple[int, int, int] | None = None,
     decoder_args: tuple[str, ...] = (),
-) -> tuple[tuple[float, bytes], ...]:
+    scan_timeline: bool = True,
+) -> tuple[tuple[tuple[float, bytes], ...], bytes | None, tuple[float, ...]]:
     path = review_model_path(_MODEL)
     if not frames or not path.is_file():
-        return ()
-    details: list[tuple[float, bytes]] = []
+        return (), None, ()
+    crops: dict[int, bytes] = {}
+    transitions: tuple[FaceTransition, ...] = ()
+    transient_frames: tuple[int, ...] = ()
     try:
         session = _session(path, path.stat().st_mtime_ns)
-        boxes = {}
-        patches = {}
-        for index, data in enumerate(frames):
+        boxes: dict[int, FaceBox] = {}
+        patches: dict[int, np.ndarray] = {}
+        for index, data in zip(frame_indices, frames, strict=True):
             with Image.open(BytesIO(data)) as image:
                 box = _face_box(image, session)
                 if box is not None:
-                    boxes[index] = box
-                    with image.crop(box) as face:
-                        patches[index] = np.asarray(face.convert("L").resize((32, 32)), dtype=np.int16)
-        if not boxes:
-            return ()
-        # 保留首尾与均匀时刻，再补面部变化最大的一对相邻采样；变化量只选择证据。
-        selected = {
-            min(boxes, key=lambda i: abs(frame_times[i] - target))
-            for target in np.linspace(frame_times[0], frame_times[-1], 9)
-        }
-        adjacent = [i for i in patches if i - 1 in patches]
-        if adjacent:
-            change = max(adjacent, key=lambda i: np.abs(patches[i] - patches[i - 1]).mean())
-            selected.update((change - 1, change))
-        for index in sorted(selected):
-            with Image.open(BytesIO(frames[index])) as image:
-                box = boxes[index]
-                if source is not None and index < len(frame_indices) and display_size and display_size != image.size:
-                    sx, sy = display_size[0] / image.width, display_size[1] / image.height
                     x, y, r, b = box
-                    native = (round(x * sx), round(y * sy), round(r * sx), round(b * sy))
-                    try:
-                        face = _native_face_crop(
-                            source,
-                            frame_indices[index],
-                            display_size,
-                            native,
-                            background,
-                            decoder_args,
-                            with_alpha=background is not None or image.mode == "RGBA",
+                    sx, sy = display_size[0] / image.width, display_size[1] / image.height
+                    boxes[index] = (round(x * sx), round(y * sy), round(r * sx), round(b * sy))
+                    if scan_timeline:
+                        with image.crop(box) as face:
+                            patches[index] = np.asarray(face.convert("L").resize((32, 32)), dtype=np.int16)
+        if not boxes:
+            return (), None, ()
+        selected = set(boxes)
+        if scan_timeline:
+            extra = {}
+            try:
+                timeline = face_timeline_evidence(source, display_size, times, frame_indices, boxes, decoder_args)
+                extra, transitions, transient_frames = timeline.boxes, timeline.transitions, timeline.transient_frames
+            except (VideoProcessError, OSError, ValueError):
+                logger.warning("Using sampled frames for an unavailable face timeline", exc_info=True)
+            selected = {
+                min(boxes, key=lambda i: abs(times[i] - target))
+                for target in np.linspace(times[0], times[-1], 12 - len(extra) if extra else 9)
+            }
+            if extra:
+                selected.update(extra)
+                boxes = {**extra, **boxes}
+            else:
+                adjacent = [(i, j) for i, j in pairwise(frame_indices) if i in patches and j in patches]
+                if adjacent:
+                    change = max(adjacent, key=lambda pair: np.abs(patches[pair[0]] - patches[pair[1]]).mean())
+                    selected.update(change)
+        originals = dict(zip(frame_indices, frames, strict=True))
+        for index in sorted(selected):
+            box = boxes[index]
+            try:
+                face = _native_face_crop(
+                    source,
+                    index,
+                    display_size,
+                    box,
+                    background,
+                    decoder_args,
+                    with_alpha=preserve_alpha or background is not None,
+                )
+            except (VideoProcessError, OSError, ValueError):
+                logger.warning("Could not extract native face crop", exc_info=True)
+                if index not in originals:
+                    continue
+                with Image.open(BytesIO(originals[index])) as image:
+                    face = image.crop(
+                        tuple(
+                            round(coord * image.size[axis % 2] / display_size[axis % 2])
+                            for axis, coord in enumerate(box)
                         )
-                    except (VideoProcessError, OSError, ValueError):
-                        logger.warning("Using sampled pixels for an unavailable native face crop")
-                        face = image.crop(box)
-                else:
-                    face = image.crop(box)
+                    )
             with face, BytesIO() as output:
                 face.save(output, format="WEBP", lossless=True)
-                details.append((frame_times[index], output.getvalue()))
+                crops[index] = output.getvalue()
     except Exception:
         logger.warning("Video face detail unavailable", exc_info=True)
-    return tuple(details)
+    details = tuple((times[index] - times[0], data) for index, data in crops.items())
+    rows = [
+        [
+            (f"{label}  {times[index] - times[0]:.3f} s", crops[index])
+            for label, index in zip("ABC", indices, strict=True)
+        ]
+        for indices in transitions
+        if all(index in crops for index in indices)
+    ]
+    transient_times = tuple(times[index] - times[0] for index in transient_frames if index in crops)
+    return details, _face_rows(rows, tile_size=(300, 320)) if rows else None, transient_times
 
 
-def _face_rows(rows: list[list[tuple[str, bytes]]]) -> bytes:
-    width, height = 202, 229
+def _face_rows(rows: list[list[tuple[str, bytes]]], *, tile_size: tuple[int, int] = (202, 229)) -> bytes:
+    width, height = tile_size
     columns = max(len(row) for row in rows)
     with Image.new("RGB", (columns * width, len(rows) * (height + 24)), "#eeeeeb") as sheet:
         draw = ImageDraw.Draw(sheet)
@@ -241,7 +273,7 @@ def face_sequence_sheet(
             with image.crop(box) as face:
                 face.save(encoded, format="WEBP", lossless=True)
             original = ("R", encoded.getvalue())
-        # 采样已保留最多九个均匀时刻和一对变化帧，同屏保留这两个可能很短的中间状态。
+        # 同屏保留均匀抽样及全片扫描找到的短暂变化。
         times = tuple(time for time, _ in details)
         tiles = [(f"{n}    {time:.2f} s", pixels) for n, (time, pixels) in enumerate(details, 1)]
         return times, _face_rows([[original, *tiles[i : i + 3]] for i in range(0, len(tiles), 3)])

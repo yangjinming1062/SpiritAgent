@@ -18,6 +18,7 @@ from infrastructure.video_processing.ffmpeg import (
     run_ffmpeg,
     video_frame_times,
 )
+from infrastructure.video_processing.scene_timeline import OPENING_SCENE_SAMPLE_OFFSETS, opening_scene_evidence
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,9 @@ class DesktopVideoFrames:
     frames: tuple[bytes, ...]
     times_seconds: tuple[float, ...]
     face_details: tuple[tuple[float, bytes], ...] = ()
+    face_transition: bytes | None = None
+    scene_transition: bytes | None = None
+    face_transient_times: tuple[float, ...] = ()
 
 
 def scene_change_times(src: Path) -> tuple[float, ...]:
@@ -68,6 +72,7 @@ def sample_desktop_video_frames(
     include_opening_transition: bool = False,
     include_scene_changes: bool = False,
     include_face_details: bool = False,
+    at_times: tuple[float, ...] = (),
 ) -> DesktopVideoFrames:
     """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
     if sample_count < 2:
@@ -76,17 +81,31 @@ def sample_desktop_video_frames(
         raise ValueError("视频采样尺寸无效")
     times = video_frame_times(src)
     first, last = times[0], times[-1]
-    targets = [first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count)]
-    if include_opening_transition:
-        targets.extend(first + offset for offset in (0.25, 0.5) if first + offset < last)
-    if include_scene_changes:
-        targets.extend(first + offset for offset in scene_change_times(src))
-    indices = sorted({min(range(len(times)), key=lambda index: abs(times[index] - target)) for target in targets})
+    if at_times:
+        targets = [first + offset for offset in at_times]
+    else:
+        targets = [first + (last - first) * fraction / (sample_count - 1) for fraction in range(sample_count)]
+        if include_opening_transition:
+            targets.extend(first + offset for offset in (0.25, 0.5) if first + offset < last)
+        if include_scene_changes:
+            targets.extend(first + offset for offset in scene_change_times(src))
+
+    def closest_frame(target: float) -> int:
+        return min(range(len(times)), key=lambda index: abs(times[index] - target))
+
+    indices = tuple(sorted({closest_frame(target) for target in targets}))
+    check_opening_scene = include_opening_transition and not at_times
+    decode_indices = indices
+    if check_opening_scene:
+        scene_samples = {
+            closest_frame(first + offset) for offset in OPENING_SCENE_SAMPLE_OFFSETS if first + offset < last
+        }
+        decode_indices = tuple(sorted(set(indices) | scene_samples))
     with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
         display_size = frame.size
         scale = min(1.0, max_edge / max(frame.size))
         width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)
-    selector = "+".join(f"eq(n\\,{index})" for index in indices)
+    selector = "+".join(f"eq(n\\,{index})" for index in decode_indices)
     decode_alpha = preserve_alpha or background is not None
     decoder_args = alpha_input_args(probe_video(src)) if decode_alpha else []
     pixel_format, mode, channels = ("rgba", "RGBA", 4) if decode_alpha else ("rgb24", "RGB", 3)
@@ -111,11 +130,11 @@ def sample_desktop_video_frames(
         failure_message="桌面视频采样检查失败",
     )
     frame_size = width * height * channels
-    if len(raw) != frame_size * len(indices):
+    if len(raw) != frame_size * len(decode_indices):
         raise VideoProcessError("桌面视频首尾帧无法完整解码")
-    frames: list[bytes] = []
-    for index in range(len(indices)):
-        data = raw[index * frame_size : (index + 1) * frame_size]
+    frames: dict[int, bytes] = {}
+    for offset, index in enumerate(decode_indices):
+        data = raw[offset * frame_size : (offset + 1) * frame_size]
         with Image.frombytes(mode, (width, height), data) as frame, BytesIO() as output:
             if background is not None:
                 with Image.new("RGB", frame.size, background) as composite:
@@ -123,23 +142,32 @@ def sample_desktop_video_frames(
                     composite.save(output, format="WEBP", lossless=True)
             else:
                 frame.save(output, format="WEBP", lossless=True)
-            frames.append(output.getvalue())
-    full_frames = tuple(frames)
+            frames[index] = output.getvalue()
+    full_frames = tuple(frames[index] for index in indices)
     frame_times = tuple(times[index] - first for index in indices)
-    details = (
+    details, transition, transient_times = (
         review_face_details(
             full_frames,
-            frame_times,
+            times,
             source=src,
-            frame_indices=tuple(indices),
+            frame_indices=indices,
             display_size=display_size,
+            preserve_alpha=preserve_alpha,
             background=background,
             decoder_args=tuple(decoder_args),
+            scan_timeline=not at_times,
         )
         if include_face_details
-        else ()
+        else ((), None, ())
     )
-    return DesktopVideoFrames(full_frames, frame_times, details)
+    scene_transition = (
+        opening_scene_evidence(
+            tuple(frames[index] for index in decode_indices), tuple(times[index] - first for index in decode_indices)
+        )
+        if check_opening_scene
+        else None
+    )
+    return DesktopVideoFrames(full_frames, frame_times, details, transition, scene_transition, transient_times)
 
 
 @dataclass(frozen=True)
@@ -150,14 +178,19 @@ class FaceMotionComparison:
 
 def face_motion_comparison(source: Path, delivered: tuple[tuple[float, bytes], ...]) -> FaceMotionComparison | None:
     """按成片局部的实际同时刻并列原表演，避免把精修引入的动作当作角色选择。"""
-    original = sample_desktop_video_frames(
-        source, sample_count=9, include_opening_transition=True, include_scene_changes=True, include_face_details=True
-    )
-    original_at = {round(t, 3): pixels for t, pixels in original.face_details}
-    matched = [(t, pixels) for t, pixels in delivered if round(t, 3) in original_at]
-    if len(matched) < 3:
+    if len(delivered) < 3:
         return None
-    pairs = [(t, original_at[round(t, 3)], pixels) for t, pixels in matched]
+    original = sample_desktop_video_frames(
+        source, include_face_details=True, at_times=tuple(time for time, _ in delivered)
+    )
+    pairs = [
+        (time, original_pixels, pixels)
+        for time, pixels in delivered
+        for source_time, original_pixels in original.face_details
+        if abs(time - source_time) <= 0.001
+    ]
+    if len(pairs) < 3:
+        return None
     loss_times = face_structure_loss_times(pairs)
     if loss_times:
         selected = {pairs[0][0], pairs[-1][0], *loss_times}

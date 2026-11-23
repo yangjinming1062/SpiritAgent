@@ -1,14 +1,12 @@
 """从实拍走位提取角色局部，按同一时间轴回贴连续生成的面部。"""
 
 import math
-import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event, Timer
 
 import cv2
 import numpy as np
@@ -16,7 +14,7 @@ from PIL import Image, ImageOps
 
 from .desktop import scene_change_times
 from .face_detail import _MODEL, _face_box, _native_face_crop, _session, review_model_path
-from .ffmpeg import VideoProcessError, VideoToolUnavailableError, _binary, probe_video, run_ffmpeg, video_frame_times
+from .ffmpeg import VideoProcessError, probe_video, raw_video_frames, run_ffmpeg, video_frame_times
 
 _LOCAL_PROCESS_TIMEOUT = 600.0
 
@@ -33,60 +31,8 @@ class FaceTrack:
 def _frames(
     path: Path, size: tuple[int, int], *, origin: tuple[int, int] | None = None
 ) -> Iterator[Iterator[Image.Image]]:
-    w, h = size
-    crop = f"crop={w}:{h}:{origin[0]}:{origin[1]}:exact=1," if origin else ""
-    with subprocess.Popen(
-        [
-            _binary("ffmpeg"),
-            "-v",
-            "error",
-            "-nostdin",
-            "-i",
-            str(path),
-            "-map",
-            "0:v:0",
-            "-an",
-            "-vf",
-            f"{crop}scale={w}:{h},setsar=1",
-            "-fps_mode",
-            "passthrough",
-            "-pix_fmt",
-            "rgb24",
-            "-f",
-            "rawvideo",
-            "-",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    ) as proc:
-        expired = Event()
-
-        def stop_decoder() -> None:
-            expired.set()
-            proc.kill()
-
-        def images() -> Iterator[Image.Image]:
-            while data := proc.stdout.read(w * h * 3):
-                if len(data) != w * h * 3:
-                    if expired.is_set():
-                        raise VideoToolUnavailableError("局部视频解码超时")
-                    raise VideoProcessError("面部运动帧不完整")
-                yield Image.frombytes("RGB", size, data)
-            if proc.wait():
-                if expired.is_set():
-                    raise VideoToolUnavailableError("局部视频解码超时")
-                raise VideoProcessError("面部运动帧无法解码")
-
-        deadline = Timer(_LOCAL_PROCESS_TIMEOUT, stop_decoder)
-        deadline.start()
-        try:
-            yield images()
-        finally:
-            deadline.cancel()
-            deadline.join()
-            if proc.poll() is None:
-                proc.kill()
-            proc.stdout.close()
+    with raw_video_frames(path, size, origin=origin, timeout=_LOCAL_PROCESS_TIMEOUT) as pixels:
+        yield (Image.frombytes("RGB", size, frame) for frame in pixels)
 
 
 def _geometry(path: Path, size: tuple[int, int], count: int, *, allow_gaps: bool = False) -> np.ndarray | None:
@@ -218,6 +164,15 @@ def _restore_on_performance(
     agrees = (
         (correlation > 0.64) & (round_trip < max(1.6, 0.021 * width)) & (np.linalg.norm(forward, axis=2) < 0.15 * width)
     )
+
+    # 同刻底片已有的轮廓可能比精修图更清楚。只在配准后仍保有细纹的位置混合局部。
+    def fine_energy(values: np.ndarray) -> np.ndarray:
+        fine = values - cv2.GaussianBlur(values, (0, 0), 1.1)
+        return np.sqrt(mean(fine * fine))
+
+    original_detail, refined_detail = fine_energy(a), fine_energy(b)
+    retains_detail = (original_detail < 0.012) | (refined_detail >= 0.9 * original_detail)
+    agrees &= retains_detail
     margin = max(2, round(width * 0.03))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * margin + 1, 2 * margin + 1))
     interior = cv2.erode(agrees.astype(np.uint8), kernel)

@@ -637,14 +637,16 @@ async def _finalize_best_video(job_id: int) -> None:
         params = _VideoJobParams.model_validate(row.params_json)
         user_id = row.user_id
     try:
-        choice = state.selections.get(0) or await select_delivery(
-            state.candidates,
-            user_id=user_id,
-            task=params.task,
-            goal=params.goal,
-            required=params.required_dimensions,
-            before_submit=partial(_require_video_review_call, job_id, user_id),
-        )
+        choice = state.selections.get(0)
+        if choice is None or choice.mode == "best_available":
+            choice = await select_delivery(
+                state.candidates,
+                user_id=user_id,
+                task=params.task,
+                goal=params.goal,
+                required=params.required_dimensions,
+                before_submit=partial(_require_video_review_call, job_id, user_id),
+            )
     except CandidateReviewBlocked:
         await _record_failure(job_id, reason="content_policy_blocked")
         return
@@ -746,8 +748,8 @@ async def _evaluate_stored_video(job_id: int) -> str:
             sample_count=9,
             include_opening_transition=True,
             include_scene_changes=True,
-            include_face_details=params.identity_snapshot is not None
-            and (entry.evidence is None or entry.result_json is None),
+            include_face_details=entry.result_json is None
+            or (params.identity_snapshot is not None and entry.evidence is None),
         )
     except Exception:
         return "invalid"
@@ -861,6 +863,11 @@ async def _evaluate_stored_video(job_id: int) -> str:
             face_sequence=(face_sheet[0], build_data_uri(face_sheet[1], "image/webp")) if face_sheet else None,
             face_motion=build_data_uri(face_motion.image, "image/webp") if face_motion else None,
             face_structure_loss_times=face_motion.loss_times if face_motion else (),
+            face_transition=build_data_uri(samples.face_transition, "image/webp") if samples.face_transition else None,
+            scene_transition=build_data_uri(samples.scene_transition, "image/webp")
+            if samples.scene_transition
+            else None,
+            face_transient_times=samples.face_transient_times,
             motion_profile=motion_profile,
             character=needs_identity and params.require_face_review,
             task=params.task,
@@ -869,11 +876,6 @@ async def _evaluate_stored_video(job_id: int) -> str:
             save_evidence=save_quality,
             before_submit=before_submit,
         )
-        if old:
-            for name in ("goal", "quality"):
-                saved = getattr(old, name)
-                if saved is not None and saved.verdict in {"pass", "fail"}:
-                    setattr(quality, name, saved)
         quality_evidence = quality.evidence
         entry.result_json = quality_evidence.model_dump_json() if quality_evidence else None
         quality.identity = old.identity if old else None
@@ -1459,14 +1461,15 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
             try:
                 result = await get_video_attempt_status(request_id)
             except (LLMRuntimeError, VideoQueueStoppedError) as exc:
-                failure, _ = media_failure_reason(exc)
+                failure, can_fallback = media_failure_reason(exc)
             else:
                 if result is None or result.status not in ("succeeded", "failed"):
                     return await _resnapshot_video(user_id, job_id)
                 failure = video_provider_failure_reason(result.error) if result.status == "failed" else None
+                can_fallback = failure == "provider_failed"
                 if request_id == state.queue_request_id:
                     result_url = result.download_url or result_url
-            if failure:
+            if failure and not (request_id == state.face_request_id and can_fallback and result_url):
                 if failure != "result_unknown":
                     await _record_failure(job_id, reason=failure, settle_unknown=True)
                     await acknowledge_video_attempt(request_id)

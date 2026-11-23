@@ -5,7 +5,12 @@ from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
 
-from infrastructure.ai.error_classifier import FailoverReason, classify_api_error, is_content_policy_error_message
+from infrastructure.ai.error_classifier import (
+    FailoverReason,
+    classify_api_error,
+    classify_response_text,
+    is_content_policy_error_message,
+)
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.providers.base import ProviderConfig, ServiceType
 from infrastructure.ai.selection import GenerationOrigin
@@ -42,7 +47,11 @@ _VIDEO_FAILURE_COPY: dict[str, str] = {
 
 def video_provider_failure_reason(error: str | None) -> str:
     """已知视频失败终态只提取审核原因，不向用户暴露供应商原文。"""
-    if error and (is_content_policy_error_message(error) or any(word in error for word in ("敏感", "违规"))):
+    if error and (
+        is_content_policy_error_message(error)
+        or classify_response_text(error) is not None
+        or any(word in error for word in ("敏感", "违规"))
+    ):
         return "content_policy_blocked"
     return "provider_failed"
 

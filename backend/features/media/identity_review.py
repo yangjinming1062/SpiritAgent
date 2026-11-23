@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from infrastructure.ai.error_classifier import FailoverReason, classify_api_error
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.models import ModelModality
 from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
@@ -45,6 +46,8 @@ from .review_contracts import (
 from .review_evidence import (
     FACE_MOTION_LABEL,
     FACE_SEQUENCE_LABEL,
+    FACE_TRANSITION_LABEL,
+    SCENE_TRANSITION_LABEL,
     freeze_review_evidence,
     freeze_video_overview,
     read_review_evidence,
@@ -464,6 +467,7 @@ FACE_SEQUENCE_POLICY = (
     "看同一张对照图。每行最左的 R 是被确认的角色面容，右边编号是同一个视频的实际局部及时间。只比较脸在当前角度仍露出的部分。"
     "沿着近侧眼睑与虹膜、鼻翼与唇角观察：A. 原有五官随转头保持可辨，或者 B. 视频中可见的结构相较参考已实际糊掉、塌陷或拉长。"
     "说明图上最能区分这两种情况的相邻时刻，指出是哪里缺少边界、何处有真实遮挡。能认出人物本身不足以判断画质。"
+    "若只有一个时刻出现明显的错位、局部涂抹或焦点跳失，也按这一格的实际证据判断。前后恢复清晰无法弥补这一格的缺陷。"
     "按原目标的画风、焦点与景别判断。不同拍摄距离允许纹理松一些，正侧脸也不用看见远眼。若在有充足脸面投影时连近侧眼鼻都无法成形，就超出了正常景别区别。"
     "无明显缺陷且有真实可辨依据为 pass，具体明显退化为 fail，还不足以确认成形为 review。按 schema 返回 verdict 和中文 reason。"
 )
@@ -477,6 +481,71 @@ FACE_PERFORMANCE_POLICY = (
     "对每项分别写出最有辨别力的相邻时刻和可见部位。"
 )
 
+FACE_TRANSITION_POLICY = (
+    "逐行比较同一镜头中很接近的三个实际时刻，A、B、C 分别在左、中、右。"
+    "只聚焦 B 与 A、C 的关系，比较近侧眼角相对鼻根的位置、鼻尖及鼻翼轮廓、面颊和嘴角。"
+    "正常的转头、眨眼与遮挡可以解释方向连贯的变化。若 B 的眼鼻或脸颊突然被拉伸、错位或涂抹，邻帧显示结构随即恢复，判 fail。"
+    "各行都能核实自然连续则 pass，关键区域无法判断则 review。引用最有区分度的实际时刻和部位作为依据。"
+)
+
+SCENE_TRANSITION_POLICY = (
+    "只检查同一视频开场的环境连续性。各列从左到右是实际时刻，上行是全帧，其余行放大同一侧的画面区域。"
+    "先在 A 辨认边缘处的固定地标、窗框、墙面或陈设。逐项核对这些物体在后续各列的位置、轮廓、颜色和材质。"
+    "根据当前有效要求判断有意转场、运镜与自然光影。要求布景连续时，背景从空白叠出新布局、固定物件凭空增减或意外改变材质属于时序缺陷。"
+    "认为是曝光时，指出附近原有结构相应的亮度变化。"
+    "若邻近木柱等前景的位置和亮度一直稳定，而它们之间从整片无纹理变为逐渐浮现分层的固定线条，核查是否为背景叠入。"
+    "明确缺陷判 fail，能核实场景连续判 pass，重要地标看不清判 review。引用具体地标及前后时刻作为依据。"
+)
+
+
+def _video_specialist_goal(context: dict) -> dict[str, object]:
+    if "generation_prompt" in context:
+        return {"generation_prompt": context["generation_prompt"]}
+    latest, earlier = {
+        "general": ("feedback", "video_feedback"),
+        "video": ("video_feedback", "feedback"),
+    }[context["customization_priority"]]
+    return {
+        "latest_feedback": context[latest],
+        "earlier_feedback": context[earlier],
+        "requirements": context["requirements"],
+        **{key: context[key] for key in ("action", "required_props") if key in context},
+    }
+
+
+async def review_video_transition(
+    config: UserLlmConfig,
+    evidence: ReviewEvidence,
+    name: Literal["face_transition", "scene_transition"],
+    before_submit: Callable[[], Awaitable[None]] | None,
+) -> ReviewDecision | None:
+    context = json.loads(evidence.context_json)
+    if f"{name}_index" not in context:
+        return None
+    index = context[f"{name}_index"]
+    label = FACE_TRANSITION_LABEL if name == "face_transition" else SCENE_TRANSITION_LABEL
+    if (
+        type(index) is not int
+        or not 0 <= index < len(evidence.images)
+        or evidence.images[index].role.removeprefix("goal_quality.") != label
+    ):
+        raise ValueError("短时变化的检查依据缺失")
+    focus = evidence.images[index]
+    return await call_llm_json(
+        config,
+        context[f"{name}_policy"],
+        _video_specialist_goal(context),
+        schema=ReviewDecision.model_json_schema(),
+        schema_name="video_transition_review",
+        stop_on_content_policy=True,
+        parse_output=ReviewDecision.model_validate,
+        repair_prompt="保留已有判断及对应时刻，按结构整理。",
+        reference_images=await read_review_evidence(evidence.model_copy(update={"images": (focus,)})),
+        image_labels=(focus.role,),
+        preserve_choices=("verdict",),
+        before_call=before_submit,
+    )
+
 
 class _FacePerformanceReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -484,6 +553,17 @@ class _FacePerformanceReview(BaseModel):
     detail_reason: str = Field(min_length=1, max_length=480)
     motion_verdict: ReviewVerdict
     motion_reason: str = Field(min_length=1, max_length=480)
+
+
+def _check_face_transients(decision: ReviewDecision, context: dict) -> ReviewDecision:
+    times = context.get("face_transient_times")
+    if decision.verdict != "pass" or not times:
+        return decision
+    seconds = "、".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in times)
+    return ReviewDecision(
+        verdict="review",
+        reason=f"{seconds} 秒的面部局部与时间上紧邻的两个近似画格相比，存在显著的纹理或轮廓突变，须复核这个时刻。",
+    )
 
 
 async def review_face_sequence(
@@ -498,6 +578,9 @@ async def review_face_sequence(
 
     try:
         context = json.loads(evidence.context_json)
+        transition = await review_video_transition(config, evidence, "face_transition", before_submit)
+        if transition and transition.verdict != "pass":
+            return transition, "complete"
         if context.get("face_review_full_frames"):
             selected = video_overview(evidence).images
         else:
@@ -527,7 +610,7 @@ async def review_face_sequence(
             observations = await call_llm_json(
                 config,
                 policy,
-                {"generation_prompt": context["generation_prompt"]},
+                _video_specialist_goal(context),
                 schema=_FacePerformanceReview.model_json_schema(),
                 schema_name="video_face_performance",
                 stop_on_content_policy=True,
@@ -549,11 +632,12 @@ async def review_face_sequence(
                     reason = measured + "局部测量与视觉判断不一致，需核实这些时刻的五官。"
                 else:
                     reason = measured + reason
-            return ReviewDecision(verdict=verdict, reason=reason[:1000]), "complete"
+            decision = ReviewDecision(verdict=verdict, reason=reason[:1000])
+            return _check_face_transients(decision, context), "complete"
         decision = await call_llm_json(
             config,
             policy,
-            {"generation_prompt": context["generation_prompt"]},
+            _video_specialist_goal(context),
             schema=ReviewDecision.model_json_schema(),
             schema_name="video_face_continuity",
             stop_on_content_policy=True,
@@ -564,7 +648,7 @@ async def review_face_sequence(
             preserve_choices=("verdict",),
             before_call=before_submit,
         )
-        return decision, "complete"
+        return _check_face_transients(decision, context), "complete"
     except GenerationWorkPaused:
         raise
     except Exception as exc:
@@ -572,7 +656,7 @@ async def review_face_sequence(
         return None, review_failure_status(exc, response_seen)
 
 
-_OPENING_STATE_POLICY = """只判断视频开拍的那个瞬间。输入先列原始参考，再列真正的第一帧，若有面部局部也取自这一帧。参考不属于视频时间轴。
+_OPENING_STATE_POLICY = """只判断视频开拍的那个瞬间。最后一张图是真正的第一帧。若前面有面部局部，它仅提供同一时刻的眼神和表情。场地、景别、人与物件的关系只看完整首帧。
 从原目标找出第一个状态，只凭第一帧说明当时的活动、位置和人物与物件的关系。由后续事件触发的转头、起身等变化，留给后续帧判断。
 活动需要特定注视方向时看实际眼神与物件的关系。手持打开的书只能证明持有；直视镜头与正在阅读书页相冲突。面对镜头只指朝向，只有目标明确要求注视时才核对眼神。指定起始地点时看可辨的空间特征。
 先根据场地和取景核对机位与所指方向。场地、景别从开拍起生效时，看第一帧实际呈现的环境与画框上下边缘。对动作过程和听到事件后的反应，只有原文明确说明了反应前的活动才检查起始姿态。若只规定场地或景别，只检查这些约束，角色可以从自己选的姿态开始。要求沿道路或通道看向前方、而相机也位于前方时，面朝相机与该方向可以同时成立。
@@ -598,11 +682,14 @@ async def _review_video_opening(
     entries = evidence.images
     count, times = context["reference_count"], context["frame_times_seconds"]
     schema = FramedOpeningReview if context.get("opening_checks_framing") else OpeningStateReview
-    selected = [*entries[:count], entries[count]]
+    current = context.get("opening_uses_candidate_only") is True
+    selected = [] if current else [*entries[:count], entries[count]]
     for i, time in enumerate(context.get("face_detail_times_seconds", ())):
         if abs(time - times[0]) <= 1e-6:
             selected.append(entries[count + len(times) + i])
             break
+    if current:
+        selected.append(entries[count])
     response_seen = False
 
     def parse(data: object) -> OpeningStateReview:
@@ -630,7 +717,7 @@ async def _review_video_opening(
         return result
 
     try:
-        inputs = {"goal": goal, "reference_count": count}
+        inputs = {"goal": goal, "reference_count": 0 if current else count}
         options = {
             "stop_on_content_policy": True,
             "parse_output": parse,
@@ -679,6 +766,9 @@ async def review_media_quality(
     face_sequence: tuple[tuple[float, ...], str] | None = None,
     face_motion: str | None = None,
     face_structure_loss_times: tuple[float, ...] = (),
+    face_transition: str | None = None,
+    scene_transition: str | None = None,
+    face_transient_times: tuple[float, ...] = (),
     character: bool = False,
     motion_profile: dict | None = None,
     task: AiTaskKey,
@@ -696,7 +786,8 @@ async def review_media_quality(
         "若目标明确给出起始活动，再用最早的全帧说明该活动已经成立，并核对随后动作和终态。手持道具只能证明持有；若目光与活动所需的注视方向相反，即使随后动作正确，起始活动仍未完成。不能以镜头开始前可能发生过的动作填补缺失阶段。"
         "各维度有充分证据且无具体偏差为 pass，明确冲突或缺陷为 fail，关键证据不足为 review。"
         "合理表情、透视、光照、遮挡及目标允许的风格变化不构成缺陷，不追加个人审美要求。"
-        "对视频比较首帧、紧随首帧的画面和后续动作。目标要求同一镜头或一个连续动作时，无依据地从底色淡入另一场地、换装或换人，均为明确的时序质量缺陷；目标要求的转场按目标判断。"
+        "对视频并列比较首帧、紧随首帧的画面和后续动作。用墙窗、家具、地面等固定地标核对空间连续性。"
+        "同一镜头中，静物应随视角和遮挡连续呈现；从空白逐渐叠入新结构、静物突现或错位、无依据换装换人，均为时序质量缺陷。目标要求的转场与自然光影按目标判断。"
         "只判断抽样可见的内容，明确中间缺陷不能被其他帧抵消。不因抽样本身判为 review。"
         "saved_decisions 中的已有 pass/fail 原样保留，其余维度重新观察。只返回符合 schema 的 JSON，goal_reason 和 quality_reason 分别说明可见依据。"
         + (ACTIVITY_POSE_REVIEW if reference_count else "")
@@ -725,6 +816,12 @@ async def review_media_quality(
             "face_reason 写明相应时刻和具体部位，修正指令保留原定动作、景别和表情。"
         )
     if frame_times_seconds:
+        prompt += " 直接给出结构化结论。每项理由用一两句写关键时刻和可见证据，各约 120 字。"
+        if reference_count and not character:
+            prompt += (
+                "若原参考提供本次要保留的主体，按其可见的轮廓、五官关系、固有标志及造型核对目标。"
+                "参考只用于场地时，按关键地标与陈设核对场景。用户明确要求调整的部分按本次目标判断。"
+            )
         prompt += (
             " 目标点名的场地须有可辨的空间特征。结合场地边界、通向何处及主体与环境的关系，说明哪些画面能确定该地点。"
             "仅有相似地面、墙面、窗格或道具，无法确认关键室内外关系时，目标判为 review；可明确看出地点相反则为 fail。"
@@ -754,6 +851,12 @@ async def review_media_quality(
     required = ("goal", "quality", "opening") if frame_times_seconds else ("goal", "quality")
     if check_face:
         required = (*required, "face")
+    has_scene_transition = (
+        "scene_transition_index" in frozen_context if evidence is not None else bool(scene_transition)
+    )
+    needs_scene_review = has_scene_transition and (
+        previous is None or previous.quality is None or previous.quality.verdict == "review"
+    )
     try:
         original = evidence
         if evidence is None:
@@ -764,23 +867,39 @@ async def review_media_quality(
             }
             if check_face:
                 context["check_face_structure"] = True
+            if face_transient_times:
+                context["face_transient_times"] = face_transient_times
             sequence = ()
+            sequence_labels = ()
             if face_policy and face_sequence:
                 sequence = (face_sequence[1],)
+                sequence_labels = (FACE_SEQUENCE_LABEL,)
                 context["face_sequence_policy"] = face_policy
                 context["face_sequence_times_seconds"] = face_sequence[0]
-                # 其余时刻已按同一尺度并列；首帧局部单独保留给开场复核。
-                face_details = tuple((time, uri) for time, uri in face_details if time == frame_times_seconds[0])
+                # 整体复核保留代表时刻，专项复核读取完整的同屏对照。
+                detail_indices = {0, len(face_details) // 2, len(face_details) - 1}
+                face_details = tuple(sample for index, sample in enumerate(face_details) if index in detail_indices)
                 context["face_sequence_index"] = len(images) + len(face_details)
                 if face_motion:
                     context["face_motion_index"] = len(images) + len(face_details) + 1
                     context["face_structure_loss_times"] = face_structure_loss_times
                     sequence = (*sequence, face_motion)
-                prompt += " 单片对照图中的 R 均为原始身份参考，编号局部来自成片相应时刻，可用来核对目光与表情。"
+                    sequence_labels = (*sequence_labels, FACE_MOTION_LABEL)
+                if face_transition:
+                    context["face_transition_index"] = len(images) + len(face_details) + len(sequence)
+                    context["face_transition_policy"] = FACE_TRANSITION_POLICY
+                    sequence = (*sequence, face_transition)
+                    sequence_labels = (*sequence_labels, FACE_TRANSITION_LABEL)
+            if scene_transition:
+                context["scene_transition_index"] = len(images) + len(face_details) + len(sequence)
+                context["scene_transition_policy"] = SCENE_TRANSITION_POLICY
+                sequence = (*sequence, scene_transition)
+                sequence_labels = (*sequence_labels, SCENE_TRANSITION_LABEL)
             detail_times = tuple(time for time, _ in face_details)
             if frame_times_seconds:
                 context["opening_state_policy"] = _FRAMED_OPENING_POLICY if character else _OPENING_STATE_POLICY
                 context["opening_checks_framing"] = character
+                context["opening_uses_candidate_only"] = True
             if face_details:
                 context["face_detail_times_seconds"] = detail_times
                 prompt += " 面部局部取自标注时刻的全帧，用于核对目光和表情。动作与场景以同时刻的全帧为准。"
@@ -803,8 +922,7 @@ async def review_media_quality(
                     *review_image_labels(
                         reference_count, len(images) - reference_count, frame_times_seconds, detail_times
                     ),
-                    *((FACE_SEQUENCE_LABEL,) if sequence else ()),
-                    *((FACE_MOTION_LABEL,) if len(sequence) > 1 else ()),
+                    *sequence_labels,
                 ),
             )
         evidence = await freeze_video_overview(
@@ -835,15 +953,19 @@ async def review_media_quality(
             return result
 
         quality_context = json.loads(evidence.context_json)
-        quality_context.pop("video_overview_indices", None)
-        quality_context.pop("video_overview_group_size", None)
-        opening_policy = quality_context.pop("opening_state_policy", None)
-        quality_context.pop("face_sequence_policy", None)
+        opening_policy = quality_context.get("opening_state_policy")
         if frame_times_seconds and (not isinstance(opening_policy, str) or not opening_policy.strip()):
             raise ValueError("视频检查证据缺少冻结的首帧判断策略")
-        payload = {k: v for k, v in quality_context.items() if k not in {"face_motion_index", "face_sequence_index"}}
-        payload["saved_decisions"] = saved
         view = video_overview(evidence)
+        payload = json.loads(view.context_json)
+        for key in (
+            "opening_state_policy",
+            "opening_uses_candidate_only",
+            "face_sequence_policy",
+            "face_sequence_index",
+        ):
+            payload.pop(key, None)
+        payload["saved_decisions"] = saved
         options = {
             "stop_on_content_policy": True,
             "parse_output": parse,
@@ -878,6 +1000,7 @@ async def review_media_quality(
         face = previous.face if previous else None
         if isinstance(result, _CharacterVideoQuality):
             face = ReviewDecision(verdict=result.face_verdict, reason=saved_reasons.get("face", result.face_reason))
+            face = _check_face_transients(face, quality_context)
         if frame_times_seconds and (opening is None or opening.verdict == "review"):
             opening, status = await _review_video_opening(
                 config,
@@ -906,6 +1029,32 @@ async def review_media_quality(
             frozen_profile = json.loads(evidence.context_json).get("motion_profile", {})
             if conflict := repeated_steps_after_limit(frozen_profile, steps):
                 motion = ReviewDecision(verdict="fail", reason=conflict)
+        quality = ReviewDecision(
+            verdict=result.quality_verdict, reason=saved_reasons.get("quality", result.quality_reason)
+        )
+        if quality.verdict == "pass" and needs_scene_review:
+            if status == "blocked":
+                quality = None
+            else:
+                try:
+                    transition = await review_video_transition(config, evidence, "scene_transition", before_submit)
+                except GenerationWorkPaused:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Video scene continuity review interrupted", extra={"user_id": user_id}, exc_info=True
+                    )
+                    scene_status = review_failure_status(
+                        exc, classify_api_error(exc).reason == FailoverReason.format_error
+                    )
+                    if status == "complete" or scene_status == "blocked":
+                        status = scene_status
+                    quality = None
+                else:
+                    if transition and transition.verdict != "pass":
+                        quality = transition
+        if not check_face and quality is not None:
+            quality = _check_face_transients(quality, quality_context)
         return VisualReview(
             required=(*required, "motion") if motion else required,
             opening=opening,
@@ -920,15 +1069,18 @@ async def review_media_quality(
             else None,
             fixed_ambient_scene=isinstance(result, _UnreferencedVideoQuality) and result.fixed_ambient_scene,
             goal=ReviewDecision(verdict=result.goal_verdict, reason=saved_reasons.get("goal", result.goal_reason)),
-            quality=ReviewDecision(
-                verdict=result.quality_verdict, reason=saved_reasons.get("quality", result.quality_reason)
-            ),
+            quality=quality,
             evidence=evidence,
         )
     except GenerationWorkPaused:
         raise
     except Exception as exc:
         logger.warning("media quality review interrupted", extra={"user_id": user_id}, exc_info=True)
+        quality = previous.quality if previous else None
+        if "quality_verdict" in saved:
+            quality = ReviewDecision(verdict=saved["quality_verdict"], reason=saved_reasons["quality"])
+        if needs_scene_review and quality and quality.verdict == "pass":
+            quality = None
         return VisualReview(
             required=(*required, "motion") if previous and previous.motion else required,
             opening=previous.opening if previous else None,
@@ -945,11 +1097,7 @@ async def review_media_quality(
             else previous.goal
             if previous
             else None,
-            quality=ReviewDecision(verdict=saved["quality_verdict"], reason=saved_reasons["quality"])
-            if "quality_verdict" in saved
-            else previous.quality
-            if previous
-            else None,
+            quality=quality,
             evidence=evidence,
             status=review_failure_status(exc, response_seen),
         )

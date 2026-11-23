@@ -90,7 +90,7 @@ VIDEO_GENERATION_PARAM_DESCS = {
     ),
     "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",
     "duration": "Clip length in seconds, 4 to 15, default 6.",
-    "resolution": "Output resolution, default 768P. If it is unavailable, the error lists the options.",
+    "resolution": "Output resolution. Use the default 768P for regular delivery, and use 512P for a requested low-resolution preview. If the selected resolution is unavailable, the error lists the options.",
     "reference_image": "Optional extra reference: the url of an image result from this conversation, or a public http(s) image URL; never invent one, and user attachments have no usable address. With subject='self' it supplies styling; otherwise it fixes the depicted subject's identity and styling.",
     "aspect_ratio": "Output aspect ratio, default 9:16.",
     "outfit_override": (

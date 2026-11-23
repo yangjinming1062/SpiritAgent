@@ -7,8 +7,13 @@
 import json
 import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryFile
+from threading import Event, Timer
+from typing import Literal
 
 from infrastructure.logger import get_logger
 
@@ -175,6 +180,81 @@ def ffmpeg_stdout(
     if proc.returncode != 0:
         raise VideoProcessError(failure_message, internal=proc.stderr.decode("utf-8", "replace")[:2000])
     return proc.stdout
+
+
+@contextmanager
+def raw_video_frames(
+    path: Path,
+    size: tuple[int, int],
+    *,
+    pixel_format: Literal["rgb24", "gray"] = "rgb24",
+    origin: tuple[int, int] | None = None,
+    input_args: tuple[str, ...] = (),
+    timeout: float | None = None,
+) -> Iterator[Iterator[bytes]]:
+    """按解码顺序流式读取，不在内存累积整段视频像素。"""
+    width, height = size
+    crop = f"crop={width}:{height}:{origin[0]}:{origin[1]}:exact=1," if origin else ""
+    byte_count = width * height * (3 if pixel_format == "rgb24" else 1)
+    with TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(
+                [
+                    _binary("ffmpeg"),
+                    "-v",
+                    "error",
+                    "-nostdin",
+                    *input_args,
+                    "-i",
+                    str(path),
+                    "-map",
+                    "0:v:0",
+                    "-an",
+                    "-vf",
+                    f"{crop}scale={width}:{height},setsar=1",
+                    "-fps_mode",
+                    "passthrough",
+                    "-pix_fmt",
+                    pixel_format,
+                    "-f",
+                    "rawvideo",
+                    "-",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=errors,
+            )
+        except OSError as exc:
+            raise VideoToolUnavailableError("视频解码进程启动失败", internal=str(exc)) from exc
+        with process, process.stdout as output:
+            expired = Event()
+
+            def stop_decoder() -> None:
+                expired.set()
+                process.kill()
+
+            def frames() -> Iterator[bytes]:
+                while pixels := output.read(byte_count):
+                    if len(pixels) != byte_count:
+                        break
+                    yield pixels
+                status = process.wait()
+                if expired.is_set():
+                    raise VideoToolUnavailableError("视频解码超时")
+                if status or pixels:
+                    errors.seek(0)
+                    raise VideoProcessError("视频帧无法完整解码", internal=errors.read(2000).decode("utf-8", "replace"))
+
+            deadline = Timer(timeout, stop_decoder) if timeout is not None else None
+            if deadline is not None:
+                deadline.start()
+            try:
+                yield frames()
+            finally:
+                if deadline is not None:
+                    deadline.cancel()
+                    deadline.join()
+                if process.poll() is None:
+                    process.kill()
 
 
 def video_frame_times(path: Path) -> tuple[float, ...]:

@@ -139,6 +139,17 @@ def _add_upscale(nodes: dict[str, dict[str, Any]], width: int, height: int) -> N
     )
 
 
+def _fit_keyframe(
+    nodes: dict[str, dict[str, Any]], key: str, image: list[str | int], width: int, height: int
+) -> list[str | int]:
+    # H3 stretches its first frame and crops the last. Fit both to the same canvas before conditioning.
+    nodes[key] = {
+        "class_type": "ImageScale",
+        "inputs": {"image": image, "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"},
+    }
+    return [key, 0]
+
+
 def _view_url(base_url: str, item: dict[str, Any]) -> str | None:
     filename = item.get("filename")
     if not isinstance(filename, str) or not filename:
@@ -530,7 +541,8 @@ class LocalVideoGenProvider(VideoGenProvider):
                 for key, filename in zip(("hold_opening", "hold_resting"), hold_names, strict=True):
                     nodes[key] = {"class_type": "LoadImage", "inputs": {"image": filename}}
                 output = ["hold_opening", 0]
-                nodes["6"]["inputs"]["last_frame"] = ["hold_resting", 0]
+                end_frame = _fit_keyframe(nodes, "fit_last", ["hold_resting", 0], width, height)
+                nodes["6"]["inputs"]["last_frame"] = end_frame
                 conditioning = ["6", 0]
                 for position, fraction in enumerate((0.42, 0.78)):
                     key = f"hold_guide_{position}"
@@ -541,7 +553,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                             "latent": ["6", 1],
                             "vae": ["4", 0],
                             "frame_idx": round((length - 1) * fraction),
-                            "image": ["hold_resting", 0],
+                            "image": end_frame,
                         },
                     }
                     conditioning = [key, 0]
@@ -560,9 +572,10 @@ class LocalVideoGenProvider(VideoGenProvider):
                     compose_activity_opening=req.compose_activity_opening,
                 )
                 nodes.update(opening_nodes)
-            nodes["6"]["inputs"]["first_frame"] = output
+            start_frame = _fit_keyframe(nodes, "fit_first", output, width, height)
+            nodes["6"]["inputs"]["first_frame"] = start_frame
             if req.fixed_ambient_scene and not (reference_image_names or first_frame_name or last_frame_name):
-                nodes["6"]["inputs"]["last_frame"] = output
+                nodes["6"]["inputs"]["last_frame"] = start_frame
             continuity = (
                 "镜头已经在拍摄首帧中的现场。从这一刻直接延续动作，整段保持首帧中的脸、穿戴结构、背景布局和光线；"
                 "衣物和饰物随身体自然移动，环境随指定镜头运动连续显现。"
@@ -573,15 +586,18 @@ class LocalVideoGenProvider(VideoGenProvider):
                 continuity = (
                     "沿用开场的现场、角色与拍摄距离，明确指定的运镜按原要求进行。"
                     + CHARACTER_FACE_MOTION
-                    + "角色、衣饰和现场只随原定动作或机位变化。"
+                    + "墙窗、地面和固定陈设沿用首帧中实际可见的布局、颜色与材质，按人物遮挡或指定运镜自然出入画。"
                 )
             nodes["6"]["inputs"]["prompt"] = f"{continuity}\n{req.first_frame_motion or req.prompt}"
         if first_frame_name:
             nodes["16"] = {"class_type": "LoadImage", "inputs": {"image": first_frame_name}}
-            nodes["6"]["inputs"]["first_frame"] = ["16", 0]
+            nodes["6"]["inputs"]["first_frame"] = _fit_keyframe(nodes, "fit_first", ["16", 0], width, height)
         if last_frame_name:
-            nodes["17"] = {"class_type": "LoadImage", "inputs": {"image": last_frame_name}}
-            nodes["6"]["inputs"]["last_frame"] = ["17", 0]
+            if last_frame_name == first_frame_name:
+                nodes["6"]["inputs"]["last_frame"] = nodes["6"]["inputs"]["first_frame"]
+            else:
+                nodes["17"] = {"class_type": "LoadImage", "inputs": {"image": last_frame_name}}
+                nodes["6"]["inputs"]["last_frame"] = _fit_keyframe(nodes, "fit_last", ["17", 0], width, height)
         if upscale:
             _add_upscale(nodes, width, height)
         return nodes

@@ -16,6 +16,7 @@ from infrastructure.assets.media_download import download_media_result
 from infrastructure.async_io import run_blocking
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.logger import get_logger
 from infrastructure.video_processing.face_performance import (
     compose_face_performance,
     performance_anchors,
@@ -36,6 +37,8 @@ from .video_queue.service import (
     wait_video_attempt,
 )
 from .video_results import download_and_store_video
+
+logger = get_logger(__name__)
 
 
 class FacePerformanceRejected(ValueError):
@@ -126,6 +129,16 @@ async def store_performance_video(
     identity = await asyncio.to_thread(original[0].read_bytes)
     if portrait_hash and hashlib.sha256(identity).hexdigest() != portrait_hash:
         raise FacePerformanceRejected("原身份依据已变化", "identity_changed", can_fallback=False)
+
+    async def save_draft() -> str:
+        if chain.face_motion_source is not None:
+            chain.face_motion_source = None
+            await save(chain)
+        await guard()
+        return await asset_store.save_video_job_asset_async(
+            await asyncio.to_thread(source.read_bytes), generation_id=generation_id, **keys
+        )
+
     try:
         track = await run_blocking(track_performance, source, identity, frame_count=local_video_frame_count(duration))
     except VideoToolUnavailableError:
@@ -135,10 +148,7 @@ async def store_performance_video(
     if track is None:
         if chain.face_request_id or await find_video_attempt(owner, anchor_index, frozen):
             raise VideoToolUnavailableError("无法恢复已登记的面部轨迹")
-        await guard()
-        return await asset_store.save_video_job_asset_async(
-            await asyncio.to_thread(source.read_bytes), generation_id=generation_id, **keys
-        )
+        return await save_draft()
 
     face_feedback = ""
     if chain.is_correction_attempt(index):
@@ -153,7 +163,7 @@ async def store_performance_video(
 
     async def receive(
         stage: Literal["anchors", "motion"], slot: int, token: str | None, references: tuple[str, ...]
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str] | None:
         if token is None:
             await guard()
             require_new_generation_call(owner.user_id)
@@ -182,6 +192,7 @@ async def store_performance_video(
                 # 该句柄仍由持久队列跟踪；重新接收时只能查询原尝试。
                 raise FacePerformanceRejected(str(exc), reason, can_fallback=False) from exc
             failure = FacePerformanceRejected(str(exc), reason, can_fallback=fallback)
+            use_draft = fallback
         else:
             if status.status == "succeeded" and status.download_url:
                 return token, status.download_url
@@ -189,7 +200,14 @@ async def store_performance_video(
             failure = FacePerformanceRejected(
                 status.error or "局部面部制作未完成", reason, can_fallback=reason != "content_policy_blocked"
             )
+            use_draft = status.status == "failed" and reason == "provider_failed"
         await finish(token)
+        if use_draft:
+            logger.warning(
+                "Face refinement failed; reviewing the source clip",
+                extra={"job_id": owner.job_id, "face_stage": stage, "reason": reason},
+            )
+            return None
         raise failure
 
     async def finish(token: str | None) -> None:
@@ -237,7 +255,10 @@ async def store_performance_video(
                 if anchor_token
                 else await freeze_images(await run_blocking(performance_anchors, source, track), "source")
             )
-            anchor_token, url = await receive("anchors", anchor_index, anchor_token, (portrait, *sources))
+            anchors = await receive("anchors", anchor_index, anchor_token, (portrait, *sources))
+            if anchors is None:
+                return await save_draft()
+            anchor_token, url = anchors
             data = await download_media_result(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
         try:
             guides = await asyncio.to_thread(_split_guides, data, len(track.frames))
@@ -253,7 +274,10 @@ async def store_performance_video(
         if motion_token is None and not allow_new:
             raise GenerationWorkPaused
         refs = () if motion_token else await freeze_images(guides, "anchor")
-        motion_token, url = await receive("motion", motion_index, motion_token, refs)
+        motion = await receive("motion", motion_index, motion_token, refs)
+        if motion is None:
+            return await save_draft()
+        motion_token, url = motion
         await download_and_store_video(url, generation_id=stage_id("face"), guard=guard, **keys)
         local_patch = asset_store.resolve_asset_reference(patch)
     else:
@@ -268,7 +292,8 @@ async def store_performance_video(
         )
     except VideoToolUnavailableError:
         raise
-    except VideoProcessError as exc:
-        raise FacePerformanceRejected(str(exc)) from exc
+    except VideoProcessError:
+        logger.warning("Face refinement could not be composed; reviewing the source clip", exc_info=True)
+        return await save_draft()
     await guard()
     return await asset_store.save_video_job_asset_async(data, generation_id=generation_id, **keys)

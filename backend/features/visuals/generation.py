@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from fractions import Fraction
 from functools import partial
 from io import BytesIO
@@ -77,9 +78,12 @@ from features.media.character_images import (
 from features.media.identity_review import (
     FACE_PERFORMANCE_POLICY,
     FACE_SEQUENCE_POLICY,
+    FACE_TRANSITION_POLICY,
+    SCENE_TRANSITION_POLICY,
     require_image_goal_review_config,
     review_character_frames_with_references,
     review_face_sequence,
+    review_video_transition,
 )
 from features.media.image_generation import ImageGenerationError, ImageResultDownloadError, ImageReviewUnavailableError
 from features.media.prompts import VIDEO_FACE_DETAIL_REVIEW
@@ -96,6 +100,8 @@ from features.media.review_contracts import (
 from features.media.review_evidence import (
     FACE_MOTION_LABEL,
     FACE_SEQUENCE_LABEL,
+    FACE_TRANSITION_LABEL,
+    SCENE_TRANSITION_LABEL,
     freeze_review_evidence,
     freeze_video_overview,
     read_review_evidence,
@@ -155,6 +161,7 @@ from .prompts import (
     VISUAL_POSE_EDIT_TEMPLATE,
     VISUAL_POSE_IMAGE_TEMPLATE,
     VISUAL_POSE_VARIANT_TEMPLATE,
+    VISUAL_SPECIALIST_REVIEW_CONTEXT,
     VISUAL_VIDEO_FRAME_DESCRIPTION,
     VISUAL_VIDEO_IDENTITY_REVIEW,
     VISUAL_VIDEO_REVIEW,
@@ -1232,6 +1239,21 @@ async def _process_actor_candidate(
     )
 
 
+async def _review_visual_video_quality(
+    user_id: int,
+    result: VisualVideoReview,
+    evidence: ReviewEvidence,
+    before_submit: Callable[[], Awaitable[None]],
+) -> ReviewDecision:
+    quality = ReviewDecision(verdict=result.quality_verdict, reason=result.quality_reason)
+    if quality.verdict == "pass" and "scene_transition_index" in json.loads(evidence.context_json):
+        config = await require_image_goal_review_config(user_id, AiTaskKey.visuals)
+        scene = await review_video_transition(config, evidence, "scene_transition", before_submit)
+        if scene and scene.verdict != "pass":
+            return scene
+    return quality
+
+
 async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobProgress) -> None:
     candidate = progress.candidate
     if candidate is None:
@@ -1308,8 +1330,16 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
         or review.quality.verdict == "review"
     ):
         try:
+            has_scene_reference = source.kind == "cinematic"
+            if has_scene_reference and progress.video_evidence is None:
+                scene = source.scene
+                references = (
+                    *references,
+                    await asyncio.to_thread(read_visual_reference, scene.path, scene.content_hash),
+                )
             review_payload: dict[str, object] = {
                 "isolated_subject": job.asset_kind == "actor",
+                "has_scene_reference": has_scene_reference,
                 "video_feedback": job.video_feedback,
                 "kind": source.action.clip_kind,
                 "duration_seconds": progress.duration_seconds,
@@ -1333,21 +1363,17 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                     len(references), len(uris), samples.times_seconds, tuple(t for t, _ in face_details)
                 )
                 if "face" in review.required:
+                    if samples.face_transient_times:
+                        review_payload["face_transient_times"] = samples.face_transient_times
                     original, _ = await asyncio.to_thread(
                         read_visual_reference_bytes, source.portrait_path, source.portrait_hash
                     )
                     sheet = await asyncio.to_thread(face_sequence_sheet, samples.face_details, original)
-                    review_payload["generation_prompt"] = "\n".join(
-                        filter(
-                            None,
-                            (source.action.motion_description, source.requirements, job.feedback, job.video_feedback),
-                        )
-                    )
                     if sheet:
                         review_payload.update(
                             face_sequence_index=len(images),
                             face_sequence_times_seconds=sheet[0],
-                            face_sequence_policy=FACE_SEQUENCE_POLICY,
+                            face_sequence_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT + FACE_SEQUENCE_POLICY,
                         )
                         images = (*images, build_data_uri(sheet[1], "image/webp"))
                         labels = (*labels, FACE_SEQUENCE_LABEL)
@@ -1366,17 +1392,34 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                         review_payload.update(
                             face_motion_index=len(images),
                             face_structure_loss_times=comparison.loss_times,
-                            face_sequence_policy=FACE_SEQUENCE_POLICY + FACE_PERFORMANCE_POLICY,
+                            face_sequence_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT
+                            + FACE_SEQUENCE_POLICY
+                            + FACE_PERFORMANCE_POLICY,
                         )
                         images = (*images, build_data_uri(comparison.image, "image/webp"))
                         labels = (*labels, FACE_MOTION_LABEL)
                     if not sheet:
                         review_payload.update(
                             face_review_full_frames=True,
-                            face_sequence_policy=VIDEO_FACE_DETAIL_REVIEW
+                            face_sequence_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT
+                            + VIDEO_FACE_DETAIL_REVIEW
                             + " 对全帧及可用局部核对可见面部，合理背影、遮挡和不具这些结构的角色尊重原目标。"
                             "明确变形或持续失焦为 fail，需要看清但依据不足为 review，可核实且符合目标为 pass。",
                         )
+                    if samples.face_transition:
+                        review_payload.update(
+                            face_transition_index=len(images),
+                            face_transition_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT + FACE_TRANSITION_POLICY,
+                        )
+                        images = (*images, build_data_uri(samples.face_transition, "image/webp"))
+                        labels = (*labels, FACE_TRANSITION_LABEL)
+                if samples.scene_transition:
+                    review_payload.update(
+                        scene_transition_index=len(images),
+                        scene_transition_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT + SCENE_TRANSITION_POLICY,
+                    )
+                    images = (*images, build_data_uri(samples.scene_transition, "image/webp"))
+                    labels = (*labels, SCENE_TRANSITION_LABEL)
                 progress.video_evidence = await freeze_review_evidence(
                     user_id,
                     images,
@@ -1422,7 +1465,9 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 review.goal = ReviewDecision(verdict=result.verdict, reason=result.reason)
                 candidate.media_semantics = result.media_semantics
             if review.quality is None or review.quality.verdict == "review":
-                review.quality = ReviewDecision(verdict=result.quality_verdict, reason=result.quality_reason)
+                review.quality = await _review_visual_video_quality(
+                    user_id, result, progress.video_evidence, before_submit
+                )
             review.status = "complete"
             if candidate.body is not None and result.head_anchor is not None:
                 candidate.body.head_anchor = (
@@ -1842,7 +1887,7 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
             source_reference = await asyncio.to_thread(read_valid_image_data_uri, job_source.scene.path)
             if not source_reference:
                 raise VisualStateError("原环境参考无法读取")
-        samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
+        samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0], include_opening_transition=True)
         uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
         async with SESSION_LOCAL() as db:
             language = resolve_language(await get_user_setting(db, user_id, "language"))
@@ -1866,11 +1911,20 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
             }
             original_evidence = progress.video_evidence
             if progress.video_evidence is None:
+                images = (reference, *((source_reference,) if source_reference else ()), *uris)
+                labels = review_image_labels(1 + bool(source_reference), len(uris), samples.times_seconds)
+                if samples.scene_transition:
+                    payload.update(
+                        scene_transition_index=len(images),
+                        scene_transition_policy=VISUAL_SPECIALIST_REVIEW_CONTEXT + SCENE_TRANSITION_POLICY,
+                    )
+                    images = (*images, build_data_uri(samples.scene_transition, "image/webp"))
+                    labels = (*labels, SCENE_TRANSITION_LABEL)
                 progress.video_evidence = await freeze_review_evidence(
                     user_id,
-                    (reference, *((source_reference,) if source_reference else ()), *uris),
+                    images,
                     prompt=SCENE_VIDEO_REVIEW,
-                    labels=review_image_labels(1 + bool(source_reference), len(uris), samples.times_seconds),
+                    labels=labels,
                     context=payload,
                     media_path=candidate.media_path,
                 )
@@ -1906,7 +1960,9 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
             if review.goal is None or review.goal.verdict == "review":
                 review.goal = ReviewDecision(verdict=result.verdict, reason=result.reason)
             if review.quality is None or review.quality.verdict == "review":
-                review.quality = ReviewDecision(verdict=result.quality_verdict, reason=result.quality_reason)
+                review.quality = await _review_visual_video_quality(
+                    user_id, result, progress.video_evidence, before_submit
+                )
             review.status = "complete"
         except LlmCallBlockedError:
             raise

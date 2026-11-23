@@ -6,18 +6,15 @@ from collections.abc import Awaitable, Callable, Sequence
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
-from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.logger import get_logger
-from infrastructure.video_processing.face_detail import compare_face_sequences
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from .chain import MediaCandidate
 from .identity_review import require_image_goal_review_config
 from .review_contracts import MediaSelection, ObservedVideoHold, review_failure_status
-from .review_evidence import FACE_DETAIL_PREFIX, FACE_SEQUENCE_LABEL, read_review_evidence, review_media_intact
+from .review_evidence import read_review_evidence, review_media_intact
 
 logger = get_logger(__name__)
 
@@ -163,6 +160,8 @@ async def select_delivery(
         if not candidate.evaluated or candidate.excluded or not review or not review.evidence:
             continue
         full = review.model_verdict == "pass"
+        if not full and "opening" in required:
+            continue
         decision = MediaSelection(
             basis_id=review.evidence.content_basis_id,
             mode="passed" if full else "best_available",
@@ -177,7 +176,9 @@ async def select_delivery(
         eligible[f"C{len(eligible) + 1}"] = candidate
     if not eligible:
         if "face" in required:
-            return MediaSelection(mode="not_delivered", reason="出镜视频尚无符合身份、动作、画质和面部检查的完整候选")
+            return MediaSelection(mode="not_delivered", reason="出镜视频尚无通过身份、开场、动作、画质和面部检查的候选")
+        if "opening" in required:
+            return MediaSelection(mode="not_delivered", reason="视频尚无同时通过开场、目标和画质检查的候选")
         return MediaSelection(mode="not_delivered", reason="没有身份、文件和检查依据都可核实的候选")
     only = next(iter(eligible.values())).review
     if len(eligible) == 1 and only.goal.verdict == "pass":
@@ -186,27 +187,11 @@ async def select_delivery(
     images: list[str] = []
     labels: list[str] = []
     references: set[str] = set()
-    # 可比较的既有候选若有原尺寸面部取样，按版本和各自的真实时间并列。
-    compare_faces = len(eligible) > 1 and all(
-        any(entry.role == f"goal_quality.{FACE_SEQUENCE_LABEL}" for entry in item.review.evidence.images)
-        for item in eligible.values()
-    )
-    face_rows: dict[str, list[tuple[float, bytes]]] = {}
-    individual_face_images: set[int] = set()
     try:
         for key, item in eligible.items():
             evidence = item.review.evidence
             seen: set[tuple[str, str]] = set()
-            entries = list(zip(evidence.images, await read_review_evidence(evidence), strict=True))
-            if compare_faces:
-                identity = json.loads(evidence.context_json).get("identity", {})
-                times = identity.get("face_detail_times_seconds", ()) if isinstance(identity, dict) else ()
-                if len(times) >= 2:
-                    details = [uri for entry, uri in entries if entry.role.startswith(f"identity.{FACE_DETAIL_PREFIX}")]
-                    if len(details) == len(times):
-                        frames = await asyncio.gather(*(resolve_reference_bytes(uri) for uri in details))
-                        face_rows[key] = [(time, pixels) for time, (pixels, _) in zip(times, frames, strict=True)]
-            for entry, uri in entries:
+            for entry, uri in zip(evidence.images, await read_review_evidence(evidence), strict=True):
                 role = entry.role.removeprefix("identity.").removeprefix("goal_quality.")
                 if "参考图" in role:
                     if entry.sha256 in references:
@@ -218,21 +203,8 @@ async def select_delivery(
                         continue
                     seen.add((entry.sha256, role))
                     label = f"{key} · {role}"
-                if compare_faces and (role == FACE_SEQUENCE_LABEL or role.startswith(FACE_DETAIL_PREFIX)):
-                    individual_face_images.add(len(images))
                 labels.append(label)
                 images.append(uri)
-        comparison_sheets = (
-            await asyncio.to_thread(compare_face_sequences, face_rows)
-            if compare_faces and len(face_rows) == len(eligible)
-            else []
-        )
-        if comparison_sheets:
-            images = [uri for index, uri in enumerate(images) if index not in individual_face_images]
-            labels = [label for index, label in enumerate(labels) if index not in individual_face_images]
-            for sheet in comparison_sheets:
-                labels.append("候选视频面部并排比较，每行用候选编号和各自真实时间标注")
-                images.append(build_data_uri(sheet, "image/webp"))
 
         def parse(raw: object) -> _Choice:
             result = _Choice.model_validate(raw)
@@ -242,12 +214,7 @@ async def select_delivery(
 
         result = await call_llm_json(
             await require_image_goal_review_config(user_id, task),
-            _SELECT
-            + (
-                " 动作均成立时，根据带编号的面部并排图比较相近朝向的眼睑、鼻唇和下颌，说明哪一版在哪个时刻更连贯以及具体的可见差异。"
-                if comparison_sheets
-                else ""
-            ),
+            _SELECT,
             {
                 "goal": goal,
                 "candidates": {
