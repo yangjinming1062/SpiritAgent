@@ -43,24 +43,49 @@ function toast(msg, type = 'ok') {
     const wrap = $('#toast-wrap');
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.textContent = msg;
+    el.innerHTML = `<span class="toast-icon">${icon(type === 'ok' ? 'check' : type === 'warn' ? 'alert' : 'alertCircle')}</span><span class="toast-text"></span>`;
+    el.querySelector('.toast-text').textContent = msg;
     wrap.appendChild(el);
     setTimeout(() => {
-        el.style.opacity = '0';
-        el.style.transform = 'translateY(0.4rem)';
-        el.style.transition = 'all .16s ease';
+        el.classList.add('toast--leaving');
         setTimeout(() => el.remove(), 200);
     }, 2600);
 }
 
-function stateRow(colspan, msg, hint = '', err = false) {
-    return `<tr class="state-row ${err ? 'err' : ''}"><td colspan="${colspan}"><div class="state-msg">${esc(msg)}</div>${hint ? `<div class="state-hint">${esc(hint)}</div>` : ''}</td></tr>`;
+function stateBlock(msg, hint = '', err = false, actionHtml = '') {
+    return `<div class="state-block${err ? ' err' : ''}"><span class="state-icon">${icon(err ? 'alertCircle' : 'inbox')}</span><p class="state-title">${esc(msg)}</p>${hint ? `<p class="state-hint">${esc(hint)}</p>` : ''}${actionHtml ? `<div class="state-action">${actionHtml}</div>` : ''}</div>`;
 }
 
-function renderTable(tbodyId, countId, data, { unit, cols, empty, emptyHint, row }) {
+function stateRow(colspan, msg, hint = '', err = false, actionHtml = '') {
+    return `<tr class="state-row${err ? ' err' : ''}"><td colspan="${colspan}">${stateBlock(msg, hint, err, actionHtml)}</td></tr>`;
+}
+
+function skeletonRows(cols, rows = 5) {
+    const widths = [72, 42, 58, 34, 50, 30];
+    return Array.from({ length: rows }, (_, row) => `<tr class="skeleton-row" aria-hidden="true">${Array.from({ length: cols }, (_, col) => `<td><span class="skeleton-line" style="width:${widths[(row + col) % widths.length]}%"></span></td>`).join('')}</tr>`).join('');
+}
+
+function paintSkeleton(selector, cols, rows = 5) {
+    const target = $(selector);
+    if (!target || target.children.length) return false;
+    target.innerHTML = skeletonRows(cols, rows);
+    target.setAttribute('aria-busy', 'true');
+    return true;
+}
+
+function clearSkeleton(selector) {
+    const target = $(selector);
+    if (target) target.removeAttribute('aria-busy');
+}
+
+function skeletonCards(count = 2) {
+    return Array.from({ length: count }, () => `<section class="card skeleton-card" aria-hidden="true"><div class="card-head"><span class="skeleton-line" style="width:180px"></span></div><div class="card-pad"><span class="skeleton-line" style="width:100%"></span><span class="skeleton-line" style="width:82%"></span><span class="skeleton-line" style="width:64%"></span></div></section>`).join('');
+}
+
+function renderTable(tbodyId, countId, data, { unit, cols, empty, emptyHint, emptyAction = '', row }) {
     const items = getItems(data);
     $('#' + countId).textContent = items.length ? `${items.length} ${unit}` : '';
-    $(tbodyId).innerHTML = items.length ? items.map(row).join('') : stateRow(cols, empty, emptyHint);
+    $(tbodyId).innerHTML = items.length ? items.map(row).join('') : stateRow(cols, empty, emptyHint, false, emptyAction);
 }
 
 function closeAllMenus() {
@@ -133,6 +158,7 @@ function showTab(name) {
     $('#topTitle').textContent = t.title;
     $('#topDesc').textContent = t.desc;
     closeAllMenus();
+    if (name !== 'users') userDialogRequest?.abort();
     stopServiceUpdatePolling();
     updateSaveActions();
     void TAB_LOADERS[name]();
@@ -197,6 +223,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
 
 
 async function loadUsers() {
+    const busy = paintSkeleton('#userList', 5);
     try {
         const data = await invoke('admin.list_users');
         tabCache.users = data;
@@ -206,6 +233,7 @@ async function loadUsers() {
         }
         renderUsers(data);
     } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
+    finally { if (busy) clearSkeleton('#userList'); }
 }
 
 function filterUsers() {
@@ -244,24 +272,24 @@ function renderUsers(data) {
             ? `<div class="td-services">${overrides.map(g => pill(g, 'amber')).join('')}</div>`
             : '<span class="text-3">继承系统</span>';
         return `<tr>
-            <td>
+            <td data-label="用户">
                 <div class="cell-user">
                     <div class="avatar ${u.is_active ? '' : 'off'}">${initial}</div>
-                    <div style="min-width:0">
-                        <div class="cell-strong">${esc(u.username)}</div>
+                    <div class="cell-user-text">
+                        <div class="cell-strong" title="${esc(u.username)}">${esc(u.username)}</div>
                         <div class="cell-sub">#${u.id}</div>
                     </div>
                 </div>
             </td>
-            <td>
+            <td data-label="状态">
                 <div class="cell-stack">
                     ${active}
                     ${night}
                 </div>
             </td>
-            <td>${overrideCell}</td>
-            <td><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
-            <td class="td-actions">
+            <td data-label="配置覆盖">${overrideCell}</td>
+            <td data-label="创建时间"><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
+            <td class="td-actions" data-label="操作">
                 <button class="btn btn--ghost btn--sm" onclick="editUser(${idArgument(u.id)})">编辑</button>
                 <button class="btn btn--ghost btn--sm" onclick="manageActivation(${idArgument(u.id)})">激活码</button>
                 ${menuHtml([
@@ -272,21 +300,11 @@ function renderUsers(data) {
                 ])}
             </td>
         </tr>`;
-    }).join('') : stateRow(5, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
+    }).join('') : stateRow(5, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加', false, q ? '' : '<button type="button" class="btn btn--primary btn--sm" onclick="showCreateUser()">创建用户</button>');
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:10620';
-
-// 每次打开弹窗时读取，系统设置中修改 public_base_url 后立即生效。
-async function fetchPublicBaseUrl() {
-    try {
-        const data = await invoke('admin.runtime_info');
-        return typeof data?.public_base_url === 'string' ? data.public_base_url : '';
-    } catch (e) {
-        toast('读取公网访问地址失败，请核对后端地址：' + e.message, 'warn');
-        return '';
-    }
-}
+let userDialogRequest = null;
 
 function decodeActivationBaseUrl(code) {
     if (!code) return null;
@@ -300,8 +318,28 @@ function decodeActivationBaseUrl(code) {
 }
 
 // baseUrl 回退顺序：激活码中的 b > public_base_url > DEFAULT_BASE_URL
-async function resolveDefaultBaseUrl(existingCode) {
-    return decodeActivationBaseUrl(existingCode) || (await fetchPublicBaseUrl()) || DEFAULT_BASE_URL;
+async function resolveDefaultBaseUrl(existingCode, signal) {
+    const existingUrl = decodeActivationBaseUrl(existingCode);
+    if (existingUrl) return existingUrl;
+    try {
+        const data = await invoke('admin.runtime_info', {}, { signal });
+        if (typeof data?.public_base_url === 'string' && data.public_base_url) return data.public_base_url;
+    } catch (error) {
+        if (!signal.aborted) toast('读取公网访问地址失败，请核对后端地址：' + error.message, 'warn');
+    }
+    return DEFAULT_BASE_URL;
+}
+
+async function prepareUserDialog(activationCode, open) {
+    userDialogRequest?.abort();
+    const request = new AbortController();
+    userDialogRequest = request;
+    try {
+        const baseUrl = await resolveDefaultBaseUrl(activationCode, request.signal);
+        if (!request.signal.aborted && !$('#app').inert) open(baseUrl);
+    } finally {
+        if (userDialogRequest === request) userDialogRequest = null;
+    }
 }
 
 // 所有写入激活码的操作共用：空地址提示并聚焦，返回空串表示中止。
@@ -311,31 +349,30 @@ function requireBaseUrl(input) {
     return value;
 }
 
-async function showCreateUser() {
-    $('#userModalTitle').textContent = '创建用户';
-    $('#editUserId').value = '';
-    $('#username').value = ''; $('#username').disabled = false;
-    $('#baseUrl').value = await resolveDefaultBaseUrl(null);
-    $('#nightlyEnabled').checked = true;
-    $('#regenField').style.display = 'none';
-    openModal('userModal');
-    $('#username').focus();
+function openUserForm(user = null) {
+    return prepareUserDialog(user?.activation_code, baseUrl => {
+        $('#userModalTitle').textContent = user ? '编辑用户' : '创建用户';
+        $('#editUserId').value = user?.id ?? '';
+        $('#username').value = user?.username ?? '';
+        $('#username').disabled = Boolean(user);
+        $('#baseUrl').value = baseUrl;
+        $('#nightlyEnabled').checked = user?.nightly_activity_enabled ?? true;
+        $('#regenField').style.display = user ? '' : 'none';
+        openModal('userModal');
+        if (!user) $('#username').focus();
+    });
 }
+
+function showCreateUser() { return openUserForm(); }
 
 function findCachedUser(id) {
     return (tabCache.users?.items ?? []).find(u => u.id === resourceId(id)) ?? null;
 }
 
-async function editUser(id) {
-    const u = findCachedUser(id);
-    if (!u) { toast('用户数据未加载，请稍后重试', 'err'); return; }
-    $('#userModalTitle').textContent = '编辑用户';
-    $('#editUserId').value = u.id;
-    $('#username').value = u.username; $('#username').disabled = true;
-    $('#baseUrl').value = await resolveDefaultBaseUrl(u.activation_code);
-    $('#nightlyEnabled').checked = u.nightly_activity_enabled;
-    $('#regenField').style.display = '';
-    openModal('userModal');
+function editUser(id) {
+    const user = findCachedUser(id);
+    if (!user) { toast('用户数据未加载，请稍后重试', 'err'); return; }
+    return openUserForm(user);
 }
 
 async function saveUser() {
@@ -408,14 +445,17 @@ async function copyActivationCode() {
     await copyText($('#activationCodeText').value, $('#activationCodeText'));
 }
 
-async function manageActivation(id) {
+function manageActivation(id) {
     const user = findCachedUser(id);
     if (!user) { toast('用户数据未加载，请稍后重试', 'err'); return; }
-    $('#activationManageUserId').value = id;
-    $('#activationManageTitle').textContent = '激活码管理 · ' + user.username;
-    $('#activationManageCode').value = user.activation_code;
-    $('#activationManageBaseUrl').value = await resolveDefaultBaseUrl(user.activation_code);
-    openModal('activationManageModal');
+    const { username, activation_code: activationCode } = user;
+    return prepareUserDialog(activationCode, baseUrl => {
+        $('#activationManageUserId').value = id;
+        $('#activationManageTitle').textContent = '激活码管理 · ' + username;
+        $('#activationManageCode').value = activationCode;
+        $('#activationManageBaseUrl').value = baseUrl;
+        openModal('activationManageModal');
+    });
 }
 
 function setManageCode(id, code) {
@@ -492,6 +532,16 @@ const ICON_PATHS = {
     outfit: '<path d="m8 3-6 4 3 5 3-2v11h8V10l3 2 3-5-6-4a4 4 0 0 1-8 0Z"/>',
     scene: '<path d="m3 12 9-9 9 9M5 10v11h14V10m-9 11v-7h4v7"/>',
     moon: '<path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/>',
+    inbox: '<path d="M4 5h16l1 7v7H3v-7l1-7Z"/><path d="M3 12h5l2 3h4l2-3h5"/>',
+    alertCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3v1"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9v1"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    key: '<circle cx="8" cy="15" r="3"/><path d="m10.5 12.5 8-8M17 4l3 3M14 7l3 3"/>',
+    shield: '<path d="M12 3 20 6v6c0 5-3.6 8-8 9-4.4-1-8-4-8-9V6l8-3Z"/><path d="m9 12 2 2 4-4"/>',
+    eye: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>',
+    eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 6.2A10.4 10.4 0 0 1 12 6c6.4 0 10 6 10 6a17.3 17.3 0 0 1-3.4 4M6.4 7.7A17.4 17.4 0 0 0 2 12s3.6 6 10 6a9.8 9.8 0 0 0 4.3-.94"/>',
 };
 const GROUP_ICONS = { '陪伴聊天': 'llm', '专业预设': 'users', '定时任务': 'clock', '主动陪伴': 'ai', '记忆': 'embedding', '夜间': 'moon', '动态': 'logs', '形象初始化': 'appearance', '换装': 'outfit', '场景': 'scene', '影像': 'video_gen', '语音': 'tts' };
 function icon(name) { return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] ?? ICON_PATHS.ai}</svg>`; }
@@ -536,7 +586,7 @@ function updateAiNavBadge(readiness) {
 }
 
 // AI 编辑器：页面与分组共享作用域草稿，系统参数保持独立。
-let aiView = { scope: 'system', userId: null, section: 'providers', group: 'providers', paletteOpen: true };
+let aiView = { scope: 'system', userId: null, section: 'providers', group: 'providers', paletteOpen: null };
 let aiSystemDirty = false;
 let aiUserDirty = false;
 let aiSaving = false;
@@ -611,11 +661,7 @@ function renderAiChain() {
         $('#aiChainBody').innerHTML = (inherited ? `<p class="layer-hint">${group === 'providers' ? '模型可引用系统供应商，也可添加用户供应商。' : `继承系统默认 · ${READINESS_KEY_LABELS[group]}`}</p>` : '') + callListHtml(editorName, group);
     }
     $('#aiDeleteBtn').hidden = aiView.scope === 'system';
-    const paletteVisible = aiView.section === 'tasks' && aiView.paletteOpen;
-    $('#aiPalette').hidden = !paletteVisible;
-    $('.ai-layout').classList.toggle('without-palette', !paletteVisible);
-    $('#aiPaletteToggle').hidden = aiView.section !== 'tasks';
-    $('#aiPaletteToggle').setAttribute('aria-expanded', String(paletteVisible));
+    updateAiPaletteVisibility();
     renderAiPalette();
     bindAiCardEvents();
     updateSaveActions();
@@ -647,7 +693,26 @@ function renderAiScope() {
     renderAiTree();
     renderAiChain();
 }
-function toggleAiPalette() { aiView.paletteOpen = !aiView.paletteOpen; renderAiChain(); }
+function updateAiPaletteVisibility() {
+    const palette = $('#aiPalette');
+    const toggle = $('#aiPaletteToggle');
+    const taskSection = aiView.section === 'tasks';
+    const visible = taskSection && (aiView.paletteOpen ?? (getComputedStyle(palette).position === 'sticky'));
+    palette.hidden = !visible;
+    toggle.hidden = !taskSection;
+    toggle.setAttribute('aria-expanded', String(visible));
+    $('.ai-layout').classList.toggle('without-palette', !visible);
+}
+
+function toggleAiPalette() {
+    const palette = $('#aiPalette');
+    aiView.paletteOpen = palette.hidden;
+    updateAiPaletteVisibility();
+    if (!palette.hidden && getComputedStyle(palette).position === 'static') {
+        palette.scrollIntoView({ block: 'start' });
+        $('#aiPaletteSearch').focus({ preventScroll: true });
+    }
+}
 function selectAiAbility(group) {
     if (!aiTaskChain(group)) return;
     aiView.group = group;
@@ -804,6 +869,7 @@ function updateSaveActions() {
     $('#pageSaveBtn').textContent = saving ? '保存中…' : ai ? '保存配置' : '保存参数';
     $('#aiDraftDot').hidden = !aiSystemDirty && !aiUserDirty;
     $('#settingsDraftDot').hidden = !settingsDirty;
+    document.body.classList.toggle('is-dirty', Boolean(dirty && !saving));
 }
 function saveCurrentPage() { return $('#panel-ai').classList.contains('active') ? saveAiScope() : saveSystemSettingsForm(); }
 function discardCurrentPage() { if ($('#panel-ai').classList.contains('active')) discardAiEdits(); else if (lastSettingsRaw) renderSystemSettings(lastSettingsRaw); }
@@ -1882,6 +1948,7 @@ async function loadVideoQueue() {
     button.disabled = true;
     const list = $('#videoQueueList');
     list.inert = true;
+    if (!list.children.length) { list.innerHTML = skeletonCards(2); list.setAttribute('aria-busy', 'true'); }
     $('#videoQueueStatus').textContent = '正在读取队列…';
     try {
         const data = await invoke('admin.video_queue');
@@ -1891,18 +1958,19 @@ async function loadVideoQueue() {
             const requests = queue.requests ?? [];
             const names = (queue.provider_names ?? []).join('、');
             const rows = requests.map(request => `<tr>
-                <td><strong>${esc(VIDEO_QUEUE_KINDS[request.kind] ?? request.kind)}</strong><div class="hint">${esc(request.id)}</div><div class="hint">用户 ${esc(request.user_id ?? '已移除')} · 记录 ${esc(request.entity_id ?? '—')}</div></td>
-                <td>${esc(request.model)}<div class="hint">${esc(request.provider_task_id ?? '尚无远端任务 ID')}</div></td>
-                <td>${pill(request.cancel_requested ? '取消中' : VIDEO_QUEUE_STATES[request.state] ?? request.state, request.state === 'blocked' ? 'warn' : 'muted')}${request.error_message ? `<div class="hint">${esc(request.error_message)}</div>` : ''}</td>
-                <td>${esc(fmtDate(request.created_at))}<div class="hint">更新 ${esc(fmtDate(request.updated_at))}</div></td>
-                <td class="td-actions">${request.state === 'blocked' ? `<button class="btn btn--ghost btn--sm" data-request-id="${esc(request.id)}" onclick="showVideoQueueResolve(this.dataset.requestId)">核对结果</button> ` : ''}<button class="btn btn--ghost btn--sm" data-queue-action="cancel" data-request-id="${esc(request.id)}" onclick="updateVideoQueue(this)"${request.cancel_requested ? ' disabled' : ''}>${request.cancel_requested ? '取消中' : '取消任务'}</button></td>
+                <td data-label="任务与归属"><strong>${esc(VIDEO_QUEUE_KINDS[request.kind] ?? request.kind)}</strong><div class="hint">${esc(request.id)}</div><div class="hint">用户 ${esc(request.user_id ?? '已移除')} · 记录 ${esc(request.job_id ?? '—')}</div></td>
+                <td data-label="模型与远端任务">${esc(request.model)}<div class="hint">${esc(request.provider_task_id ?? '尚无远端任务 ID')}</div></td>
+                <td data-label="状态">${pill(request.cancel_requested ? '取消中' : VIDEO_QUEUE_STATES[request.state] ?? request.state, request.state === 'blocked' ? 'warn' : 'muted')}${request.error_message ? `<div class="hint">${esc(request.error_message)}</div>` : ''}</td>
+                <td data-label="入队时间">${esc(fmtDate(request.created_at))}<div class="hint">更新 ${esc(fmtDate(request.updated_at))}</div></td>
+                <td class="td-actions" data-label="操作">${request.state === 'blocked' ? `<button class="btn btn--ghost btn--sm" data-request-id="${esc(request.id)}" onclick="showVideoQueueResolve(this.dataset.requestId)">核对结果</button> ` : ''}<button class="btn btn--ghost btn--sm" data-queue-action="cancel" data-request-id="${esc(request.id)}" onclick="updateVideoQueue(this)"${request.cancel_requested ? ' disabled' : ''}>${request.cancel_requested ? '取消中' : '取消任务'}</button></td>
             </tr>`).join('');
             const retryButton = new Date(queue.next_retry_at).getTime() > Date.now() ? `<button class="btn btn--ghost btn--sm" data-queue-action="retry" data-lane-id="${esc(queue.id)}" onclick="updateVideoQueue(this)" title="清除冷却，按原顺序继续处理">立即重试</button>` : '';
-            return `<section class="card video-queue-card"><div class="card-head"><h3>${esc(names || queue.provider)}</h3><span class="count">${requests.length} 个请求</span>${retryButton}</div><div class="video-queue-meta hint">供应商 ${esc(queue.provider)} · 队列 ${esc(queue.id)}${queue.next_retry_at ? ` · 下次可重试 ${esc(fmtDate(queue.next_retry_at))}` : ''}</div><div class="table-scroll"><table><thead><tr><th>任务与归属</th><th>模型与远端任务</th><th>状态</th><th>入队时间</th><th class="td-actions">操作</th></tr></thead><tbody>${rows || stateRow(5, '当前没有等待任务')}</tbody></table></div></section>`;
+            return `<section class="card video-queue-card"><div class="card-head"><h3>${esc(names || queue.provider)}</h3><span class="count">${requests.length} 个请求</span>${retryButton}</div><div class="video-queue-meta hint">供应商 ${esc(queue.provider)} · 队列 ${esc(queue.id)}${queue.next_retry_at ? ` · 下次可重试 ${esc(fmtDate(queue.next_retry_at))}` : ''}</div><div class="table-scroll"><table aria-label="视频队列任务"><thead><tr><th>任务与归属</th><th>模型与远端任务</th><th>状态</th><th>入队时间</th><th class="td-actions">操作</th></tr></thead><tbody>${rows || stateRow(5, '当前没有等待任务')}</tbody></table></div></section>`;
         }).join('');
     } catch (error) {
+        if (!videoQueueSnapshot.length) list.innerHTML = stateBlock('队列读取失败', error.message, true);
         $('#videoQueueStatus').textContent = '读取失败：' + error.message;
-    } finally { button.disabled = false; list.inert = false; }
+    } finally { button.disabled = false; list.inert = false; list.removeAttribute('aria-busy'); }
 }
 
 async function updateVideoQueue(button) {
@@ -1981,16 +2049,38 @@ async function resolveVideoQueue(event) {
     } finally { form.inert = false; }
 }
 
+let logRequest = null;
+
 async function loadLogs() {
     const userId = $('#logUserId').value.trim();
     const dateVal = $('#logDate').value;
+    logRequest?.abort();
+    const request = new AbortController();
+    logRequest = request;
+    paintSkeleton('#logList', 6);
     try {
         const data = await invoke('admin.list_nightly_activity_logs', { query: {
             ...(userId ? { user_id: resourceId(userId) } : {}), ...(dateVal ? { target_date: dateVal } : {}),
-        } });
+        } }, { signal: request.signal });
+        if (logRequest !== request) return;
         tabCache.logs = data;
-        renderLogs(data);
-    } catch (e) { $('#logList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
+        renderLogs(data, Boolean(userId || dateVal));
+    } catch (error) {
+        if (logRequest !== request) return;
+        $('#logCount').textContent = '';
+        $('#logList').innerHTML = stateRow(6, '加载失败：' + error.message, '', true);
+    } finally {
+        if (logRequest === request) {
+            logRequest = null;
+            clearSkeleton('#logList');
+        }
+    }
+}
+
+function clearLogFilters() {
+    $('#logUserId').value = '';
+    $('#logDate').value = '';
+    loadLogs();
 }
 
 // 未列出的状态原样显示。
@@ -2002,18 +2092,21 @@ const LOG_STATUS = Object.freeze({
     skipped: ['跳过', 'muted'],
 });
 
-function renderLogs(data) {
+function renderLogs(data, filtered) {
     renderTable('#logList', 'logCount', data, {
-        unit: '条记录', cols: 6, empty: '暂无夜间活动记录', emptyHint: '当夜间流水线运行后会在此展示',
+        unit: '条记录', cols: 6,
+        empty: filtered ? '没有符合筛选条件的记录' : '暂无夜间活动记录',
+        emptyHint: filtered ? '' : '当夜间流水线运行后会在此展示',
+        emptyAction: filtered ? '<button type="button" class="btn btn--ghost btn--sm" onclick="clearLogFilters()">清除筛选</button>' : '',
         row: r => {
             const [statusLabel, statusTone] = Object.hasOwn(LOG_STATUS, r.status) ? LOG_STATUS[r.status] : [r.status, 'muted'];
             return `<tr style="cursor:pointer" onclick="openLogDetail(${idArgument(r.id)})">
-                <td class="td-id">${r.id}</td>
-                <td><div class="cell-strong">用户 ${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
-                <td>${esc(r.target_date)}</td>
-                <td>${pill(statusLabel, statusTone)}</td>
-                <td>${fmtDate(r.updated_at || r.created_at)}</td>
-                <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${idArgument(r.id)})">查看</button></td>
+                <td class="td-id" data-label="记录">${r.id}</td>
+                <td data-label="用户与摘要"><div class="cell-strong">用户 ${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
+                <td data-label="目标日期">${esc(r.target_date)}</td>
+                <td data-label="状态">${pill(statusLabel, statusTone)}</td>
+                <td data-label="更新时间">${fmtDate(r.updated_at || r.created_at)}</td>
+                <td class="td-actions" data-label="操作"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${idArgument(r.id)})">查看</button></td>
             </tr>`;
         },
     });
@@ -2029,7 +2122,7 @@ async function openLogDetail(id) {
     $('#logStages').innerHTML = `<p class="layer-hint">${esc(item.summary || '暂无摘要')}</p>` + stages.map(stage => {
         const tone = stage.status === 'ok' ? 'green' : stage.status === 'error' ? 'red' : 'muted';
         const label = stage.status === 'ok' ? '已完成' : stage.status === 'error' ? '失败' : stage.status === 'skipped' ? '跳过' : stage.status;
-        return `<div class="log-stage">${icon(tone === 'green' ? 'check' : 'alert')}<div><strong>${esc(stageLabels[stage.stage] ?? stage.stage)}</strong><p class="hint">${esc(stage.reason || stage.error || '')}</p></div><span class="spacer"></span>${pill(label, tone)}</div>`;
+        return `<div class="log-stage tone-${tone}">${icon(tone === 'green' ? 'check' : 'alert')}<div><strong>${esc(stageLabels[stage.stage] ?? stage.stage)}</strong><p class="hint">${esc(stage.reason || stage.error || '')}</p></div><span class="spacer"></span>${pill(label, tone)}</div>`;
     }).join('');
     $('#logDetailBody').textContent = JSON.stringify(item, null, 2);
     openModal('logDetailModal');
@@ -2075,7 +2168,10 @@ document.addEventListener('click', (e) => {
     const closer = target.closest('[data-close]');
     if (closer) closeModal(closer.closest('.modal').id);
 });
-window.addEventListener('resize', () => closeAllMenus());
+window.addEventListener('resize', () => {
+    closeAllMenus();
+    if (aiView.paletteOpen === null) updateAiPaletteVisibility();
+});
 document.addEventListener('scroll', (e) => {
     if (e.target instanceof Element && e.target.closest('.menu')) return;
     closeAllMenus();
@@ -2119,6 +2215,7 @@ const svcUpdate = {
     logTruncated: false,
     pollTimer: null,
     pollRevision: 0,
+    statusRequest: null,
     checking: false,
     historyOpen: false,
 };
@@ -2154,36 +2251,69 @@ function randomRequestId() {
 
 function stopServiceUpdatePolling() {
     svcUpdate.pollRevision++;
+    svcUpdate.statusRequest?.abort();
+    svcUpdate.statusRequest = null;
     clearTimeout(svcUpdate.pollTimer);
     svcUpdate.pollTimer = null;
 }
 
 async function loadServiceUpdate(explicit = false) {
     if (!$('#panel-serviceUpdate').classList.contains('active')) return;
+    clearTimeout(svcUpdate.pollTimer);
+    svcUpdate.pollTimer = null;
+    svcUpdate.statusRequest?.abort();
+    const request = new AbortController();
+    svcUpdate.statusRequest = request;
     try {
-        applyServiceUpdateStatus(await invoke('update.get_service_updater_status'));
+        const data = await invoke('update.get_service_updater_status', {}, { signal: request.signal });
+        if (svcUpdate.statusRequest !== request) return;
+        applyServiceUpdateStatus(data);
         if (explicit) toast('更新器状态已刷新');
     } catch (error) {
+        if (svcUpdate.statusRequest !== request) return;
         // 后端重启期间连接失败只更新状态条，保留上一次可用视图并继续轮询。
         $('#serviceUpdateStatus').textContent = error.isNetwork
             ? '连接不上后端，可能正在重启；页面会自动重试。'
             : '读取更新器状态失败：' + error.message;
+    } finally {
+        if (svcUpdate.statusRequest === request) {
+            svcUpdate.statusRequest = null;
+            armServiceUpdatePolling();
+        }
     }
-    armServiceUpdatePolling();
 }
 
 function armServiceUpdatePolling() {
-    if (!$('#panel-serviceUpdate').classList.contains('active')) return;
+    if (svcUpdate.statusRequest || !$('#panel-serviceUpdate').classList.contains('active')) return;
     const revision = svcUpdate.pollRevision;
     clearTimeout(svcUpdate.pollTimer);
     const delay = svcUpdate.task && !svcTaskTerminal(svcUpdate.task) ? 1500 : 6000;
-    svcUpdate.pollTimer = setTimeout(async () => {
-        if (revision !== svcUpdate.pollRevision) return;
-        try {
-            applyServiceUpdateStatus(await invoke('update.get_service_updater_status'));
-        } catch { /* 下一轮继续 */ }
-        if (revision === svcUpdate.pollRevision) armServiceUpdatePolling();
+    svcUpdate.pollTimer = setTimeout(() => {
+        if (revision === svcUpdate.pollRevision) void loadServiceUpdate();
     }, delay);
+}
+
+function currentServiceUpdateCheck(status) {
+    const task = status?.latest_task;
+    // 检查任务在预检时已有 check，只有完成后才包含远端比较结果。
+    if (task?.kind !== 'check' || task.state !== 'done' || !task.check) return null;
+    const repo = status.repo;
+    if (!repo?.upstream || !repo.current_commit || !repo.remote_commit) return null;
+    const checkedRepo = task.check.repo;
+    const matchesRepo = checkedRepo.upstream === repo.upstream
+        && checkedRepo.current_commit === repo.current_commit
+        && checkedRepo.remote_commit === repo.remote_commit;
+    return matchesRepo ? task.check : null;
+}
+
+function serviceUpdateAction(status, check) {
+    if (!check || status.active_task) return null;
+    const { current_commit: current, remote_commit: target, behind } = check.repo;
+    if (check.incoming.length) return { target, count: behind, redeploy: false };
+
+    const running = status.runtime?.running_commit;
+    if (current !== target || !running || running === target) return null;
+    return { target, count: 0, redeploy: true };
 }
 
 function applyServiceUpdateStatus(data) {
@@ -2198,14 +2328,17 @@ function applyServiceUpdateStatus(data) {
         return;
     }
     const repo = data.repo || {};
-    const incoming = (data.active_task?.check || data.latest_task?.check)?.incoming || [];
+    const check = currentServiceUpdateCheck(data);
+    const action = serviceUpdateAction(data, check);
+    const applyButton = $('#serviceUpdateApplyBtn');
     $('#serviceUpdateDisabled').hidden = true;
     $('#serviceUpdateBody').hidden = false;
     $('#serviceUpdateCheckBtn').disabled = Boolean(data.active_task) || svcUpdate.checking;
-    $('#serviceUpdateApplyBtn').hidden = !incoming.length || Boolean(data.active_task);
+    applyButton.hidden = !action;
+    applyButton.textContent = action?.redeploy ? '重新部署' : '更新到最新';
     renderServiceUpdateRepo(repo, data.runtime);
     renderServiceUpdateIssues(data.preflight_issues || []);
-    renderServiceUpdateIncoming(repo, incoming);
+    renderServiceUpdateIncoming(repo, check);
     // 任务结束后由 latest_task 取终态；查看历史任务时不抢占当前视图。
     const active = data.active_task;
     const latest = data.latest_task;
@@ -2230,16 +2363,26 @@ function renderServiceUpdateIssues(issues) {
     $('#svcPreflightList').innerHTML = issues.map(i => `<li><span class="tl-dot amber"></span><div class="tl-body"><div class="title">${esc(i.check)}</div><div class="meta">${esc(i.message)}</div></div></li>`).join('');
 }
 
-function renderServiceUpdateIncoming(repo, incoming) {
-    $('#svcIncoming').textContent = incoming.length ? `${incoming.length} 个提交` : '已是最新';
+function renderServiceUpdateIncoming(repo, check) {
+    const incoming = check?.incoming ?? [];
+    const confirmedEmpty = Boolean(check) && !repo.behind;
+    const sameCommit = confirmedEmpty && repo.current_commit === repo.remote_commit;
+    let summary = '待检查';
+    if (incoming.length) summary = `${incoming.length} 个提交`;
+    else if (confirmedEmpty) summary = sameCommit ? '已是最新' : '无可更新提交';
+    $('#svcIncoming').textContent = summary;
     $('#svcIncomingHint').textContent = repo.behind ? `落后 upstream ${repo.behind} 个提交` : '';
     $('#svcIncomingCount').textContent = incoming.length ? `${incoming.length} 条` : '';
     $('#svcIncomingList').innerHTML = incoming.length ? incoming.map(c => `<tr>
-        <td><span class="cell-strong" style="font-family:var(--font-mono);">${esc(c.short_sha)}</span></td>
-        <td><div class="cell-strong">${esc(c.subject)}</div></td>
-        <td><div class="cell-meta">${esc(c.author)}</div></td>
-        <td><div class="cell-meta">${fmtDate(c.committed_at)}</div></td>
-    </tr>`).join('') : stateRow(4, '没有可更新提交', '当前分支已与 upstream 一致');
+        <td data-label="提交"><span class="cell-strong" style="font-family:var(--font-mono);">${esc(c.short_sha)}</span></td>
+        <td data-label="说明"><div class="cell-strong">${esc(c.subject)}</div></td>
+        <td data-label="作者"><div class="cell-meta">${esc(c.author)}</div></td>
+        <td data-label="时间"><div class="cell-meta">${fmtDate(c.committed_at)}</div></td>
+    </tr>`).join('') : stateRow(
+        4,
+        confirmedEmpty ? '没有可更新提交' : '待检查更新',
+        sameCommit ? '当前分支已与 upstream 一致' : confirmedEmpty ? '' : '点击“检查更新”获取提交列表',
+    );
 }
 
 function syncServiceUpdateTask(task) {
@@ -2336,18 +2479,22 @@ async function trackServiceUpdateTask(taskId) {
 }
 
 function openServiceUpdateConfirm() {
-    const check = svcUpdate.status?.latest_task?.kind === 'check' ? svcUpdate.status.latest_task : null;
-    const repo = check?.check?.repo || svcUpdate.status?.repo || {};
-    const incoming = check?.check?.incoming || [];
-    const target = repo.remote_commit || incoming[0]?.sha || '';
-    if (!target) { toast('没有可更新的目标提交，请先检查更新', 'warn'); return; }
+    const status = svcUpdate.status;
+    const check = currentServiceUpdateCheck(status);
+    const action = serviceUpdateAction(status, check);
+    if (!action) { toast('没有可更新的目标提交，请先检查更新', 'warn'); return; }
+
+    const { target, count, redeploy } = action;
+    $('#svcConfirmTitle').textContent = redeploy ? '确认重新部署服务' : '确认更新服务';
     $('#svcConfirmTarget').textContent = target.slice(0, 12);
-    $('#svcConfirmCount').textContent = String(incoming.length || repo.behind || 0);
-    const running = svcUpdate.status?.runtime;
-    const drifted = Boolean(running?.running_commit && running.running_commit !== repo.current_commit);
+    $('#svcConfirmCount').textContent = String(count);
+    const running = status.runtime?.running_commit;
+    const drifted = Boolean(running && running !== check.repo.current_commit);
     $('#svcConfirmNote').hidden = !drifted;
-    $('#svcConfirmNote').textContent = '注意：仓库代码与运行版本不一致（上次部署未完成），本次更新会把两者重新对齐。';
-    $('#svcConfirmSubmit').onclick = () => applyServiceUpdate(target);
+    $('#svcConfirmNote').textContent = '仓库代码与运行版本不一致，本次部署将重新构建并重启服务。';
+    const submit = $('#svcConfirmSubmit');
+    submit.textContent = redeploy ? '确认并重新部署' : '确认并开始更新';
+    submit.onclick = () => applyServiceUpdate(target);
     openModal('serviceUpdateConfirmModal');
 }
 
@@ -2377,12 +2524,12 @@ async function loadServiceUpdateHistory() {
     try {
         const data = await invoke('update.list_service_update_tasks');
         $('#svcHistoryList').innerHTML = (data.tasks || []).length ? data.tasks.map(t => `<tr>
-            <td><span style="font-family:var(--font-mono);">${esc(t.task_id.slice(0, 8))}</span></td>
-            <td>${t.kind === 'update' ? '更新' : '检查'}</td>
-            <td>${svcStateBadge(t)}</td>
-            <td><span style="font-family:var(--font-mono);">${esc(t.target_commit ? t.target_commit.slice(0, 12) : '—')}</span></td>
-            <td><div class="cell-meta">${fmtDate(t.created_at)}</div></td>
-            <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="viewServiceUpdateTask('${esc(t.task_id)}')">查看</button></td>
+            <td data-label="任务"><span style="font-family:var(--font-mono);">${esc(t.task_id.slice(0, 8))}</span></td>
+            <td data-label="类型">${t.kind === 'update' ? '更新' : '检查'}</td>
+            <td data-label="状态">${svcStateBadge(t)}</td>
+            <td data-label="目标提交"><span style="font-family:var(--font-mono);">${esc(t.target_commit ? t.target_commit.slice(0, 12) : '—')}</span></td>
+            <td data-label="时间"><div class="cell-meta">${fmtDate(t.created_at)}</div></td>
+            <td class="td-actions" data-label="操作"><button class="btn btn--ghost btn--sm" onclick="viewServiceUpdateTask('${esc(t.task_id)}')">查看</button></td>
         </tr>`).join('') : stateRow(6, '暂无历史任务');
     } catch (error) {
         $('#svcHistoryList').innerHTML = stateRow(6, '加载失败：' + error.message, '', true);
@@ -2420,6 +2567,20 @@ $$('.modal').forEach(modal => {
     if (heading) modal.setAttribute('aria-labelledby', heading.id);
 });
 $$('.nav-item').forEach(button => { button.setAttribute('aria-label', TABS[button.dataset.tab].title); button.title = TABS[button.dataset.tab].title; });
+const loginPassToggle = $('#loginPassToggle');
+if (loginPassToggle) loginPassToggle.addEventListener('click', () => {
+    const input = $('#loginPass');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    loginPassToggle.setAttribute('aria-pressed', String(show));
+    const glyph = loginPassToggle.querySelector('[data-icon]');
+    if (glyph) glyph.innerHTML = icon(show ? 'eyeOff' : 'eye');
+});
 injectIcons();
 updateSaveActions();
+const topbar = $('.topbar');
+new ResizeObserver(() => {
+    const height = topbar.offsetHeight;
+    if (height) document.documentElement.style.setProperty('--topbar-height', `${height}px`);
+}).observe(topbar, { box: 'border-box' });
 if (getToken()) enterApp();
