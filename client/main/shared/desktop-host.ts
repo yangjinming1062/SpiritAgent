@@ -1,4 +1,4 @@
-import type { SpiritAgentUiPalette } from '@ipc/contracts'
+import type { DockPreviewSelection, SpiritAgentUiPalette } from '@ipc/contracts'
 
 import type { RunningApplicationsState } from './desktop-applications'
 import type { DesktopJumpListTask } from './desktop-jump-list'
@@ -20,6 +20,12 @@ export interface DesktopHostTrayLayout {
   clip: DesktopHostWindow['bounds']
 }
 
+export interface DesktopHostDockPreview {
+  requestId: number
+  anchor: DesktopHostWindow['bounds']
+  windowIds: string[]
+}
+
 export interface DesktopHostOptions {
   helperPath: string
   journalPath: string
@@ -30,6 +36,7 @@ export interface DesktopHostOptions {
   onApplicationsChanged?: (state: RunningApplicationsState) => void
   onWorkAreaChanged?: (bounds: DesktopHostWindow['bounds']) => void
   onSystemTrayChanged?: (tray: DesktopHostSystemTray | null) => void
+  onDockPreviewSelected?: (selection: DockPreviewSelection) => void
 }
 
 export interface DesktopHostOperations {
@@ -42,13 +49,15 @@ export interface DesktopHostOperations {
   }) => Promise<void>
   setPalette: (palette: SpiritAgentUiPalette) => Promise<void>
   setTrayLayout: (layout: DesktopHostTrayLayout | null, eligible?: () => boolean) => Promise<void>
+  setDockPreview: (layout: DesktopHostDockPreview | null, eligible?: () => boolean) => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (
     windowId: string,
     allowRemote: boolean,
     eligible: () => boolean,
-    continuation?: () => boolean
+    continuation?: () => boolean,
+    previewRequestId?: number
   ) => Promise<void>
   cancelExternalInteraction: () => Promise<void>
   launchExternal: (

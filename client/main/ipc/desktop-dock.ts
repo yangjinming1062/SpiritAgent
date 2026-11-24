@@ -4,7 +4,7 @@ import path from 'node:path'
 import { type BrowserWindow, dialog, type IpcMain, type WebContents } from 'electron'
 import log from 'electron-log/main'
 
-import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
+import { type DockCatalog, type DockEntry, type DockPreviewRequest, type DockState, IPC } from '@ipc/contracts'
 
 import { CLIENT_LIMITS } from '../../shared/constants'
 import type { ApplicationEligibility, RunningApplicationsState } from '../shared/desktop-applications'
@@ -42,11 +42,13 @@ export function registerDesktopDock(options: {
   onRunningApplicationsChanged: (listener: (state: RunningApplicationsState) => void) => () => void
   captureEligibility: (sender: WebContents, interaction?: boolean) => ApplicationEligibility
   refreshApplications: (sender: WebContents) => Promise<void>
+  setDockPreview: (sender: WebContents, request: DockPreviewRequest, windowIds: string[]) => Promise<void>
   activateExternal: (
     sender: WebContents,
     windowId: string,
     allowRemote: boolean,
-    eligible: ApplicationEligibility
+    eligible: ApplicationEligibility,
+    previewRequestId?: number
   ) => Promise<void>
   launchExternal: (
     sender: WebContents,
@@ -598,11 +600,30 @@ export function registerDesktopDock(options: {
       return add(raw.map(fileSelection))
     })
   })
-  options.ipcMain.handle(IPC.invoke.dockActivate, (event, id: unknown, windowId: unknown) => {
+  options.ipcMain.handle(IPC.invoke.dockSetPreview, (event, raw: unknown) => {
+    assertSender(event.sender)
+
+    if (process.platform !== 'win32' || !isDockPreviewRequest(raw)) {
+      return
+    }
+
+    const windowIds =
+      raw.layout && running.state().status === 'ready'
+        ? windowsFor(findRunningApplication(raw.layout.entryId)).map(window => window.id)
+        : []
+
+    return options.setDockPreview(event.sender, raw, windowIds)
+  })
+  options.ipcMain.handle(IPC.invoke.dockActivate, (event, id: unknown, windowId: unknown, previewId: unknown) => {
     assertSender(event.sender)
     const eligible = options.captureEligibility(event.sender)
 
-    if (typeof id !== 'string' || (windowId !== undefined && typeof windowId !== 'string')) {
+    if (
+      typeof id !== 'string' ||
+      (windowId !== undefined && typeof windowId !== 'string') ||
+      (previewId !== undefined &&
+        (process.platform !== 'win32' || typeof windowId !== 'string' || !isPreviewRequestId(previewId)))
+    ) {
       throw new Error('无效程序或窗口。')
     }
 
@@ -621,7 +642,7 @@ export function registerDesktopDock(options: {
             eligible,
             ready: running.state().status === 'ready',
             activate: (windowId, allowRemote, eligible) =>
-              options.activateExternal(event.sender, windowId, allowRemote, eligible)
+              options.activateExternal(event.sender, windowId, allowRemote, eligible, previewId)
           })
         ) {
           return
@@ -862,4 +883,38 @@ export function registerDesktopDock(options: {
       return commit(entries.filter(entry => entry.id !== id))
     })
   })
+}
+
+function isPreviewRequestId(raw: unknown): raw is number {
+  return typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0
+}
+
+function isDockPreviewRequest(raw: unknown): raw is DockPreviewRequest {
+  if (!raw || typeof raw !== 'object') {
+    return false
+  }
+
+  const { epoch, requestId, layout } = raw as Partial<DockPreviewRequest>
+
+  if (!Number.isSafeInteger(epoch) || !isPreviewRequestId(requestId)) {
+    return false
+  }
+
+  if (layout === null) {
+    return true
+  }
+
+  if (!layout || typeof layout.entryId !== 'string' || !layout.anchor || !layout.viewport) {
+    return false
+  }
+
+  const { x, y, width, height } = layout.anchor
+
+  return (
+    [x, y, width, height, layout.viewport.width, layout.viewport.height].every(Number.isFinite) &&
+    width > 0 &&
+    height > 0 &&
+    layout.viewport.width > 0 &&
+    layout.viewport.height > 0
+  )
 }

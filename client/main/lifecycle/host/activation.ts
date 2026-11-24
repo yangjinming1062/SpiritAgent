@@ -351,7 +351,8 @@ export function createExternalActivation(runtime: ActivationRuntime) {
     allowRemote: boolean,
     continuation: () => boolean,
     generation: number,
-    host: ChildProcessWithoutNullStreams | null
+    host: ChildProcessWithoutNullStreams | null,
+    previewRequestId?: number
   ): Promise<void> => {
     clear()
 
@@ -377,7 +378,12 @@ export function createExternalActivation(runtime: ActivationRuntime) {
 
     try {
       const result = await runtime.request<unknown>(
-        { command: 'activate_external', window_id: windowId, allow_remote: allowRemote },
+        {
+          command: 'activate_external',
+          window_id: windowId,
+          allow_remote: allowRemote,
+          preview_request_id: previewRequestId
+        },
         3_000
       )
 

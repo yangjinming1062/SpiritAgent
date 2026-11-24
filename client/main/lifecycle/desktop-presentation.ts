@@ -9,6 +9,7 @@ import {
   type DesktopMediaBytes,
   type DesktopMediaReference,
   type DesktopTrayLayout,
+  type DockPreviewRequest,
   getUiPalette,
   IPC,
   normalizeUiTheme,
@@ -105,6 +106,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let nativeSystemTray: PresentationState['systemTray'] = null
   let nativeSystemTrayReceived = false
   let trayLayoutRevision = 0
+  let lastDockPreviewRequest: Pick<DockPreviewRequest, 'epoch' | 'requestId'> | null = null
+  let dockPreview: { requestId: number; current: () => boolean } | null = null
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
   let lastActivity: StageActivity = { locked: false }
@@ -156,6 +159,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const health = createDesktopHealth({
     onDisplaysChanged,
     onLock: () => {
+      clearDockPreview()
       foreground = false
       publish()
     },
@@ -200,6 +204,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     journalPath: journal.journalPath,
     log: options.log,
     onForegroundChanged: state => {
+      if (state.fullscreen) {
+        clearDockPreview()
+      }
+
       if (
         process.platform !== 'darwin' &&
         foreground === state.active &&
@@ -220,6 +228,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       publish()
     },
     onApplicationsChanged: state => {
+      if (state.status !== 'ready') {
+        clearDockPreview()
+      }
+
       if (status === 'starting' || status === 'active') {
         setRunningApplications(
           state.status === 'unavailable' && (process.platform !== 'darwin' || native.accessibility().granted)
@@ -230,6 +242,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     },
     onWorkAreaChanged: updateNativeWorkArea,
     onSystemTrayChanged: updateNativeSystemTray,
+    onDockPreviewSelected: selection => {
+      if (dockPreview?.requestId === selection.requestId && dockPreview.current()) {
+        dockPreview = null
+        sendToWindow(windows.getInteractive(), IPC.event.dockPreviewSelected, selection)
+      }
+    },
     onFailure: reason => {
       if (status === 'inactive' || status === 'failed') {
         return
@@ -542,6 +560,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     prepareDesktopMedia &&= preservePreparation
     health.stopMode()
+    clearDockPreview()
     status = 'recovering'
     nativeWorkArea = null
     nativeWorkAreaEpoch = null
@@ -820,6 +839,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function onDisplaysChanged(): void {
+    clearDockPreview()
     void refreshDisplayResolutions()
     const activeDisplayId = activeDisplay?.id
     const displays = screen.getAllDisplays()
@@ -965,6 +985,91 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       throw error
     }
+  }
+
+  function clearDockPreview(): void {
+    if (!dockPreview) {
+      return
+    }
+
+    dockPreview = null
+    void native.setDockPreview(null).catch(error => options.log(`[Dock] closing preview: ${errorMessage(error)}`))
+  }
+
+  async function setDockPreview(sender: WebContents, request: DockPreviewRequest, windowIds: string[]): Promise<void> {
+    assertDesktop(sender)
+
+    if (
+      process.platform !== 'win32' ||
+      request.epoch !== stageEpoch ||
+      (lastDockPreviewRequest?.epoch === request.epoch && lastDockPreviewRequest.requestId >= request.requestId)
+    ) {
+      return
+    }
+
+    lastDockPreviewRequest = { epoch: request.epoch, requestId: request.requestId }
+
+    if (!request.layout || !windowIds.length) {
+      clearDockPreview()
+
+      return
+    }
+
+    const eligible = captureDesktopEligibility(sender, request.epoch)
+    const win = windows.getInteractive()
+    const display = activeDisplay
+
+    if (!eligible() || fullscreen || !win || !display || !win.isVisible()) {
+      clearDockPreview()
+
+      return
+    }
+
+    const { anchor, viewport } = request.layout
+    const content = win.getContentBounds()
+
+    // 使用当前交互屏的内容坐标，屏幕变化或 AppBar 压缩中的旧测量直接丢弃。
+    if (
+      content.x !== display.bounds.x ||
+      content.y !== display.bounds.y ||
+      content.width !== display.bounds.width ||
+      content.height !== display.bounds.height ||
+      Math.abs(content.width - viewport.width) > 1 ||
+      Math.abs(content.height - viewport.height) > 1 ||
+      anchor.x < 0 ||
+      anchor.y < viewport.height - DESKTOP_LAYOUT.bottomInset - 1 ||
+      anchor.width > DESKTOP_LAYOUT.barHeight ||
+      anchor.height > DESKTOP_LAYOUT.barHeight ||
+      anchor.x + anchor.width > viewport.width + 1 ||
+      anchor.y + anchor.height > viewport.height + 1
+    ) {
+      clearDockPreview()
+
+      return
+    }
+
+    const preview = {
+      requestId: request.requestId,
+      current: () => dockPreview === preview && eligible() && !fullscreen && win.isVisible()
+    }
+
+    dockPreview = preview
+
+    const left = Math.round(anchor.x)
+    const top = Math.round(anchor.y)
+    await native.setDockPreview(
+      {
+        requestId: preview.requestId,
+        anchor: screen.dipToScreenRect(win, {
+          x: content.x + left,
+          y: content.y + top,
+          width: Math.max(1, Math.round(anchor.x + anchor.width) - left),
+          height: Math.max(1, Math.round(anchor.y + anchor.height) - top)
+        }),
+        windowIds
+      },
+      preview.current
+    )
   }
 
   function captureApplicationEligibility(sender: WebContents, interaction = true): ApplicationEligibility {
@@ -1252,6 +1357,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   return {
     captureApplicationEligibility,
+    setDockPreview,
     getRunningApplications: () => runningApplications,
     onRunningApplicationsChanged: (listener: (state: RunningApplicationsState) => void): (() => void) => {
       applicationListeners.add(listener)
@@ -1267,7 +1373,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       sender: WebContents,
       windowId: string,
       allowRemote: boolean,
-      eligible: ApplicationEligibility
+      eligible: ApplicationEligibility,
+      previewRequestId?: number
     ): Promise<void> => {
       assertDesktop(sender)
 
@@ -1280,7 +1387,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
         // 桌面已在前台，沿用原始交互；不重新激活已失焦的桌面。
         win.focus()
-        await native.activateExternal(windowId, allowRemote, eligible.current, eligible.continuation)
+        await native.activateExternal(windowId, allowRemote, eligible.current, eligible.continuation, previewRequestId)
       })
     },
     launchExternal: (
@@ -1331,6 +1438,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     dispose,
     clearUiState: (removedAccountId: string) => uiState.forgetAccount(removedAccountId),
     accountChanged: () => {
+      clearDockPreview()
       uiState.accountChanged()
       suppressAutoRestore = true
       prepareDesktopMedia = false

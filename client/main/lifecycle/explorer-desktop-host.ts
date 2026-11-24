@@ -227,6 +227,12 @@ export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopH
             applicationsMessage(message)
           } else if (message.event === 'external_focus') {
             activation.message(message)
+          } else if (message.event === 'dock_preview_selected') {
+            const { request_id: requestId, window_id: windowId } = message
+
+            if (typeof requestId === 'number' && Number.isSafeInteger(requestId) && typeof windowId === 'string') {
+              options.onDockPreviewSelected?.({ requestId, windowId })
+            }
           } else if (message.event === 'work_area') {
             if (!isPhysicalRect(message.work_area)) {
               throw new Error('Desktop helper returned an invalid work area')
@@ -345,6 +351,29 @@ export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopH
         await request({ command: 'set_tray_layout', layout }, 4_000)
       })
     },
+    setDockPreview: async (layout, eligible = () => true) => {
+      if (state !== 'running' || !eligible()) {
+        return
+      }
+
+      if (layout && Buffer.byteLength(JSON.stringify(layout.windowIds)) > 60_000) {
+        await request({ command: 'set_dock_preview', layout: null }, 1_000)
+        throw new Error('运行窗口列表超过预览传输上限。')
+      }
+
+      await request(
+        {
+          command: 'set_dock_preview',
+          layout: layout && {
+            request_id: layout.requestId,
+            anchor: layout.anchor,
+            window_ids: layout.windowIds,
+            expires_at: Date.now() + 650
+          }
+        },
+        1_000
+      )
+    },
     setPalette: palette => {
       const currentGeneration = generation
 
@@ -385,7 +414,7 @@ export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopH
         await request({ command: 'refresh_applications' }, 4_000)
       })
     },
-    activateExternal: (windowId, allowRemote, eligible, continuation = eligible) => {
+    activateExternal: (windowId, allowRemote, eligible, continuation = eligible, previewRequestId) => {
       const currentGeneration = generation
 
       return serialize(async () => {
@@ -393,7 +422,7 @@ export function createExplorerDesktopHost(options: DesktopHostOptions): DesktopH
           throw new Error('桌面已改变，请重新选择窗口。')
         }
 
-        await activation.activate(windowId, allowRemote, continuation, currentGeneration, child)
+        await activation.activate(windowId, allowRemote, continuation, currentGeneration, child, previewRequestId)
       })
     },
     cancelExternalInteraction: () => {

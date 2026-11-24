@@ -169,6 +169,7 @@ export function DesktopBottomBar({
         onContentWidthChange={setDockWidth}
         onMenuOpenChange={onDockOpenChange}
         overlayActive={dockOverlayActive}
+        previewBlocked={overlayActive}
       />
       <div className={styles.avatarSlot}>{avatar}</div>
       <div className={styles.rightRail} data-dock-motion-group>

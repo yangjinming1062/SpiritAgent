@@ -6,6 +6,8 @@ import type {
   DesktopBackgroundRequest,
   DesktopTrayLayout,
   DockCatalog,
+  DockPreviewRequest,
+  DockPreviewSelection,
   DockState,
   DockTask,
   PresentationMode,
@@ -59,6 +61,8 @@ export type {
   DockCatalogSource,
   DockCatalogSourceKey,
   DockEntry,
+  DockPreviewRequest,
+  DockPreviewSelection,
   DockState,
   DockTask,
   DockWindow,
@@ -176,7 +180,8 @@ export interface IpcInvokeContract {
   'spiritagent:dock:add-from-catalog': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:add-from-files': () => Promise<DockState>
   'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
-  'spiritagent:dock:activate': (id: string, windowId?: string) => Promise<void>
+  'spiritagent:dock:set-preview': (request: DockPreviewRequest) => Promise<void>
+  'spiritagent:dock:activate': (id: string, windowId?: string, previewRequestId?: number) => Promise<void>
   'spiritagent:dock:activate-catalog': (catalogId: string) => Promise<void>
   'spiritagent:dock:close-windows': (id: string, windowIds: string[]) => Promise<void>
   'spiritagent:dock:pin': (runningId: string, beforeEntryId?: string) => Promise<DockState>
@@ -353,6 +358,7 @@ export interface IpcEventContract {
   'spiritagent:presentation:changed': [payload: PresentationState]
   'spiritagent:presentation:pointer-position': [payload: { x: number; y: number }]
   'spiritagent:dock:changed': [payload: DockState]
+  'spiritagent:dock:preview-selected': [payload: DockPreviewSelection]
   'spiritagent:desktop:navigate': [payload: AppNavigationTarget]
   'spiritagent:background:media': [payload: DesktopBackground]
   'spiritagent:presentation:background-playback': [payload: DesktopBackgroundPlayback]
@@ -408,6 +414,7 @@ export const IPC = {
     dockAddFromCatalog: 'spiritagent:dock:add-from-catalog',
     dockAddFromFiles: 'spiritagent:dock:add-from-files',
     dockAddDropped: 'spiritagent:dock:add-dropped',
+    dockSetPreview: 'spiritagent:dock:set-preview',
     dockActivate: 'spiritagent:dock:activate',
     dockActivateCatalog: 'spiritagent:dock:activate-catalog',
     dockCloseWindows: 'spiritagent:dock:close-windows',
@@ -497,6 +504,7 @@ export const IPC = {
     presentationChanged: 'spiritagent:presentation:changed',
     presentationPointerPosition: 'spiritagent:presentation:pointer-position',
     dockChanged: 'spiritagent:dock:changed',
+    dockPreviewSelected: 'spiritagent:dock:preview-selected',
     desktopNavigate: 'spiritagent:desktop:navigate',
     backgroundMedia: 'spiritagent:background:media',
     backgroundPlayback: 'spiritagent:presentation:background-playback',

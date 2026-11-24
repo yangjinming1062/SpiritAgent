@@ -228,6 +228,7 @@ export function createMacosDesktopHost(options: DesktopHostOptions): DesktopHost
     recover: async () => false,
     setPalette: async () => {},
     setTrayLayout: async () => {},
+    setDockPreview: async () => {},
     focus: async (handle, eligible = () => true) => {
       const win = windowForHandle(handle)
 

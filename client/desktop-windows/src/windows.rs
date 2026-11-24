@@ -1,4 +1,4 @@
-use crate::{Bounds, Command, Palette, Result, TrayLayout, WindowRole, WindowSpec, commands, emit};
+use crate::{Bounds, Command, DockPreviewLayout, Palette, Result, TrayLayout, WindowRole, WindowSpec, commands, emit};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs::{self, File};
@@ -48,6 +48,7 @@ use tray_placement::RestoreTrayPlacement;
 mod tray_style;
 use tray_style::{RestoreTrayStyle, TrayStyle};
 mod command;
+mod dock_preview;
 mod geometry;
 mod identity;
 mod journal;
@@ -715,9 +716,13 @@ pub fn host(path: &Path) -> Result<()> {
     let _lock = MutexGuard::exclusive("Local\\SpiritAgentDesktopHost")?;
     let receiver = commands();
     let mut session: Option<Session> = None;
+    let mut last_poll = Instant::now();
     emit(json!({ "event": "host_ready" }));
     loop {
-        let command = receiver.recv_timeout(Duration::from_millis(200));
+        let preview_active = session.as_ref().is_some_and(Session::dock_preview_active);
+        let interval = if preview_active { 20 } else { 200 };
+        let command = receiver.recv_timeout(Duration::from_millis(interval));
+        let received = command.is_ok();
         let mut message: MSG = unsafe { zeroed() };
         while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             unsafe {
@@ -750,9 +755,13 @@ pub fn host(path: &Path) -> Result<()> {
             Err(RecvTimeoutError::Timeout) => {}
         }
         if let Some(active) = session.as_mut() {
-            if let Err(reason) = active.poll() {
-                return Err(interrupt_session(Some(active), "host_failure", reason));
+            if received || !preview_active || last_poll.elapsed() >= Duration::from_millis(200) {
+                last_poll = Instant::now();
+                if let Err(reason) = active.poll() {
+                    return Err(interrupt_session(Some(active), "host_failure", reason));
+                }
             }
+            active.poll_dock_preview();
         }
     }
 }

@@ -13,6 +13,7 @@ import { useStrings } from '@/shared/strings'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
+import { useDesktopDockPreview } from './desktop-dock-preview'
 import styles from './desktop.module.css'
 
 type DockState = Awaited<ReturnType<DesktopBridge['dock']['getState']>>
@@ -26,12 +27,14 @@ type DockTaskMenuState = { entryId: string; loading: boolean; tasks: DockTask[] 
 export function DesktopDock({
   menuEnabled,
   overlayActive,
+  previewBlocked,
   onBeforeOpen,
   onContentWidthChange,
   onMenuOpenChange
 }: {
   menuEnabled: boolean
   overlayActive: boolean
+  previewBlocked: boolean
   onBeforeOpen: () => void
   onContentWidthChange: (width: number) => void
   onMenuOpenChange: (open: boolean) => void
@@ -39,6 +42,7 @@ export function DesktopDock({
   const t = useStrings().desktopShell
   const presentation = useStore($presentation)
   const isMac = desktopPlatform() === 'darwin'
+  const isWindows = desktopPlatform() === 'win32'
 
   const [state, setState] = useState<DockState>({
     entries: [],
@@ -71,6 +75,14 @@ export function DesktopDock({
   const busyRef = useRef(false)
   const beginAsync = useAsyncGuard()
 
+  const preview = useDesktopDockPreview(
+    isWindows && menuEnabled && !previewBlocked && !busy && !draggingOver && state.runningStatus === 'ready',
+    presentation.stageEpoch,
+    (entryId, windowId, requestId) => void run(() => shellApi().dock.activate(entryId, windowId, requestId))
+  )
+
+  const { revalidate: revalidatePreview } = preview
+
   const closePicker = useCallback((restoreFocus = true): void => {
     pickerEpochRef.current += 1
     setPicker(null)
@@ -81,6 +93,7 @@ export function DesktopDock({
   }, [])
 
   const openPicker = (mode: DockPickerMode, trigger: HTMLElement): void => {
+    preview.dismiss()
     onBeforeOpen()
     setMenu(null)
     pickerEpochRef.current += 1
@@ -109,6 +122,7 @@ export function DesktopDock({
     }
 
     const update = (): void => {
+      revalidatePreview()
       const gap = Number.parseFloat(getComputedStyle(dock).columnGap) || 0
       const warning = dock.querySelector<HTMLElement>('[role="status"], [data-permission-request]')
       onContentWidthChange(
@@ -122,11 +136,13 @@ export function DesktopDock({
     const observer = new ResizeObserver(update)
     observer.observe(content)
     observer.observe(trigger)
+    observer.observe(dock)
     update()
 
     return () => observer.disconnect()
   }, [
     onContentWidthChange,
+    revalidatePreview,
     state.runningStatus,
     presentation.accessibility.granted,
     presentation.accessibility.requestable
@@ -278,6 +294,7 @@ export function DesktopDock({
       return
     }
 
+    preview.dismiss()
     onBeforeOpen()
     closePicker(false)
     const rect = button.getBoundingClientRect()
@@ -424,12 +441,20 @@ export function DesktopDock({
               openMenu({ id: entry.id, pinned }, event.currentTarget, true)
             }
           }}
+          onPointerEnter={event => {
+            if (event.pointerType === 'mouse' && event.buttons === 0) {
+              preview.enter(entry.id, event.currentTarget, entry.windows.length > 0)
+            }
+          }}
+          onPointerLeave={preview.leave}
           title={
-            entry.status === 'loading'
-              ? `${entry.name} · ${t.pickLoading}`
-              : entry.status === 'ready' || entry.running
-                ? label
-                : `${entry.name} · ${entry.error || t.missing}`
+            isWindows && entry.running && state.runningStatus === 'ready'
+              ? ''
+              : entry.status === 'loading'
+                ? `${entry.name} · ${t.pickLoading}`
+                : entry.status === 'ready' || entry.running
+                  ? label
+                  : `${entry.name} · ${entry.error || t.missing}`
           }
           type="button"
         >
@@ -494,7 +519,14 @@ export function DesktopDock({
             <LayoutGrid size={25} />
           </span>
         </button>
-        <div className={styles.dockViewport} data-dock-viewport onScroll={() => setMenu(null)}>
+        <div
+          className={styles.dockViewport}
+          data-dock-viewport
+          onScroll={() => {
+            preview.dismiss()
+            setMenu(null)
+          }}
+        >
           <div className={styles.dockItems} ref={contentRef}>
             <div
               aria-label={t.pinnedApps}

@@ -85,6 +85,7 @@ export function createDesktopBridge(
       addFromCatalog: request(IPC.invoke.dockAddFromCatalog),
       addFromFiles: request(IPC.invoke.dockAddFromFiles),
       addDroppedFiles: async (dropped: File[]) => addPaths(await getDroppedPaths(dropped)),
+      setPreview: request(IPC.invoke.dockSetPreview),
       activate: request(IPC.invoke.dockActivate),
       activateCatalog: request(IPC.invoke.dockActivateCatalog),
       closeWindows: request(IPC.invoke.dockCloseWindows),
@@ -95,7 +96,8 @@ export function createDesktopBridge(
       repairWithFiles: request(IPC.invoke.dockRepairWithFiles),
       tasks: request(IPC.invoke.dockTasks),
       activateTask: request(IPC.invoke.dockActivateTask),
-      onChanged: subscribe(IPC.event.dockChanged)
+      onChanged: subscribe(IPC.event.dockChanged),
+      onPreviewSelected: subscribe(IPC.event.dockPreviewSelected)
     },
     desktop: {
       accounts: request(IPC.invoke.desktopAccounts),

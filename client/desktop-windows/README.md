@@ -28,6 +28,8 @@ Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢�
 
 [applications.rs](src/windows/applications.rs) 枚举当前虚拟桌面各屏普通／最小化窗口，排除壳、隐藏、工具浮窗和产品自身。会话共用 WinEvent，保留移动与销毁顺序，周期补扫；事件溢出清登记后全量校准。未变不广播，快照按 revision 分批，主进程收齐才采纳，换代丢弃半批。行大小及接收预算同时受 [explorer-desktop-host.ts](../main/lifecycle/explorer-desktop-host.ts) 限制。
 
+[dock_preview.rs](src/windows/dock_preview.rs) 持有辅助进程自己的浮层和当前页的 DWM 缩略图。浮层使用交互屏物理坐标，在悬停期间置顶并保持当前前台。指针经过图标与浮层之间的空隙时短暂保留，窗口归属、工作区或前台变化时释放。资源随宿主会话销毁，无需写入恢复记录。
+
 | 操作 | 必须保留的边界 |
 |---|---|
 | 激活／迁移 | 重核会话、窗口身份、虚拟桌面与前台；只有固定项／目录异屏回退允许迁移，其余目标须仍在交互屏。本屏仅还原最小化，跨屏适配 DPI 并保留最大化及还原位置 |

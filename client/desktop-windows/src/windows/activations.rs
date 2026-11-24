@@ -8,8 +8,8 @@ enum PlacementGoal {
 }
 
 impl PlacementGoal {
-    fn for_window(window: HWND, workspace: &Workspace) -> Self {
-        if workspace.on_display(window) { Self::OnDisplay } else { Self::WorkArea }
+    fn for_window(window: HWND, workspace: &Workspace, local_preview: bool) -> Self {
+        if local_preview || workspace.on_display(window) { Self::OnDisplay } else { Self::WorkArea }
     }
 
     fn satisfied(self, window: HWND, workspace: &Workspace) -> bool {
@@ -19,8 +19,8 @@ impl PlacementGoal {
         }
     }
 
-    fn refresh(&mut self, window: HWND, workspace: &Workspace) {
-        if !workspace.on_display(window) {
+    fn refresh(&mut self, window: HWND, workspace: &Workspace, local_preview: bool) {
+        if !local_preview && !workspace.on_display(window) {
             *self = Self::WorkArea;
         }
     }
@@ -72,6 +72,7 @@ pub(super) struct PendingActivation {
     authorization_id: Option<String>,
     window_id: String,
     parent_pid: u32,
+    local_preview: bool,
     foreground_at_request: usize,
     phase: Phase,
 }
@@ -82,10 +83,11 @@ impl PendingActivation {
         activation_id: String,
         window_id: String,
         parent_pid: u32,
+        local_preview: bool,
         workspace: &Workspace,
     ) -> Result<Self> {
         Ok(Self {
-            root_goal: PlacementGoal::for_window(root.window(), workspace),
+            root_goal: PlacementGoal::for_window(root.window(), workspace, local_preview),
             root,
             target: None,
             activation_id,
@@ -93,6 +95,7 @@ impl PendingActivation {
             authorization_id: None,
             window_id,
             parent_pid,
+            local_preview,
             foreground_at_request: foreground_window() as usize,
             phase: Phase::PreparingRoot,
         })
@@ -140,6 +143,9 @@ impl PendingActivation {
             return Err("程序窗口已关闭或改变，已停止窗口操作。".into());
         }
         workspace.monitor()?;
+        if self.local_preview && !workspace.on_display(root) {
+            return Err("程序窗口已移出交互屏，已停止预览激活。".into());
+        }
         let foreground = foreground_window();
         // Windows 切换前台期间允许暂时没有前台窗口；这不是用户选择了其他程序。
         if foreground.is_null() {
@@ -159,11 +165,14 @@ impl PendingActivation {
 
         let preparing_root = matches!(self.phase, Phase::PreparingRoot | Phase::MovingRoot(_) | Phase::RestoringRoot(_));
         if !preparing_root && !self.root_goal.satisfied(root, workspace) {
-            self.root_goal.refresh(root, workspace);
+            self.root_goal.refresh(root, workspace, self.local_preview);
             self.target = None;
             self.replan(Phase::PreparingRoot);
         }
         if let Some(target) = &self.target {
+            if self.local_preview && !workspace.on_display(target.identity.window()) {
+                return Err("程序弹窗已移出交互屏，已停止预览激活。".into());
+            }
             if workspace.user_moving(target.identity.window()) {
                 return Ok(true);
             }
@@ -175,7 +184,7 @@ impl PendingActivation {
 
         match &mut self.phase {
             Phase::PreparingRoot => {
-                self.root_goal.refresh(root, workspace);
+                self.root_goal.refresh(root, workspace, self.local_preview);
                 if self.root_goal.satisfied(root, workspace) {
                     self.phase = Phase::ResolvingTarget;
                 } else if matches!(self.root_goal, PlacementGoal::OnDisplay) {
@@ -198,16 +207,19 @@ impl PendingActivation {
             }
             Phase::ResolvingTarget => {
                 let Some(target) = activation_target(root)? else { return Ok(false); };
+                if self.local_preview && !workspace.on_display(target) {
+                    return Err("程序弹窗在其他屏幕，已停止预览激活。".into());
+                }
                 self.target = Some(ActivationTarget {
                     identity: Identity::capture(target)?,
-                    goal: if target == root { self.root_goal } else { PlacementGoal::for_window(target, workspace) },
+                    goal: if target == root { self.root_goal } else { PlacementGoal::for_window(target, workspace, self.local_preview) },
                 });
                 self.phase = Phase::PreparingTarget;
             }
             Phase::PreparingTarget => {
                 let target = self.target.as_mut().ok_or("程序激活目标丢失。")?;
                 let window = target.identity.window();
-                target.goal.refresh(window, workspace);
+                target.goal.refresh(window, workspace, self.local_preview);
                 if target.goal.satisfied(window, workspace) {
                     self.phase = Phase::ReservingFocus;
                 } else if matches!(target.goal, PlacementGoal::OnDisplay) {
@@ -235,7 +247,7 @@ impl PendingActivation {
                     return Err("程序窗口已关闭或改变，已停止激活。".into());
                 }
                 if !target.goal.satisfied(window, workspace) {
-                    self.target.as_mut().unwrap().goal.refresh(window, workspace);
+                    self.target.as_mut().unwrap().goal.refresh(window, workspace, self.local_preview);
                     self.replan(Phase::PreparingTarget);
                     return Ok(false);
                 }

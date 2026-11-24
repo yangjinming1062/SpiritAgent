@@ -1,3 +1,4 @@
+use super::dock_preview::DockPreview;
 use super::geometry::{monitor_bounds, rectangle};
 use super::identity::{Identity, actual_parent};
 use super::journal::{Journal, JournalPhase, RestoringSignal, require_session};
@@ -25,6 +26,26 @@ pub(crate) struct Session {
     pub(crate) last_tray: Option<tray::SystemTray>,
     pub(crate) tray_style: Option<TrayStyle>,
     pub(crate) palette: Palette,
+    dock_preview: Option<DockPreview>,
+    dock_selection: Option<DockSelection>,
+}
+
+struct DockSelection {
+    request_id: u64,
+    window_id: String,
+    overlay: Identity,
+    foreground: HWND,
+    expires: Instant,
+    sent: bool,
+}
+
+fn external_input_released() -> bool {
+    [
+        VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1,
+        VK_XBUTTON2,
+    ]
+    .into_iter()
+    .all(|key| unsafe { GetAsyncKeyState(i32::from(key)) >= 0 })
 }
 
 pub(crate) struct InputAttachment {
@@ -315,6 +336,8 @@ impl Session {
             last_tray,
             tray_style,
             palette,
+            dock_preview: None,
+            dock_selection: None,
         })
     }
 
@@ -338,6 +361,140 @@ impl Session {
         self.tray.apply(&self.journal, self.tray_style.as_ref())?;
         self.publish_tray();
         Ok(())
+    }
+
+    fn overlay(&self) -> Option<&Identity> {
+        self.journal
+            .windows
+            .iter()
+            .find(|saved| saved.role == WindowRole::Overlay)
+            .map(|saved| &saved.identity)
+    }
+
+    pub(crate) fn set_dock_preview(&mut self, layout: Option<DockPreviewLayout>) -> Result<()> {
+        let mut previous = self.dock_preview.take();
+        self.dock_selection = None;
+        let Some(layout) = layout else { return Ok(()); };
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?;
+        if !self.takeover
+            || now.as_millis() >= u128::from(layout.expires_at)
+            || self.workspace.fullscreen(foreground_window())
+        {
+            return Ok(());
+        }
+        let Some(overlay) = self.overlay().filter(|identity| identity.valid()) else { return Ok(()); };
+        let dpi = unsafe { GetDpiForWindow(overlay.window()) };
+        if dpi == 0 || unsafe { IsWindowVisible(overlay.window()) == 0 || IsIconic(overlay.window()) != 0 } {
+            return Ok(());
+        }
+        let screen = self.journal.desktop_bounds;
+        let work = self.workspace.current();
+        let anchor = layout.anchor;
+        if !anchor.valid()
+            || layout.request_id == 0
+            || anchor.x < screen.x
+            || anchor.x + anchor.width > screen.x + screen.width
+            || anchor.y < work.y + work.height - 2
+            || anchor.y + anchor.height > screen.y + screen.height
+        {
+            return Err("Dock preview anchor is outside the current display rail".into());
+        }
+        if previous.as_mut().is_some_and(|preview| preview.renew(&layout, work)) {
+            self.dock_preview = previous;
+            return Ok(());
+        }
+        drop(previous);
+
+        let sources = self.applications.preview_sources(&layout.window_ids, &self.workspace);
+        self.dock_preview = DockPreview::show(layout, work, dpi, self.palette, sources)?;
+        Ok(())
+    }
+
+    pub(crate) fn clear_dock_preview(&mut self) {
+        self.dock_preview = None;
+        self.dock_selection = None;
+    }
+
+    pub(crate) fn dock_preview_active(&self) -> bool {
+        self.dock_preview.is_some() || self.dock_selection.is_some()
+    }
+
+    pub(crate) fn poll_dock_preview(&mut self) {
+        if let Some(preview) = &mut self.dock_preview {
+            if preview.should_close() {
+                self.dock_preview = None;
+            } else if let Some(window_id) = preview.selection() {
+                let request_id = preview.request_id;
+                let foreground = preview.foreground;
+                self.dock_preview = None;
+                self.select_dock_preview(request_id, window_id, foreground);
+            }
+        }
+
+        let Some(selection) = &mut self.dock_selection else { return; };
+        let foreground = foreground_window();
+        if Instant::now() >= selection.expires || !selection.overlay.valid() || !external_input_released() {
+            self.dock_selection = None;
+        } else if foreground == selection.overlay.window() {
+            if !selection.sent {
+                selection.sent = true;
+                emit(json!({ "event": "dock_preview_selected", "request_id": selection.request_id, "window_id": selection.window_id }));
+            }
+        } else if selection.sent || (!foreground.is_null() && foreground != selection.foreground) {
+            self.dock_selection = None;
+        }
+    }
+
+    fn select_dock_preview(&mut self, request_id: u64, window_id: String, foreground: HWND) {
+        let expires = Instant::now() + Duration::from_millis(1600);
+        if !self.takeover || foreground.is_null() || !external_input_released() {
+            return;
+        }
+        let Some(source) = self.applications
+            .preview_sources(std::slice::from_ref(&window_id), &self.workspace)
+            .pop() else {
+            return;
+        };
+        let source_window = source.identity.window();
+        let target_already_foreground = owned_by(foreground, source_window)
+            && applications::activation_target(source_window)
+                .is_ok_and(|target| target.is_some_and(|target| owned_by(foreground, target)));
+        let Ok(_transaction) = MutexGuard::restoration() else { return; };
+        if require_session(&self.path, &self.journal.session, &self.restoring).is_err() {
+            return;
+        }
+        let Some(overlay) = self.overlay().filter(|identity| identity.valid()).cloned() else { return; };
+        let window = overlay.window();
+        if !source.identity.valid()
+            || !self.workspace.on_display(source_window)
+            || self.workspace.fullscreen(foreground)
+            || unsafe { IsWindowVisible(window) == 0 || IsIconic(window) != 0 }
+            || Instant::now() >= expires
+            || !external_input_released()
+            || foreground_window() != foreground
+        {
+            return;
+        }
+        self.applications.cancel_interaction();
+        if target_already_foreground {
+            return;
+        }
+        // 完成点击且前台保持不变，才将前台交给已登记的桌面界面。
+        if foreground != window && unsafe { SetForegroundWindow(window) } == 0 {
+            emit(json!({ "event": "warning", "reason": "无法激活预览窗口，请重新选择。" }));
+            return;
+        }
+        self.dock_selection = Some(DockSelection {
+            request_id,
+            window_id,
+            overlay,
+            foreground,
+            expires,
+            sent: false,
+        });
     }
 
     pub(crate) fn publish_tray(&mut self) {
@@ -398,6 +555,12 @@ impl Session {
             }
             self.applications.poll(&events, force, &self.workspace);
         }
+        if let Some(preview) = &self.dock_preview {
+            let sources = self.applications.preview_sources(&preview.window_ids, &self.workspace);
+            if preview.work != self.workspace.current() || !preview.update(sources, self.palette) {
+                self.dock_preview = None;
+            }
+        }
         Ok(())
     }
 
@@ -407,12 +570,22 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn activate_external(&mut self, window_id: &str, allow_remote: bool) -> Result<String> {
+    pub(crate) fn activate_external(&mut self, window_id: &str, allow_remote: bool, preview_id: Option<u64>) -> Result<String> {
         self.refresh_applications(false)?;
         let _transaction = MutexGuard::restoration()?;
         require_session(&self.path, &self.journal.session, &self.restoring)?;
+        let selection = self.dock_selection.take();
         self.require_external_interaction()?;
-        self.applications.activate(window_id, allow_remote, &self.workspace)
+        if let Some(preview_id) = preview_id {
+            if allow_remote || !selection.is_some_and(|selection| {
+                selection.sent && selection.request_id == preview_id && selection.window_id == window_id
+                    && Instant::now() < selection.expires && selection.overlay.valid()
+                    && foreground_window() == selection.overlay.window()
+            }) {
+                return Err("窗口预览已失效，请重新选择窗口。".into());
+            }
+        }
+        self.applications.activate(window_id, allow_remote, preview_id.is_some(), &self.workspace)
     }
 
     pub(crate) fn close_external(&mut self, window_ids: &[String]) -> Result<()> {
@@ -503,12 +676,8 @@ impl Session {
         {
             return Err("外部窗口操作需要当前桌面交互。".into());
         }
-        for key in [
-            VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
-        ] {
-            if unsafe { GetAsyncKeyState(i32::from(key)) } < 0 {
-                return Err("请释放按键后重新操作窗口。".into());
-            }
+        if !external_input_released() {
+            return Err("请释放按键后重新操作窗口。".into());
         }
         Ok(())
     }
@@ -578,24 +747,8 @@ impl Session {
             return Ok(());
         }
         let keys_up = || -> Result<()> {
-            for key in [
-                VK_CONTROL,
-                VK_MENU,
-                VK_SHIFT,
-                VK_LWIN,
-                VK_RWIN,
-                VK_LBUTTON,
-                VK_RBUTTON,
-                VK_MBUTTON,
-                VK_XBUTTON1,
-                VK_XBUTTON2,
-            ] {
-                if unsafe { GetAsyncKeyState(i32::from(key)) } < 0 {
-                    return Err(
-                        "desktop focus cannot change while modifiers or mouse buttons are held"
-                            .into(),
-                    );
-                }
+            if !external_input_released() {
+                return Err("desktop focus cannot change while modifiers or mouse buttons are held".into());
             }
             Ok(())
         };
@@ -776,6 +929,7 @@ impl Session {
     }
 
     pub(crate) fn cancel_operations(&mut self) {
+        self.clear_dock_preview();
         self.applications.cancel_operations();
         self.workspace.cancel_operations();
     }

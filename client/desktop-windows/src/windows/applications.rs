@@ -146,7 +146,7 @@ fn last_input() -> Option<u32> {
     (unsafe { GetLastInputInfo(&mut input) } != 0).then_some(input.dwTime)
 }
 
-fn activation_target(window: HWND) -> Result<Option<HWND>> {
+pub(super) fn activation_target(window: HWND) -> Result<Option<HWND>> {
     let root = unsafe { GetAncestor(window, GA_ROOTOWNER) };
     let popup = unsafe { GetLastActivePopup(root) };
     if !popup.is_null()
@@ -492,7 +492,25 @@ impl Applications {
         Ok(())
     }
 
-    pub(super) fn activate(&mut self, id: &str, allow_remote: bool, workspace: &Workspace) -> Result<String> {
+    pub(super) fn preview_sources(&self, ids: &[String], workspace: &Workspace) -> Vec<dock_preview::PreviewSource> {
+        let by_id: HashMap<_, _> = self.windows.values()
+            .map(|tracked| (tracked.value.id.as_str(), tracked))
+            .collect();
+        ids.iter().filter_map(|id| {
+            let tracked = by_id.get(id.as_str())?;
+            let window = tracked.identity.window();
+            if !tracked.identity.valid() || !workspace.on_display(window) || !self.eligible(window).ok()? {
+                return None;
+            }
+            Some(dock_preview::PreviewSource {
+                id: id.clone(),
+                title: if tracked.value.title.is_empty() { &tracked.value.name } else { &tracked.value.title }.clone(),
+                identity: tracked.identity.clone(),
+            })
+        }).collect()
+    }
+
+    pub(super) fn activate(&mut self, id: &str, allow_remote: bool, local_preview: bool, workspace: &Workspace) -> Result<String> {
         let tracked = self
             .windows
             .values()
@@ -509,7 +527,7 @@ impl Applications {
         self.activation = None;
         self.next_activation += 1;
         let activation_id = format!("{}:activation:{}", self.session, self.next_activation);
-        self.activation = Some(PendingActivation::start(identity, activation_id.clone(), id.into(), self.parent_pid, workspace)?);
+        self.activation = Some(PendingActivation::start(identity, activation_id.clone(), id.into(), self.parent_pid, local_preview, workspace)?);
         Ok(activation_id)
     }
 

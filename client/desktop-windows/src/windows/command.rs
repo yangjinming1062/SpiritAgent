@@ -24,6 +24,7 @@ pub(crate) fn execute_command(
         (Command::CancelExternalInteraction { .. }, active) => {
             if let Some(active) = active {
                 active.applications.cancel_interaction();
+                active.clear_dock_preview();
             }
             Ok(json!(null))
         }
@@ -31,12 +32,13 @@ pub(crate) fn execute_command(
         (Command::Heartbeat { .. }, Some(active)) => active.heartbeat().map(|_| json!(null)),
         (Command::SetPalette { palette, .. }, Some(active)) => active.set_palette(palette).map(|_| json!(null)),
         (Command::SetTrayLayout { layout, .. }, Some(active)) => active.set_tray_layout(layout).map(|_| json!(null)),
+        (Command::SetDockPreview { layout, .. }, Some(active)) => active.set_dock_preview(layout).map(|_| json!(null)),
         (Command::Focus { handle, .. }, Some(active)) => active.focus(&handle).map(|_| json!(null)),
         (Command::RefreshApplications { .. }, Some(active)) => active
             .refresh_applications(true)
             .map(|_| json!(null)),
-        (Command::ActivateExternal { window_id, allow_remote, .. }, Some(active)) => active
-            .activate_external(&window_id, allow_remote)
+        (Command::ActivateExternal { window_id, allow_remote, preview_request_id, .. }, Some(active)) => active
+            .activate_external(&window_id, allow_remote, preview_request_id)
             .map(|activation_id| json!({ "activation_id": activation_id })),
         (Command::AuthorizeExternalFocus { activation_id, granted, .. }, Some(active)) => {
             require_session(&active.path, &active.journal.session, &active.restoring)?;

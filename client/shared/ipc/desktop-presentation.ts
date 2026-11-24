@@ -139,6 +139,21 @@ export interface DockWindow {
   minimized: boolean
 }
 
+export interface DockPreviewRequest {
+  epoch: number
+  requestId: number
+  layout: {
+    entryId: string
+    anchor: { x: number; y: number; width: number; height: number }
+    viewport: { width: number; height: number }
+  } | null
+}
+
+export interface DockPreviewSelection {
+  requestId: number
+  windowId: string
+}
+
 export interface DockEntry {
   id: string
   name: string

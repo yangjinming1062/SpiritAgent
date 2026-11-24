@@ -62,6 +62,16 @@ struct TrayLayout {
 }
 
 #[cfg(windows)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DockPreviewLayout {
+    request_id: u64,
+    anchor: Bounds,
+    window_ids: Vec<String>,
+    expires_at: u64,
+}
+
+#[cfg(windows)]
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WindowRole {
@@ -104,6 +114,10 @@ enum Command {
         id: u32,
         layout: Option<TrayLayout>,
     },
+    SetDockPreview {
+        id: u32,
+        layout: Option<DockPreviewLayout>,
+    },
     Focus {
         id: u32,
         handle: String,
@@ -115,6 +129,7 @@ enum Command {
         id: u32,
         window_id: String,
         allow_remote: bool,
+        preview_request_id: Option<u64>,
     },
     CancelExternalInteraction {
         id: u32,
@@ -156,6 +171,7 @@ impl Command {
             | Self::Heartbeat { id }
             | Self::SetPalette { id, .. }
             | Self::SetTrayLayout { id, .. }
+            | Self::SetDockPreview { id, .. }
             | Self::Focus { id, .. }
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }

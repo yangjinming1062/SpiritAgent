@@ -74,8 +74,10 @@ export function registerEntryIpc(services: EntryServices): ReturnType<typeof reg
         continuation: () => false
       },
     refreshApplications: sender => presentation?.refreshApplications(sender) ?? Promise.resolve(),
-    activateExternal: (sender, windowId, allowRemote, eligible) =>
-      presentation?.activateExternal(sender, windowId, allowRemote, eligible) ?? Promise.resolve(),
+    setDockPreview: (sender, request, windowIds) =>
+      presentation?.setDockPreview(sender, request, windowIds) ?? Promise.resolve(),
+    activateExternal: (sender, windowId, allowRemote, eligible, previewRequestId) =>
+      presentation?.activateExternal(sender, windowId, allowRemote, eligible, previewRequestId) ?? Promise.resolve(),
     launchExternal: (sender, target, appId, eligible) =>
       presentation?.launchExternal(sender, target, appId, eligible) ?? Promise.resolve(),
     closeExternal: (sender, windowIds, eligible) =>
