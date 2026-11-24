@@ -16,7 +16,6 @@ import { registerSkillsIpc } from '../ipc/skills'
 import { registerSpriteIpc } from '../ipc/sprite'
 import { registerSystemIpc } from '../ipc/system'
 import { registerUiThemeIpc } from '../ipc/ui-theme'
-import { registerUpdateIpc } from '../ipc/update'
 import { registerVoicePlaybackIpc } from '../ipc/voice-playback'
 import { showActivation, toggleMainWindow } from '../lifecycle/tray'
 import { isSenderWindow } from '../security/ipc-trust'
@@ -26,10 +25,8 @@ import type { EntryServices } from './services'
 /** IPC 注册表：只把通道接到服务，不构造服务。 */
 export function registerEntryIpc(services: EntryServices): ReturnType<typeof registerAuthIpc> {
   const {
-    appQuit,
     assetDiskCache,
     authBroadcaster,
-    autoUpdater,
     backendHttp,
     configSync,
     ensureBackend,
@@ -185,14 +182,6 @@ export function registerEntryIpc(services: EntryServices): ReturnType<typeof reg
     spiritagentHome,
     getRunnerBridge: () => runnerHost.getBridge(),
     ipcMain
-  })
-  registerUpdateIpc({
-    electron: { app },
-    feed: autoUpdater,
-    ipcMain,
-    isInstallSender: sender => Boolean(surfaces?.isSurfaceSender(sender) || presentation?.isDesktopSender(sender)),
-    prepareInstall: () => presentation?.stop() ?? Promise.resolve(),
-    markQuitting: () => appQuit.markQuitting()
   })
 
   registerSpriteIpc({

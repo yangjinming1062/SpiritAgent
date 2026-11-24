@@ -63,7 +63,7 @@ export async function writeStoredBackendUrl(
   }
 }
 
-// 为会在后面拼接路径后缀（如 /api/update）的调用方做归一化与去尾斜杠；没有配置后端 URL 时返回 null。
+// 为会在后面拼接路径后缀的调用方做归一化与去尾斜杠；没有配置后端 URL 时返回 null。
 export function resolveNormalizedBackendUrl(spiritagentHome: string | null | undefined): string | null {
   const url = readStoredBackendUrl(spiritagentHome)
 

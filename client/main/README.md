@@ -8,7 +8,7 @@
 |---|---|
 | `backend` | 凭据、HTTP、账户 WS 与会话恢复 |
 | `runner` | 本地进程、RPC 桥和 Runner 更新 |
-| `lifecycle` | 窗口、托盘、退出、桌面宿主与应用更新 |
+| `lifecycle` | 窗口、托盘、退出、桌面宿主 |
 | `ipc` | 注册受控操作，持有缓存与本机能力服务 |
 | `security` | sender、文件路径和接口策略校验 |
 | `shared` | 主进程叶子类型与组件，通过注入端口协作，不导入 backend／runner 实现 |
@@ -21,7 +21,7 @@
 
 [随包技能同步](lifecycle/bundled-skills.ts) 位于日志器初始化之后、会话恢复及 Runner 自动启动之前。仅打包版本变化时覆盖同名技能，保留其他内容；`.no-bundled-skills` 跳过同步，全部成功才更新版本标记，失败下次启动再试。默认单实例，验证开关 `SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 仅用于隔离测试；转发器就绪前的第二实例事件折叠后兑现一次。
 
-关窗与退出分别处理。[app-quit.ts](lifecycle/app-quit.ts) 负责配置、日志、Runner 与收听记录收尾，有界等待不保证残留进程已结束；更新重启提前设置退出标志并复用此链。后台节流全局关闭，renderer 自行管理功耗；远程显示的 GPU／透明回退由 `platform.ts` 决定。
+关窗与退出分别处理。[app-quit.ts](lifecycle/app-quit.ts) 负责配置、日志、Runner 与收听记录收尾，有界等待不保证残留进程已结束。后台节流全局关闭，renderer 自行管理功耗；远程显示的 GPU／透明回退由 `platform.ts` 决定。
 
 ## 渲染面准入
 
@@ -76,7 +76,7 @@ macOS 的 [desktop-macos-host.ts](lifecycle/desktop-macos-host.ts) 传全局 poi
 
 真实点击和显式导航才请求焦点；广播不抢前台，队列执行时重核账户、舞台和锁屏。Windows 焦点请求超时终止 host 并恢复；macOS 已提交 AX 操作不可撤回，保留未知结果。
 
-退出顺序是停止宿主、恢复系统、销毁窗口。`stop()` 可供更新取消后重新启用，`dispose()` 幂等关闭准入并取消交接，持续接收退出期上报，`will-quit` 最后注销 IPC。换号、鉴权失效、拔交互屏、renderer 失败及休眠唤醒均收敛到窗口模式；迟到准备不能重新接管。活动屏与首选屏分开，缺屏回退不改首选，只有活动屏几何变化才重挂载。
+退出顺序是停止宿主、恢复系统、销毁窗口。`dispose()` 幂等关闭准入并取消交接，持续接收退出期上报，`will-quit` 最后注销 IPC。换号、鉴权失效、拔交互屏、renderer 失败及休眠唤醒均收敛到窗口模式；迟到准备不能重新接管。活动屏与首选屏分开，缺屏回退不改首选，只有活动屏几何变化才重挂载。
 
 Windows 启动先处理待恢复记录；guardian 的异常原因与主进程失败标记分开保存，手动重试不能覆盖 guardian 原因。恢复失败保留 journal 与诊断但允许窗口模式启动。恢复界面只读取已有呈现，不提交制作。
 
@@ -117,13 +117,7 @@ Windows 启动先处理待恢复记录；guardian 的异常原因与主进程失
 
 账户网关串行发送 `tools.sync`；业务派发透传 `call_id`，当前连接取消优先用 RPC `req_id`，恢复后按 `call_id` 定位，窗口直调不伪造业务调用身份。[session-runtime.ts](backend/session-runtime.ts) 的登录恢复和应用就绪后的延迟启动共用幂等入口。
 
-[runner/updater.ts](runner/updater.ts) 在原 venv 安装单 wheel，不承诺原子切换或自动回滚，损坏环境交 Installer 修复。暂存保留 wheel 原名，安装前核摘要，安装后执行包内 `--check` 并核版本；待装资产在创建精灵前处理。源码和安装版共用模块启动，开发环境须 editable 安装。
-
-## 桌面更新
-
-[ipc/update.ts](ipc/update.ts) 持状态与失败阶段，[auto-updater.ts](lifecycle/auto-updater.ts) 管更新源和 Runner 预取。每次检查／下载重新核后端地址，预取绑定发现版本时的源；electron-updater 的无来源错误按最近发起阶段归属，新增入口必须设置阶段。
-
-安装包下载后先广播 `preparing`，Runner 预取校验完成才广播 `downloaded`。安装只接受主窗口／交互桌面，先等待桌面恢复再调用 `quitAndInstall`；Windows 会先启动安装器再发退出事件，不能仅依赖退出钩子。状态向所有窗口广播，不假定主窗口存在。
+损坏的安装环境由 Installer 修复。源码和安装版共用模块启动，开发环境须 editable 安装。
 
 ## 网络与缓存
 
@@ -141,4 +135,4 @@ tsup 构建 main / preload，共享 IPC 经 alias 解析；开发监听 main 与
 
 ## 验证入口
 
-覆盖错误 sender、未授权路径、换号、reset 后迟到结果、退出超时及更新失败。preload 改动检查构建产物；原生层级、系统恢复与焦点分别执行 Windows 和 macOS 实机验收。
+覆盖错误 sender、未授权路径、换号、reset 后迟到结果、退出超时。preload 改动检查构建产物；原生层级、系统恢复与焦点分别执行 Windows 和 macOS 实机验收。

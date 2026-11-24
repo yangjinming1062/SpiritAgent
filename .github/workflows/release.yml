@@ -1,7 +1,6 @@
 # 推送 v<semver> tag 即发版：双平台构建 + LLM 总结提交生成 release notes，汇总为 draft release。
 # 人工在 Releases 页检查产物与 notes 后 Publish。版本号以 tag 为唯一来源，构建时注入各清单文件。
 # notes 生成走供应商无关的 OpenAI 兼容接口：repo secrets LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME，缺失或请求失败直接终止工作流。
-# 签名所需 repo secrets：SPIRITAGENT_UPDATE_SIGNING_KEY（PEM 内容，Windows update zip 签名）。
 name: Release
 
 on:
@@ -76,20 +75,6 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      # Resolve-UpdateSigningKey 接受 PEM 路径；secret 存的是内容，先落地为临时文件。
-      - name: Restore update signing key
-        if: matrix.target == 'win'
-        env:
-          SPIRITAGENT_UPDATE_SIGNING_KEY: ${{ secrets.SPIRITAGENT_UPDATE_SIGNING_KEY }}
-        shell: bash
-        run: |
-          if [[ -z "$SPIRITAGENT_UPDATE_SIGNING_KEY" ]]; then
-            echo "::error::secret SPIRITAGENT_UPDATE_SIGNING_KEY is not set — cannot sign the update zip" >&2
-            exit 1
-          fi
-          key_path="$RUNNER_TEMP/spiritagent-update.key"
-          printf '%s' "$SPIRITAGENT_UPDATE_SIGNING_KEY" > "$key_path"
-          echo "SPIRITAGENT_UPDATE_SIGNING_KEY=$key_path" >> "$GITHUB_ENV"
       - name: Build installer
         shell: bash
         env:
@@ -103,7 +88,6 @@ jobs:
           path: |
             release/SpiritAgent-Setup-*.exe
             release/SpiritAgent-Setup-*.dmg
-            release/SpiritAgent-*-update.zip
           if-no-files-found: error
 
   release:

@@ -71,6 +71,12 @@ flowchart LR
 | 要自行部署后端 | 按 [Docker Compose 部署](backend/README.md#docker-compose-部署) 配置数据库、签名密钥和管理员密码；在 `/admin/` 配置供应商、创建账户并取得激活码。制作透明形象还需准备[抠像模型](backend/README.md#透明素材模型)。 |
 | 要让手机或其他电脑连接 | 配置[对外访问地址](backend/README.md#端口与对外访问)，确保设备可以访问；用桌面端授权手机，也可从桌面撤销授权。 |
 
+### macOS 覆盖安装
+
+1. 退出正在运行的唤生。从项目的 Releases 页面下载目标版本的 `SpiritAgent-Setup-<版本>.dmg`，双击挂载。
+2. 打开「终端」，键入 `open -n -a` 和一个空格。在访达中打开刚挂载的磁盘，将其中的「唤生」安装器拖入终端，再键入一个空格和 `--args --reinstall`，按回车进入安装界面。
+3. 保持联网并按提示完成安装。启动唤生后，在「设置 → 关于」确认版本号。
+
 ### 从源码启动
 
 后端就绪后，在桌面开发机安装 uv、Node.js 24、pnpm 11.5.2 和对应的原生工具链（[Windows](client/desktop-windows/README.md#构建) / [macOS](client/desktop-macos/README.md#构建与验证)），从仓库根目录运行：

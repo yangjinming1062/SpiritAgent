@@ -22,8 +22,6 @@ interface AppQuitDeps {
 
 export interface AppQuit {
   isQuitting: () => boolean
-  /** 在 before-quit 之前就要放行窗口关闭时调用（如原生 quitAndInstall 先关窗）。 */
-  markQuitting: () => void
 }
 
 /** 退出链：before-quit 置退出标志、释放托盘与快捷键、尽力上云并落盘日志；will-quit 有界等待 Runner 收尾后 app.exit(0)，避免孤儿子进程，超时仍可能残留。 */
@@ -94,9 +92,6 @@ export function installAppQuit(deps: AppQuitDeps): AppQuit {
   })
 
   return {
-    isQuitting: () => quitting,
-    markQuitting: () => {
-      quitting = true
-    }
+    isQuitting: () => quitting
   }
 }

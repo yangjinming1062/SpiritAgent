@@ -1,12 +1,12 @@
 # Installer
 
-Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Client。macOS 可在已安装环境健康时直接启动桌面端。
+Tauri 安装器负责首次安装、覆盖安装和环境修复。macOS 安装器也可在已安装环境健康时直接启动桌面端。
 
 ## 任务入口
 
 | 修改任务 | 入口 |
 |---|---|
-| 启动、快路径及修复 | [lib.rs](src-tauri/src/lib.rs)、[bootstrap.rs](src-tauri/src/bootstrap.rs)；健康探针与 [Client 更新器](../client/main/runner/updater.ts)一致 |
+| 启动、快路径及修复 | [lib.rs](src-tauri/src/lib.rs)、[bootstrap.rs](src-tauri/src/bootstrap.rs) |
 | 安装、取消和事件 | [install.sh](install.sh)、[install.ps1](install.ps1) 定义阶段，[powershell.rs](src-tauri/src/powershell.rs) 管进程，[events.rs](src-tauri/src/events.rs) 与 [store.ts](src/store.ts) 连接编排和 UI |
 | 路径与内嵌载荷 | [paths.rs](src-tauri/src/paths.rs)、[install_script.rs](src-tauri/src/install_script.rs)、[embedded_payload.rs](src-tauri/src/embedded_payload.rs)、[build.rs](src-tauri/build.rs) |
 | 界面与光效 | [ambience.tsx](src/components/ambience.tsx)、[halo.tsx](src/components/halo.tsx)、[egg.tsx](src/components/egg.tsx)、[light-core.tsx](src/components/light-core.tsx)、[styles.css](src/styles.css)；光效只表达真实阶段 |
@@ -29,6 +29,8 @@ Tauri 安装器负责首次安装与环境修复，日常运行及更新归 Clie
 ## 安装与修复
 
 仅 macOS 在未指定 `--repair`／`--reinstall` 时尝试快路径：完成标记、桌面二进制和 Runner 包内 `python -I -m spirit_agent_runner --check` 均有效才启动并退出。探针超时或启动失败回安装 UI；Windows 从桌面快捷方式启动。
+
+升级时退出桌面应用，使用目标版本的完整安装器覆盖安装；macOS 已安装环境用 `--reinstall` 跳过快路径。
 
 阶段真源为两端脚本 manifest：准备 → Python → Runner → 桌面包 → 技能 → 完成。每阶段是独立进程，不能依赖前阶段 shell 变量；Runner 使用 uv 管理 Python 和独立 venv，优先已有 3.13、再 3.14，否则安装 3.13。仅 finalize 写完成标记。
 

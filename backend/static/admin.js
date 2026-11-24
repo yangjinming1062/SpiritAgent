@@ -1,11 +1,10 @@
 const TOKEN_KEY = 'spiritagent_admin_token';
-const tabCache = { users: null, models: null, logs: null, versions: null };
+const tabCache = { users: null, models: null, logs: null };
 
 const TABS = {
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
     ai:       { title: 'AI 配置', desc: '按功能组织能力，拖拽编排模型调用链' },
     settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
-    versions: { title: '版本发布', desc: '桌面端更新包与版本分发' },
     logs: { title: '夜间日志', desc: '夜间活动的执行状态与阶段结果' },
     videoQueue: { title: '视频队列', desc: '查看生成状态、取消任务、重试限流队列与核对远端结果' },
     serviceUpdate: { title: '服务更新', desc: '检查更新、构建并重启 backend' },
@@ -121,7 +120,7 @@ function toggleMenu(btn) {
     placeMenuPop(btn, pop);
 }
 
-const TAB_LOADERS = { users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs, videoQueue: loadVideoQueue, serviceUpdate: loadServiceUpdate };
+const TAB_LOADERS = { users: loadUsers, ai: loadAiView, settings: loadSystemSettings, logs: loadLogs, videoQueue: loadVideoQueue, serviceUpdate: loadServiceUpdate };
 
 function showTab(name) {
     $$('.nav-item').forEach(b => {
@@ -477,7 +476,6 @@ const ICON_PATHS = {
     users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 5v2"/>',
     settings: '<circle cx="12" cy="12" r="4"/><path d="m9 3-1 3-3 1-2 3 2 2-1 4 3 2 3-1 2 4 3-2 1-3 4-1 1-4-3-2 1-4-4-1-2-3-3 1Z"/>',
     versions: '<path d="M4 14v6h16v-6M12 3v12m-5-7 5-5 5 5"/>',
-    upload: '<path d="M4 16v5h16v-5M12 3v13M7 8l5-5 5 5"/>',
     logs: '<path d="M6 3h9l4 4v14H6V3Zm9 0v5h4M9 12h7m-7 4h5"/>',
     logout: '<path d="M9 3H4v18h5m5-15 6 6-6 6m-5-6h11"/>',
     scope: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5 18a7 7 0 0 1 14 0"/>',
@@ -2037,85 +2035,6 @@ async function openLogDetail(id) {
     openModal('logDetailModal');
 }
 
-async function loadVersions() {
-    try {
-        const data = await invoke('update.list_versions');
-        renderVersions(data);
-    } catch (e) { $('#versionList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
-}
-
-function renderVersions(data) {
-    renderTable('#versionList', 'versionCount', data, {
-        unit: '个版本', cols: 6, empty: '暂无历史版本', emptyHint: '上传一个 .zip 更新包以开始分发',
-        row: v => {
-            const size = fmtSize(v.exe_size);
-            return `<tr>
-                <td><div class="cell-strong">v${esc(v.version)}</div><div class="cell-sub mono">${size ? esc(size) : '—'}</div></td>
-                <td class="td-notes">${esc(v.release_notes) || '<span class="text-3">—</span>'}</td>
-                <td class="td-platforms">
-                    ${plat('Windows', !!v.exe_filename)}
-                    ${plat('macOS', !!v.mac_filename)}
-                    ${plat('Runner', !!v.runner_filename)}
-                </td>
-                <td>${v.is_active ? pill('上线', 'green') : pill('下线', 'muted')}</td>
-                <td><div>${fmtDate(v.created_at)}</div><div class="cell-sub">${esc(v.created_by) || '—'}</div></td>
-                <td class="td-actions">
-                    ${v.is_active
-                        ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${idArgument(v.id)}, false)">下线</button>`
-                        : `<button class="btn btn--primary btn--sm" onclick="setActive(${idArgument(v.id)}, true)">上线</button>`}
-                    ${menuHtml([
-                        { label: '永久删除', onclick: `deleteVersion(${idArgument(v.id)})`, danger: true },
-                    ])}
-                </td>
-            </tr>`;
-        },
-    });
-}
-
-async function setActive(id, active) {
-    try {
-        await invoke('update.update_version', { path: { id: resourceId(id) }, body: { is_active: active } });
-        toast(active ? '版本已上线' : '版本已下线');
-        loadVersions();
-    } catch (e) { toast(e.message, 'err'); }
-}
-
-async function deleteVersion(id) {
-    if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
-    try {
-        await invoke('update.delete_version', { path: { id: resourceId(id) } });
-        toast('版本已删除');
-        loadVersions();
-    } catch (e) { toast(e.message, 'err'); }
-}
-
-$('#fileInput').addEventListener('change', (e) => {
-    $('#fileName').textContent = e.target.files[0] ? e.target.files[0].name : '';
-});
-
-$('#uploadForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData();
-    const rn = $('#releaseNotes').value;
-    if (rn) formData.append('release_notes', rn);
-    formData.append('file', $('#fileInput').files[0]);
-    const status = $('#uploadStatus');
-    if (!$('#fileInput').files.length || $('#uploadForm').inert) return;
-    $('#uploadForm').inert = true;
-    status.textContent = '正在上传并处理版本，请稍候…'; status.style.color = 'var(--primary)';
-    try {
-        const data = await invoke('update.create_version', { body: formData }, { timeoutMs: 180_000 });
-        status.textContent = `发布成功 · v${data.version}`; status.style.color = 'var(--green)';
-        $('#uploadForm').reset(); $('#fileName').textContent = '';
-        toast('新版本已发布');
-        loadVersions();
-    } catch (err) {
-        status.textContent = '发布失败：' + err.message;
-        status.style.color = 'var(--red)';
-    }
-    finally { $('#uploadForm').inert = false; }
-});
-
 const modalFocus = new Map();
 function openModal(id) {
     const modal = $('#' + id);
@@ -2493,17 +2412,6 @@ $('#aiSections').onclick = event => {
         const first = tabCache.models?.ai_tasks?.[0];
         if (first) aiSelectNode(`task:${first.id}:${first.services[0]}`);
     }
-};
-$('#releaseDrop').ondragover = event => { if (!$('#uploadForm').inert) { event.preventDefault(); $('#releaseDrop').classList.add('ai-drop-target'); } };
-$('#releaseDrop').ondragleave = () => $('#releaseDrop').classList.remove('ai-drop-target');
-$('#releaseDrop').ondrop = event => {
-    event.preventDefault(); $('#releaseDrop').classList.remove('ai-drop-target');
-    if ($('#uploadForm').inert) return;
-    const file = event.dataTransfer.files[0];
-    if (!file || !file.name.toLowerCase().endsWith('.zip')) { toast('请选择 ZIP 更新包', 'err'); return; }
-    const transfer = new DataTransfer(); transfer.items.add(file);
-    $('#fileInput').files = transfer.files;
-    $('#fileName').textContent = file.name;
 };
 $$('.modal').forEach(modal => {
     const heading = modal.querySelector('h2');

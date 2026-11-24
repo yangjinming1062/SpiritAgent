@@ -21,7 +21,6 @@
 | 供应商和能力链 | [tasks.py](infrastructure/ai/tasks.py)、[providers/base.py](infrastructure/ai/providers/base.py)、[llm_client.py](infrastructure/ai/llm_client.py) |
 | 桌面配置与附件 | [desktop_config.py](features/configuration/desktop_config.py)、[attachments.py](features/conversation/attachments.py)、[media.py](entrypoints/http/routes/media.py) |
 | 共享任务与正式资产 | [任务](features/jobs/README.md)、[资产](features/assets/README.md)、[asset_store.py](infrastructure/assets/asset_store.py) |
-| 桌面/Runner 发布分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
 | 后端服务更新 | [服务更新](#服务更新)、[updater](updater/README.md)、[service_updater.py](infrastructure/web/service_updater.py) |
 | 数据库结构与账户维护 | [模型注册](bootstrap/models.py)、[user.py](workflows/maintenance/user.py) |
 | 提示词与恢复装配 | [提示词定位](#提示词定位)、[registrations.py](bootstrap/registrations.py)、[runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) |
@@ -52,7 +51,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-启动执行 `alembic upgrade head`。[完整基线](alembic/versions/0001_baseline.py) 是唯一修订，编号为 `0001`。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
+启动执行 `alembic upgrade head`。[完整基线](alembic/versions/0001_baseline.py) 的编号为 `0001`。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
 
 ### 装配与启停
 

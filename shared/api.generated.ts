@@ -176,8 +176,6 @@ export interface ApiSchemas {
   "ReadingSourceView": { "url": string; "title": string; "retrieved_at": string; "content_kind": "extracted_text" | "summary"; "excerpted": boolean }
   "RefreshRequest": { "client_version"?: string; "client_context"?: (ApiSchemas["ChatRequestClientContext"] | null) }
   "RegenerateActivationRequest": { "base_url"?: (string | null) }
-  "ReleaseManifestFileItem": { "url": string; "sha512": string; "size": number }
-  "ReleaseManifestResponse": { "version": string; "releaseDate": string; "releaseNotes": string; "path": string; "sha512": string; "files": Array<ApiSchemas["ReleaseManifestFileItem"]> }
   "RememberCommandResult": { "memory_id": string; "content": string }
   "RemoteSessionResponse": { "user": ApiSchemas["RemoteUserResponse"]; "device": ApiSchemas["DeviceResponse"]; "csrf_token": string }
   "RemoteUserResponse": { "id": string; "username": string }
@@ -368,9 +366,6 @@ export interface ApiSchemas {
   "TurnCancelResult": { "request_id": string; "cancelled": boolean }
   "UndoAnchor": { "text": string; "attachments": Array<ApiSchemas["UndoAttachment"]> }
   "UndoAttachment": { "type": "image"; "url": string }
-  "UpdateVersionItem": { "id": string; "version": string; "release_notes": string; "exe_filename": string; "exe_sha512": string; "exe_size": number; "mac_filename": (string | null); "mac_sha512": (string | null); "mac_size": (number | null); "runner_filename": (string | null); "is_active": boolean; "created_at": string; "created_by": (string | null) }
-  "UpdateVersionListResponse": { "items": Array<ApiSchemas["UpdateVersionItem"]> }
-  "UpdateVersionUpdate": { "release_notes"?: (string | null); "is_active"?: (boolean | null) }
   "UserCreate": { "username": string; "base_url": string; "nightly_activity_enabled"?: boolean }
   "UserInfo": { "id": string; "username": string }
   "UserListResponse": { "items": Array<ApiSchemas["UserResponse"]> }
@@ -424,7 +419,6 @@ export interface ApiSchemas {
   "VoiceSampleResponse": { "sample_id": string; "url": string; "duration": number; "mime_type": string }
   "VoicesListResponse": { "providers": Array<string>; "voices": Array<ApiSchemas["VoiceEntry"]>; "supports_voice_design": boolean; "voice_design_guide": string; "supports_voice_prompt_generation": boolean; "supports_voice_clone": boolean; "custom_voices": Array<ApiSchemas["CustomVoiceSummary"]> }
   "WakeTransition": { "id": string; "reason": "interaction" | "morning"; "occurred_at": string; "expires_at": string }
-  "create_version": { "file": string; "release_notes"?: string }
   "upload_chat_audio": { "file": string; "session_id": string }
   "upload_chat_video": { "file"?: (string | null); "session_id"?: string }
   "upload_voice_reference": { "file": string }
@@ -597,14 +591,6 @@ export interface ApiOperations {
   "social_accounts.get_social_login": { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SocialLoginStatus"] }
   "social_accounts.cancel_social_login": { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query: Record<string, never>; body: undefined; input: { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query?: never; body?: never }; response: ApiSchemas["SocialAccountView"] }
   "social_accounts.verify_social_login": { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query: Record<string, never>; body: ApiSchemas["SocialVerificationRequest"]; input: { path: { "platform": "x" | "xiaohongshu" | "bilibili"; "session_id": string }; query?: never; body: ApiSchemas["SocialVerificationRequest"] }; response: ApiSchemas["SocialLoginStatus"] }
-  "update.get_latest_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
-  "update.get_latest_mac_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ReleaseManifestResponse"] }
-  "update.get_latest_runner_yml": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: Uint8Array }
-  "update.get_latest_file": { path: { "filename": string }; query: Record<string, never>; body: undefined; input: { path: { "filename": string }; query?: never; body?: never }; response: Uint8Array }
-  "update.list_versions": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["UpdateVersionListResponse"] }
-  "update.create_version": { path: Record<string, never>; query: Record<string, never>; body: FormData; input: { path?: never; query?: never; body: FormData }; response: ApiSchemas["UpdateVersionItem"] }
-  "update.update_version": { path: { "id": string }; query: Record<string, never>; body: ApiSchemas["UpdateVersionUpdate"]; input: { path: { "id": string }; query?: never; body: ApiSchemas["UpdateVersionUpdate"] }; response: ApiSchemas["UpdateVersionItem"] }
-  "update.delete_version": { path: { "id": string }; query: Record<string, never>; body: undefined; input: { path: { "id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "update.get_service_updater_status": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["ServiceUpdaterStatus"] }
   "update.start_service_update_check": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateCheckRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateCheckRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
   "update.apply_service_update": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ServiceUpdateApplyRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ServiceUpdateApplyRequest"] }; response: ApiSchemas["ServiceUpdateTaskAccepted"] }
@@ -2625,94 +2611,6 @@ export const API_OPERATIONS = {
     ],
     "wait_for_model": false,
     "ipc": true
-  },
-  "update.get_latest_yml": {
-    "path": "/api/update/latest.yml",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "public"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.get_latest_mac_yml": {
-    "path": "/api/update/latest-mac.yml",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "public"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.get_latest_runner_yml": {
-    "path": "/api/update/latest-runner.yml",
-    "method": "GET",
-    "encoding": "json",
-    "response": "binary",
-    "identities": [
-      "public"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.get_latest_file": {
-    "path": "/api/update/{filename}",
-    "method": "GET",
-    "encoding": "json",
-    "response": "binary",
-    "identities": [
-      "public"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.list_versions": {
-    "path": "/api/admin/updates/versions",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.create_version": {
-    "path": "/api/admin/updates/versions",
-    "method": "POST",
-    "encoding": "multipart",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.update_version": {
-    "path": "/api/admin/updates/versions/{id}",
-    "method": "PATCH",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
-  },
-  "update.delete_version": {
-    "path": "/api/admin/updates/versions/{id}",
-    "method": "DELETE",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "admin"
-    ],
-    "wait_for_model": false,
-    "ipc": false
   },
   "update.get_service_updater_status": {
     "path": "/api/admin/updates/service/status",

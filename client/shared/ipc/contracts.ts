@@ -22,7 +22,6 @@ export * from './contracts/runner'
 
 export * from './contracts/session'
 export * from './contracts/ui-state'
-export * from './contracts/update'
 export {
   APP_PAGES,
   COMPANION_SECTIONS,
@@ -156,7 +155,6 @@ import type {
   UiStateReply,
   UiStateRequest
 } from './contracts/ui-state'
-import type { DesktopUpdateEvent } from './contracts/update'
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
@@ -336,13 +334,6 @@ export interface IpcInvokeContract {
     payload: DesktopShortcutsSetPayload
   ) => DesktopShortcutsState | Promise<DesktopShortcutsState>
 
-  // 更新
-  'spiritagent:update:check': () => Promise<void> | void
-  'spiritagent:update:download': () => Promise<void> | void
-  /** 仅主窗口或交互桌面可调用，且须处于 downloaded 状态。 */
-  'spiritagent:update:install': () => Promise<void> | void
-  'spiritagent:update:get-state': () => DesktopUpdateEvent | null | Promise<DesktopUpdateEvent | null>
-
   // 精灵窗口
   'spiritagent:sprite:hide': () => Promise<void> | void
   'spiritagent:sprite:set-ignore-mouse-events': (payload: {
@@ -380,7 +371,6 @@ export interface IpcEventContract {
   'spiritagent:tray:activate': []
   'spiritagent:tray:reset-position': []
   'spiritagent:ui-theme-changed': [payload: DesktopUiThemeBroadcast]
-  'spiritagent:update-event': [payload: DesktopUpdateEvent]
   'spiritagent:gateway:state-changed': [payload: DesktopGatewaySnapshot & { authSessionId: string }]
   'spiritagent:gateway:event': [payload: { event: DesktopGatewayEvent; authSessionId: string }]
   'spiritagent:voice:event': [payload: VoiceConnectionEvent]
@@ -501,11 +491,7 @@ export const IPC = {
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
-    spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
-    updateCheck: 'spiritagent:update:check',
-    updateDownload: 'spiritagent:update:download',
-    updateInstall: 'spiritagent:update:install',
-    updateGetState: 'spiritagent:update:get-state'
+    spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display'
   } as const satisfies Record<string, IpcChannel>,
   event: {
     presentationChanged: 'spiritagent:presentation:changed',
@@ -529,7 +515,6 @@ export const IPC = {
     trayActivate: 'spiritagent:tray:activate',
     trayResetPosition: 'spiritagent:tray:reset-position',
     uiThemeChanged: 'spiritagent:ui-theme-changed',
-    updateEvent: 'spiritagent:update-event',
     voiceEvent: 'spiritagent:voice:event',
     gatewayStateChanged: 'spiritagent:gateway:state-changed',
     gatewayEvent: 'spiritagent:gateway:event'

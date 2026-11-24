@@ -13,7 +13,6 @@ import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { createGatewayView } from '@/shared/lib/gateway-view'
 import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
-import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
@@ -100,11 +99,6 @@ export function bootstrapSurface(role: 'main' | 'desktop', RootComponent: React.
 
   setSurfaceRole(role)
   initRenderer()
-  const offUpdateBridge = installUpdateBridge()
-
-  if (import.meta.hot) {
-    import.meta.hot.dispose(offUpdateBridge)
-  }
 
   setPrimaryGateway(createGatewayView())
 

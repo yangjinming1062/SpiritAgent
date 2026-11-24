@@ -4,7 +4,7 @@ import { defineConfig } from 'tsup'
 const baseOptions = {
   bundle: true,
   dts: false,
-  external: ['electron', 'electron-log', 'electron-log/main', 'electron-updater', 'ws', 'yaml'],
+  external: ['electron', 'electron-log', 'electron-log/main', 'ws', 'yaml'],
   ignoreWatch: [
     '**/dist/**',
     '**/dist-electron/**',

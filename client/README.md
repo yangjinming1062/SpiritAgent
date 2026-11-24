@@ -12,7 +12,7 @@
 | 生活近况、事项与成果 | [生活读取与浏览](renderer/README.md#生活读取与浏览)、[生活页面](renderer/features/life/) |
 | 伙伴资料、衣柜、环境、动作与影像 | [渲染层入口](renderer/README.md#分层与目录) |
 | 设置、主题、声音与手机授权 | [settings](renderer/features/settings/)、[声音管理](renderer/features/companion/voice-manager.tsx)、[远程网页](#远程网页) |
-| Runner、配置及桌面更新 | [Runner 生命周期](main/README.md#runner-生命周期)、[配置镜像](main/README.md#配置镜像)、[桌面更新](main/README.md#桌面更新) |
+| Runner 与配置 | [Runner 生命周期](main/README.md#runner-生命周期)、[配置镜像](main/README.md#配置镜像) |
 
 ## 进程与代码边界
 

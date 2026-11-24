@@ -205,14 +205,7 @@ export function createDesktopBridge(
     onTrayResetPosition: subscribe(IPC.event.trayResetPosition),
     onUiThemeChanged: subscribe(IPC.event.uiThemeChanged),
     onPrefsHydrated: subscribe(IPC.event.prefsHydrated),
-    getVersion: request(IPC.invoke.version),
-    update: {
-      check: request(IPC.invoke.updateCheck),
-      download: request(IPC.invoke.updateDownload),
-      getState: request(IPC.invoke.updateGetState),
-      install: request(IPC.invoke.updateInstall),
-      onEvent: subscribe(IPC.event.updateEvent)
-    }
+    getVersion: request(IPC.invoke.version)
   }
 }
 

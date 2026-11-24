@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-export function venvPythonFor(spiritagentHome: string, platform: NodeJS.Platform = process.platform): string {
+function venvPythonFor(spiritagentHome: string, platform: NodeJS.Platform = process.platform): string {
   return platform === 'win32'
     ? path.join(spiritagentHome, 'runner', '.venv', 'Scripts', 'python.exe')
     : path.join(spiritagentHome, 'runner', '.venv', 'bin', 'python')

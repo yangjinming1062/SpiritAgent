@@ -15,7 +15,6 @@ from features.media.video_queue.lifecycle import runtime_participants as video_q
 from features.memory.lifecycle import runtime_participants as memory_participants
 from features.posts.lifecycle import runtime_participants as post_participants
 from features.scenes.lifecycle import runtime_participants as scene_participants
-from features.updates.lifecycle import runtime_participants as update_participants
 from features.visuals.lifecycle import runtime_participants as visuals_participants
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
@@ -33,7 +32,6 @@ from workflows.visual_preparation import (
 def configure_runtime_lifecycle() -> None:
     RUNTIME_LIFECYCLE.configure(
         (
-            *update_participants(),
             *video_queue_participants(),
             *media_participants(),
             *action_participants(),

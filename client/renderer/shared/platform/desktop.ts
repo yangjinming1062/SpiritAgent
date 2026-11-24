@@ -64,7 +64,7 @@ type PreferencesPort = Pick<
   DesktopBridge,
   'prefs' | 'shortcuts' | 'setUiTheme' | 'onUiThemeChanged' | 'onPrefsHydrated'
 >
-type SystemPort = Pick<DesktopBridge, 'log' | 'getVersion' | 'update'>
+type SystemPort = Pick<DesktopBridge, 'log' | 'getVersion'>
 type MediaPort = Pick<DesktopBridge, 'voicePlayback'> & {
   media: Pick<DesktopBridge['media'], 'prepareOutput'> & {
     [K in 'tts' | 'uploadAudio' | 'uploadVoiceSample']: ApiValueCall<DesktopBridge['media'][K]>

@@ -34,7 +34,6 @@ import { cleanupShortcuts, syncShortcutsFromConfig } from '../ipc/shortcuts'
 import { createVoicePlaybackStore } from '../ipc/voice-playback-store'
 import { installAppQuit } from '../lifecycle/app-quit'
 import { createAudioOutput } from '../lifecycle/audio-output'
-import { createAutoUpdater } from '../lifecycle/auto-updater'
 import { syncBundledSkills } from '../lifecycle/bundled-skills'
 import { createDesktopLogger } from '../lifecycle/desktop-log'
 import { createDesktopPresentation, type DesktopPresentation } from '../lifecycle/desktop-presentation'
@@ -61,7 +60,6 @@ import { createZoomPersistence } from '../lifecycle/zoom-persistence'
 import { createRunnerBridge } from '../runner/bridge'
 import { createRunnerProcess } from '../runner/process'
 import { createRunnerWsServer } from '../runner/rpc-ws'
-import { RunnerUpdater } from '../runner/updater'
 import { ASSET_FETCH_TIMEOUT_MS, DEFAULT_CSP_POLICY, DEV_CSP_POLICY } from '../security/hardening'
 import { isSenderWindow } from '../security/ipc-trust'
 import { resolveDesktopHome } from '../security/paths'
@@ -72,11 +70,9 @@ import { broadcastToAllWindows, fileExists } from '../shared/utils'
 
 export interface EntryServices {
   appRoot: string
-  appQuit: ReturnType<typeof installAppQuit>
   assetDiskCache: ReturnType<typeof createAssetDiskCache>
   audioOutput: ReturnType<typeof createAudioOutput>
   authBroadcaster: ReturnType<typeof createAuthBroadcaster>
-  autoUpdater: ReturnType<typeof createAutoUpdater>
   backendHttp: ReturnType<typeof createBackendHttp>
   configSync: ReturnType<typeof createConfigSync>
   ensureBackend: ReturnType<typeof createEnsureBackend>['ensureBackend']
@@ -407,17 +403,6 @@ export function createEntryServices(): EntryServices {
   powerMonitor.on('resume', () => gatewayRuntime?.reconnect())
   app.on('before-quit', () => gatewayRuntime?.close())
 
-  const autoUpdater = createAutoUpdater({
-    app,
-    runtime: {
-      getRunnerBridge: () => runnerHost.getBridge(),
-      spiritagentHome
-    },
-    createRunnerUpdater: deps => new RunnerUpdater(deps),
-    fetchImpl: electronFetch,
-    spiritagentHome
-  })
-
   const appQuit = installAppQuit({
     app,
     cleanupShortcuts,
@@ -452,9 +437,6 @@ export function createEntryServices(): EntryServices {
       windowHandlers.installContentSecurityPolicy()
       windowHandlers.configureSpellChecker(app)
       syncShortcutsFromConfig()
-      autoUpdater.setup()
-
-      await autoUpdater.installPendingRunnerUpdate()
 
       if (appQuit.isQuitting()) {
         return
@@ -520,11 +502,9 @@ export function createEntryServices(): EntryServices {
 
   return {
     appRoot,
-    appQuit,
     assetDiskCache,
     audioOutput,
     authBroadcaster,
-    autoUpdater,
     backendHttp,
     configSync,
     ensureBackend,

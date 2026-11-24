@@ -4,7 +4,7 @@
 
 ## 运行拓扑
 
-Backend 部署于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS。库本身支持的平台不等于产品支持。安装器负责首装和环境修复，安装后的运行与更新归 Client；Python 与依赖准备仍需联网。
+Backend 部署于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS。库本身支持的平台不等于产品支持。安装器负责首装和环境修复，安装后的运行归 Client；Python 与依赖准备仍需联网。
 
 桌面身份与账户网关连接由 Client 主进程持有，渲染窗口经受控 IPC 请求和订阅。进程拆分隔离职责和凭据，不构成任意代码安全沙箱。
 
@@ -56,13 +56,13 @@ Runner 的源码和安装版共用一个 Python 包及 wheel，[bootstrap](../ru
 
 Backend web 只支持单副本：会话、工具等待、用户锁、接口限流与连接重放均含进程内状态；媒体与影像按账户、任务与候选创建的互斥锁只在操作期间持有，随本地引用释放，不做长期登记。Cron 竞争认领和 outbox 持久化不能单独支持水平扩展；增加副本前须解决连接路由、回合互斥、调用关联和恢复所有权。
 
-默认 Compose 通过宿主 `10620` 提供 HTTP/WS，数据库、资产与更新包分别持久化。独立更新器只负责 `backend` 代码拉取、构建和重启；自身、采集服务及拓扑变化仍手工升级。部署与操作见 [Backend](../backend/README.md#部署与排障)。
+默认 Compose 通过宿主 `10620` 提供 HTTP/WS，数据库与资产分别持久化。独立更新器只负责 `backend` 代码拉取、构建和重启；自身、采集服务及拓扑变化仍手工升级。部署与操作见 [Backend](../backend/README.md#部署与排障)。
 
 ## 信任边界与安全
 
 Backend 保管供应商及资讯来源凭据并校验资源归属；Client 主进程保管桌面凭据，Runner 只取得执行所需配置。本机工具以用户权限操作，文件、截图和结果可能进入云端模型，提示词和进程拆分不能替代授权、路径或网络检查。
 
-更新器持 Docker socket、仓库写权限及只读部署密钥，只接受经共享 Unix socket 转发的管理员请求；它不参与业务流量，也不绕过 fast-forward 和本地修改保护。凭据落盘与更新验签统一见 [安全契约](PROTOCOL.md#安全更新与账户维护)。
+更新器持 Docker socket、仓库写权限及只读部署密钥，只接受经共享 Unix socket 转发的管理员请求；它不参与业务流量，也不绕过 fast-forward 和本地修改保护。凭据落盘见 [安全契约](PROTOCOL.md#安全与账户维护)。
 
 ## 模块入口
 

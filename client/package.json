@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "electron-log": "^5.2.0",
-    "electron-updater": "^6.6.2",
     "qrcode.react": "^4.2.0",
     "ws": "^8.21.0",
     "yaml": "^2.9.0"
@@ -101,10 +100,6 @@
         "to": "icon.ico"
       },
       {
-        "from": "../scripts/release-keys/update.pub",
-        "to": "update.pub"
-      },
-      {
         "from": "../installer/skills",
         "to": "skills"
       }
@@ -138,11 +133,11 @@
       "gatekeeperAssess": false,
       "hardenedRuntime": true,
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ]
     },
     "dmg": {
+      "writeUpdateInfo": false,
       "title": "安装 唤生",
       "backgroundColor": "#f5f5f7",
       "iconSize": 96,
@@ -186,6 +181,7 @@
       ]
     },
     "nsis": {
+      "differentialPackage": false,
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
@@ -193,14 +189,6 @@
       "uninstallDisplayName": "唤生",
       "warningsAsErrors": false
     },
-    "publish": [
-      {
-        "provider": "generic",
-        "url": "https://resolved-at-runtime.invalid/api/update",
-        "channel": "latest",
-        "useMultipleRangeRequest": false,
-        "updaterCacheDirName": "spiritagent-updater"
-      }
-    ]
+    "publish": null
   }
 }

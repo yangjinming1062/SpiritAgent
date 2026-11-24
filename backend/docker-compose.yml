@@ -58,7 +58,6 @@ services:
       - "10620:10620"
     volumes:
       - ./config.toml:/app/config.toml:ro
-      - ./updates:/app/updates
       - ./data:/app/data
       # 与更新器容器共享同一 socket 卷。
       - updater_socket:/run/updater

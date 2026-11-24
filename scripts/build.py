@@ -236,35 +236,6 @@ def main() -> int:
         shutil.copy2(exe_file, output_dir / final_name)
         print(f"\n==> Final installer: {output_dir / final_name}")
 
-        # Windows 自更新 zip：桌面产物与 Runner wheel；签名缺失或失败即中止构建。
-        update_lib = SCRIPT_DIR / "lib" / "UpdateManifest.ps1"
-        runner_payload = repo_root / "installer" / "payload" / "runner"
-        wheels = sorted(runner_payload.glob("*.whl"))
-        ps_bin = shutil.which("pwsh") or shutil.which("powershell")
-
-        if not update_lib.is_file():
-            raise RuntimeError(f"missing {update_lib}")
-        if not ps_bin:
-            raise RuntimeError("PowerShell (pwsh or powershell) not found in PATH — required to build the update zip")
-        if len(wheels) != 1:
-            raise RuntimeError(f"expected exactly one staged runner wheel in {runner_payload}, found {len(wheels)}")
-        if f"-{args.version}-" not in wheels[0].name:
-            raise RuntimeError(f"staged runner wheel {wheels[0].name} does not match release version {args.version}")
-
-        print("==> Building update zip via PowerShell...")
-        client_release = repo_root / "client" / "release"
-        run_cmd(
-            [
-                ps_bin,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                f"& {{ . '{update_lib}'; Build-UpdateZip -Version '{args.version}' -DesktopReleaseDir '{client_release}' -RunnerWheelPath '{wheels[0]}' -OutputDir '{output_dir}' }}",
-            ],
-            cwd=repo_root,
-        )
-
     return 0
 
 

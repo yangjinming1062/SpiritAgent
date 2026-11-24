@@ -77,21 +77,7 @@ export const settings = {
       heading: (brandFullName: string) => brandFullName,
       version: (value: number | string) => `版本 ${value}`,
       versionUnavailable: '版本不可用',
-      intro: '桌面客户端版本与更新管理。',
-      checkForUpdates: '检查更新',
-      checking: '检查中…',
-      upToDate: '已是最新版本',
-      upToDateWithVersion: (value: number | string) => `已是最新版本（v${value}）`,
-      updateAvailable: (value: number | string) => `v${value} 可用`,
-      downloadUpdate: '下载更新',
-      retryDownload: '重新下载',
-      downloading: (percent: number) => `正在下载更新 ${percent}%`,
-      preparing: '准备安装中…',
-      updateDownloaded: (value: number | string) => `v${value} 已就绪，重启后完成安装`,
-      restartNow: '立即重启',
-      checkError: (value: string) => `检查更新失败：${value}`,
-      downloadError: (value: string) => `下载更新失败：${value}`,
-      installError: (value: string) => `安装更新失败：${value}`
+      intro: '桌面客户端版本信息。'
     },
     runner: {
       title: '执行器配置',

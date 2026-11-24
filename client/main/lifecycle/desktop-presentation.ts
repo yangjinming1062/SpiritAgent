@@ -1328,7 +1328,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     isDesktopSender,
     registerIpc,
     initialize,
-    stop,
     dispose,
     clearUiState: (removedAccountId: string) => uiState.forgetAccount(removedAccountId),
     accountChanged: () => {

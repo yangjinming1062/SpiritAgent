@@ -80,21 +80,7 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
       heading: (brandFullName: string) => brandFullName,
       version: (value: number | string) => `Version ${value}`,
       versionUnavailable: 'Version unavailable',
-      intro: 'Desktop client version and update management.',
-      checkForUpdates: 'Check for updates',
-      checking: 'Checking…',
-      upToDate: 'Up to date',
-      upToDateWithVersion: (value: number | string) => `Up to date (v${value})`,
-      updateAvailable: (value: number | string) => `v${value} available`,
-      downloadUpdate: 'Download update',
-      retryDownload: 'Download again',
-      downloading: (percent: number) => `Downloading update ${percent}%`,
-      preparing: 'Preparing to install…',
-      updateDownloaded: (value: number | string) => `v${value} is ready; restart to finish installing`,
-      restartNow: 'Restart now',
-      checkError: (value: string) => `Update check failed: ${value}`,
-      downloadError: (value: string) => `Update download failed: ${value}`,
-      installError: (value: string) => `Update install failed: ${value}`
+      intro: 'Desktop client version information.'
     },
     runner: {
       title: 'Runner configuration',
