@@ -11,7 +11,7 @@ from starlette.responses import Response
 
 
 class ContractRouter(APIRouter):
-    """注册时固定操作策略，公开 OpenAPI 与实际准入使用相同元数据。"""
+    """注册时固定操作策略，协议生成与请求准入使用相同元数据。"""
 
     def __init__(self, *, identities: tuple[HttpIdentity, ...], **kwargs: Any) -> None:
         self.identities = identities

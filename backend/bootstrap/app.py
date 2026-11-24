@@ -22,7 +22,13 @@ from bootstrap.registrations import register_all
 
 register_all()
 
-app = FastAPI(title=SETTINGS.app_name, lifespan=lifespan)
+app = FastAPI(
+    title=SETTINGS.app_name,
+    lifespan=lifespan,
+    openapi_url=None,
+    docs_url=None,
+    redoc_url=None,
+)
 app.add_middleware(BodyLimitMiddleware)
 # 跨域仅供 Bearer 客户端；远程 Cookie 身份要求同源，CORS 不开放凭据跨域。
 app.add_middleware(

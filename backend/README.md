@@ -127,6 +127,8 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 管理后台的 `public_base_url` 用于激活码地址、手机入口及供应商读取视频附件，须对实际访问方可达。反向代理透传 WS 升级及 Origin。调整 Compose 后重新 `up -d` 应用；移除旧服务时核对孤立容器，保留数据卷。
 
+更新后从实际对外入口确认 `/openapi.json`、`/docs`、`/redoc` 和 `/docs/oauth2-redirect` 均返回 404，`/health` 返回 200。若代理缓存过文档响应，清理对应缓存后复验。
+
 ### 透明素材模型
 
 全身及衣柜需要数据目录中的 `models/<matting_model>.onnx`，默认文件名和解析见 [matting.py](infrastructure/video_processing/matting.py)，镜像不自动下载。新付费阶段前检查模型，已有源素材保留供恢复；本地抠图入口为 [image.py](infrastructure/video_processing/image.py)。

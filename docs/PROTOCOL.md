@@ -32,7 +32,7 @@
 
 HTTP 受理聊天提交、停止、快照、命令和资源操作；WS 交付事件与设备指令。HTTP 独立鉴权，不要求 WS 在线；请求失败不证明未受理，副作用恢复必须查询原身份。
 
-路由的 `operationId` 与 `operation_policy` 定义身份、编码、载荷和等待策略。[协议生成器](../scripts/generate_protocol.py)从 OpenAPI、控制 RPC、事件、Runner 和预设目录生成[跨端映射](../shared/api.generated.ts)。调用方使用操作标识，主进程不接收渲染层任意业务路径。
+路由的 `operationId` 与 `operation_policy` 定义身份、编码、载荷和等待策略。[协议生成器](../scripts/generate_protocol.py)在进程内读取 OpenAPI，结合控制 RPC、事件、Runner 和预设目录生成[跨端映射](../shared/api.generated.ts)。服务端关闭 OpenAPI 规范和交互式文档的 HTTP 入口。调用方使用操作标识，主进程不接收渲染层任意业务路径。
 
 聊天实时流归会话 emitter，与状态共同提交的异步通知归 outbox。Backend 不决定开窗和像素坐标，媒体交付不自动切换生活环境或呈现。
 
