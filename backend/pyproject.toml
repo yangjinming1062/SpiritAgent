@@ -5,6 +5,7 @@ description = "SpiritAgent Backend API"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
+    "starlette>=1.8.0",
     "uvicorn[standard]>=0.52.1",
     "sqlalchemy>=2.0.51",
     "greenlet>=3.0",

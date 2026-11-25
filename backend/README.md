@@ -43,6 +43,8 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 业务操作由 HTTP 受理，稳定操作标识与编码/等待策略生成到共享契约；WS [handlers.py](entrypoints/desktop/handlers.py) 只管理连接控制、工具同步、回执和情境信号。[body_limit.py](entrypoints/http/body_limit.py) 在解析前执行身份及载荷限制，实际流超限同样拒绝；管理页面可加载不代表管理 API 免鉴权。
 
+管理页的 HTML、JS 和 CSS 由 [page.py](entrypoints/http/routes/page.py) 提供，支持单段 Range。多段、重复或超长的 Range 按普通下载处理，避免组装 multipart 响应。
+
 [auth_rate_limit.py](entrypoints/http/auth_rate_limit.py) 在读取请求体前限制来源或已签发凭据的查验次数，命中失败锁定时记录入口与来源。计数表预留固定数量的共享桶，独占条目用尽后新来源按哈希分摊额度，同一来源在共享窗口到期前继续使用原桶。
 
 ## 配置与运行生命周期

@@ -1400,6 +1400,7 @@ dependencies = [
     { name = "qrcode" },
     { name = "slowapi" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "twscrape" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
@@ -1432,6 +1433,7 @@ requires-dist = [
     { name = "qrcode", specifier = ">=8.2" },
     { name = "slowapi", specifier = "==0.1.10" },
     { name = "sqlalchemy", specifier = ">=2.0.51" },
+    { name = "starlette", specifier = ">=1.8.0" },
     { name = "twscrape", specifier = "==0.20.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.1" },
     { name = "websockets", specifier = ">=15.0.1" },
@@ -1473,14 +1475,14 @@ wheels = [
 
 [[package]]
 name = "starlette"
-version = "0.47.3"
+version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/15/b9/cc3017f9a9c9b6e27c5106cc10cc7904653c3eec0729793aec10479dd669/starlette-0.47.3.tar.gz", hash = "sha256:6bc94f839cc176c4858894f1f8908f0ab79dfec1a6b8402f6da9be26ebea52e9", size = 2584144, upload-time = "2025-08-24T13:36:42.122Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/bb/3d8757f21e9a53d9035c9eb039a777047139a16bfdbedfc7a58241c3d914/starlette-1.10.0.tar.gz", hash = "sha256:b8399098d4c1e3522734f7235dc79b1fc967f96cf139c81e0fa30479e0685f9b", size = 2734356, upload-time = "2026-10-24T15:04:12.342Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/fd/901cfa59aaa5b30a99e16876f11abe38b59a1a2c51ffb3d7142bb6089069/starlette-0.47.3-py3-none-any.whl", hash = "sha256:89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51", size = 72991, upload-time = "2025-08-24T13:36:40.887Z" },
+    { url = "https://files.pythonhosted.org/packages/88/2e/947cfe02def9371c07cd5bf5b6b61c829e9aecb9904db02a66cfafbc1eec/starlette-1.10.0-py3-none-any.whl", hash = "sha256:478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4", size = 80571, upload-time = "2026-10-24T15:04:10.371Z" },
 ]
 
 [[package]]
