@@ -295,9 +295,10 @@ async def _run_tool_batch(
     tool_calls_list: list[dict], ctx: _ToolDispatchContext, progress: _BatchProgress
 ) -> list[dict]:
     results = await _execute_tool_batch(tool_calls_list, ctx, progress)
+    bodies = [result.get("receipt_content", result.get("content")) for result in results]
     await ctx.guardrails.record_round(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
-        [result["content"] if isinstance(result.get("content"), str) else None for result in results],
+        [body if isinstance(body, str) else None for body in bodies],
         goal=ctx.goal,
     )
     return results

@@ -195,7 +195,7 @@ async def _review_batches(
                     exclude_reflection=True,
                     for_review=True,
                 )
-                if ranked is not None:
+                if ranked:
                     async with SESSION_LOCAL() as db:
                         context = await load_review_context(
                             db,

@@ -1,5 +1,6 @@
 """影像库的只读查询与对外视图装配；签名 URL 只在响应出口生成。"""
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -95,6 +96,8 @@ from .stage_selection import (
     stage_day_phase,
     stage_scene_alias,
 )
+
+_STAGE_PREFERENCE_WINDOW_SECONDS = 4.0
 
 
 def _frozen_asset_kind() -> ColumnElement[str]:
@@ -1016,6 +1019,8 @@ async def stage_recovery_view(db: AsyncSession, user_id: int) -> StageRecoveryVi
 
 
 async def presentation_state(user_id: int) -> VisualPresentationView:
+    event_loop = asyncio.get_running_loop()
+    preference_deadline = event_loop.time() + _STAGE_PREFERENCE_WINDOW_SECONDS
     async with SESSION_LOCAL() as db:
         row = await db.get(VisualPresentation, user_id)
         now = utc_now()
@@ -1048,8 +1053,16 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
             pending_play=_pending_command(row),
             static_presentation=static,
         )
-    if view.stage_plan is not None and decision_enabled():
-        view.stage_plan = await _prefer_stage_plan(user_id, view.stage_plan, catalog, scene, intent, rhythm, now)
+    if view.stage_plan is not None and decision_enabled() and event_loop.time() < preference_deadline:
+        preference_window = asyncio.timeout_at(preference_deadline)
+        try:
+            async with preference_window:
+                view.stage_plan = await _prefer_stage_plan(
+                    user_id, view.stage_plan.model_copy(), catalog, scene, intent, rhythm, now
+                )
+        except TimeoutError:
+            if not preference_window.expired():
+                raise
     return view
 
 

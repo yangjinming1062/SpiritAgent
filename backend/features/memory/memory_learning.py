@@ -155,7 +155,8 @@ async def load_review_context(
             )
         )
     messages.sort(key=lambda m: m.message_id)
-    memory_stmt = select(Memory).where(scope_filter(scope), learning_filter(), Memory.status != "forgotten")
+    scoped_memories = select(Memory).where(scope_filter(scope), learning_filter(), Memory.status != "forgotten")
+    memory_stmt = scoped_memories
     if reviewed_before is not None:
         memory_stmt = memory_stmt.where(or_(Memory.reviewed_at.is_(None), Memory.reviewed_at < reviewed_before))
     if query:
@@ -172,41 +173,28 @@ async def load_review_context(
     )
     memories = list((await db.scalars(memory_stmt.order_by(*order).limit(REVIEW_MEMORY_LIMIT))).all())
     # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中；命中词多的优先。
-    if prioritized_memory_ids is not None:
-        related = {
-            row.id: row
-            for row in await db.scalars(
-                select(Memory).where(
-                    scope_filter(scope),
-                    learning_filter(),
-                    Memory.status != "forgotten",
-                    Memory.id.in_(prioritized_memory_ids),
-                )
-            )
-        }
-        ordered_related = [related[identifier] for identifier in prioritized_memory_ids if identifier in related]
-        memories = list({row.id: row for row in (*ordered_related, *memories)}.values())
-    elif new_only and messages:
+    keyword_matches: list[Memory] = []
+    if new_only and messages:
         terms = extract_search_terms(
             " ".join(m.content for m in messages if m.role == "user" and not m.suppressed), limit=REVIEW_TERM_LIMIT
         )
         if terms:
-            related = list(
+            keyword_matches = list(
                 (
                     await db.scalars(
-                        select(Memory)
-                        .where(
-                            scope_filter(scope),
-                            learning_filter(),
-                            Memory.status != "forgotten",
-                            or_(*(Memory.content.icontains(term, autoescape=True) for term in terms)),
-                        )
+                        scoped_memories.where(or_(*(Memory.content.icontains(term, autoescape=True) for term in terms)))
                         .order_by(keyword_match_score(terms).desc(), Memory.updated_at.desc(), Memory.id.desc())
                         .limit(REVIEW_MEMORY_LIMIT)
                     )
                 ).all()
             )
-            memories = list({r.id: r for r in (*related, *memories)}.values())
+    ranked_matches: list[Memory] = []
+    if prioritized_memory_ids:
+        related = {
+            row.id: row for row in await db.scalars(scoped_memories.where(Memory.id.in_(prioritized_memory_ids)))
+        }
+        ranked_matches = [related[identifier] for identifier in prioritized_memory_ids if identifier in related]
+    memories = list({row.id: row for row in (*keyword_matches, *ranked_matches, *memories)}.values())
     evidence_by_id = await load_evidence(db, [row.id for row in memories])
     records: list[MemoryRecord] = []
     record_chars = 0

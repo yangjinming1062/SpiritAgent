@@ -222,6 +222,7 @@ async def _choose_post_publication(payload: dict[str, Any]) -> tuple[str | None,
         return None, None
     excerpts = payload["selected_life_excerpts"]
     life = payload["life_context"]
+    events = life.get("recent_events", [])
     media = [DecisionOption(kind, _POST_TYPES[kind]) for kind in payload["available_types"] if kind in _POST_TYPES]
     questions = {
         "publication": DecisionQuestion(
@@ -242,37 +243,32 @@ async def _choose_post_publication(payload: dict[str, Any]) -> tuple[str | None,
             media,
             min_probability=0.8,
         )
-    choices = await choose_decisions(
-        "post_publication",
-        state=fit_decision_state(
-            {
-                "persona": str(payload["persona"])[:200],
-                "current_activity_type": life.get("own_activity_type"),
-                "selected_excerpt_count": len(excerpts),
-            },
-            {
-                "selected_life_excerpts": [
-                    {
-                        "title": str(item.get("title") or "")[:75],
-                        "narrative": str(item.get("narrative") or "")[:170],
-                        "occurred_at": item.get("occurred_at"),
-                    }
-                    for item in excerpts[:8]
-                ],
-                "previous_post_choices": [str(item)[:140] for item in payload.get("previous_post_choices", [])[:5]],
-                "recent_events": [
-                    {"fact_type": row.get("fact_type"), "content": str(row.get("narrative") or row.get("fact"))[:120]}
-                    for row in life.get("recent_events", [])[:5]
-                ],
-                "recent_posts": [str(item.get("title", ""))[:65] for item in payload["recent_posts"][:6]],
-            },
-            questions=questions,
-        ),
+    state = fit_decision_state(
+        {
+            "persona": str(payload["persona"])[:200],
+            "current_activity_type": life.get("own_activity_type"),
+            "mood": life.get("state", {}).get("mood"),
+            "selected_excerpt_count": len(excerpts),
+            "recent_event_count": len(events),
+        },
+        {
+            "selected_life_excerpts": excerpts[:8],
+            "recent_events": events[:5],
+            "previous_post_choices": [str(item)[:140] for item in payload.get("previous_post_choices", [])[:5]],
+            "recent_posts": [str(item.get("title", ""))[:65] for item in payload["recent_posts"][:6]],
+        },
         questions=questions,
-        wait_seconds=5.0,
     )
+    choices = await choose_decisions("post_publication", state=state, questions=questions, wait_seconds=5.0)
+    publication = choices.get("publication")
+    if publication == "quiet" and (
+        payload.get("recent_dialogue", {}).get("messages")
+        or state["selected_life_excerpts"] != excerpts
+        or state["recent_events"] != events
+    ):
+        return None, None
     medium = media[0].key if len(media) == 1 else choices.get("medium")
-    return choices.get("publication"), medium
+    return publication, medium
 
 
 async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
