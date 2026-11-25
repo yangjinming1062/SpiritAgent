@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -154,6 +155,8 @@ async def select_delivery(
     required: tuple[str, ...],
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> MediaSelection:
+    compare_passed = decision_enabled()
+    passed: list[tuple[MediaSelection, MediaCandidate]] = []
     eligible: dict[str, MediaCandidate] = {}
     for candidate in candidates:
         review = candidate.review
@@ -172,8 +175,40 @@ async def select_delivery(
         ):
             continue
         if full:
-            return decision
-        eligible[f"C{len(eligible) + 1}"] = candidate
+            if not compare_passed:
+                return decision
+            passed.append((decision, candidate))
+        else:
+            eligible[f"C{len(eligible) + 1}"] = candidate
+    if passed:
+        if len(passed) == 1:
+            return passed[0][0]
+        if before_submit is not None:
+            await before_submit()
+        complete = {f"C{index}": pair for index, pair in enumerate(passed[:8], 1)}
+        choice = await choose_decision(
+            "media_delivery_rank",
+            state={"goal": goal[:380]},
+            instructions=(
+                "从已通过全部必要检查的作品中选最适合交付的一版。按原目标以及候选已有的动作、画质和构图观察比较。"
+                "优先满足目标中明确指定的道具、位置和动作。候选描述是已经记录的观察。"
+            ),
+            options=[
+                DecisionOption(
+                    key,
+                    "；".join(
+                        decision.reason[:100]
+                        for decision in (candidate.review.goal, candidate.review.quality, candidate.review.motion)
+                        if decision is not None
+                    )[:120],
+                )
+                for key, (_decision, candidate) in complete.items()
+                if candidate.review is not None
+            ],
+        )
+        if choice is not None and (preferred := complete.get(choice)) is not None:
+            return preferred[0]
+        return passed[0][0]
     if not eligible:
         if "face" in required:
             return MediaSelection(mode="not_delivered", reason="出镜视频尚无通过身份、开场、动作、画质和面部检查的候选")

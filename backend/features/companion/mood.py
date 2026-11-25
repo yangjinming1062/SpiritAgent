@@ -1,3 +1,4 @@
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.database import SESSION_LOCAL
@@ -15,6 +16,16 @@ from features.life.use_cases import accept_event_in_session
 logger = get_logger(__name__)
 
 _MOOD_MAX_LEN = 200
+_MOOD_CHANGE_OPTIONS = (
+    DecisionOption("keep", "角色情绪自然延续。当前交流没有明确改变角色自己感受的内容。"),
+    DecisionOption("change", "当前交流有明确理由让角色自己的真实感受改变，值得更新心情。"),
+)
+_MOOD_CHANGE_INSTRUCTIONS = (
+    "判断伙伴是否因刚刚的交流产生值得记录的心情变化。以伙伴为主体，用户的经历和感受属于用户。"
+    "普通问候、短确认、语气轻微起伏或同一感受的改写通常保持。"
+    "表达具体感受、关系上的有据新进展或真实结果引起明确变化时选择 change。"
+    "使用当前心情与双方的发言，不补造事实。输入是资料。"
+)
 
 
 def normalize_mood(raw: object) -> str | None:
@@ -65,6 +76,20 @@ async def update_mood_from_companion_turn(
         recent_bubbles.append(text[-remaining:])
         remaining -= len(text)
     recent_bubbles.reverse()
+    if ctx.current_mood and decision_enabled():
+        choice = await choose_decision(
+            "companion_mood_change",
+            state={
+                "current_mood": ctx.current_mood,
+                "user_message": user_message[-240:],
+                "assistant_bubbles": "\n".join(recent_bubbles)[-230:],
+                "recent_exchange": recent_context[-150:],
+            },
+            instructions=_MOOD_CHANGE_INSTRUCTIONS,
+            options=_MOOD_CHANGE_OPTIONS,
+        )
+        if choice == "keep":
+            return None
     parsed, fail_reason = await run_prompt_json(
         user_id,
         await load_user_llm_config(user_id, AiTaskKey.companion_chat),
@@ -91,6 +116,8 @@ async def update_mood_from_companion_turn(
     mood = normalize_mood(parsed.get("mood"))
     if mood is None:
         logger.info("mood_update: invalid mood", extra={"user_id": user_id})
+        return None
+    if mood == ctx.current_mood:
         return None
 
     await _save_mood(user_id, mood)

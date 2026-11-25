@@ -115,18 +115,21 @@ def inspect_file(path: Path, backend: Path) -> tuple[int, list[str]]:
                 elif (
                     path == backend / "workflows/life_decisions.py"
                     and ast.unparse(expression.func) == "_decision_schema"
-                    and len(expression.args) == 4
+                    and len(expression.args) in (4, 5)
                     and not expression.keywords
                 ):
                     from features.life.actions import LIFE_CAPABILITIES
 
                     builder = resolve(expression.func, module)
-                    names = tuple(LIFE_CAPABILITIES)
+                    names = (*LIFE_CAPABILITIES, "recall", "complete_pursuit")
                     schemas = (
-                        builder(dict(zip(names, mask, strict=True)), evidence_ids, active, paused)
+                        builder(capabilities, evidence_ids, active, paused, selection)
                         for mask in product((False, True), repeat=len(names))
                         for evidence_ids in ([], ["1"])
                         for active, paused in product((False, True), repeat=2)
+                        for capabilities in (dict(zip(names, mask, strict=True)),)
+                        for baseline in (builder(capabilities, evidence_ids, active, paused),)
+                        for selection in (None, *baseline["properties"]["choice"]["enum"])
                     )
                 elif (
                     path == backend / "features/media/selection.py"

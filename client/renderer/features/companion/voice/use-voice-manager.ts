@@ -131,10 +131,8 @@ export function useVoiceManager({ compact = false, disabled = false, onVoiceSele
     setCatalogStatus(status => (status === 'ready' ? status : 'loading'))
 
     void (async () => {
-      const [result, matched] = await Promise.all([
-        fetchVoiceCatalogRaw(locale),
-        preference?.trim() ? matchVoicePreference(preference, locale) : Promise.resolve(null)
-      ])
+      const recommendation = preference?.trim() ? matchVoicePreference(preference, locale) : null
+      const result = await fetchVoiceCatalogRaw(locale)
 
       if (cancelled || !mounted()) {
         return
@@ -148,12 +146,6 @@ export function useVoiceManager({ compact = false, disabled = false, onVoiceSele
       }
 
       const next = result.catalog
-
-      if (matched?.ok && matched.voice) {
-        const priority = [matched.voice, ...matched.alternatives]
-        const ids = new Set(priority.map(voiceSelectionId))
-        next.voices = [...priority, ...next.voices.filter(voice => !ids.has(voiceSelectionId(voice)))]
-      }
 
       setCatalog(next)
       setCatalogStatus('ready')
@@ -175,6 +167,27 @@ export function useVoiceManager({ compact = false, disabled = false, onVoiceSele
           initializedPrompt: true,
           ...(saved ? { prompt: saved.prompt, provider: saved.provider } : {})
         })
+      }
+
+      const matched = await recommendation
+
+      if (cancelled || !mounted() || !matched?.ok || !matched.voice) {
+        return
+      }
+
+      const available = new Map(next.voices.map(voice => [voiceSelectionId(voice), voice]))
+
+      const priority = [matched.voice, ...matched.alternatives].flatMap(voice => {
+        const id = voiceSelectionId(voice)
+        const candidate = available.get(id)
+
+        available.delete(id)
+
+        return candidate ? [candidate] : []
+      })
+
+      if (priority.length) {
+        setCatalog({ ...next, voices: [...priority, ...available.values()] })
       }
     })()
 

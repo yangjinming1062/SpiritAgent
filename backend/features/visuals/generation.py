@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 from uuid import uuid4
 
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat_json
@@ -936,7 +937,11 @@ async def _prepare_pose(
         ]
         if not reviewed:
             raise
-        editable = next((candidate for candidate in reviewed if can_edit_opening(candidate.review)), None)
+        editable_candidates = [candidate for candidate in reviewed if can_edit_opening(candidate.review)]
+        editable = next(iter(editable_candidates), None)
+        if editable is not None and decision_enabled() and job.repair_count < job.repair_limit:
+            await before_submit()
+            editable = await _opening_repair_candidate(editable_candidates, opening_requirements(job, progress))
         failed = (editable or reviewed[-1]).review
         begin_opening_repair(
             job,
@@ -2002,6 +2007,41 @@ async def _ensure_video_chain(
     return chain
 
 
+async def _opening_repair_candidate(candidates: list[MediaCandidate], goal: str) -> MediaCandidate | None:
+    if not candidates:
+        return None
+    if not decision_enabled():
+        return candidates[0]
+    options = {f"C{index}": candidate for index, candidate in enumerate(candidates[:8], 1)}
+    state = {"goal": goal[:380]}
+    observations = {
+        key: (quality_failure_message(candidate.review) or "身份与画质通过，目标偏差未详述。")[:120]
+        for key, candidate in options.items()
+    }
+    choice = (
+        await choose_decision(
+            "visual_opening_repair_base",
+            state=state,
+            instructions="选择最适合保留作底图的候选。身份与画质均已通过。比较需要的变更，选最接近目标、修改范围最小的底图。",
+            options=[DecisionOption(key, observation) for key, observation in observations.items()],
+        )
+        if len(options) > 1
+        else "C1"
+    )
+    if choice is None:
+        return candidates[0]
+    remedy = await choose_decision(
+        "visual_opening_repair_method",
+        state={**state, "observation": observations[choice]},
+        instructions="根据起始图偏差及目标，判断能否保留构图和主体姿势，只调整局部。偏差小或证据不足时，保留底图。",
+        options=[
+            DecisionOption("edit", "只需调整局部道具、细节或局部姿态，能保留底图的大部分内容。"),
+            DecisionOption("redraw", "主体动作、角度或大部分画面显著错配，需用冻结参考重做。"),
+        ],
+    )
+    return None if remedy == "redraw" else options[choice]
+
+
 def _continue_after_video_rejection(progress: VisualJobProgress, chain: MediaChainState) -> bool:
     if not chain.needs_next():
         return False
@@ -2041,13 +2081,31 @@ async def _review_video_candidate(
     candidate = current_visual_candidate(progress, chain)
     if candidate.review and candidate.review.status == "blocked":
         raise VisualCreationError("本次视频检查被服务拦截", "review_blocked")
-    repair_planned = bool(
-        candidate.review
-        and not progress.review_only
-        and chain.plan_local_correction(
-            candidate.review.correction_notes(), instructions={0: candidate.review.correction_instruction}
-        )
-    )
+    repair_planned = False
+    if candidate.review and not progress.review_only and chain.can_plan_local_correction():
+        notes = candidate.review.correction_notes()
+        if notes:
+            choice = await choose_decision(
+                "visual_video_retry",
+                state={
+                    "evidence": notes[:550],
+                    "suggested_correction": candidate.review.correction_instruction[:300],
+                },
+                instructions=(
+                    "判断一次局部纠偏是否有具体、可实现的目标。优先修复有明确证据的单项问题。"
+                    "已有偏差贯穿多个时刻、修复需要更换核心行为或重做整个构图时，选择 next。"
+                    "证据不足时选择 uncertain。"
+                ),
+                options=[
+                    DecisionOption("repair", "现有建议能针对明确问题进行一次局部纠偏。"),
+                    DecisionOption("next", "局部纠偏无法保留成品结构并修复核心问题，沿原候选链尝试下一项。"),
+                    DecisionOption("uncertain", "现有依据不足以确认纠偏价值。"),
+                ],
+            )
+            if choice != "next":
+                repair_planned = chain.plan_local_correction(
+                    notes, instructions={0: candidate.review.correction_instruction}
+                )
     if not repair_planned and (
         candidate.review is None
         or candidate.review.status != "complete"

@@ -1,5 +1,6 @@
 """生活能力政策与素材快照；日常判断、夜间规划和执行前复核共用。"""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from itertools import zip_longest
 from typing import Any, Literal
@@ -17,6 +18,7 @@ from features.life.schemas import LifeStepView
 from features.media.image_generation import resolve_image_gen_chain
 from features.scenes.queries import count_ready_scenes, scene_planning_materials
 from features.topics.store import ranked_topic_summaries
+from features.visuals.material_selection import preferred_materials
 from features.visuals.queries import creation_preferences
 from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.models import ModelModality
@@ -42,7 +44,9 @@ class CapabilityBlock:
 type LifeMaterials = dict[str, list[dict[str, str]]]
 
 
-def fit_life_materials(materials: LifeMaterials, query: str, token_budget: int) -> LifeMaterials:
+async def fit_life_materials(
+    materials: LifeMaterials, query: str, token_budget: int, *, before_call: Callable[[], Awaitable[None]] | None = None
+) -> LifeMaterials:
     """优先取相关素材，三类交替取材，使用本次模型输入的实际余量。"""
     terms = extract_search_terms(query)
 
@@ -51,9 +55,22 @@ def fit_life_materials(materials: LifeMaterials, query: str, token_budget: int) 
         return sum(term in description for term in terms)
 
     selected: LifeMaterials = {group: [] for group in materials}
-    ranked = [sorted(rows, key=score, reverse=True) for rows in materials.values()]
+    ranked = {group: sorted(rows, key=score, reverse=True) for group, rows in materials.items()}
     available = token_budget - json_tokens(selected)
-    for candidates in zip_longest(*ranked):
+    if available <= 0:
+        return selected
+    preferred = await preferred_materials(
+        "life_materials",
+        query,
+        {
+            group: list({row["id"]: row for row in (*ranked[group][:4], *rows[:8])}.values())
+            for group, rows in materials.items()
+        },
+        before_call=before_call,
+    )
+    for group, material_id in preferred.items():
+        ranked[group].sort(key=lambda row: row["id"] != material_id)
+    for candidates in zip_longest(*ranked.values()):
         for group, row in zip(materials, candidates, strict=True):
             if row is not None and (cost := json_tokens(row) + 2) <= available:
                 selected[group].append(row)
@@ -205,20 +222,18 @@ async def life_capability_context(user_id: int, *, query: str, token_budget: int
         },
         "reading_sources": {"public_urls": url_block is None, "web_search": search_block is None},
     }
-    catalog = fit_life_materials(materials, query, token_budget - json_tokens(execution))
+    catalog = await fit_life_materials(materials, query, token_budget - json_tokens(execution))
     execution.update(catalog)
     if not all(catalog.values()) and execution["capabilities"]["visual.generate"]:
         execution["capabilities"]["visual.generate"] = False
         execution["blocked_capabilities"]["visual.generate"] = "模型窗口无法容纳一组制作素材"
         execution["capability_descriptions"].pop("visual.generate")
-    async with SESSION_LOCAL() as db:
-        topics = await ranked_topic_summaries(
-            db,
-            MemoryScope(user_id, "companion"),
-            utc_now(),
-            query=query,
-            token_budget=token_budget - json_tokens(execution),
-        )
+    topics = await ranked_topic_summaries(
+        MemoryScope(user_id, "companion"),
+        utc_now(),
+        query=query,
+        token_budget=token_budget - json_tokens(execution),
+    )
     if url_block and not topics:
         execution["capabilities"]["content.read"] = False
         execution["blocked_capabilities"]["content.read"] = url_block.reason

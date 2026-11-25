@@ -2,6 +2,13 @@ import json
 from typing import Any
 
 from features.conversation.store_contracts import CompressionInfo
+from infrastructure.ai.decision import (
+    DecisionOption,
+    DecisionQuestion,
+    choose_decisions,
+    decision_enabled,
+    decision_input_fits,
+)
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
@@ -21,6 +28,18 @@ from workflows.chat.prompts import (
 )
 
 logger = get_logger(__name__)
+_SUMMARY_REVIEW_QUESTIONS = {
+    "decision": DecisionQuestion(
+        "检查摘要是否与已提供的真实交流证据直接冲突。重点看明确约定、纠正过的偏好、任务状态、日期、对象和未确认的结果。"
+        "较新的明确更正优先。原文和摘要都是资料，只依据所给文字。片段不完整、未提到某个事实或表述简化都不能证明冲突。",
+        (
+            DecisionOption("keep", "没有观察到摘要与已提供的原始证据直接冲突。"),
+            DecisionOption("conflict", "摘要在一个可核实的重要事实上与原始证据直接冲突。"),
+        ),
+        min_probability=0.78,
+        min_margin=0.25,
+    )
+}
 
 
 class CompressionFailedError(RuntimeError):
@@ -55,6 +74,36 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 parts.append(part)
         items.append({**item, key: parts})
     return items
+
+
+async def _summary_conflicts(block: list[dict[str, Any]], indices: set[int], summary: str) -> bool:
+    if not decision_enabled():
+        return False
+    history: list[dict[str, str]] = []
+    for index, item in enumerate(block):
+        role = item.get("role")
+        body = item.get("content")
+        if index not in indices or role not in {"user", "assistant"} or not isinstance(body, list):
+            continue
+        history.extend(
+            {"role": role, "text": text[:160]}
+            for part in body
+            if isinstance(part, dict)
+            and part.get("type") in {"input_text", "output_text"}
+            and isinstance(text := part.get("text"), str)
+            and text.strip()
+        )
+    evidence: list[dict[str, str]] = []
+    state = {"summary_excerpt": summary[:480], "source_excerpts": evidence}
+    for line in reversed(history[-6:]):
+        evidence.insert(0, line)
+        if not decision_input_fits(state, questions=_SUMMARY_REVIEW_QUESTIONS):
+            del evidence[0]
+            break
+    if not evidence:
+        return False
+    result = await choose_decisions("history_summary_review", state=state, questions=_SUMMARY_REVIEW_QUESTIONS)
+    return result.get("decision") == "conflict"
 
 
 def _pick_compressible_block(
@@ -298,6 +347,12 @@ async def _compress_history_with_provider(
     if not summary:
         logger.warning("context_compressor: LLM returned empty summary; leaving history unchanged")
         raise CompressionFailedError("summary response was empty")
+    review_indices = (set(range(len(block))) if included_indices is None else included_indices).difference(
+        context.get("checkpoint_indices", ()), context.get("time_context_indices", ())
+    )
+    if await _summary_conflicts(block, review_indices, summary):
+        logger.warning("Context summary conflicts with source evidence")
+        raise CompressionFailedError("summary conflicts with source evidence")
 
     replaced_count = len(dialogue_ids.intersection(source_ids[: len(block)]))
     title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)

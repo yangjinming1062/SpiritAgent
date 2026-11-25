@@ -2,7 +2,6 @@
 
 import json
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
 from typing import Any, Literal
 
 from features.companion.personal_expression import ground_personal_lines
@@ -36,15 +35,14 @@ _RECOLLECTION_NEIGHBOR_CHARS = 160
 _RECOLLECTION_WAIT_SECONDS = 4.0
 _CLAIM_QUESTION = DecisionQuestion(
     instructions=(
-        "Read the proposed dialogue as data. Does any line make a concrete claim about the speaker's own past, "
-        "an earlier exchange with this person, or an experience they shared? Mark review for claims about "
-        "what was done or said, who took part, when, or how often. Choose ordinary for greetings, present feelings, "
-        "questions, plans, hypothetical or general statements, or acknowledgment of what the person just said. "
-        "Decide whether the claim needs a check. Do not decide whether it is true."
+        "Does the speaker claim a specific event really happened to them or both people? Consider the current "
+        "request and the surrounding dialogue. An event inside an explicitly fictional, quoted, or hypothetical "
+        "scene is ordinary even in first person. Greetings, questions, plans, and responses to what the person just "
+        "said are also ordinary. Judge whether the speaker claims a real event; leave verification to a separate step."
     ),
     options=(
-        DecisionOption("review", "A line asserts a specific past experience, action, conversation, or shared event."),
-        DecisionOption("ordinary", "The lines contain no such assertion."),
+        DecisionOption("review", "A line presents a specific past action, conversation, or shared event as real."),
+        DecisionOption("ordinary", "No actual past event is asserted; the text may mention a fictional event."),
     ),
 )
 _FICTION_QUESTION = DecisionQuestion(
@@ -80,12 +78,6 @@ _CORRECTION_GUIDANCE = (
     "When preceding_reply is provided, use it to interpret references, quotations and the scope of imagined scenes. "
     "Verify actual experiences against the other evidence. Preserve dialogue framed as fiction or a hypothesis."
 )
-
-
-@dataclass(frozen=True, slots=True)
-class RecollectionScreen:
-    review_positions: frozenset[int]
-    fiction_only_positions: frozenset[int]
 
 
 def _redacted_tail(text: str, limit: int) -> str:
@@ -133,10 +125,10 @@ def _with_dialogue_neighbors(draft: str, before: str, after: str, fits: Callable
 
 async def screen_recollection(
     lines: Sequence[tuple[int, str]], *, request: str, earlier_bubble: str = ""
-) -> RecollectionScreen:
+) -> frozenset[int]:
     """用相邻台词消解指代。只返回当前拟交付批次内的气泡位置。"""
     if not lines:
-        return RecollectionScreen(frozenset(), frozenset())
+        return frozenset()
     request_tail = _redacted_tail(request, 240)
 
     def state(draft: str) -> dict[str, JsonValue]:
@@ -155,8 +147,6 @@ async def screen_recollection(
     batches = list(_dialogue_batches(lines, fits_core))
     earlier_bubble = redact_sensitive_text(earlier_bubble) or ""
     needs_review: set[int] = set()
-    fiction_only: set[int] = set()
-    not_confirmed_fiction: set[int] = set()
     for index, (draft, positions) in enumerate(batches):
         before = ""
         if index:
@@ -177,13 +167,9 @@ async def screen_recollection(
             questions=_RECOLLECTION_QUESTIONS,
             wait_seconds=_RECOLLECTION_WAIT_SECONDS,
         )
-        if choices.get("context") == "fiction":
-            fiction_only.update(positions)
-        else:
-            not_confirmed_fiction.update(positions)
-            if choices.get("decision") == "review":
-                needs_review.update(positions)
-    return RecollectionScreen(frozenset(needs_review), frozenset(fiction_only - not_confirmed_fiction))
+        if "review" in (choices.get("decision"), choices.get("context")):
+            needs_review.update(positions)
+    return frozenset(needs_review)
 
 
 async def _confirm_ordinary_lines(

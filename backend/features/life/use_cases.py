@@ -442,11 +442,11 @@ async def update_personal_growth_in_session(
 
 
 async def _apply_pursuit_operation(
-    db: AsyncSession, user_id: int, row: LifeState, decision: LifeDecisionRequest
+    db: AsyncSession, user_id: int, row: LifeState, decision: LifeDecisionRequest, successor_focus: int | None
 ) -> None:
     previous_pursuit = None
     if decision.operation in {"pause_pursuit", "resume_pursuit", "abandon_pursuit", "redirect_pursuit"}:
-        previous_pursuit = await transition_pursuit(db, user_id, decision)
+        previous_pursuit = await transition_pursuit(db, user_id, decision, successor_focus=successor_focus)
     if decision.operation in {"start_pursuit", "redirect_pursuit"}:
         if not decision.pursuit_reason.strip() or not decision.pursuit_result.strip():
             raise ValueError("新事项必须说明缘由和可核验的完成标准")
@@ -474,7 +474,7 @@ async def _apply_pursuit_operation(
             if previous_pursuit is not None:
                 created.previous_pursuit_id = previous_pursuit.id
     elif decision.operation in {"advance_pursuit", "complete_pursuit"}:
-        await advance_pursuit(db, user_id, decision)
+        await advance_pursuit(db, user_id, decision, successor_focus=successor_focus)
 
 
 async def _enqueue_next_action(db: AsyncSession, user_id: int, row: LifeState, decision: LifeDecisionRequest) -> None:
@@ -502,7 +502,9 @@ async def _enqueue_next_action(db: AsyncSession, user_id: int, row: LifeState, d
     )
 
 
-async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifeStateView:
+async def commit_decision_in_session(
+    db: AsyncSession, user_id: int, decision: LifeDecisionRequest, *, successor_focus: int | None = None
+) -> LifeStateView:
     row = await get_or_create_state(db, user_id, lock=True)
     if decision.operation == "start_pursuit" and decision.source == "user" and decision.source_message_id is None:
         raise LifeInputError("登记用户约定需要本轮实际用户发言")
@@ -549,7 +551,7 @@ async def commit_decision_in_session(db: AsyncSession, user_id: int, decision: L
     if decision.narrative.state is not None:
         row.narrative = decision.narrative.state
     await db.flush()
-    await _apply_pursuit_operation(db, user_id, row, decision)
+    await _apply_pursuit_operation(db, user_id, row, decision, successor_focus)
     await _enqueue_next_action(db, user_id, row, decision)
     if row.presentation_revision != previous.presentation_revision:
         emit_ws_event(

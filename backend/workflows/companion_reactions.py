@@ -19,6 +19,7 @@ from features.conversation.turn_access import turn_conversation
 from features.visuals.queries import presentation_state
 from features.visuals.schemas import AmbientCatalogEntry
 from features.visuals.stage_selection import compatible_activity, stage_activity
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
@@ -30,6 +31,12 @@ from runtime.events.emit import emit_ws_event
 
 GestureKind = Literal["tap", "drag_released", "chat_opened"]
 _GESTURE_TTL = timedelta(seconds=15)
+_REACTION_DECISION_INSTRUCTIONS = (
+    "根据人物设定、作息、正在做的事和实际交流，从候选中选择此刻适合的反应。材料都是资料。"
+    "单击、移放或打开聊天本身并不表示对方期待表演、打招呼或回应。明确不想被打扰、没有具体缘由，"
+    "或正在安睡且没有理由醒来时，选择不作额外反应。只选择使用条件合适的动作。"
+    "适合主动说一句贴合此刻的话时才选择表达。只有自然地适合被听见时才选朗读。"
+)
 
 
 class GestureReactionRequest(BaseModel):
@@ -152,9 +159,43 @@ async def _decide(
         query = str(event.get("user_message") or gesture_topics.get(str(event["kind"]), ""))
         ctx = await load_companion_prompt_context(user_id, memory_query=query + " " + recent_context[-1800:])
         config = await load_user_llm_config(user_id, AiTaskKey.companion_chat)
-        if ctx is None or not config.is_configured or utc_now() - occurred_at > _GESTURE_TTL:
+        if ctx is None or utc_now() - occurred_at > _GESTURE_TTL:
             return GestureReactionResponse()
         shared_life = ctx.life_context.prompt_payload(shared_only=True)
+        planned = None
+        result = None
+        if decision_enabled():
+            visual_options = {f"move_{index}": key for index, key in enumerate(catalog)}
+            options = [DecisionOption("none", "不增加动作或台词，继续当前活动。")]
+            if allow_text and config.is_configured:
+                options.append(DecisionOption("say", "用文字说一句贴合此刻的话。"))
+                if can_read_aloud:
+                    options.append(DecisionOption("speak", "把一句适合被听见的话朗读出来。"))
+            for label, key in visual_options.items():
+                item = catalog[key]
+                options.append(
+                    DecisionOption(label, f"{item.action_name}。适合 {item.use_when}。避免 {item.avoid_when}"[:140])
+                )
+            if len(options) > 1:
+                planned = await choose_decision(
+                    "companion_desktop_reaction",
+                    state={
+                        "event": {
+                            key: value[-250:] if isinstance(value, str) else value for key, value in event.items()
+                        },
+                        "persona": ctx.persona_extras[:300],
+                        "local_time": ctx.current_time,
+                        "current_activity": activity,
+                        "rhythm": rhythm.state,
+                        "recent_exchange": recent_context[-350:],
+                    },
+                    instructions=_REACTION_DECISION_INSTRUCTIONS,
+                    options=options,
+                )
+            if planned == "none":
+                return GestureReactionResponse()
+            if planned is not None and planned in visual_options:
+                result = ReactionDecision(choice="move", visual_key=visual_options[planned], text=None)
 
         def parse_output(raw: object) -> ReactionDecision:
             decision = ReactionDecision.model_validate(raw)
@@ -164,40 +205,53 @@ async def _decide(
                 raise ValueError("Read-aloud is unavailable here")
             if decision.text and not allow_text:
                 raise ValueError("The current surface has no text delivery channel")
+            if planned in {"say", "speak"} and (
+                decision.choice != "say" or decision.read_aloud != (planned == "speak")
+            ):
+                raise ValueError("Express the selected speech decision in one grounded line")
             return decision
 
-        result = await call_llm_json(
-            config,
-            resolve_prompt_text(REACTION_INSTRUCTIONS, ctx.language),
-            {
-                "output_language": ctx.language,
-                "event": event,
-                "persona": ctx.persona_extras,
-                "local_time": ctx.current_time,
-                "current_activity": activity,
-                "rhythm": rhythm.state,
-                "recent_exchange": recent_context,
-                "memory": ctx.memory.model_dump(mode="json"),
-                "shared_life": shared_life,
-                "previously_told": told.deliveries,
-                "can_say": allow_text,
-                "can_read_aloud": can_read_aloud,
-                "visuals": [
-                    {
-                        "key": key,
-                        "description": item.action_name,
-                        "use_when": item.use_when,
-                        "avoid_when": item.avoid_when,
-                    }
-                    for key, item in catalog.items()
-                ],
-            },
-            schema=ReactionDecision.model_json_schema(),
-            schema_name="companion_desktop_reaction",
-            parse_output=parse_output,
-            repair_prompt="Preserve the choice, the selected visual and whether to read aloud. Fill only applicable fields.",
-            preserve_choices=("choice", "read_aloud"),
-        )
+        if result is None:
+            if not config.is_configured or utc_now() - occurred_at > _GESTURE_TTL:
+                return GestureReactionResponse()
+            instructions = resolve_prompt_text(REACTION_INSTRUCTIONS, ctx.language)
+            if planned in {"say", "speak"}:
+                instructions += (
+                    "\nThe reaction has already been chosen. Write one short grounded line with choice=say. "
+                    + ("Set read_aloud=true." if planned == "speak" else "Set read_aloud=false.")
+                )
+            result = await call_llm_json(
+                config,
+                instructions,
+                {
+                    "output_language": ctx.language,
+                    "event": event,
+                    "persona": ctx.persona_extras,
+                    "local_time": ctx.current_time,
+                    "current_activity": activity,
+                    "rhythm": rhythm.state,
+                    "recent_exchange": recent_context,
+                    "memory": ctx.memory.model_dump(mode="json"),
+                    "shared_life": shared_life,
+                    "previously_told": told.deliveries,
+                    "can_say": allow_text,
+                    "can_read_aloud": can_read_aloud,
+                    "visuals": [
+                        {
+                            "key": key,
+                            "description": item.action_name,
+                            "use_when": item.use_when,
+                            "avoid_when": item.avoid_when,
+                        }
+                        for key, item in catalog.items()
+                    ],
+                },
+                schema=ReactionDecision.model_json_schema(),
+                schema_name="companion_desktop_reaction",
+                parse_output=parse_output,
+                repair_prompt="Preserve the choice, the selected visual and whether to read aloud. Fill only applicable fields.",
+                preserve_choices=("choice", "read_aloud"),
+            )
         if result.text and (told.deliveries or shared_life["recent_events"]):
             verified = await ground_personal_lines(
                 config,

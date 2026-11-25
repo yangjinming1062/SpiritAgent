@@ -122,6 +122,7 @@ async def load_review_context(
     before_memory_id: int | None = None,
     new_only: bool = False,
     reviewed_before: datetime | None = None,
+    prioritized_memory_ids: tuple[int, ...] | None = None,
 ) -> MemoryReviewContext:
     await memory_write_lock(db, scope)
     rows = await review_messages(
@@ -171,7 +172,21 @@ async def load_review_context(
     )
     memories = list((await db.scalars(memory_stmt.order_by(*order).limit(REVIEW_MEMORY_LIMIT))).all())
     # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中；命中词多的优先。
-    if new_only and messages:
+    if prioritized_memory_ids is not None:
+        related = {
+            row.id: row
+            for row in await db.scalars(
+                select(Memory).where(
+                    scope_filter(scope),
+                    learning_filter(),
+                    Memory.status != "forgotten",
+                    Memory.id.in_(prioritized_memory_ids),
+                )
+            )
+        }
+        ordered_related = [related[identifier] for identifier in prioritized_memory_ids if identifier in related]
+        memories = list({row.id: row for row in (*ordered_related, *memories)}.values())
+    elif new_only and messages:
         terms = extract_search_terms(
             " ".join(m.content for m in messages if m.role == "user" and not m.suppressed), limit=REVIEW_TERM_LIMIT
         )

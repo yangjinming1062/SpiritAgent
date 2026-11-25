@@ -42,7 +42,7 @@ from runtime.presets import COMPANION_PRESET_ID
 from runtime.tools.registry import REGISTRY
 
 from workflows.chat.background_review import run_background_memory_review
-from workflows.chat.chat_emitter import Emitter
+from workflows.chat.chat_emitter import Emitter, HeadlessEmitter
 from workflows.chat.tool_dispatch import (
     _BatchProgress,
     _run_tool_batch,
@@ -476,6 +476,8 @@ async def _persist_assistant_with_tool_calls_and_results(
             )
         raise
 
+    if isinstance(dispatch_ctx.emitter, HeadlessEmitter):
+        dispatch_ctx.emitter.record_tool_results(tool_results)
     for res in tool_results:
         context["input"].extend(message_to_response_items(res))
         if res.get("name") != "search_tools":

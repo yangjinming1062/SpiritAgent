@@ -13,6 +13,7 @@ from features.configuration.settings.values import get_user_setting
 from features.media.described import DescribedDetail
 from features.media.visual_semantics import DayPhase
 
+from .material_selection import preferred_materials
 from .prompts import VISUAL_COMPOSE_REPAIR, VISUAL_COMPOSE_TEXTS
 from .schemas import (
     VisualIntent,
@@ -138,17 +139,45 @@ async def interpret_visual_description(
         "catalog": catalog,
         "catalog_truncated": catalog_truncated,
     }
-
-    output = await call_llm_json(
-        config,
-        VISUAL_COMPOSE_TEXTS.get(language, VISUAL_COMPOSE_TEXTS["zh"]),
-        payload,
-        schema=_ComposeOutput.model_json_schema(),
-        schema_name="visual_compose",
-        parse_output=_ComposeOutput.model_validate,
-        repair_prompt=VISUAL_COMPOSE_REPAIR,
+    required_groups = () if intent == "scenery" else ("outfits", "actions")
+    if intent in {"photo", "video"} and fixed_scene is None:
+        required_groups += ("scenes",)
+    preferred = await preferred_materials(
+        "visual_materials", description, {group: catalog[group] for group in required_groups if group in catalog}
     )
 
+    async def compose(request: dict[str, Any]) -> _ComposeOutput:
+        return await call_llm_json(
+            config,
+            VISUAL_COMPOSE_TEXTS.get(language, VISUAL_COMPOSE_TEXTS["zh"]),
+            request,
+            schema=_ComposeOutput.model_json_schema(),
+            schema_name="visual_compose",
+            parse_output=_ComposeOutput.model_validate,
+            repair_prompt=VISUAL_COMPOSE_REPAIR,
+        )
+
+    if preferred:
+        selected_catalog = {
+            group: [item for item in rows if item["id"] == preferred[group]] if group in preferred else rows
+            for group, rows in catalog.items()
+        }
+        output = await compose(
+            {
+                **payload,
+                "catalog": selected_catalog,
+                "catalog_truncated": catalog_truncated or selected_catalog != catalog,
+                "preferred_material_ids": preferred,
+            }
+        )
+        field_by_group = {"outfits": "outfit_id", "scenes": "scene_id", "actions": "action_id"}
+        if selected_catalog != catalog and (
+            not output.feasible
+            or any(getattr(output, field_by_group[group]) != identifier for group, identifier in preferred.items())
+        ):
+            output = await compose(payload)
+    else:
+        output = await compose(payload)
     if not output.feasible:
         return _infeasible(output.reason or labels["mismatch"], output.next_step)
 

@@ -20,6 +20,7 @@ from features.conversation.reply_audio import discard_reply_audio, prepare_reply
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.turn_access import ensure_main_conversation
 from features.life.context import read_contact_excerpt
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
@@ -34,6 +35,31 @@ from workflows.chat.orchestrator import run_chat_turn
 logger = get_logger(__name__)
 
 _FAILURE_REASON_MAX_CHARS = 200
+_LIFE_CONTACT_OPTIONS = (
+    DecisionOption("consider", "分享内容有新的交流价值，或需要进入完整回合判断。"),
+    DecisionOption("quiet", "最近交流已经说过同一段内容，或对方明确表示现在不想收到这类分享。"),
+)
+
+
+async def _decline_redundant_life_contact(experience: dict[str, str], recent: str) -> bool:
+    if not recent or not decision_enabled():
+        return False
+    choice = await choose_decision(
+        "companion_life_contact",
+        state={
+            "title": experience["title"][:100],
+            "episode": experience["excerpt"][:360],
+            "recent_exchange": recent[-440:],
+        },
+        instructions=(
+            "判断一段伙伴可分享的生活经历此刻是否明显重复或不合适。不打断已有约定。"
+            "最近交流已分享同一件事且没有新增内容，或对方明确表示暂时别分享，才选择 quiet。"
+            "同主题但有新进展，或资料不足以确定重复时，选择 consider。"
+        ),
+        options=_LIFE_CONTACT_OPTIONS,
+        min_probability=0.90,
+    )
+    return choice == "quiet"
 
 
 def _build_proactive_hint(
@@ -133,6 +159,13 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
                 language = resolve_language(await get_user_setting(db, user_id, "language"))
             if conversation_id is None:
+                await finish_companion_intent(user_id, trigger, contact_revision=revision, user_message_id=message_id)
+                return
+            if (
+                intent.source_kind == "life"
+                and life_experience is not None
+                and await _decline_redundant_life_contact(life_experience, recent_exchange)
+            ):
                 await finish_companion_intent(user_id, trigger, contact_revision=revision, user_message_id=message_id)
                 return
             request = ChatRequest(

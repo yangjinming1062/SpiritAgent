@@ -349,16 +349,18 @@ async def _has_unresolved_steps(db: AsyncSession, user_id: int, pursuit_id: int)
     )
 
 
-async def _latest_active_pursuit_id(db: AsyncSession, user_id: int, *, exclude: int) -> int | None:
-    return await db.scalar(
-        select(LifePursuit.id)
-        .where(LifePursuit.user_id == user_id, LifePursuit.status == "active", LifePursuit.id != exclude)
-        .order_by(LifePursuit.updated_at.desc(), LifePursuit.id.desc())
-        .limit(1)
+async def _successor_pursuit_id(db: AsyncSession, user_id: int, *, exclude: int, preferred: int | None) -> int | None:
+    query = select(LifePursuit.id).where(
+        LifePursuit.user_id == user_id, LifePursuit.status == "active", LifePursuit.id != exclude
     )
+    if preferred is not None and (valid := await db.scalar(query.where(LifePursuit.id == preferred))) is not None:
+        return valid
+    return await db.scalar(query.order_by(LifePursuit.updated_at.desc(), LifePursuit.id.desc()).limit(1))
 
 
-async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifePursuit:
+async def advance_pursuit(
+    db: AsyncSession, user_id: int, decision: LifeDecisionRequest, *, successor_focus: int | None = None
+) -> LifePursuit:
     state = await get_or_create_state(db, user_id, lock=True)
     pursuit = await db.scalar(
         select(LifePursuit)
@@ -403,7 +405,9 @@ async def advance_pursuit(db: AsyncSession, user_id: int, decision: LifeDecision
             "results": [deepcopy(result_reference(event)) for event in evidence],
         }
         if state.active_pursuit_id == pursuit.id:
-            state.active_pursuit_id = await _latest_active_pursuit_id(db, user_id, exclude=pursuit.id)
+            state.active_pursuit_id = await _successor_pursuit_id(
+                db, user_id, exclude=pursuit.id, preferred=successor_focus
+            )
     else:
         state.active_pursuit_id = pursuit.id
     if evidence_ids:

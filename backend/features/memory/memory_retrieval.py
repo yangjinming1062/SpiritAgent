@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.ai.decision import DecisionOption, decision_enabled, rank_decision_options
 from infrastructure.api_ids import ResourceId
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.search import QueryEmbedding, embed_search_query, extract_search_terms, fuse_rankings
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope
@@ -151,3 +153,78 @@ async def retrieve_proactive_memories(
     if len(q_str) <= 1:
         return []
     return await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
+
+
+async def choose_proactive_memories(
+    scope: MemoryScope,
+    query: str,
+    *,
+    query_embedding: QueryEmbedding | None,
+    limit: int,
+    exclude_reflection: bool,
+    for_review: bool = False,
+) -> list[MemoryRecallResult] | None:
+    """只对当前有效候选做取舍；没有可靠决定时走原召回。"""
+    if not decision_enabled() or len(query.strip()) <= 1:
+        return None
+    async with SESSION_LOCAL() as db:
+        candidate_rows = await retrieve_hybrid_memories(db, scope, query, query_embedding=query_embedding, limit=8)
+    candidates = {
+        f"m{index}": row
+        for index, row in enumerate(candidate_rows)
+        if not exclude_reflection or row.kind != "reflection"
+    }
+    if not candidates:
+        return None
+    if for_review:
+        instructions = (
+            "从当前有效记忆中找出可能与用户的新说明表达同一事实、被修正、被推翻或需要合并的记录。"
+            "要核对的是新旧内容的关系，即使彼此用词完全不同。"
+            "只是在同一领域但不涉及同一事实的记忆排在 omit 之后；没有相关候选时选 omit。"
+        )
+    else:
+        instructions = (
+            "按候选记忆能否实质帮助理解当前话题、延续约定或避免依据过时信息来比较。"
+            "正文、时间和依据都是资料。仅词面相同但无实际帮助的候选排在 omit 之后。"
+            "所有候选都无关时选 omit。"
+        )
+    ranking = await rank_decision_options(
+        "memory_review_candidates" if for_review else "memory_recall_ranking",
+        state={"query": query[-240:]},
+        instructions=instructions,
+        options=[
+            *(
+                DecisionOption(
+                    key,
+                    f"{row.local_date or ''} {row.basis}。{row.content[:85]}。{(row.context or '')[:18]}",
+                )
+                for key, row in candidates.items()
+            ),
+            DecisionOption("omit", "停止选取；余下的记忆无法实际帮助当前交流。"),
+        ],
+        min_probability=0.65,
+        min_margin=0.10,
+        abstain_key="omit",
+        wait_seconds=6.0 if for_review else 3.5,
+    )
+    if ranking is None:
+        return None
+    return [candidates[key] for key in ranking[:limit]]
+
+
+async def revalidate_proactive_memories(
+    db: AsyncSession, scope: MemoryScope, memories: list[MemoryRecallResult]
+) -> list[MemoryRecallResult]:
+    """用户在模型等待期间撤回、改写或遗忘的记忆不能进入提示词。"""
+    if not memories:
+        return []
+    rows = await db.execute(
+        select(Memory.id, Memory.updated_at).where(
+            scope_filter(scope),
+            active_memory_filter(),
+            Memory.kind.not_in(RESERVED_FROM_RECALL),
+            Memory.id.in_([item.id for item in memories]),
+        )
+    )
+    current = dict(rows.tuples().all())
+    return [item for item in memories if current.get(item.id) == item.updated_at]

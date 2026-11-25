@@ -120,7 +120,7 @@ async def _search_events(
         await rebuild_life_search(db, user_id)
         await db.commit()
         ids, status = await search_documents(
-            db, LifeEventSearchIndex, user_id, select(LifeEvent.id).where(*where), query, vector=vector, limit=limit
+            LifeEventSearchIndex, user_id, select(LifeEvent.id).where(*where), query, vector=vector, limit=limit
         )
         found = {row.id: row for row in await db.scalars(select(LifeEvent).where(*where, LifeEvent.id.in_(ids)))}
         LIFE_SEARCH_WORKER.schedule(user_id, vector)

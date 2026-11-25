@@ -1985,7 +1985,7 @@ export const API_OPERATIONS = {
       "desktop",
       "remote"
     ],
-    "wait_for_model": false,
+    "wait_for_model": true,
     "ipc": true
   },
   "voices.post_voice_candidate": {

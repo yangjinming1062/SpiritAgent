@@ -24,8 +24,9 @@ from features.conversation.submissions import submission_user_messages
 from features.conversation.turn_access import context_messages, turn_conversation, turn_message
 from features.conversation.turn_store import persist_compression_checkpoint, persist_user_message
 from features.media.turn_state import MediaTurnState
-from features.memory.memory_retrieval import embed_memory_text
+from features.memory.memory_retrieval import MemoryRecallResult, choose_proactive_memories, embed_memory_text
 from features.scenes.turn_state import SceneTurnState
+from infrastructure.ai.decision import decision_enabled
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.selection import ProviderSelection
@@ -60,6 +61,7 @@ from workflows.chat.prompts import REPLACE_REPLY_GUIDANCES
 from workflows.chat.system_prompt import build_companion_environment_prompt
 from workflows.chat.tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
 from workflows.chat.topic_context import load_topic_context
+from workflows.chat.turn_decisions import TurnDecision, choose_turn_decision
 from workflows.chat.turn_errors import (
     CompanionReplyFormatError,
     emit_conversation_unavailable,
@@ -77,7 +79,7 @@ from workflows.chat.turn_inputs import (
     resolve_inference_settings,
     user_text_item,
 )
-from workflows.chat.types import LifeContactEvidence, TerminalReplyDelivery, TrackTask
+from workflows.chat.types import LifeContactEvidence, LLMTurnResult, TerminalReplyDelivery, TrackTask
 from workflows.companion_actions import build_action_view
 from workflows.companion_rhythm import open_rhythm_message
 from workflows.tool_availability import unavailable_action_tool_names
@@ -221,6 +223,9 @@ class _TurnSetup:
     user_message_id: int | None
     final_reply_only: bool
     memory_query: str
+    related_context_query: str
+    direct_call_reply: bool
+    stay_silent: bool
     history: list[MessageSnapshot] | None
 
 
@@ -245,9 +250,12 @@ async def _load_turn_setup(
     task_override: AiTaskKey | None,
     session_settings: dict | None,
     persisted_message_id: int | None,
+    submission_request_id: str | None,
     final_reply_only: bool,
     replace_reply_message_id: int | None,
     ephemeral: bool,
+    call_can_reply_directly: bool,
+    reply_can_stay_silent: bool,
 ) -> _TurnSetup | None:
     """读取会话与作用域，核对已受理输入或保存内部入口的消息；None 表示已发错误帧结束本轮。"""
     user_message_id: int | None = None
@@ -291,14 +299,41 @@ async def _load_turn_setup(
             session_settings if session_settings is not None else (conv.settings_json or {}),
         )
         # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
-        history: list[MessageSnapshot] | None = None
-        if replacement is not None:
-            history = [m for m in await context_messages(db, conv) if m.id != replacement.previous.id]
+        judge_turn = decision_enabled() and (memory_scope is not None or call_can_reply_directly)
+        history = (
+            await context_messages(db, conv)
+            if replacement is not None or (ephemeral and memory_scope is not None) or judge_turn
+            else None
+        )
+        if replacement is not None and history is not None:
+            history = [m for m in history if m.id != replacement.previous.id]
         memory_query = ""
         if memory_scope is not None:
-            if ephemeral:
-                history = await context_messages(db, conv)
             memory_query = memory_query_text(req, history or [], use_request=not ephemeral)
+        current: dict[int, str] = {}
+        if judge_turn and not ephemeral and user_message_id is not None:
+            if submission_request_id is not None:
+                current = await submission_user_messages(db, user_id, conv.id, submission_request_id)
+            if not current:
+                current = {user_message_id: req.message.content}
+    decision = (
+        await choose_turn_decision(
+            memory_query,
+            current,
+            history or (),
+            trigger=req.message.content if ephemeral else "",
+            memory_available=memory_scope is not None,
+            call_can_reply_directly=call_can_reply_directly and not final_reply_only,
+            reply_can_stay_silent=reply_can_stay_silent
+            and not final_reply_only
+            and replacement is None
+            and conv.system_preset_id == COMPANION_PRESET_ID
+            and conv.parent_id is None
+            and not conv.is_automation,
+        )
+        if judge_turn
+        else TurnDecision(memory_query)
+    )
     return _TurnSetup(
         conv=conv,
         task=task,
@@ -307,7 +342,10 @@ async def _load_turn_setup(
         replacement=replacement,
         user_message_id=user_message_id,
         final_reply_only=final_reply_only,
-        memory_query=memory_query,
+        memory_query=decision.memory_query,
+        related_context_query=decision.memory_query or memory_query,
+        direct_call_reply=decision.direct_call_reply,
+        stay_silent=decision.stay_silent,
         history=history,
     )
 
@@ -326,6 +364,7 @@ async def _prepare_turn(
     submission_request_id: str | None,
     excluded_tool_names: frozenset[str],
     memory_embedding: QueryEmbedding | None,
+    recalled_memories: list[MemoryRecallResult] | None,
     reply_delivery: TerminalReplyDelivery | None,
     call_record_id: int | None,
 ) -> _TurnContext | None:
@@ -343,6 +382,8 @@ async def _prepare_turn(
                 task=setup.task,
                 proactive_memory_query=setup.memory_query,
                 proactive_memory_embedding=memory_embedding,
+                recalled_memories=recalled_memories,
+                life_context_query=setup.related_context_query,
                 companion_proactive_turn=ephemeral,
                 prefer_streaming_voice=reply_delivery is not None,
                 excluded_tool_names=excluded_tool_names,
@@ -514,6 +555,7 @@ async def _prepare_turn(
         scene_turn=SceneTurnState(),
         proactive_turn=ephemeral,
         user_messages=user_messages,
+        goal=req.message.content,
         media_turn=media_turn,
     )
 
@@ -563,17 +605,16 @@ async def _refresh_turn_material(
             )
             instruction_parts.append(environment)
             action_tools_not_ready = await unavailable_action_tool_names(user_id, action_view=action_view)
-            if memory_scope is not None:
-                topic_context_at = utc_now()
-                current_context["topic_sources"] = await load_topic_context(
-                    db,
-                    memory_scope,
-                    inputs.context.get("historical_topic_ids", ()),
-                    now=topic_context_at,
-                    query=memory_query,
-                    token_budget=inputs.ctx_length // 4,
-                )
-                current_context["topic_context_at"] = topic_context_at
+    if memory_scope is not None and conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
+        topic_context_at = utc_now()
+        current_context["topic_sources"] = await load_topic_context(
+            memory_scope,
+            inputs.context.get("historical_topic_ids", ()),
+            now=topic_context_at,
+            query=memory_query,
+            token_budget=inputs.ctx_length // 4,
+        )
+        current_context["topic_context_at"] = topic_context_at
     current_context["instructions"] = "\n\n".join(instruction_parts)
     return action_tools_not_ready
 
@@ -610,14 +651,63 @@ async def _run_chat_turn(
             task_override=task_override,
             session_settings=session_settings,
             persisted_message_id=persisted_message_id,
+            submission_request_id=submission_request_id,
             final_reply_only=final_reply_only,
             replace_reply_message_id=replace_reply_message_id,
             ephemeral=ephemeral,
+            call_can_reply_directly=call_record_id is not None
+            and reply_delivery is not None
+            and not req.message.attachments,
+            reply_can_stay_silent=submission_request_id is not None
+            and not ephemeral
+            and not headless
+            and call_record_id is None
+            and not req.message.attachments,
         )
         if setup is None:
             return
+        if setup.stay_silent:
+            await _persist_assistant_no_tool_turn(
+                setup.conv,
+                user_id,
+                LLMTurnResult(
+                    turn_content="",
+                    tool_calls_list=[],
+                    final_prompt_tokens=0,
+                    final_completion_tokens=0,
+                    final_usage_payload=None,
+                    turn_duration_ms=0,
+                    decision="silent",
+                ),
+                task=setup.task,
+                emitter=emitter,
+                effective_settings=setup.effective_settings,
+                user_text=req.message.content,
+                first_user_msg_content=None,
+                memory_scope=setup.memory_scope,
+                media=None,
+                turn_reasoning=None,
+                cache_usage=LlmUsageAccumulator().summary(),
+                persist=True,
+                track_task=track_task,
+                submission_request_id=submission_request_id,
+                submitted_message_id=setup.user_message_id,
+            )
+            return
         memory_embedding = (
             await embed_memory_text(user_id, setup.memory_query) if len(setup.memory_query.strip()) > 1 else None
+        )
+        is_companion = setup.conv.system_preset_id == COMPANION_PRESET_ID and setup.conv.parent_id is None
+        recalled_memories = (
+            await choose_proactive_memories(
+                setup.memory_scope,
+                setup.memory_query,
+                query_embedding=memory_embedding,
+                limit=4 if is_companion else 3,
+                exclude_reflection=is_companion,
+            )
+            if setup.memory_scope is not None
+            else None
         )
         turn = await _prepare_turn(
             setup,
@@ -632,6 +722,7 @@ async def _run_chat_turn(
             submission_request_id=submission_request_id,
             excluded_tool_names=excluded_tool_names,
             memory_embedding=memory_embedding,
+            recalled_memories=recalled_memories,
             reply_delivery=reply_delivery,
             call_record_id=call_record_id,
         )
@@ -674,7 +765,7 @@ async def _run_chat_turn(
                 current_context,
                 base_instructions=base_instructions,
                 memory_scope=setup.memory_scope,
-                memory_query=setup.memory_query,
+                memory_query=setup.related_context_query,
                 replacement=setup.replacement,
                 media_turn=media_turn,
             )
@@ -702,7 +793,7 @@ async def _run_chat_turn(
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 只依据已有结果收束回复；主动回合由意图有效期约束。
-            reply_only = setup.final_reply_only or dispatch_ctx.guardrails.must_conclude()
+            reply_only = setup.final_reply_only or setup.direct_call_reply or dispatch_ctx.guardrails.must_conclude()
             planner_pass = reply_bubble_sink is not None and bool(active_schemas) and not reply_only
             generate = partial(
                 generate_turn_response,

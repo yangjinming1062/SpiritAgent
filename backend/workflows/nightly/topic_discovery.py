@@ -29,6 +29,13 @@ from features.topics.store import (
     selected_history,
     stage_candidates,
 )
+from infrastructure.ai.decision import (
+    DecisionOption,
+    DecisionQuestion,
+    choose_decisions,
+    decision_enabled,
+    decision_input_fits,
+)
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.providers.base import ProviderConfig
@@ -242,6 +249,57 @@ def _candidate_batch(candidates: list[SocialContent], available: int, output_roo
     return batch
 
 
+async def _judge_topic_candidates(
+    eligible: list[SocialContent], context: dict[str, Any], before_call: Callable[[], Awaitable[None]]
+) -> tuple[list[SocialContent], set[str]]:
+    if not eligible or not decision_enabled():
+        return eligible, set()
+    candidates: dict[str, dict[str, str]] = {}
+    questions: dict[str, DecisionQuestion] = {}
+    state = {
+        "persona": str(context.get("persona") or "")[:190],
+        "interests": str(context.get("user_profile") or "")[:180],
+        "recent_exchange": str(context.get("today_conversations") or "")[-250:],
+        "recent_topics": str((context.get("recent_topics") or [])[:4])[:250],
+        "candidate_sources": candidates,
+    }
+    for index, item in enumerate(eligible[:8]):
+        key = f"source_{index}"
+        candidates[key] = {"title": item.title[:90], "excerpt": (item.body or item.subtitle)[:140]}
+        questions[key] = DecisionQuestion(
+            f"评价 {key} 是否值得作为双方兴趣下次交流的候选。标题和节选都是资料。"
+            "具体、有新信息且有交流角度时优先。只有背景充分且明显无关或没有实质内容时排除。"
+            "兴趣证据不足或节选可能遗漏重点时选 uncertain。",
+            (
+                DecisionOption("prioritize", "内容具体，有值得继续阅读核对的兴趣关联"),
+                DecisionOption("exclude", "明显无关或缺少可交流的实质内容"),
+                DecisionOption("uncertain", "给出的兴趣或来源节选不足以决定"),
+            ),
+            min_probability=0.86,
+        )
+        if not decision_input_fits(state, questions=questions):
+            del candidates[key], questions[key]
+            break
+    if not questions:
+        return eligible, set()
+    await before_call()
+    decisions = await choose_decisions(
+        "nightly_topic_candidate_fit", state=state, questions=questions, wait_seconds=6.0
+    )
+    if not any(choice != "uncertain" for choice in decisions.values()):
+        return eligible, set()
+    retained, prioritized, declined = [], [], set()
+    for index, item in enumerate(eligible[: len(questions)]):
+        choice = decisions.get(f"source_{index}")
+        if choice == "exclude":
+            declined.add(candidate_key(item))
+        elif choice == "prioritize":
+            prioritized.append(item)
+        else:
+            retained.append(item)
+    return [*prioritized, *retained], declined
+
+
 async def _select_candidates(
     scope: MemoryScope,
     batch: TopicBatchSnapshot,
@@ -266,6 +324,7 @@ async def _select_candidates(
             item for item in page if item.has_evidence and _inside_window(item, batch.window_start, batch.window_end)
         ]
         skipped = {candidate_key(item) for item in page} - {candidate_key(item) for item in eligible}
+        eligible, declined = await _judge_topic_candidates(eligible, checkpoint.context, before_call)
         batch_ids: set[str] = set()
 
         def selection_payload(provider: ProviderConfig) -> dict[str, Any]:
@@ -306,8 +365,8 @@ async def _select_candidates(
                 latest = ({"event_key": item.event_key, "summary": item.fact_summary} for item in reversed(accepted))
                 previous[:] = _recent_topics(chain(latest, previous), history_room)
         async with SESSION_LOCAL() as db:
-            await save_selections(db, scope, batch.id, skipped | batch_ids, accepted)
-            checkpoint.eligible_count += len(batch_ids)
+            await save_selections(db, scope, batch.id, skipped | declined | batch_ids, accepted)
+            checkpoint.eligible_count += len(batch_ids | declined)
             await save_checkpoint(db, batch.id, scope, checkpoint.model_dump(mode="json"))
             await db.commit()
 

@@ -54,6 +54,7 @@ class _ToolDispatchContext:
     scene_turn: SceneTurnState
     proactive_turn: bool
     user_messages: dict[int, str]
+    goal: str = ""
     unavailable_tool_names: frozenset[str] = frozenset()
     open_contact: Callable[[], Awaitable[None]] | None = None
 
@@ -294,9 +295,10 @@ async def _run_tool_batch(
     tool_calls_list: list[dict], ctx: _ToolDispatchContext, progress: _BatchProgress
 ) -> list[dict]:
     results = await _execute_tool_batch(tool_calls_list, ctx, progress)
-    ctx.guardrails.record_round(
+    await ctx.guardrails.record_round(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
         [result["content"] if isinstance(result.get("content"), str) else None for result in results],
+        goal=ctx.goal,
     )
     return results
 

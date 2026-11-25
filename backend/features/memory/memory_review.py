@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from infrastructure.ai.decision import decision_enabled
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import call_llm_once
 from infrastructure.ai.tasks import AiTaskKey
@@ -18,6 +19,7 @@ from features.conversation.evidence import latest_scope_message_id
 from features.memory.contracts import MemoryConflictError, MemoryRecord
 from features.memory.memory_learning import MemoryReviewContext, apply_memory_decisions, load_review_context
 from features.memory.memory_policy import MemoryDecisions
+from features.memory.memory_retrieval import choose_proactive_memories, embed_memory_text
 from features.memory.prompts import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 
 logger = get_logger(__name__)
@@ -177,6 +179,33 @@ async def _review_batches(
             return
         if not llm_config.is_configured:
             raise ValueError("Memory review requires an available LLM configuration")
+        if decision_enabled():
+            user_text = "\n".join(
+                message.content for message in context.messages if message.role == "user" and not message.suppressed
+            )
+            if user_text.strip():
+                if before_call is not None:
+                    await before_call()
+                query = user_text[-1600:]
+                ranked = await choose_proactive_memories(
+                    scope,
+                    query,
+                    query_embedding=await embed_memory_text(scope.user_id, query),
+                    limit=6,
+                    exclude_reflection=True,
+                    for_review=True,
+                )
+                if ranked is not None:
+                    async with SESSION_LOCAL() as db:
+                        context = await load_review_context(
+                            db,
+                            scope,
+                            session_id=session_id,
+                            through_message_id=through_message_id,
+                            new_only=True,
+                            reviewed_before=started_at,
+                            prioritized_memory_ids=tuple(memory.id for memory in ranked),
+                        )
         await assess_memory_changes(
             scope,
             MemorySource("reflection"),

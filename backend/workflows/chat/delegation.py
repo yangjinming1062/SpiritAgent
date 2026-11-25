@@ -10,6 +10,7 @@ from infrastructure.text import tool_error
 from runtime.delegation import DelegateAction
 
 from workflows.chat.chat_emitter import Emitter, HeadlessEmitter
+from workflows.chat.outcome import TaskOutcome, assess_task_outcome
 from workflows.chat.prompt_presets import LIFE_SPACE_TOOL_NAMES
 
 
@@ -76,7 +77,16 @@ async def run_delegated_turn(
             return tool_error(headless.error)
         final_answer = headless.final_text or "Subagent completed without producing text output."
 
-        return json.dumps({"success": True, "result": final_answer, "subagent_session_id": sid}, ensure_ascii=False)
+        outcome = await assess_task_outcome(action.task_description, headless)
+        return json.dumps(
+            {
+                "success": outcome in (None, TaskOutcome.COMPLETED),
+                "result": final_answer,
+                "subagent_session_id": sid,
+                **({"outcome": outcome.value} if outcome is not None else {}),
+            },
+            ensure_ascii=False,
+        )
     except Exception:
         logger.exception("Agent delegation failed")
         return tool_error("Subagent did not complete. Check any work already started before repeating the task.")

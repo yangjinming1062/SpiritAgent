@@ -119,10 +119,18 @@ def make_tool_result_message(
     name: str, content: str | list[dict[str, Any]], tool_call_id: str, *, trusted_suffix: str = ""
 ) -> dict:
     """构造带 OpenAI 格式 ``name`` 字段与内部 ``tool_name``（DB 用）的 tool-result 消息字典。"""
-    content = _maybe_wrap_untrusted(name, content)
+    # 回执判断读取脱敏结果本身，不把模型输入的包裹或守卫提示当作回执正文。
+    delivered = _maybe_wrap_untrusted(name, content)
     if trusted_suffix:
-        if isinstance(content, str):
-            content += trusted_suffix
+        if isinstance(delivered, str):
+            delivered += trusted_suffix
         else:
-            content = [*content, {"type": "input_text", "text": trusted_suffix}]
-    return {"role": "tool", "name": name, "tool_name": name, "content": content, "tool_call_id": tool_call_id}
+            delivered = [*delivered, {"type": "input_text", "text": trusted_suffix}]
+    return {
+        "role": "tool",
+        "name": name,
+        "tool_name": name,
+        "content": delivered,
+        "tool_call_id": tool_call_id,
+        **({"receipt_content": content} if delivered is not content else {}),
+    }

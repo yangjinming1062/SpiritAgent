@@ -11,11 +11,17 @@ from runtime.events.emit import emit_ws_event
 
 from workflows.chat.chat_emitter import HeadlessEmitter
 from workflows.chat.orchestrator import run_chat_turn
+from workflows.chat.outcome import TaskOutcome, assess_task_outcome
 
 logger = get_logger(__name__)
 
 # 同一任务已受理且未结束的触发上限：持锁运行的一个和等待锁的一个。
 _MAX_ADMITTED_TURNS = 2
+_INCOMPLETE_OUTCOME_MESSAGES = {
+    TaskOutcome.PARTIAL: "任务部分完成。",
+    TaskOutcome.BLOCKED: "任务未完成。",
+    TaskOutcome.UNKNOWN: "任务结果尚未核实。",
+}
 
 
 @dataclass
@@ -67,7 +73,12 @@ async def _execute_standard_turn(
                 user_id, name=name, text="任务执行失败，请稍后重试", conversation_id=conversation_id, error=True
             )
             return
-        await _emit_notification(user_id, name=name, text=emitter.final_text, conversation_id=conversation_id)
+        outcome = await assess_task_outcome(prompt, emitter)
+        incomplete = _INCOMPLETE_OUTCOME_MESSAGES.get(outcome) if outcome is not None else None
+        preview = f"{incomplete} {emitter.final_text}".strip() if incomplete else emitter.final_text
+        await _emit_notification(
+            user_id, name=name, text=preview, conversation_id=conversation_id, error=incomplete is not None
+        )
     except Exception:
         logger.exception("standard cron turn failed", extra={"user_id": user_id, "job_id": job_id})
         if conversation_id is not None:

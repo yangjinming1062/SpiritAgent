@@ -19,6 +19,7 @@ from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
 from features.scenes.queries import stage_scene_by_title
 from features.scenes.snapshots import list_scene_snapshots
+from features.visuals.material_selection import preferred_materials
 from features.visuals.queries import StageRecoveryView, stage_recovery_view
 from features.visuals.schemas import (
     ComboMaterialRef,
@@ -28,6 +29,7 @@ from features.visuals.schemas import (
 from features.visuals.stage_selection import project_stage_intent
 from features.visuals.static_presentation import present_static
 from features.visuals.static_presentation import record_stage_intent as persist_intent
+from infrastructure.ai.decision import decision_enabled
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -69,7 +71,7 @@ async def read_ready_stage_scene(db: AsyncSession, user_id: int, title: str) -> 
 
 
 async def _fresh_static_snapshot(
-    user_id: int, epoch: int, revision: int, projection: StageRecoveryView
+    user_id: int, epoch: int, life: LifeStateView, projection: StageRecoveryView
 ) -> StagePresentation:
     """保留有效的冻结素材，只从库存补齐缺失部分。"""
 
@@ -79,7 +81,7 @@ async def _fresh_static_snapshot(
         request_id=uuid4().hex,
         presentation_epoch=epoch,
         state_revision=0,
-        life_revision=revision,
+        life_revision=life.presentation_revision,
         outfit=previous.outfit if previous else composition.outfit_material if composition else None,
         scene=previous.scene if previous else composition.scene_material if composition else None,
         identity_path=previous.identity_path if previous else composition.identity_path if composition else None,
@@ -92,6 +94,8 @@ async def _fresh_static_snapshot(
     if resolve_asset_reference(target.identity_path) is None:
         target.identity_path = target.identity_hash = None
 
+    scene_options = []
+    scene_title = life.current_scene.get("title") if life.activity_shared_with_user else ""
     async with SESSION_LOCAL() as db:
         if target.outfit is None:
             outfit = await initial_outfit_snapshot(db, user_id)
@@ -104,16 +108,11 @@ async def _fresh_static_snapshot(
                     description=outfit.description or "",
                 )
         if target.scene is None:
-            scenes = (await list_scene_snapshots(db, user_id, ready_only=True, limit=1)).scenes
-            if scenes and scenes[0].media_path:
-                scene = scenes[0]
-                target.scene = SceneMediaRef(
-                    scene_id=scene.id,
-                    title=scene.title,
-                    path=scene.media_path,
-                    content_hash=await asyncio.to_thread(_hash, scene.media_path),
-                    description=scene.description,
+            scene_options = (
+                await list_scene_snapshots(
+                    db, user_id, ready_only=True, limit=8 if scene_title and decision_enabled() else 1
                 )
+            ).scenes
         if not target.identity_path or not target.identity_hash:
             try:
                 identity = await require_visual_identity(db, user_id)
@@ -124,6 +123,39 @@ async def _fresh_static_snapshot(
             if avatar is not None and avatar.seed_fullbody_url:
                 target.identity_path = avatar.seed_fullbody_url
                 target.identity_hash = await asyncio.to_thread(_hash, avatar.seed_fullbody_url)
+    if scene_options:
+        original = scene_options[0]
+        preferred = (
+            await preferred_materials(
+                "static_stage_scene",
+                f"在{scene_title}。{life.current_activity}",
+                {
+                    "scenes": [
+                        {"id": str(scene.id), "title": scene.title, "description": scene.description}
+                        for scene in scene_options
+                        if scene.media_path
+                    ]
+                },
+            )
+            if len(scene_options) > 1 and isinstance(scene_title, str) and scene_title
+            else {}
+        )
+        scene = next(
+            (
+                scene
+                for scene in scene_options
+                if str(scene.id) == preferred.get("scenes") and resolve_asset_reference(scene.media_path) is not None
+            ),
+            original,
+        )
+        if scene.media_path:
+            target.scene = SceneMediaRef(
+                scene_id=scene.id,
+                title=scene.title,
+                path=scene.media_path,
+                content_hash=await asyncio.to_thread(_hash, scene.media_path),
+                description=scene.description,
+            )
     if target.outfit is None or target.scene is None or not target.identity_path or not target.identity_hash:
         target.error = "造型与环境尚未就绪"
     return target
@@ -175,9 +207,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             ) or (projection.composition is not None and projection.composition.scene_material is not None)
             if motion == "off" or not has_media or not has_scene:
                 # 冻结素材沿用，仅缺失或文件已删除时才从库存补齐；新代次换新的请求身份。
-                snapshot = await _fresh_static_snapshot(
-                    user_id, presence.revision, life.presentation_revision, projection
-                )
+                snapshot = await _fresh_static_snapshot(user_id, presence.revision, life, projection)
                 if not await present_static(user_id, snapshot, expected_state_revision=projection.state_revision):
                     return
             await record_stage_intent(user_id, life)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from infrastructure.ai.decision import decision_enabled
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
@@ -88,9 +89,11 @@ from .stage_selection import (
     cinematic_options,
     paired_wake,
     project_stage_intent,
+    rank_stage_variants,
     scene_matches,
     stage_activity,
     stage_day_phase,
+    stage_scene_alias,
 )
 
 
@@ -192,6 +195,29 @@ async def creation_request(user_id: int, request_id: str) -> tuple[VisualJobView
             else None
         )
         return (await job_view(db, job), visual_snapshot(job)) if job is not None else None
+
+
+async def pending_base_preparation_actions(
+    db: AsyncSession, user_id: int, *, identity_hash: str, outfit_hash: str, portrait_hash: str, reference_role: str
+) -> list[int]:
+    """优先回到当前造型上此前已受理、仍未成功的基础动作。"""
+    source = VisualJob.snapshot_json["source"]
+    return list(
+        await db.scalars(
+            select(VisualJob.action_id)
+            .where(
+                VisualJob.user_id == user_id,
+                VisualJob.action_id.is_not(None),
+                VisualJob.state != "succeeded",
+                VisualJob.checkpoint["source"].astext == "base_preparation",
+                source["identity_hash"].astext == identity_hash,
+                source["outfit"]["content_hash"].astext == outfit_hash,
+                source["portrait_hash"].astext == portrait_hash,
+                source["identity_reference_role"].astext == reference_role,
+            )
+            .order_by(VisualJob.id)
+        )
+    )
 
 
 async def job_review_reason(user_id: int, job_id: int) -> str:
@@ -1005,7 +1031,7 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
         if life is not None and (intent is None or life.presentation_revision > intent.life_revision):
             intent = project_stage_intent(life, await active_pursuit_title(db, user_id, life.active_pursuit_id))
         catalog = await ambient_catalog(db, row, intent=intent)
-        return VisualPresentationView(
+        view = VisualPresentationView(
             composition=await composition_with_media(db, user_id, composition),
             ambient_catalog=[candidate.entry for candidate in catalog],
             intent=intent,
@@ -1022,6 +1048,9 @@ async def presentation_state(user_id: int) -> VisualPresentationView:
             pending_play=_pending_command(row),
             static_presentation=static,
         )
+    if view.stage_plan is not None and decision_enabled():
+        view.stage_plan = await _prefer_stage_plan(user_id, view.stage_plan, catalog, scene, intent, rhythm, now)
+    return view
 
 
 async def _layer_media(
@@ -1403,12 +1432,20 @@ async def _stage_playback_plan(
     intent: StageIntent | None,
     rhythm: RhythmView,
     now: datetime,
+    *,
+    scene_alias: SceneMediaRef | None = None,
 ) -> StagePlaybackPlan:
     phase, next_phase = stage_day_phase(now, rhythm.timezone)
     activity = stage_activity(intent, rhythm)
     asleep = rhythm.state == "asleep"
     wake = rhythm.wake if rhythm.wake is not None and rhythm.wake.expires_at > now else None
-    scene_title = intent.scene_title.strip().casefold() if intent is not None else ""
+    scene_title = (
+        scene_alias.title.strip().casefold()
+        if scene_alias is not None
+        else intent.scene_title.strip().casefold()
+        if intent is not None
+        else ""
+    )
     resting_scene = None
     resting_cinematics: list[StageMediaCandidate] = []
     if asleep or wake is not None:
@@ -1427,10 +1464,15 @@ async def _stage_playback_plan(
         scene = resting_scene
         cinematics = resting_cinematics
     else:
-        cinematics = await _usable_cinematics(
-            db, user_id, cinematic_options(catalog, activity, phase, intent, asleep=False)
+        matching_intent = (
+            intent.model_copy(update={"scene_title": scene_alias.title}) if intent and scene_alias else intent
         )
-        named = base if scene_matches(base, scene_title) else await read_stage_scene(db, user_id, scene_title)
+        cinematics = await _usable_cinematics(
+            db, user_id, cinematic_options(catalog, activity, phase, matching_intent, asleep=False)
+        )
+        named = scene_alias or (
+            base if scene_matches(base, scene_title) else await read_stage_scene(db, user_id, scene_title)
+        )
         scene = named or (cinematics[0].scene if cinematics else None) or base
     tags = set(intent.scene_tags) if intent is not None and scene_matches(scene, scene_title) else set()
     if asleep and resting_cinematics and resting_cinematics[0].entry.media_semantics is not None:
@@ -1472,6 +1514,60 @@ async def _stage_playback_plan(
         wake_scene=resting_scene if wake is not None else None,
         wake_scene_media=_media_at_phase(wake_catalog, phase) if wake is not None else None,
     )
+
+
+async def _prefer_stage_plan(
+    user_id: int,
+    plan: StagePlaybackPlan,
+    catalog: list[StageMediaCandidate],
+    base: SceneMediaRef | None,
+    intent: StageIntent | None,
+    rhythm: RhythmView,
+    now: datetime,
+) -> StagePlaybackPlan:
+    """语义决策仅排列已经可播的候选，作息过渡继续使用真实首帧配对。"""
+    if rhythm.state == "asleep" or plan.wake_actor is not None:
+        return plan
+    activity, phase = plan.activity_type, plan.day_phase
+    title = intent.scene_title.strip() if intent is not None else ""
+    if title and not scene_matches(plan.scene, title.casefold()):
+        alternatives = cinematic_options(catalog, activity, phase, intent, asleep=False, match_title=False)
+        async with SESSION_LOCAL() as db:
+            aliases = await _usable_cinematics(db, user_id, alternatives)
+        if alias := await stage_scene_alias(user_id, title, aliases):
+            async with SESSION_LOCAL() as db:
+                if await _scene_reference_usable(db, user_id, alias):
+                    plan = await _stage_playback_plan(
+                        db, user_id, catalog, base, intent, rhythm, now, scene_alias=alias
+                    )
+
+    # 完整影像只在已选择的同一环境内重排，避免下一段活动换到相似但不同的地点。
+    matching_keys = {
+        (candidate.entry.visual_id, candidate.entry.version)
+        for candidate in catalog
+        if candidate.scene is not None
+        and plan.scene is not None
+        and candidate.scene.content_hash == plan.scene.content_hash
+    }
+    matching = [entry for entry in plan.cinematic_variants if (entry.visual_id, entry.version) in matching_keys]
+    if len(matching) > 1:
+        ranked = iter(
+            await rank_stage_variants(
+                user_id, "cinematic", matching, activity=activity, phase=phase, scene=plan.scene, intent=intent
+            )
+        )
+        plan.cinematic_variants = [next(ranked) if entry in matching else entry for entry in plan.cinematic_variants]
+    use_fallback = not plan.actor_variants
+    entries = plan.fallback_actor_variants if use_fallback else plan.actor_variants
+    entries = await rank_stage_variants(
+        user_id, "actor", entries, activity=activity, phase=phase, scene=plan.scene, intent=intent
+    )
+    if use_fallback:
+        plan.fallback_actor_variants = entries
+    else:
+        plan.actor_variants = entries
+    plan.actor_still_url = next((entry.body.first_frame_path for entry in entries if entry.body is not None), None)
+    return plan
 
 
 async def composition_with_media(

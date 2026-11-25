@@ -75,6 +75,7 @@ from features.visuals.schemas import (
     ImportObservation,
     SceneMediaRef,
 )
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference, save_companion_asset_async
 from infrastructure.assets.write_protection import asset_write_context
@@ -190,22 +191,46 @@ async def _rank_candidates(work: ImportWork, observation: ImportObservation) -> 
     query = f"{observation.name} {observation.description} {' '.join(observation.features)}"
 
     def ranked() -> list[ImportCatalogCandidate]:
-        ordered = sorted(
+        return sorted(
             candidates,
             key=lambda entry: retrieval_score(f"{entry.name} {entry.description}", query, entry.path, target),
             reverse=True,
         )
-        # 内容完全一致的环境/着装必须进入复核，即使文本和轻量视觉召回把它排到后面。
-        exact = [
-            entry
-            for entry in ordered
-            if (entry.outfit and entry.outfit.content_hash == work.snapshot.source.original_content_hash)
-            or (entry.scene and entry.scene.content_hash == work.snapshot.source.original_content_hash)
-        ]
-        selected = exact + [entry for entry in ordered if entry not in exact]
-        return selected[:_IMPORT_CANDIDATE_LIMIT]
 
-    return await run_blocking(ranked)
+    ordered = await run_blocking(ranked)
+    # 内容完全一致的环境/着装必须进入复核，即使文本和轻量视觉召回把它排到后面。
+    source_hash = work.snapshot.source.original_content_hash
+    exact = [
+        entry
+        for entry in ordered
+        if (entry.outfit and entry.outfit.content_hash == source_hash)
+        or (entry.scene and entry.scene.content_hash == source_hash)
+    ]
+    remaining = [entry for entry in ordered if entry not in exact]
+    if len(remaining) > 1 and decision_enabled():
+        require_new_generation_call(work.user_id)
+        await guard_import_work(work)
+        # 原排序入围项与其后的邻近候选一起比较，语义前置不代替对原画面和候选图的复核。
+        sample = (*remaining[:8], *remaining[_IMPORT_CANDIDATE_LIMIT : _IMPORT_CANDIDATE_LIMIT + 6])
+        options = {f"C{index}": entry for index, entry in enumerate(sample, 1)}
+        choice = await choose_decision(
+            "import_materials",
+            state={"category": observation.kind, "observed": query[:280]},
+            instructions=(
+                "在候选描述中找出最值得查看原始素材以核对是否相同的一项。比较可以辨认的具体形状、结构和使用方式。"
+                "名称相似但只有通用风格共性时选 none。这个判断只决定先核对哪项。"
+            ),
+            options=[
+                *(
+                    DecisionOption(key, f"{entry.name[:40]}。{entry.description[:62]}")
+                    for key, entry in options.items()
+                ),
+                DecisionOption("none", "根据现有描述无足够对应的候选可优先。"),
+            ],
+        )
+        if choice is not None and (preferred := options.get(choice)) is not None:
+            remaining = [preferred, *(entry for entry in remaining if entry is not preferred)]
+    return [*exact, *remaining][:_IMPORT_CANDIDATE_LIMIT]
 
 
 async def _outfit_candidate(row: OutfitSnapshot) -> ImportCatalogCandidate:

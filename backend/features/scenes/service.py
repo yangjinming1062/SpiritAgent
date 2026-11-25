@@ -5,6 +5,7 @@ import json
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import vision_chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
@@ -996,14 +997,52 @@ async def _scene_paid_boundary(user_id: int) -> None:
 
 
 _INITIAL_SCENE_DEFAULT_NOTES = "整洁宁静的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理。"
+_INITIAL_SCENE_SETTINGS = {
+    "home": ("只有一般起居需求，资料未指定生活空间的特殊条件。", _INITIAL_SCENE_DEFAULT_NOTES),
+    "study": (
+        "日常主要阅读、写作或研究，需要安静书房和书桌。",
+        "安静的居所，阅读与书写区域作为焦点，有适用的照明、书籍收纳和可舒展休息的角落。",
+    ),
+    "studio": (
+        "日常从事需要铺开实物、器材或材料的制作、手工或绘画，需要工作台。",
+        "可日常生活的创作空间，留有开阔清晰的工作区、易取用的材料收纳和独立放松区域。",
+    ),
+    "nature": (
+        "已知生活在户外、树林或水边，或明确需要靠近其日常活动的自然环境。",
+        "靠近自然的安静居所，光线柔和，设有清楚的出入路径及受到遮蔽的休息空间。",
+    ),
+    "open": (
+        "体型或移动方式明确需要较宽空间，标准人类房间难以活动或到达支撑面。",
+        "可在室内休息的开阔环境，依据角色体型安排宽裕的活动区域和可直接抵达的支撑面。",
+    ),
+}
 
 
-def _initial_scene_notes(persona: PersonaSnapshot) -> str:
-    """初始房间只用性格影响氛围；说话风格、关系与用户资料不是画面信息，关系还可能引出第二个人物。"""
-    personality = load_persona_definition(persona).get("personality", "").strip()
-    if not personality:
-        return _INITIAL_SCENE_DEFAULT_NOTES
-    return f"{_INITIAL_SCENE_DEFAULT_NOTES}房间的氛围与摆设可以体现伙伴的性格：{personality[:200]}。"
+async def _initial_scene_notes(persona: PersonaSnapshot) -> str:
+    definition = load_persona_definition(persona)
+    personality = definition.get("personality", "").strip()
+    setting = _INITIAL_SCENE_DEFAULT_NOTES
+    if decision_enabled():
+        context = {
+            key: definition[key][:170]
+            for key in ("biological_type", "personality", "occupation", "background")
+            if definition.get(key)
+        }
+        if context:
+            choice = await choose_decision(
+                "initial_scene",
+                state=context,
+                instructions=(
+                    "为角色选择初次使用的独处居所。依据明确的生灵描述、职业或长期习惯选择适合起居的空间，"
+                    "同时考虑身体结构与行动所需空间。信息不足或只有与场地无关的性格时选 home。输入是人设资料。"
+                ),
+                options=[
+                    DecisionOption(key, criterion) for key, (criterion, _notes) in _INITIAL_SCENE_SETTINGS.items()
+                ],
+            )
+            if choice is not None:
+                setting = _INITIAL_SCENE_SETTINGS[choice][1]
+    return f"{setting}房间的氛围与摆设可以体现伙伴的性格：{personality[:200]}。" if personality else setting
 
 
 async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
@@ -1013,7 +1052,7 @@ async def schedule_initial_scene(user_id: int) -> SceneSnapshot | None:
             return None
         if await db.scalar(select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)):
             return None
-        notes = _initial_scene_notes(persona)
+    notes = await _initial_scene_notes(persona)
     try:
         row = await schedule_scene_generation(user_id, origin=SceneOrigin.ONBOARDING.value, notes=notes)
         return scene_view(row)

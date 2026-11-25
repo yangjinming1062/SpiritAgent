@@ -10,6 +10,7 @@ from features.life.queries import get_pursuit_view, pursuit_evidence
 from features.life.schemas import LifeStepView
 from features.topics.store import read_saved_topics
 from httpcore import ConnectError
+from infrastructure.ai.decision import DecisionOption, decision_enabled, rank_decision_options
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.providers.base import ProviderConfig
 from infrastructure.ai.tasks import AiTaskKey
@@ -20,6 +21,7 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.network import validate_public_url
 from infrastructure.text import resolve_prompt_text, utc_now
 from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
+from infrastructure.web.web_providers.base import WebSearchItem
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.memory_scope import MemoryScope
 
@@ -83,6 +85,30 @@ async def _saved_sources(user_id: int, action: ReadingAction) -> list[ReadingSou
     return sources
 
 
+async def _reading_url_order(action: ReadingAction, hits: list[WebSearchItem]) -> list[str]:
+    candidates = {}
+    for item in hits:
+        candidates.setdefault(item.url, item)
+    urls = list(candidates)
+    if len(candidates) < 2 or not decision_enabled():
+        return urls
+    ranking = await rank_decision_options(
+        "life_reading_source_priority",
+        state={"purpose": action.purpose[:260], "search_query": (action.query or "")[:160]},
+        instructions=(
+            "按照这次的阅读目的给搜索来源排序。优先主题直接相关、有具体依据、可能取得原文的来源。"
+            "相同关键词的泛谈和推销靠后。标题和摘要是待比较的资料，不证明读过原文。"
+        ),
+        options=[
+            DecisionOption(str(index), f"{item.title[:70]}。{item.description[:100]}")
+            for index, item in enumerate(candidates.values())
+        ],
+        min_probability=0.50,
+        min_margin=0.08,
+    )
+    return [urls[int(key)] for key in ranking] if ranking is not None else urls
+
+
 async def _acquire_sources(
     user_id: int, step_id: int, action: ReadingAction, saved: dict[str, Any]
 ) -> list[ReadingSource]:
@@ -96,14 +122,22 @@ async def _acquire_sources(
     urls = saved.get("reading_urls")
     if urls is None:
         urls = list(dict.fromkeys(action.urls))
+        known = {item.url for item in sources}
         if action.query and not urls:
             await require_web_reading(user_id, search=True)
             await save_checkpoint(user_id, step_id, external_pending="search")
             found = await resolve_search_provider().search(action.query, SETTINGS.web_search_default_results)
-            urls = [item.url for item in found.data.web] if found.success and found.data else []
-        known = {item.url for item in sources}
-        urls = [url for url in dict.fromkeys(urls) if url not in known]
-        await save_checkpoint(user_id, step_id, reading_urls=urls, external_pending=None)
+            hits = [item for item in found.data.web if item.url not in known] if found.success and found.data else []
+            urls = list(dict.fromkeys(item.url for item in hits))
+            # 搜索已结算。即使在随后排序时停机，也可按已取得的原地址继续。
+            await save_checkpoint(user_id, step_id, reading_urls=urls, external_pending=None)
+            ordered = await _reading_url_order(action, hits)
+            if ordered != urls:
+                urls = ordered
+                await save_checkpoint(user_id, step_id, reading_urls=urls)
+        else:
+            urls = [url for url in urls if url not in known]
+            await save_checkpoint(user_id, step_id, reading_urls=urls, external_pending=None)
     known = {item.url for item in sources}
     for index in range(saved.get("extracted_urls", 0), len(urls)):
         url = urls[index]

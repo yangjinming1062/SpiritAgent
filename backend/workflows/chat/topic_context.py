@@ -8,12 +8,11 @@ from typing import Any
 from features.conversation.replies import LinkBubble
 from features.topics.store import ranked_topic_summaries, read_saved_topics
 from infrastructure.ai.token_budget import fit_text_prefix, json_tokens
+from infrastructure.database import SESSION_LOCAL
 from runtime.memory_scope import MemoryScope
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def load_topic_context(
-    db: AsyncSession,
     scope: MemoryScope,
     historical_topic_ids: Sequence[int],
     *,
@@ -22,12 +21,13 @@ async def load_topic_context(
     token_budget: int,
 ) -> list[dict[str, Any]]:
     summaries = await ranked_topic_summaries(
-        db, scope, now, query=query, historical_topic_ids=historical_topic_ids, token_budget=token_budget
+        scope, now, query=query, historical_topic_ids=historical_topic_ids, token_budget=token_budget
     )
-    sources = {
-        topic.topic_id: topic
-        for topic in await read_saved_topics(db, scope, [int(brief["topic_id"]) for brief in summaries])
-    }
+    async with SESSION_LOCAL() as db:
+        sources = {
+            topic.topic_id: topic
+            for topic in await read_saved_topics(db, scope, [int(brief["topic_id"]) for brief in summaries])
+        }
     return [
         {**brief, "topic_id": source.topic_id, "source_text": source.body, "existing_subtitle": source.subtitle}
         for brief in summaries

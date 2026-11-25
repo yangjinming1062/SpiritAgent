@@ -88,9 +88,9 @@ async def put_current_voice(user: CurrentUser, db: DbSession, body: CurrentVoice
     return CurrentVoiceResponse(voice_id=await write_current_voice(db, user.id, body.voice_id))
 
 
-@router.post("/match", response_model=VoiceMatchResponse)
-async def post_voice_match(user: CurrentUser, db: DbSession, body: VoiceMatchRequest) -> VoiceMatchResponse:
-    return await match_user_voice(db, user.id, body.preference, normalize_voice_language(body.language))
+@router.post("/match", response_model=VoiceMatchResponse, openapi_extra=operation_policy(wait_for_model=True))
+async def post_voice_match(user: CurrentUser, body: VoiceMatchRequest) -> VoiceMatchResponse:
+    return await match_user_voice(user.id, body.preference, normalize_voice_language(body.language))
 
 
 @router.post("/candidates", response_model=VoicePreviewResponse, openapi_extra=operation_policy(wait_for_model=True))

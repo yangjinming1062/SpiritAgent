@@ -249,14 +249,23 @@ def is_tool_catalog_identifier(query: str) -> bool:
     )
 
 
+_SEMANTIC_TOOL_DESCRIPTIONS = {
+    "cronjob": "只管理固定重复执行的任务，例如每天或每周一都执行。支持创建、查询、改期、暂停和删除这类周期任务。",
+    "companion_wait": "只安排一次的伙伴联系或提醒，例如下周一早上提醒一次。支持查询和取消已有的一次性提醒。",
+}
+
+
+def _semantic_tool_description(match: ToolSearchMatch) -> str:
+    return _SEMANTIC_TOOL_DESCRIPTIONS.get(match["name"], f"{match['name']}: {match['description']}")
+
+
 def semantic_tool_groups(available_schemas: list[dict[str, Any]], *, limit: int) -> dict[str, ToolSearchGroup]:
     """小目录直接选工具，大目录只提供当前有工具的业务域。"""
     schemas = _searchable_schemas(available_schemas)
     if len(schemas) <= limit:
         matches = [_search_match(name, schemas[name]) for name in sorted(schemas)]
         return {
-            f"tool_{match['name']}": ToolSearchGroup(f"{match['name']}: {match['description']}", (match,))
-            for match in matches
+            f"tool_{match['name']}": ToolSearchGroup(_semantic_tool_description(match), (match,)) for match in matches
         }
 
     names = set(schemas)
@@ -267,7 +276,7 @@ def semantic_tool_groups(available_schemas: list[dict[str, Any]], *, limit: int)
             continue
         matches = tuple(_search_match(name, schemas[name]) for name in domain_names)
         if len(matches) == 1 or not domain.prefixes and len(matches) < len(domain.extra_tools):
-            description = " / ".join(f"{match['name']}: {match['description']}" for match in matches)
+            description = " / ".join(_semantic_tool_description(match) for match in matches)
         else:
             description = domain.description_zh
         # 终端执行和终端后台进程共用选项，为“无匹配”保留一个位置。

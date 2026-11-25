@@ -598,7 +598,7 @@ async def generate_provider_response(
             if screen_ordinary_dialogue:
                 start = len(incremental_receipts)
                 preceding = incremental_receipts[-1][0].get("text") if incremental_receipts else None
-                screened = await screen_recollection(
+                review_positions = await screen_recollection(
                     [
                         (index, line)
                         for index, item in enumerate(normalized, start=start)
@@ -607,8 +607,8 @@ async def generate_provider_response(
                     request=turn_request,
                     earlier_bubble=preceding if isinstance(preceding, str) else "",
                 )
-                if screened.review_positions:
-                    screened_review_positions.update(screened.review_positions)
+                if review_positions:
+                    screened_review_positions.update(review_positions)
                     # 保留已入队气泡的播放位置，终态用完整上下文复查待交付的部分。
                     if len(normalized) == 1:
                         held_position = start
@@ -834,7 +834,7 @@ async def generate_provider_response(
                     optional_positions = None
                     if screen_ordinary_dialogue and resolved.source_kind == "dialogue":
                         preceding = reply.bubbles[unchecked - 1] if 0 < unchecked <= len(reply.bubbles) else None
-                        screened = await screen_recollection(
+                        review_positions = await screen_recollection(
                             [
                                 (index, bubble.text)
                                 for index, bubble in enumerate(reply.bubbles[unchecked:], start=unchecked)
@@ -843,8 +843,8 @@ async def generate_provider_response(
                             request=turn_request,
                             earlier_bubble=preceding.text if isinstance(preceding, (TextBubble, VoiceBubble)) else "",
                         )
-                        screened_review_positions.difference_update(screened.fiction_only_positions)
-                        screened_review_positions.update(screened.review_positions)
+                        # 已暂缓的台词由证据复核处理，终态筛查只增加待核对的位置。
+                        screened_review_positions.update(review_positions)
                         optional_positions = screened_review_positions or None
                     if mandatory_review or optional_positions:
                         text, reply = await ground_recollection(

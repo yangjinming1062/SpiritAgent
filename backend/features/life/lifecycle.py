@@ -6,10 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import LifeActionAdmission, LifePursuit, LifeStep
 from .schemas import LifeDecisionRequest, LifeEventInput
-from .service import LifeInputError, _latest_active_pursuit_id, clear_activity_step, get_or_create_state, record_events
+from .service import LifeInputError, _successor_pursuit_id, clear_activity_step, get_or_create_state, record_events
 
 
-async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecisionRequest) -> LifePursuit:
+async def transition_pursuit(
+    db: AsyncSession, user_id: int, decision: LifeDecisionRequest, *, successor_focus: int | None = None
+) -> LifePursuit:
     state = await get_or_create_state(db, user_id, lock=True)
     pursuit = await db.scalar(
         select(LifePursuit)
@@ -55,7 +57,9 @@ async def transition_pursuit(db: AsyncSession, user_id: int, decision: LifeDecis
     if target == "active":
         state.active_pursuit_id = pursuit.id
     elif state.active_pursuit_id == pursuit.id:
-        state.active_pursuit_id = await _latest_active_pursuit_id(db, user_id, exclude=pursuit.id)
+        state.active_pursuit_id = await _successor_pursuit_id(
+            db, user_id, exclude=pursuit.id, preferred=successor_focus
+        )
     events = []
     if target in {"paused", "abandoned"}:
         if target == "abandoned":

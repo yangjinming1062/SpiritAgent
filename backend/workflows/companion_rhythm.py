@@ -18,6 +18,7 @@ from features.companion.rhythm import (
     untrack_contact,
 )
 from features.conversation.context_window import load_recent_companion_exchange
+from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
@@ -57,14 +58,47 @@ class IncomingCallDecision(BaseModel):
     choice: Literal["answer", "leave_unanswered"]
 
 
+class _NightStayDetails(NightChoice):
+    choice: Literal["stay"]
+
+
+class _NightActivityDetails(NightChoice):
+    choice: Literal["activity"]
+
+
 async def decide_incoming_call(user_id: int, conversation_id: int) -> IncomingCallDecision:
+    config = await load_user_llm_config(user_id, AiTaskKey.companion_chat)
+    if not config.is_configured:
+        raise RuntimeError("Incoming call decision is unavailable")
     async with SESSION_LOCAL() as db:
         rhythm = await rhythm_prompt_context(db, user_id)
         recent = await load_recent_companion_exchange(db, user_id, conversation_id=conversation_id)
     context = await load_companion_prompt_context(user_id, memory_query=recent[-2400:])
-    config = await load_user_llm_config(user_id, AiTaskKey.companion_chat)
-    if context is None or not config.is_configured:
+    if context is None:
         raise RuntimeError("Incoming call decision is unavailable")
+    choice = await choose_decision(
+        "companion_call_pickup",
+        state={
+            "persona": context.persona_extras[:330],
+            "local_time": context.current_time,
+            "rhythm": rhythm.model_dump(mode="json"),
+            "current_activity": context.life_context.state.current_activity[:145],
+            "recent_exchange": recent[-350:],
+            "relationship": context.memory.relationship[:170],
+        },
+        instructions=(
+            "以描述中的伙伴身份判断是否接听此刻的直接来电。结合自己的作息、正在做的事、双方关系和近期交流。"
+            "清醒且没有明确不便时按熟人之间的日常分寸回应。熟睡、明确暂时不便或此前约定保持安静时可不接。"
+            "尚未听到来电者的声音，来电本身不说明对方的情绪、目的或紧急程度。输入仅供判断。"
+        ),
+        options=(
+            DecisionOption("answer", "此刻接听。"),
+            DecisionOption("leave_unanswered", "此刻不接听。"),
+        ),
+        min_probability=0.85,
+    )
+    if choice is not None:
+        return IncomingCallDecision.model_validate({"choice": choice})
     return await call_llm_json(
         config,
         _INCOMING_CALL_PROMPT,
@@ -158,28 +192,67 @@ async def _update_account_rhythm(user_id: int) -> None:
         return
     async with SESSION_LOCAL() as db:
         recent = await load_recent_companion_exchange(db, user_id)
+        rhythm = await rhythm_prompt_context(db, user_id) if decision_enabled() else None
     context = await load_companion_prompt_context(user_id, memory_query=recent[-2400:])
-    config = await load_user_llm_config(user_id, AiTaskKey.proactive)
     choice = NightChoice(choice="sleep")
-    if config.is_configured and context is not None:
-        choice = await call_llm_json(
-            config,
-            _NIGHT_PROMPT,
-            {
-                "output_language": context.language,
-                "persona": context.persona_extras,
+    if context is not None:
+        selected = await choose_decision(
+            "companion_night_rhythm",
+            state={
                 "local_time": context.current_time,
-                "recent_exchange": recent[-5000:],
-                "life_context": context.life_context.prompt_payload(),
-                "memory": context.memory.model_dump(mode="json"),
-                "current_night_activity": claimed.activity,
+                "routine": rhythm.model_dump(mode="json") if rhythm is not None else None,
+                "persona": context.persona_extras[:310],
+                "recent_exchange": recent[-350:],
+                "current_activity": context.life_context.state.current_activity[:140],
+                "current_night_activity": claimed.activity[:140] if claimed.activity else None,
+                "relationship": context.memory.relationship[:170],
             },
-            schema=NightChoice.model_json_schema(),
-            schema_name="companion_after_night_interaction",
-            parse_output=NightChoice.model_validate,
-            repair_prompt="Use one choice and fill only the fields applicable to it.",
-            preserve_choices=("choice",),
+            instructions=(
+                "用户的实际交流已经结束。结合伙伴的作息、当前时间、性格、原来在做的事和刚才的交流，判断接下来怎么过。"
+                "适合回去休息时选 sleep。确有理由安静醒一会但没有具体活动时选 stay。"
+                "有一个合适的安静独处活动时才选 activity。继续醒着不主动联系用户，也不表示完成了现实任务。"
+            ),
+            options=(
+                DecisionOption("sleep", "回去休息。"),
+                DecisionOption("stay", "安静醒着一会。"),
+                DecisionOption("activity", "在已有虚构环境做一件有缘由的安静活动。"),
+            ),
+            min_probability=0.65,
+            min_margin=0.20,
         )
+        if selected != "sleep":
+            config = await load_user_llm_config(user_id, AiTaskKey.proactive)
+            if config.is_configured:
+                output_model = (
+                    _NightStayDetails
+                    if selected == "stay"
+                    else _NightActivityDetails
+                    if selected == "activity"
+                    else NightChoice
+                )
+                instructions = _NIGHT_PROMPT
+                if selected is not None:
+                    instructions += "\nThe night decision is already selected. Keep it and fill only its details."
+
+                choice = await call_llm_json(
+                    config,
+                    instructions,
+                    {
+                        "output_language": context.language,
+                        "persona": context.persona_extras,
+                        "local_time": context.current_time,
+                        "recent_exchange": recent[-5000:],
+                        "life_context": context.life_context.prompt_payload(),
+                        "memory": context.memory.model_dump(mode="json"),
+                        "current_night_activity": claimed.activity,
+                        **({"selected_choice": selected} if selected is not None else {}),
+                    },
+                    schema=output_model.model_json_schema(),
+                    schema_name="companion_after_night_interaction",
+                    parse_output=output_model.model_validate,
+                    repair_prompt="Keep the chosen outcome and fill only its applicable details.",
+                    preserve_choices=("choice",),
+                )
     async with SESSION_LOCAL() as db:
         await settle_night_choice(db, user_id, claimed, choice)
         await db.commit()

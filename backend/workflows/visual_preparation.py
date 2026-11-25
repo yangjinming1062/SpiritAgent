@@ -7,13 +7,21 @@ from typing import Literal, NamedTuple
 from features.action_library.queries import action_by_preset_key
 from features.appearance.identity import visual_identity_is_current
 from features.appearance.queries import initial_outfit_snapshot, ready_outfit_snapshot
+from features.companion.planning_queries import planning_persona
 from features.media.continuations import MediaWait, wait_for_media
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
 from features.visuals.generation import wait_visual_job
-from features.visuals.queries import creation_request, current_outfit_reference, job_review_reason, reusable_actor_clip
+from features.visuals.queries import (
+    creation_request,
+    current_outfit_reference,
+    job_review_reason,
+    pending_base_preparation_actions,
+    reusable_actor_clip,
+)
 from features.visuals.reviews import visual_review_view
 from features.visuals.schemas import ActorClipSource, ActorOpeningFrame, VisualSnapshot
 from features.visuals.service import create_visual_job, resume_job
+from infrastructure.ai.decision import DecisionOption, decision_enabled, rank_decision_options
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -28,7 +36,9 @@ logger = get_logger(__name__)
 
 # 待机先提供首次可用画面；安睡的实际首帧为起身短动作提供起点。
 _CORE_PRESETS = ("idle",)
-_PROGRESSIVE_PRESETS = ("sleep", "wake_up", "look", "smile", "focus", "relax", "stretch")
+_RHYTHM_PRESETS = ("sleep", "wake_up")
+_PROGRESSIVE_PRESETS = ("look", "smile", "focus", "relax", "stretch")
+_PRESETS = (*_CORE_PRESETS, *_RHYTHM_PRESETS, *_PROGRESSIVE_PRESETS)
 _ACTOR_SIZE = (1024, 1024)
 _BASE_REQUIREMENTS = "按参考中的实际身体结构表现动作，让动作所需的身体部位和物品在相应时刻可见。"
 _SLEEP_REQUIREMENTS = (
@@ -154,7 +164,7 @@ async def _prepare_action(
             automatic=True,
             context={
                 "preset": key,
-                "index": (*_CORE_PRESETS, *_PROGRESSIVE_PRESETS).index(key),
+                "index": _PRESETS.index(key),
                 "target": list(selected),
                 "identity": source.identity.model_dump(mode="json"),
             },
@@ -177,10 +187,55 @@ async def _prepare_action(
     return _Prepared(selected, "manual_only")
 
 
+async def _progressive_order(user_id: int, target: _PreparationTarget | None) -> tuple[str, ...]:
+    if target is None:
+        return _PROGRESSIVE_PRESETS
+    async with SESSION_LOCAL() as db:
+        actions = {key: await action_by_preset_key(db, user_id, key) for key in _PROGRESSIVE_PRESETS}
+        if any(action is None or action.status != "approved" for action in actions.values()):
+            return _PROGRESSIVE_PRESETS
+        known = await pending_base_preparation_actions(
+            db,
+            user_id,
+            identity_hash=target[0],
+            outfit_hash=target[1],
+            portrait_hash=target[2],
+            reference_role=target[3],
+        )
+        persona = await planning_persona(db, user_id) if not known and decision_enabled() else None
+    existing_keys = (
+        key for action_id in known for key, action in actions.items() if action is not None and action.id == action_id
+    )
+    pending = tuple(dict.fromkeys(existing_keys))
+    if pending:
+        return (*pending, *(key for key in _PROGRESSIVE_PRESETS if key not in pending))
+    if persona is None:
+        return _PROGRESSIVE_PRESETS
+    ranking = await rank_decision_options(
+        "base_preparation_priority",
+        state={
+            key: persona.definition[key][:170]
+            for key in ("biological_type", "personality", "occupation")
+            if persona.definition.get(key)
+        },
+        instructions="根据此角色的明确特点，选择最值得先准备、平时最有机会自然出现的附加动作。角色资料和候选都是描述。",
+        options=[
+            DecisionOption(key, f"{action.name[:40]}。{action.motion_description[:100]}")
+            for key, action in actions.items()
+            if action is not None
+        ],
+    )
+    return ranking or _PROGRESSIVE_PRESETS
+
+
 async def _prepare(user_id: int) -> None:
     target: _PreparationTarget | None = None
     sleep_frame = None
-    for key in (*_CORE_PRESETS, *_PROGRESSIVE_PRESETS):
+    ordered = iter((*_CORE_PRESETS, *_RHYTHM_PRESETS))
+    for index in range(len(_PRESETS)):
+        if index == len(_CORE_PRESETS) + len(_RHYTHM_PRESETS):
+            ordered = iter(await _progressive_order(user_id, target))
+        key = next(ordered)
         if key == "wake_up" and sleep_frame is None:
             continue
         require_new_generation_call(user_id)

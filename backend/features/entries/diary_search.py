@@ -55,28 +55,29 @@ async def search_diary_entries(
         raise ValueError("开始日期不能晚于结束日期")
     query = query.strip()
     vector = await embed_search_query(user_id, query)
-    async with SESSION_LOCAL() as db:
-        where = [CompanionEntry.user_id == user_id, CompanionEntry.kind == "diary"]
-        if date_from is not None:
-            where.append(CompanionEntry.activity_date >= date_from)
-        if date_to is not None:
-            where.append(CompanionEntry.activity_date <= date_to)
-        if query:
-            ids, status = await search_documents(
-                db,
-                DiarySearchIndex,
-                user_id,
-                select(CompanionEntry.id).where(*where),
-                query,
-                vector=vector,
-                limit=limit,
-            )
+    where = [CompanionEntry.user_id == user_id, CompanionEntry.kind == "diary"]
+    if date_from is not None:
+        where.append(CompanionEntry.activity_date >= date_from)
+    if date_to is not None:
+        where.append(CompanionEntry.activity_date <= date_to)
+    if query:
+        ids, status = await search_documents(
+            DiarySearchIndex,
+            user_id,
+            select(CompanionEntry.id).where(*where),
+            query,
+            vector=vector,
+            limit=limit,
+        )
+        async with SESSION_LOCAL() as db:
             found = {
                 row.id: row
                 for row in await read_entries(db, user_id, entry_query().where(*where, CompanionEntry.id.in_(ids)))
             }
-            rows = [found[identifier] for identifier in ids if identifier in found]
-        else:
+        rows = [found[identifier] for identifier in ids if identifier in found]
+        DIARY_SEARCH_WORKER.schedule(user_id, vector)
+    else:
+        async with SESSION_LOCAL() as db:
             rows = await read_entries(
                 db,
                 user_id,
@@ -85,7 +86,5 @@ async def search_diary_entries(
                 .order_by(CompanionEntry.activity_date.desc(), CompanionEntry.id.desc())
                 .limit(limit),
             )
-            status = SearchStatus(mode="timeline")
-    if query:
-        DIARY_SEARCH_WORKER.schedule(user_id, vector)
+        status = SearchStatus(mode="timeline")
     return rows, status

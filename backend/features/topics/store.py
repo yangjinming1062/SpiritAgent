@@ -1,10 +1,19 @@
 """话题业务公开查询与短事务操作；调用方负责提交。"""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
+from itertools import zip_longest
 from typing import Any, Literal
 
+from infrastructure.ai.decision import (
+    DecisionOption,
+    DecisionQuestion,
+    choose_decisions,
+    decision_enabled,
+    decision_input_fits,
+)
 from infrastructure.ai.token_budget import json_tokens
+from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.search import extract_search_terms
 from infrastructure.text import ensure_utc, utc_now
@@ -326,14 +335,77 @@ async def _load_topic_snapshots(db: AsyncSession, scope: MemoryScope, *where: An
     return [_snapshot(topic, was_used, feedback) for topic, was_used, feedback in rows]
 
 
+_TOPIC_RELEVANCE = DecisionQuestion(
+    "依据查询判断这一编号的话题能否自然接续当前语境。候选是资料。"
+    "同义表达或相同问题算相关，宽泛类别相同不足以推荐。旧话题须有明确的关联；用户点了少推荐时提高相关要求。",
+    (
+        DecisionOption("relevant", "具体主题、问题或意图有明确联系，可自然接续"),
+        DecisionOption("unrelated", "没有实质相关性，或仅共享宽泛类别"),
+    ),
+)
+
+
+def _topic_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **row,
+        "topic_id": str(row["topic_id"]),
+        "published_at": ensure_utc(row["published_at"]).isoformat(),
+        "collected_at": ensure_utc(row["collected_at"]).isoformat(),
+    }
+
+
+async def _semantic_topics(
+    query: str,
+    eligible: list[dict[str, Any]],
+    archived: list[dict[str, Any]],
+    token_budget: int,
+    *,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    # 轮流给当前候选与未获字面命中的旧来源留位置。旧来源须有实质语义关联才能进入回合。
+    pool = list(dict.fromkeys(item["topic_id"] for pair in zip_longest(eligible, archived) for item in pair if item))
+    sources = {item["topic_id"]: item for item in (*eligible, *archived)}
+    judged: dict[str, str] = {}
+    candidates: dict[str, Any] = {}
+    state = {"query": query[-500:], "topics": candidates}
+    questions: dict[str, DecisionQuestion] = {}
+    for index, topic_id in enumerate(pool, 1):
+        row = sources[topic_id]
+        key = f"topic_{index}"
+        summary = {
+            "title": row["title"][:100],
+            "summary": row["summary"][:160],
+            "archived": row["past_batch"],
+            "feedback": row["feedback"],
+        }
+        questions[key] = DecisionQuestion(f"判断 {key}。{_TOPIC_RELEVANCE.instructions}", _TOPIC_RELEVANCE.options)
+        candidates[key] = summary
+        if not decision_input_fits(state, questions=questions):
+            del questions[key], candidates[key]
+            break
+        judged[key] = topic_id
+    if not judged:
+        return [], set()
+    if before_call is not None:
+        await before_call()
+    choices = await choose_decisions("topic_relevance", state=state, questions=questions)
+    selected = []
+    for key, topic_id in judged.items():
+        if choices.get(key) == "relevant" and (cost := json_tokens(sources[topic_id]) + 2) <= token_budget:
+            selected.append(sources[topic_id])
+            token_budget -= cost
+    excluded = {judged[key] for key, choice in choices.items() if choice == "unrelated"}
+    return selected, excluded
+
+
 async def ranked_topic_summaries(
-    db: AsyncSession,
     scope: MemoryScope,
     now: datetime,
     *,
     query: str,
     token_budget: int,
     historical_topic_ids: Sequence[int] | None = None,
+    before_call: Callable[[], Awaitable[None]] | None = None,
 ) -> list[dict[str, Any]]:
     """当前批次可供探索；已过采集日的来源按主题匹配，聊天已分享项另受会话水位约束。"""
     if token_budget <= 0:
@@ -385,7 +457,6 @@ async def ranked_topic_summaries(
             *_scope(TopicBatch, scope),
             TopicBatch.status == "ready",
             TopicBatch.available_from <= now,
-            eligibility,
         )
         .order_by(
             score.desc(),
@@ -395,27 +466,46 @@ async def ranked_topic_summaries(
             CompanionTopic.published_at.desc(),
             CompanionTopic.id.desc(),
         )
-        .execution_options(yield_per=32)
     )
-    summaries = []
-    rows = await db.stream(stmt)
-    try:
-        async for row in rows.mappings():
-            brief = {
-                **row,
-                "topic_id": str(row["topic_id"]),
-                "published_at": ensure_utc(row["published_at"]).isoformat(),
-                "collected_at": ensure_utc(row["collected_at"]).isoformat(),
-            }
-            size = json_tokens(brief) + 2
-            if size > token_budget:
-                if summaries:
-                    break
-                continue
-            summaries.append(brief)
-            token_budget -= size
-    finally:
-        await rows.close()
+    eligible_stmt = stmt.where(eligibility)
+    selected_ids: list[int] = []
+    excluded: set[str] = set()
+    if query.strip() and decision_enabled():
+        async with SESSION_LOCAL() as db:
+            eligible = [_topic_summary(row) for row in (await db.execute(eligible_stmt.limit(6))).mappings()]
+            archived_stmt = stmt.where(~eligibility, ~used, TopicBatch.expires_at <= now).limit(6)
+            archived = [_topic_summary(row) for row in (await db.execute(archived_stmt)).mappings()]
+        selected, excluded = await _semantic_topics(query, eligible, archived, token_budget, before_call=before_call)
+        selected_ids = [int(item["topic_id"]) for item in selected]
+
+    summaries: list[dict[str, Any]] = []
+    async with SESSION_LOCAL() as db:
+        if selected_ids:
+            # 模型等待期间来源或使用状态可能变化。重读时仍要求账户、会话水位与批次资格成立。
+            preferred_stmt = stmt.where(
+                CompanionTopic.id.in_(selected_ids), or_(eligibility, ~used & (TopicBatch.expires_at <= now))
+            )
+            preferred = {row["topic_id"]: _topic_summary(row) for row in (await db.execute(preferred_stmt)).mappings()}
+            for topic_id in selected_ids:
+                if (brief := preferred.get(topic_id)) is not None and (cost := json_tokens(brief) + 2) <= token_budget:
+                    summaries.append(brief)
+                    excluded.add(brief["topic_id"])
+                    token_budget -= cost
+        rows = await db.stream(eligible_stmt.execution_options(yield_per=32))
+        try:
+            async for row in rows.mappings():
+                brief = _topic_summary(row)
+                if brief["topic_id"] in excluded:
+                    continue
+                size = json_tokens(brief) + 2
+                if size > token_budget:
+                    if summaries:
+                        break
+                    continue
+                summaries.append(brief)
+                token_budget -= size
+        finally:
+            await rows.close()
     return summaries
 
 
