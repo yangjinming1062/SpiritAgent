@@ -1677,13 +1677,18 @@ const secret = (key, label, hint = '') => ({ key, label, type: 'secret', hint })
 
 const SETTINGS_SECTIONS = [
     {
-        title: '能力运行参数', hint: '请求、重试与媒体任务的全局运行参数',
+        title: '能力运行参数', hint: '模型请求与媒体任务的全局运行参数',
         blocks: [
             ['sub', 'LLM 网络重试调优'],
             ['grid', [
                 num('llm_max_retry_attempts', '失败最大重试次数', 1, { min: 0 }),
                 num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5, { min: 0 }),
                 num('llm_max_retry_delay', '最大重试延迟 (秒)', 1, { min: 0 }),
+            ]],
+            ['sub', '本地决策服务'],
+            ['grid', [
+                text('decision_base_url', '决策服务地址', 'http://valen-host:8000（留空关闭）'),
+                secret('decision_api_key', '决策服务 API 密钥', '服务要求 Bearer 鉴权时填写。已有密钥时，更换服务或从停用状态重新启用须重新填写或勾选清除。'),
             ]],
             ['sub', '视频生成轮询与下载调优'],
             ['grid', [

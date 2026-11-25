@@ -41,6 +41,7 @@ async def generate_turn_response(
     allow_silence: bool,
     allow_deferral: bool = False,
     pace_bubbles: bool,
+    visible_reply: bool,
     final_reply_only: bool,
     selection: ProviderSelection | None,
     transcripts: dict[str, str | Exception],
@@ -91,6 +92,7 @@ async def generate_turn_response(
                         reply_format_error=reply_format_error,
                         media_turn=media_turn,
                         pace_bubbles=pace_bubbles,
+                        visible_reply=visible_reply,
                         final_reply_only=reply_only,
                         allow_voice_fallback=recovery_used,
                     )

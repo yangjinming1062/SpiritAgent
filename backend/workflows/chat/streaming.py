@@ -9,8 +9,9 @@ from functools import cache
 from typing import Any, Literal
 
 from features.companion.intent_contracts import DeferredReply
-from features.conversation.replies import CompanionReply, LinkBubble
+from features.conversation.replies import CompanionReply, LinkBubble, TextBubble, VoiceBubble
 from features.media.turn_state import MediaTurnState
+from infrastructure.ai.decision import decision_enabled
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.providers.base import ChatProvider, ProviderCapabilityError, ProviderConfig
@@ -31,7 +32,12 @@ from openai.types.responses import Response
 from workflows.chat.bubble import BubbleEvent, BubbleSplitter
 from workflows.chat.chat_emitter import Emitter
 from workflows.chat.message_sanitization import reply_repair_history, truncate_responses_context
-from workflows.chat.personal_recollection import consulted_personal_archive, ground_recollection, recollection_evidence
+from workflows.chat.personal_recollection import (
+    consulted_personal_archive,
+    ground_recollection,
+    recollection_evidence,
+    screen_recollection,
+)
 from workflows.chat.prompts import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
     COMPANION_REPLY_CLOSING_GUIDANCES,
@@ -210,6 +216,7 @@ async def generate_provider_response(
     reply_format_error: CompanionReplyFormatError | None,
     media_turn: MediaTurnState,
     pace_bubbles: bool,
+    visible_reply: bool,
     reply_persona: str = "",
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
@@ -445,9 +452,15 @@ async def generate_provider_response(
     pending_text: list[str] = []
     incremental_receipts: list[tuple[dict[str, Any], asyncio.Future[None]]] = []
     reply_extractor = _ReplyBubbleExtractor() if delivery == "reply_stream" else None
-    archive_turn = "personal_evidence" in context and consulted_personal_archive(context)
+    has_personal_evidence = "personal_evidence" in context
+    archive_turn = has_personal_evidence and consulted_personal_archive(context)
     selected_contact = "contact_evidence" in context
     incremental_blocked = archive_turn or selected_contact or bool(first_archived_mentions)
+    screen_ordinary_dialogue = (
+        has_personal_evidence and not (archive_turn or selected_contact) and visible_reply and decision_enabled()
+    )
+    screened_review_positions: set[int] = set()
+    held_position: int | None = None
 
     bubbles = BubbleSplitter()
 
@@ -552,7 +565,7 @@ async def generate_provider_response(
                 await _send_text(event.text)
 
     async def _emit_reply_bubbles(text: str) -> None:
-        nonlocal incremental_blocked, text_emitted
+        nonlocal held_position, incremental_blocked, text_emitted
         if reply_extractor is None or reply_bubble_sink is None or incremental_blocked:
             return
         for bubble in reply_extractor.feed(text):
@@ -582,6 +595,25 @@ async def generate_provider_response(
                     "Incremental companion bubble validation failed", extra={"bubble_index": len(incremental_receipts)}
                 )
                 break
+            if screen_ordinary_dialogue:
+                start = len(incremental_receipts)
+                preceding = incremental_receipts[-1][0].get("text") if incremental_receipts else None
+                screened = await screen_recollection(
+                    [
+                        (index, line)
+                        for index, item in enumerate(normalized, start=start)
+                        if isinstance(line := item.get("text"), str)
+                    ],
+                    request=turn_request,
+                    earlier_bubble=preceding if isinstance(preceding, str) else "",
+                )
+                if screened.review_positions:
+                    screened_review_positions.update(screened.review_positions)
+                    # 保留已入队气泡的播放位置，终态用完整上下文复查待交付的部分。
+                    if len(normalized) == 1:
+                        held_position = start
+                    incremental_blocked = True
+                    break
             for item in normalized:
                 try:
                     receipt = await reply_bubble_sink(len(incremental_receipts), item)
@@ -788,22 +820,44 @@ async def generate_provider_response(
                 )
             if resolved is not None:
                 text, reply = resolved.text, resolved.reply
-                if (
-                    reply is not None
-                    and (
-                        selected_contact
-                        or resolved.source_kind == "recollection"
-                        or (archive_turn and resolved.source_kind == "dialogue")
+                if reply is not None:
+                    mandatory_review = (
+                        not incremental_receipts
+                        and (has_personal_evidence or selected_contact)
+                        and (
+                            selected_contact
+                            or resolved.source_kind == "recollection"
+                            or (archive_turn and resolved.source_kind == "dialogue")
+                        )
                     )
-                    and not incremental_receipts
-                    and ("personal_evidence" in context or selected_contact)
-                ):
-                    text, reply = await ground_recollection(
-                        UserLlmConfig(provider.config, user_id=media_turn.user_id),
-                        recollection_evidence(context),
-                        text,
-                        reply,
-                    )
+                    unchecked = len(incremental_receipts)
+                    optional_positions = None
+                    if screen_ordinary_dialogue and resolved.source_kind == "dialogue":
+                        preceding = reply.bubbles[unchecked - 1] if 0 < unchecked <= len(reply.bubbles) else None
+                        screened = await screen_recollection(
+                            [
+                                (index, bubble.text)
+                                for index, bubble in enumerate(reply.bubbles[unchecked:], start=unchecked)
+                                if isinstance(bubble, (TextBubble, VoiceBubble))
+                            ],
+                            request=turn_request,
+                            earlier_bubble=preceding.text if isinstance(preceding, (TextBubble, VoiceBubble)) else "",
+                        )
+                        screened_review_positions.difference_update(screened.fiction_only_positions)
+                        screened_review_positions.update(screened.review_positions)
+                        optional_positions = screened_review_positions or None
+                    if mandatory_review or optional_positions:
+                        text, reply = await ground_recollection(
+                            UserLlmConfig(provider.config, user_id=media_turn.user_id),
+                            recollection_evidence(context),
+                            text,
+                            reply,
+                            request=turn_request,
+                            kind="written" if resolved.source_kind == "written" else "dialogue",
+                            keep_prefix=unchecked,
+                            optional_review_positions=None if mandatory_review else optional_positions,
+                            held_position=held_position,
+                        )
                 decision, followup = resolved.decision, resolved.followup
                 pending_text = [text]
         else:

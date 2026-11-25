@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 
 from runtime.tools.prompts import SEARCH_TOOLS_CATALOG_DESC, SEARCH_TOOLS_DESC
 
@@ -18,6 +18,17 @@ class ToolDomain:
     aliases: tuple[str, ...]
     prefixes: tuple[str, ...] = ()
     extra_tools: tuple[str, ...] = ()
+
+
+class ToolSearchMatch(TypedDict):
+    name: str
+    description: str
+
+
+@dataclass(frozen=True)
+class ToolSearchGroup:
+    description: str
+    matches: tuple[ToolSearchMatch, ...]
 
 
 DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
@@ -58,8 +69,8 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="memory",
-        description_zh="长期记忆",
-        description_en="Long-term memory",
+        description_zh="查找从前聊过的内容、经历或偏好，管理长期记忆",
+        description_en="Recall past conversations, experiences or preferences and manage long-term memory",
         aliases=("memory", "reflection", "记忆", "反思", "相处", "回忆", "记住", "备忘"),
         extra_tools=("memory_retain", "memory_recall", "memory_inspect"),
     ),
@@ -123,8 +134,8 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="tasks",
-        description_zh="定时任务",
-        description_en="Scheduled tasks",
+        description_zh="安排或管理在指定时间执行的一次性或周期性任务，以及稍后的联系意图",
+        description_en="Arrange or manage one-time or recurring scheduled tasks, and follow-up contact intents",
         aliases=("tasks", "scheduled_tasks", "cron", "定时", "定时任务", "周期任务", "闹钟", "提醒", "定时器"),
         extra_tools=("cronjob", "companion_wait"),
     ),
@@ -216,14 +227,65 @@ def _tool_summary(description: object) -> str:
     return re.split(r"(?<=[。.!?])\s*|\n", text, maxsplit=1)[0][:160]
 
 
-def search_domains_and_tools(query: str, available_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _searchable_schemas(available_schemas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        name: schema
+        for schema in available_schemas
+        if (name := schema.get("name")) and isinstance(name, str) and name != _META_TOOL_NAME
+    }
+
+
+def _search_match(name: str, schema: dict[str, Any]) -> ToolSearchMatch:
+    return ToolSearchMatch(name=name, description=_tool_summary(schema.get("description")))
+
+
+def is_tool_catalog_identifier(query: str) -> bool:
+    identifier = query.lower()
+    if not re.fullmatch(r"[a-z0-9_.-]+", identifier):
+        return False
+    return identifier == _META_TOOL_NAME or any(
+        identifier == domain.id or identifier in domain.extra_tools or identifier.startswith(domain.prefixes)
+        for domain in DOMAIN_CATALOG
+    )
+
+
+def semantic_tool_groups(available_schemas: list[dict[str, Any]], *, limit: int) -> dict[str, ToolSearchGroup]:
+    """小目录直接选工具，大目录只提供当前有工具的业务域。"""
+    schemas = _searchable_schemas(available_schemas)
+    if len(schemas) <= limit:
+        matches = [_search_match(name, schemas[name]) for name in sorted(schemas)]
+        return {
+            f"tool_{match['name']}": ToolSearchGroup(f"{match['name']}: {match['description']}", (match,))
+            for match in matches
+        }
+
+    names = set(schemas)
+    groups: dict[str, ToolSearchGroup] = {}
+    for domain in DOMAIN_CATALOG:
+        domain_names = resolve_tools_for_domain(domain, names)
+        if not domain_names:
+            continue
+        matches = tuple(_search_match(name, schemas[name]) for name in domain_names)
+        if len(matches) == 1 or not domain.prefixes and len(matches) < len(domain.extra_tools):
+            description = " / ".join(f"{match['name']}: {match['description']}" for match in matches)
+        else:
+            description = domain.description_zh
+        # 终端执行和终端后台进程共用选项，为“无匹配”保留一个位置。
+        key = "terminal" if domain.id == "process" else domain.id
+        if previous := groups.get(key):
+            description = f"{previous.description} / {description}"
+            matches = (*previous.matches, *matches)
+        groups[key] = ToolSearchGroup(description, matches)
+
+    return groups if len(groups) <= limit else {}
+
+
+def search_domains_and_tools(query: str, available_schemas: list[dict[str, Any]]) -> list[ToolSearchMatch]:
     query_str = query.strip().lower()
     if not query_str:
         return []
 
-    schema_map: dict[str, dict[str, Any]] = {
-        name: schema for schema in available_schemas if (name := schema.get("name")) and isinstance(name, str)
-    }
+    schema_map = _searchable_schemas(available_schemas)
     available_names = set(schema_map)
     matched_names: set[str] = set()
 
@@ -239,9 +301,4 @@ def search_domains_and_tools(query: str, available_schemas: list[dict[str, Any]]
         if query_str in name.lower() or desc_match:
             matched_names.add(name)
 
-    matched_names.discard(_META_TOOL_NAME)
-    return [
-        {"name": name, "description": _tool_summary(schema_map[name].get("description"))}
-        for name in sorted(matched_names)
-        if name in schema_map
-    ]
+    return [_search_match(name, schema_map[name]) for name in sorted(matched_names)]

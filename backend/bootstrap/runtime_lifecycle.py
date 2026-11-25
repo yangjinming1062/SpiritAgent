@@ -16,6 +16,7 @@ from features.memory.lifecycle import runtime_participants as memory_participant
 from features.posts.lifecycle import runtime_participants as post_participants
 from features.scenes.lifecycle import runtime_participants as scene_participants
 from features.visuals.lifecycle import runtime_participants as visuals_participants
+from infrastructure.ai.decision import cancel_decision_request
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.onboarding.initial_appearance import resume_initial_appearance
@@ -55,6 +56,7 @@ def configure_runtime_lifecycle() -> None:
             DIARY_SEARCH_WORKER.participant(),
             RuntimeParticipant("chat.submissions", prepare=recover_interrupted_submissions),
             RuntimeParticipant("chat.calls", prepare=recover_call_records),
+            RuntimeParticipant("ai.decision", drain=cancel_decision_request),
             RuntimeParticipant("desktop.connections", settle=drain_user_sessions),
             RuntimeParticipant("scheduler", stop_producer=stop_scheduler, drain=drain_scheduling),
             RuntimeParticipant("events", stop_producer=stop_event_loop, drain=drain_event_tasks),

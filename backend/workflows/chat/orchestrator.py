@@ -665,6 +665,7 @@ async def _run_chat_turn(
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
         reply_bubble_sink = reply_delivery.enqueue_partial if reply_delivery is not None else None
+        visible_turn = has_viewer and not headless
         while True:
             action_tools_not_ready = await _refresh_turn_material(
                 setup.conv,
@@ -718,7 +719,7 @@ async def _run_chat_turn(
                 delivery=turn.delivery,
                 allow_silence=allow_silence,
                 allow_deferral=allow_deferral,
-                pace_bubbles=has_viewer and not headless and setup.replacement is None,
+                pace_bubbles=visible_turn and setup.replacement is None,
                 selection=ProviderSelection(origin=setup.replacement.generation_origin, mode="next")
                 if setup.replacement
                 else None,
@@ -729,10 +730,13 @@ async def _run_chat_turn(
                 # 工具决策结束前保留推测性台词；确定为回复后才按序交付气泡。
                 llm_result = await generate(
                     reply_bubble_sink=None if planner_pass else reply_bubble_sink,
+                    visible_reply=visible_turn and not planner_pass,
                     final_reply_only=reply_only,
                 )
                 if planner_pass and not llm_result.tool_calls_list:
-                    llm_result = await generate(reply_bubble_sink=reply_bubble_sink, final_reply_only=True)
+                    llm_result = await generate(
+                        reply_bubble_sink=reply_bubble_sink, visible_reply=visible_turn, final_reply_only=True
+                    )
             except LLMRuntimeError as exc:
                 logger.warning(
                     "LLM turn failed",

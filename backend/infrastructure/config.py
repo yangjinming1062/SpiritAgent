@@ -1,7 +1,9 @@
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, Self
 
+import httpx
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy import URL
@@ -14,6 +16,15 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 _EXAMPLE_CONFIG_PATH = BACKEND_DIR / "config.toml.example"
 _SECRET_SETTING_KEYS = ("jwt_secret_key", "companion_asset_signing_key", "admin_password")
 _MAX_LOGIN_REQUESTS_PER_MINUTE = 10
+_ADMIN_ONLY_SETTINGS = frozenset({"decision_base_url", "decision_api_key"})
+
+
+def _deployment_source(source: PydanticBaseSettingsSource) -> Callable[[], dict[str, Any]]:
+    def load() -> dict[str, Any]:
+        return {key: value for key, value in source().items() if key.lower() not in _ADMIN_ONLY_SETTINGS}
+
+    load.__name__ = type(source).__name__
+    return load
 
 
 def _parse_toml_dict(content: dict) -> dict[str, Any]:
@@ -75,6 +86,8 @@ def _postgres_database_url() -> str:
 
 class Settings(BaseSettings):
     ai_config: AIConfig = Field(default_factory=AIConfig)
+    decision_base_url: str = ""
+    decision_api_key: str = Field(default="", repr=False)
     app_name: str = Field(default="SpiritAgent Backend", validation_alias="APP_NAME")
     # 非空时视频附件以绝对 URL 直发供应商（单文件上限=会话配额）；留空走 base64 内联（50MB）。
     public_base_url: str = Field(default="", validation_alias="PUBLIC_BASE_URL")
@@ -220,6 +233,24 @@ class Settings(BaseSettings):
     def _cap_login_rate_limit(cls, value: int) -> int:
         return min(value, _MAX_LOGIN_REQUESTS_PER_MINUTE)
 
+    @field_validator("decision_base_url")
+    @classmethod
+    def _validate_decision_base_url(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        try:
+            url = httpx.URL(value.strip())
+        except httpx.InvalidURL:
+            raise ValueError("决策服务地址无效") from None
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.host
+            or url.userinfo
+            or url != url.copy_with(query=None, fragment=None)
+        ):
+            raise ValueError("决策服务地址须为不含凭据、查询或片段的 HTTP(S) 地址")
+        return str(url).rstrip("/")
+
     @model_validator(mode="after")
     def validate_nightly_window(self) -> Self:
         if self.nightly_window_start_hour == self.nightly_window_end_hour:
@@ -234,8 +265,13 @@ class Settings(BaseSettings):
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,  # noqa: ARG003
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (init_settings, env_settings, dotenv_settings, TomlConfigSource(settings_cls))
+    ) -> tuple[Callable[[], dict[str, Any]], ...]:
+        return (
+            init_settings,
+            _deployment_source(env_settings),
+            _deployment_source(dotenv_settings),
+            _deployment_source(TomlConfigSource(settings_cls)),
+        )
 
     @field_validator("data_dir", mode="after")
     @classmethod

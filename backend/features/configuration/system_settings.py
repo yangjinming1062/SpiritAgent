@@ -1,7 +1,9 @@
 import json
 from typing import Any
 
+import httpx
 from infrastructure.ai.config import CAPABILITY_SERVICES, AIConfig, AIConfigUpdate
+from infrastructure.ai.decision import cancel_decision_request
 from infrastructure.ai.providers.http import rotate_http_clients
 from infrastructure.ai.providers.registry import provider_configuration_defaults, providers_supporting
 from infrastructure.ai.tasks import AI_TASKS
@@ -34,7 +36,7 @@ STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
 )
 
 # 敏感字段：返回给前端时脱敏掩码，保存时空字符串默认保持原值
-SENSITIVE_KEYS: frozenset[str] = frozenset({"brave_search_api_key", "tavily_api_key"})
+SENSITIVE_KEYS: frozenset[str] = frozenset({"brave_search_api_key", "tavily_api_key", "decision_api_key"})
 
 
 def _validation_fields(exc: ValidationError) -> str:
@@ -78,11 +80,11 @@ async def load_and_apply_system_settings(db: AsyncSession) -> None:
         SETTINGS.apply_runtime_candidate(candidate)
         if overrides:
             logger.info("Loaded %d dynamic system settings from database", len(overrides))
-            _apply_runtime_side_effects(set(overrides))
+            await _apply_runtime_side_effects(set(overrides))
 
 
-def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
-    """日志配置或 LLM 重试参数变更时触发即时副作用。"""
+async def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
+    """同步日志配置并收敛更新后的模型连接资源。"""
     if "log_level" in changed_keys or "log_format" in changed_keys:
         try:
             setup_logging()
@@ -98,6 +100,8 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
             logger.info("LLM HTTP client pools rotated for new retry settings")
         except Exception:
             logger.warning("Failed to rotate LLM HTTP client caches", exc_info=True)
+    if changed_keys & {"decision_base_url", "decision_api_key"}:
+        await cancel_decision_request()
 
 
 def get_system_settings_for_admin() -> dict[str, Any]:
@@ -153,6 +157,15 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
         except ValidationError as exc:
             raise ValueError(f"系统设置无效，请检查：{_validation_fields(exc)}") from None
 
+        if (
+            SETTINGS.decision_api_key
+            and candidate.decision_base_url
+            and "decision_base_url" in pending
+            and "decision_api_key" not in pending
+            and httpx.URL(SETTINGS.decision_base_url).join("/") != httpx.URL(candidate.decision_base_url).join("/")
+        ):
+            raise ValueError("请为新的决策服务地址填写密钥，或勾选清除已保存的密钥")
+
         serialized = {
             key: json.dumps(value, ensure_ascii=False)
             for key, value in candidate.model_dump(mode="json", include=set(pending)).items()
@@ -179,4 +192,4 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
         SETTINGS.apply_runtime_candidate(candidate)
         if changed_keys:
             logger.info("System settings updated: %s", ", ".join(sorted(changed_keys)))
-            _apply_runtime_side_effects(changed_keys)
+            await _apply_runtime_side_effects(changed_keys)
