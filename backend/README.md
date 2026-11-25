@@ -43,6 +43,8 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 业务操作由 HTTP 受理，稳定操作标识与编码/等待策略生成到共享契约；WS [handlers.py](entrypoints/desktop/handlers.py) 只管理连接控制、工具同步、回执和情境信号。[body_limit.py](entrypoints/http/body_limit.py) 在解析前执行身份及载荷限制，实际流超限同样拒绝；管理页面可加载不代表管理 API 免鉴权。
 
+[auth_rate_limit.py](entrypoints/http/auth_rate_limit.py) 在读取请求体前限制来源或已签发凭据的查验次数，命中失败锁定时记录入口与来源。计数表预留固定数量的共享桶，独占条目用尽后新来源按哈希分摊额度，同一来源在共享窗口到期前继续使用原桶。
+
 ## 配置与运行生命周期
 
 ### 配置与迁移
@@ -126,6 +128,8 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 默认发布 HTTP/WS `10620` 和 PostgreSQL `15432`，端口映射见 Compose。桌面激活地址为 `http://<服务器地址>:10620`，管理端为 `/admin/`；实际访问仍取决于防火墙与网络。
 
 管理后台的 `public_base_url` 用于激活码地址、手机入口及供应商读取视频附件，须对实际访问方可达。反向代理透传 WS 升级及 Origin。调整 Compose 后重新 `up -d` 应用；移除旧服务时核对孤立容器，保留数据卷。
+
+反向代理部署时，`FORWARDED_ALLOW_IPS` 只填写实际受信代理的地址。入口代理覆盖客户端传入的 `X-Forwarded-For` 并转发真实来源，供认证限流使用。
 
 更新后从实际对外入口确认 `/openapi.json`、`/docs`、`/redoc` 和 `/docs/oauth2-redirect` 均返回 404，`/health` 返回 200。若代理缓存过文档响应，清理对应缓存后复验。
 

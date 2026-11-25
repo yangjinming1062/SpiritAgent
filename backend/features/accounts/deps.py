@@ -1,4 +1,3 @@
-import hmac
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -18,9 +17,9 @@ from features.accounts.remote.models import RemoteSession
 from features.accounts.remote.schemas import REMOTE_TOKEN_MAX_LENGTH
 from features.accounts.remote.security import (
     hash_remote_token,
-    remote_csrf_token,
     remote_session_cookie,
     require_remote_origin,
+    valid_remote_csrf,
 )
 from features.accounts.security import BEARER_SCHEME, decode_bearer_token
 from features.accounts.snapshots import (
@@ -184,9 +183,7 @@ async def authenticate_remote_session(
     csrf = request.headers.get("x-csrf-token")
     if write_request:
         require_remote_origin(request)
-    if (write_request or csrf is not None) and (
-        csrf is None or len(csrf) != 64 or not csrf.isascii() or not hmac.compare_digest(csrf, remote_csrf_token(token))
-    ):
+    if (write_request or csrf is not None) and not valid_remote_csrf(token, csrf):
         if write_request:
             raise HTTPException(status_code=403, detail="页面授权校验失败，请刷新页面。")
         raise HTTPException(status_code=401, detail="页面授权已变化，请刷新页面后重新连接。")

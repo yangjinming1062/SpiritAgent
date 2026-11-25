@@ -3,15 +3,12 @@ from features.accounts.remote import use_cases as remote_use_cases
 from features.accounts.remote.schemas import DeviceListResponse, ExchangeRequest, PairingResponse, RemoteSessionResponse
 from features.accounts.remote.security import REMOTE_SESSION_TTL_SECONDS, remote_session_cookie, require_remote_origin
 from infrastructure.api_ids import ResourceId
-from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.channels import terminate_remote_sessions
 from runtime.responses import MessageResponse
-from slowapi.util import get_remote_address
 
 from entrypoints.http.auth import CurrentRemoteSession, CurrentSession
-from entrypoints.http.rate_limit import limiter
 from entrypoints.http.routing import get_router
 
 
@@ -42,7 +39,6 @@ async def cancel_pairing(pairing_id: ResourceId, session: CurrentSession, db: Db
 @router.post(
     "/session/exchange", response_model=RemoteSessionResponse, openapi_extra=operation_policy(identities=("remote",))
 )
-@limiter.limit(lambda: f"{SETTINGS.login_rate_limit_per_minute}/minute", key_func=get_remote_address)
 async def exchange_pairing(
     payload: ExchangeRequest, request: Request, response: Response, db: DbSession
 ) -> RemoteSessionResponse:

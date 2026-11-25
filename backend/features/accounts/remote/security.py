@@ -42,6 +42,12 @@ def remote_csrf_token(token: str) -> str:
     return hmac.new(SETTINGS.jwt_secret_key.encode(), f"remote-csrf:{token}".encode(), hashlib.sha256).hexdigest()
 
 
+def valid_remote_csrf(token: str, csrf: str | None) -> bool:
+    return (
+        csrf is not None and len(csrf) == 64 and csrf.isascii() and hmac.compare_digest(csrf, remote_csrf_token(token))
+    )
+
+
 def remote_public_base_url() -> str:
     value = SETTINGS.public_base_url.strip().rstrip("/")
     try:

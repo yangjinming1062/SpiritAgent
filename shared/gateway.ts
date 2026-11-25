@@ -532,6 +532,7 @@ export class GatewayConnection {
   private enabled = true
   private blocked = false
   private attempt = 0
+  private retryNotBefore = 0
   private connecting: Promise<void> | null = null
   private timer: ReturnType<typeof setTimeout> | undefined
 
@@ -570,6 +571,11 @@ export class GatewayConnection {
     if (this.connecting) {
       return this.connecting
     }
+    if (Date.now() < this.retryNotBefore) {
+      this.schedule()
+      return Promise.resolve()
+    }
+    this.retryNotBefore = 0
     const task = (async () => {
       try {
         const url = await this.options.url(this.client.streamId || undefined)
@@ -589,6 +595,11 @@ export class GatewayConnection {
           this.blocked = true
           this.options.onExpired()
         } else {
+          if (error instanceof ApiError && error.status === 429 && error.retryAfterMs !== undefined) {
+            this.retryNotBefore = Date.now() + error.retryAfterMs
+            clearTimeout(this.timer)
+            this.timer = undefined
+          }
           this.schedule()
         }
       }
@@ -621,12 +632,13 @@ export class GatewayConnection {
     if (!this.enabled || this.blocked || this.timer) {
       return
     }
+    const backoff = Math.min(1000 * 2 ** Math.min(this.attempt++, 5), 30_000)
     this.timer = setTimeout(
       () => {
         this.timer = undefined
         void this.connect()
       },
-      Math.min(1000 * 2 ** Math.min(this.attempt++, 5), 30_000)
+      Math.min(2 ** 31 - 1, Math.max(backoff, this.retryNotBefore - Date.now()))
     )
   }
 }

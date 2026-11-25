@@ -20,6 +20,8 @@ import { createBackendClient, normalizeBaseUrl } from './client'
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 3
 const REFRESH_LEAD_MS = 5 * 60 * 1000
+const REFRESH_RETRY_FALLBACK_MS = 5000
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 
 interface SessionErrorOptions {
   cause?: unknown
@@ -78,6 +80,7 @@ interface StoredAccountsPayload {
 }
 
 type TokenAuthResponse = ApiResponse<'user.activate'>
+type RefreshPayload = NonNullable<Parameters<BackendSessionPort['refresh']>[0]>
 
 interface ActiveSession extends SavedAccount {
   sessionId: string
@@ -211,6 +214,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   let activeAccountId: null | string = null
   let cached: null | ActiveSession = null
   let refreshTimer: NodeJS.Timeout | null = null
+  let pendingRefresh: Promise<null | SessionSnapshotPort> | null = null
   let sessionEpoch = 0
   const enqueue = createSerialQueue()
   const backendAt = (baseUrl: string): BackendClientPort => createBackendClient({ baseUrl, fetch: fetchImpl })
@@ -277,6 +281,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   function clearActive(): void {
     sessionEpoch++
     clearRefreshTimer()
+    pendingRefresh = null
     cached = null
   }
 
@@ -340,16 +345,20 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     return { expiresAt: now() + response.expires_in * 1000, token: response.access_token, user }
   }
 
-  function scheduleRefresh(): void {
+  function scheduleRefresh(refreshAt?: number, payload: RefreshPayload = {}): void {
     clearRefreshTimer()
 
-    if (!cached) {
+    const current = cached
+    const time = now()
+
+    if (!current || current.tokenExpiresAt <= time) {
       return
     }
 
-    const delay = cached.tokenExpiresAt - now() - REFRESH_LEAD_MS
+    const ttl = current.tokenExpiresAt - time
+    const due = refreshAt ?? current.tokenExpiresAt - (ttl > REFRESH_LEAD_MS ? REFRESH_LEAD_MS : ttl / 2)
 
-    if (delay <= 0) {
+    if (due >= current.tokenExpiresAt) {
       return
     }
 
@@ -357,13 +366,17 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       () => {
         refreshTimer = null
 
-        if (delay > 2 ** 31 - 1) {
-          scheduleRefresh()
+        if (cached !== current || now() >= current.tokenExpiresAt) {
+          return
+        }
+
+        if (now() < due) {
+          scheduleRefresh(due, payload)
         } else {
-          void refresh().catch(error => log(`[session] proactive refresh failed: ${errorMessage(error)}`))
+          void refresh(payload).catch(error => log(`[session] proactive refresh failed: ${errorMessage(error)}`))
         }
       },
-      Math.min(delay, 2 ** 31 - 1)
+      Math.min(Math.max(1, Math.ceil(due - time)), MAX_TIMER_DELAY_MS)
     )
     refreshTimer.unref?.()
   }
@@ -451,12 +464,42 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  async function refresh(payload: { clientContext?: BackendClientContext } = {}): Promise<null | SessionSnapshotPort> {
-    if (!cached) {
-      throw new SessionError({ code: 'not-logged-in', message: 'Cannot refresh without an active session.' })
+  function refresh(payload: RefreshPayload = {}): Promise<null | SessionSnapshotPort> {
+    const requested = cached
+
+    if (!requested) {
+      return Promise.reject(
+        new SessionError({ code: 'not-logged-in', message: 'Cannot refresh without an active session.' })
+      )
     }
 
-    const current = cached
+    if (pendingRefresh) {
+      if (!payload.clientContext) {
+        return pendingRefresh
+      }
+
+      // 带新上下文的手动续签需要前一次轮换后的 JWT。
+      return pendingRefresh.then(() => {
+        if (cached?.sessionId !== requested.sessionId) {
+          throw new SessionError({ code: 'session-superseded', message: 'Session changed during refresh.' })
+        }
+
+        return refresh(payload)
+      })
+    }
+
+    const result = refreshCurrent(requested, payload).finally(() => {
+      if (pendingRefresh === result) {
+        pendingRefresh = null
+      }
+    })
+
+    pendingRefresh = result
+
+    return result
+  }
+
+  async function refreshCurrent(current: ActiveSession, payload: RefreshPayload): Promise<null | SessionSnapshotPort> {
     const epoch = sessionEpoch
 
     try {
@@ -487,12 +530,16 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
 
       return snapshot()
     } catch (error) {
-      if (epoch === sessionEpoch && error instanceof ApiError && error.isLoginExpired) {
-        await enqueue(async () => {
-          if (epoch === sessionEpoch) {
-            clearActive()
-          }
-        })
+      if (epoch === sessionEpoch && error instanceof ApiError) {
+        if (error.status === 429) {
+          scheduleRefresh(now() + Math.max(1000, error.retryAfterMs ?? REFRESH_RETRY_FALLBACK_MS), payload)
+        } else if (error.isLoginExpired) {
+          await enqueue(async () => {
+            if (epoch === sessionEpoch) {
+              clearActive()
+            }
+          })
+        }
       }
 
       return translateBackendError(error)

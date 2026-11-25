@@ -15,6 +15,7 @@ from infrastructure.http_contracts import operation_policy
 
 from entrypoints.desktop.handlers import handle_chat_websocket, handle_remote_websocket
 from entrypoints.http.auth import get_request_identity
+from entrypoints.http.auth_rate_limit import limit_authenticated_session
 from entrypoints.http.routing import get_router
 
 router = get_router(remote=True)
@@ -31,6 +32,10 @@ async def gateway_ticket(
     identity = await get_request_identity(
         request, db, credentials, content_only=False, stream_id=body.stream_id if body else None
     )
+    session_key = (
+        f"remote:{identity.device_id}" if identity.device_id is not None else f"desktop:{identity.login_record_id}"
+    )
+    limit_authenticated_session(request, session_key)
     response.headers["Cache-Control"] = "no-store"
     return issue_gateway_ticket(identity)
 

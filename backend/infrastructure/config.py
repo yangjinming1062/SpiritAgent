@@ -13,6 +13,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 # 示例文件随仓库公开：这些项仍为空或示例值时等于公开密钥，web 进程拒绝启动。
 _EXAMPLE_CONFIG_PATH = BACKEND_DIR / "config.toml.example"
 _SECRET_SETTING_KEYS = ("jwt_secret_key", "companion_asset_signing_key", "admin_password")
+_MAX_LOGIN_REQUESTS_PER_MINUTE = 10
 
 
 def _parse_toml_dict(content: dict) -> dict[str, Any]:
@@ -170,8 +171,9 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: float = Field(default=60.0, gt=0, validation_alias="SCHEDULER_INTERVAL_SECONDS")
 
     rate_limit_enabled: bool = Field(default=True, validation_alias="RATE_LIMIT_ENABLED")
-    # 各端点限流项须为正数（0 会使该端点请求全部 429）；整体关闭限流用 rate_limit_enabled。
-    login_rate_limit_per_minute: int = Field(default=10, gt=0, validation_alias="LOGIN_RATE_LIMIT_PER_MINUTE")
+    login_rate_limit_per_minute: int = Field(
+        default=_MAX_LOGIN_REQUESTS_PER_MINUTE, gt=0, validation_alias="LOGIN_RATE_LIMIT_PER_MINUTE"
+    )
     media_stt_rate_limit_per_minute: int = Field(default=20, gt=0, validation_alias="MEDIA_STT_RATE_LIMIT_PER_MINUTE")
     media_tts_rate_limit_per_minute: int = Field(default=30, gt=0, validation_alias="MEDIA_TTS_RATE_LIMIT_PER_MINUTE")
     media_video_rate_limit_per_minute: int = Field(
@@ -212,6 +214,11 @@ class Settings(BaseSettings):
 
     def apply_runtime_candidate(self, candidate: Self) -> None:
         self.__dict__.update({key: getattr(candidate, key) for key in type(self).model_fields})
+
+    @field_validator("login_rate_limit_per_minute")
+    @classmethod
+    def _cap_login_rate_limit(cls, value: int) -> int:
+        return min(value, _MAX_LOGIN_REQUESTS_PER_MINUTE)
 
     @model_validator(mode="after")
     def validate_nightly_window(self) -> Self:

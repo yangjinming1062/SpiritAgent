@@ -9,6 +9,8 @@ from infrastructure.api_errors import ApiErrorResponse
 from infrastructure.http_contracts import HttpIdentity, HttpOperation, register_http_operation
 from starlette.responses import Response
 
+from entrypoints.http.auth_rate_limit import AUTHENTICATION_PATHS
+
 
 class ContractRouter(APIRouter):
     """注册时固定操作策略，协议生成与请求准入使用相同元数据。"""
@@ -32,6 +34,10 @@ class ContractRouter(APIRouter):
                 )
         for status in (400, 401, 403, 404, 409, 413, 422, 429, 500, 503):
             responses.setdefault(status, {"model": ApiErrorResponse})
+        if self.prefix + path in AUTHENTICATION_PATHS and "POST" in (kwargs.get("methods") or []):
+            responses[429]["headers"] = {
+                "Retry-After": {"description": "重试前应等待的秒数", "schema": {"type": "integer", "minimum": 1}}
+            }
         kwargs["responses"] = responses
         extra = dict(kwargs.get("openapi_extra") or {})
         overrides = extra.get("x-spiritagent", {})

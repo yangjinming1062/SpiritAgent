@@ -109,6 +109,17 @@ function requestBody(body: unknown, encoding: HttpEncoding, headers: Headers): R
   return JSON.stringify(body)
 }
 
+function retryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined
+  }
+  if (/^\d+$/.test(value)) {
+    return Math.min(Number(value) * 1000, Number.MAX_SAFE_INTEGER)
+  }
+  const deadline = /^[A-Za-z]{3,9}[ ,]/.test(value) ? Date.parse(value) : NaN
+  return Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : undefined
+}
+
 export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
   const text = await response.text()
   let payload: unknown
@@ -124,7 +135,8 @@ export async function apiErrorFromResponse(response: Response): Promise<ApiError
       message: `请求失败（${response.status}）`,
       details: null,
       request_id: response.headers.get('X-Request-ID') ?? ''
-    }
+    },
+    { retryAfterMs: retryAfterMs(response.headers.get('Retry-After')) }
   )
 }
 

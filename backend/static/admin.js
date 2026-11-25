@@ -1763,9 +1763,9 @@ const SETTINGS_SECTIONS = [
     {
         title: '接口限流与安全防护', hint: '接口频控、媒体处理与附件空间',
         blocks: [
-            ['field', bool('rate_limit_enabled', '开启接口速率限制 (Rate Limiting)')],
+            ['field', bool('rate_limit_enabled', '开启媒体与头像生成限流')],
             ['grid', [
-                num('login_rate_limit_per_minute', '登录频次上限 (/分钟)', 1, { min: 1 }),
+                num('login_rate_limit_per_minute', '每个来源的未认证请求上限 (/分钟)', 1, { min: 1, max: 10 }),
                 num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)', 1, { min: 1 }),
                 num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)', 1, { min: 1 }),
                 num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)', 1, { min: 1 }),

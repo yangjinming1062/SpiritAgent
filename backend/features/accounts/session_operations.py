@@ -29,8 +29,8 @@ async def activate_account(
 ) -> TokenResponse:
     try:
         _base_url, raw_token = decode_activation_code(payload.code)
-    except Exception:
-        raise RequestError(status_code=401, message="激活码格式无效。") from None
+    except (ValueError, RecursionError):
+        raise RequestError(status_code=401, message="激活码无效。") from None
     token_hash = hash_activation_token(raw_token)
     user = await db.scalar(
         select(User).where(User.activation_token_hash == token_hash, User.is_active.is_(True)).with_for_update()

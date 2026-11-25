@@ -53,13 +53,16 @@ export function readHttpError(value: unknown): BusinessError | null {
 }
 
 export class ApiError extends Error {
+  readonly retryAfterMs?: number
+
   constructor(
     readonly status: number | null,
     readonly business: BusinessError,
-    options?: ErrorOptions
+    options?: ErrorOptions & { retryAfterMs?: number }
   ) {
     super(business.message, options)
     this.name = 'ApiError'
+    this.retryAfterMs = options?.retryAfterMs
   }
 
   get code(): string {

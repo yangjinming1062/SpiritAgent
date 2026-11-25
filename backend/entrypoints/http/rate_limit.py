@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 import jwt
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.security.utils import get_authorization_scheme_param
 from features.accounts.security import decode_access_token
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger, set_request_user_id
@@ -40,26 +41,30 @@ class DynamicLimiter(Limiter):
 limiter = DynamicLimiter(key_func=_user_key, storage_uri="memory://", config_filename="")
 
 
+def rate_limit_bearer_claims(request: Request) -> dict[str, object] | None:
+    """限流共用的请求级验签结果。无 Bearer 返回 None，无效 Bearer 返回空映射。"""
+    if hasattr(request.state, "rate_limit_claims"):
+        return request.state.rate_limit_claims
+    scheme, token = get_authorization_scheme_param(request.headers.get("authorization"))
+    if scheme.lower() != "bearer" or not token:
+        return None
+    try:
+        claims = decode_access_token(token)
+    except jwt.PyJWTError as exc:
+        logger.debug("rate_limit: JWT decode failed: %s", exc)
+        claims = {}
+    request.state.rate_limit_claims = claims
+    return claims
+
+
 async def stash_user_id_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     """提前标记 Bearer 身份；Cookie 身份由端点鉴权依赖提供。"""
-    if not request.url.path.startswith("/api/"):
-        return await call_next(request)
-    auth = request.headers.get("authorization")
-    if auth is None or auth[:7].lower() != "bearer ":
-        return await call_next(request)
-    token = auth[7:].strip()
-    if not token:
-        return await call_next(request)
-    try:
-        # 用户 token 的 sub 是数字字符串；admin token 的 sub 是 "admin"，不参与按用户限流。
-        sub = decode_access_token(token).get("sub")
-        if isinstance(sub, str) and sub.isdigit():
+    if request.url.path.startswith("/api/") and (claims := rate_limit_bearer_claims(request)):
+        sub = claims.get("sub")
+        if isinstance(sub, str) and sub.isascii() and sub.isdecimal():
             uid = int(sub)
             request.state.user_id = uid
-            # 同步到 logger 的 ContextVar, 后续本 task log 自动带 user_id 字段
             set_request_user_id(uid)
-    except jwt.PyJWTError as exc:
-        logger.debug("rate_limit: JWT decode failed in stash middleware: %s", exc)
     return await call_next(request)
 
 

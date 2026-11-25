@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -15,6 +16,8 @@ from features.accounts.models import AdminSession
 
 # 激活 token 是不可猜随机串（非用户密码），SHA-256 已够，不需要慢哈希。
 ACTIVATION_TOKEN_BYTES = 32
+_ACTIVATION_TOKEN_LENGTH = (ACTIVATION_TOKEN_BYTES * 8 + 5) // 6
+_ACTIVATION_TOKEN_PATTERN = re.compile(rf"[A-Za-z0-9_-]{{{_ACTIVATION_TOKEN_LENGTH}}}")
 BEARER_SCHEME = HTTPBearer(auto_error=False)
 
 
@@ -49,8 +52,10 @@ def decode_activation_code(code: str) -> tuple[str, str]:
         raise ValueError("activation code payload must be a JSON object")
     base_url = data.get("b")
     token = data.get("t")
-    if not isinstance(base_url, str) or not isinstance(token, str) or not base_url or not token:
+    if not isinstance(base_url, str) or not base_url or not isinstance(token, str):
         raise ValueError("activation code missing required fields")
+    if not _ACTIVATION_TOKEN_PATTERN.fullmatch(token):
+        raise ValueError("invalid activation token format")
     return base_url, token
 
 
@@ -82,7 +87,10 @@ async def create_admin_token() -> tuple[str, int]:
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, SETTINGS.jwt_secret_key, algorithms=[SETTINGS.jwt_algorithm])
+    try:
+        return jwt.decode(token, SETTINGS.jwt_secret_key, algorithms=[SETTINGS.jwt_algorithm])
+    except RecursionError as exc:
+        raise jwt.DecodeError("Invalid token structure") from exc
 
 
 def decode_bearer_token(credentials: HTTPAuthorizationCredentials | None) -> dict:

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from entrypoints.http.auth_rate_limit import AuthenticationRateLimitMiddleware
 from entrypoints.http.body_limit import BodyLimitMiddleware
 from entrypoints.http.errors import http_exception_handler, request_exception_handler, validation_exception_handler
 from entrypoints.http.rate_limit import limiter, rate_limit_exception_handler, stash_user_id_middleware
@@ -30,6 +31,9 @@ app = FastAPI(
     redoc_url=None,
 )
 app.add_middleware(BodyLimitMiddleware)
+app.state.limiter = limiter
+app.middleware("http")(stash_user_id_middleware)
+app.add_middleware(AuthenticationRateLimitMiddleware)
 # 跨域仅供 Bearer 客户端；远程 Cookie 身份要求同源，CORS 不开放凭据跨域。
 app.add_middleware(
     CORSMiddleware,
@@ -37,9 +41,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     allow_credentials=False,
+    expose_headers=["Retry-After"],
 )
-app.state.limiter = limiter
-app.middleware("http")(stash_user_id_middleware)
 # 后注册 = Starlette 外层 wrapper：inbound 先跑、response header 最后写；覆盖所有 path，health/static 也带 ID。
 app.middleware("http")(correlation_id_middleware)
 # 兜底：ServerErrorMiddleware 在最外层，BaseHTTPMiddleware 抛 raise 时 post-call_next 不跑；从 ContextVar 写 header，让 500/404 也带 X-Request-ID。
