@@ -4,26 +4,35 @@ import { backendApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $auth } from '@/shared/store/auth'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
+import { $presentation } from '@/shared/store/presentation'
 import {
   $surfaceOpen,
   $surfaceOpenVisible,
   $surfaceRole,
+  $surfaceScreenLocked,
   $surfaceSpriteVisible,
   isSpriteStageShown
 } from '@/shared/store/surfaces'
-import type { VoicePlaybackRecord } from '@ipc/contracts'
+import { voicePlaybackKey, type VoicePlaybackRecord, type VoicePlaybackScope } from '@ipc/contracts'
 import type { ReplyAudio } from '@protocol'
 
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
 import { $callAudioBusy, bindCallAudioFocus } from './call-audio-focus'
 
+export interface VoiceBarTarget extends VoicePlaybackScope {
+  messageId: string
+  bubbleIndex: number
+}
+
 export interface VoiceBarProjection {
-  isActive?(messageId?: string): boolean | undefined
-  isVisible?(messageId?: string): boolean | undefined
+  isActive(sessionId: string): boolean
+  getVisibleSessionIds(): string[] | undefined
+  getSelectedSessionId(): string | null
   getAudio(messageId: string): ReplyAudio | null | undefined
   getRecord(messageId: string): VoicePlaybackRecord | undefined
-  getKey(messageId: string): string | null
-  getFollowing(messageId: string): string[]
+  getTarget(messageId: string): VoiceBarTarget | null
+  resolveId(target: VoiceBarTarget): string | undefined
+  getFollowingTargets(messageId: string): VoiceBarTarget[]
   ready(messageId: string): Promise<void>
   captureProgress(messageId: string): NonNullable<AudioPlaybackOptions['onProgress']>
   isAutoplay(): boolean
@@ -40,8 +49,14 @@ let activeId: string | null = null
 let pausedId: string | null = null
 let mounted = false
 let recording = false
-let queue: string[] = []
+let queue: VoiceBarTarget[] = []
 const received = new Set<string>()
+let autoplayAuthSessionId: string | null = null
+let autoplayEligibleSince = new Map<string, number>()
+
+function targetKey({ authSessionId, sessionId, messageId, bubbleIndex }: VoiceBarTarget): string {
+  return `${authSessionId}:${sessionId}:${voicePlaybackKey(messageId, bubbleIndex)}`
+}
 
 export function bindVoiceBarProjection(value: VoiceBarProjection): void {
   projection = value
@@ -55,35 +70,64 @@ function voiceProjection(): VoiceBarProjection {
   return projection
 }
 
-function isVoiceSurfaceVisible(messageId?: string): boolean {
+function visibleVoiceSessions(): string[] {
   if (
     $callAudioBusy.get() ||
     recording ||
     $auth.get().kind !== 'authenticated' ||
+    $surfaceScreenLocked.get() ||
     presentationPorts().$screenLocked.get()
   ) {
-    return false
+    return []
   }
 
-  const scopedVisible = projection?.isVisible?.(messageId)
+  const scoped = projection?.getVisibleSessionIds()
 
-  if (scopedVisible !== undefined) {
-    return scopedVisible
+  if (scoped) {
+    return scoped
   }
 
-  if (!mounted) {
-    return false
+  const selected = projection?.getSelectedSessionId()
+
+  if (!mounted || !selected) {
+    return []
   }
 
-  if ($surfaceRole.get() === 'main') {
-    return $surfaceOpen.get() && $surfaceOpenVisible.get()
-  }
+  const role = $surfaceRole.get()
 
-  return $surfaceRole.get() === 'sprite' && $whisperOpen.get() && isSpriteStageShown()
+  const visible =
+    role === 'main'
+      ? $surfaceOpen.get() && $surfaceOpenVisible.get()
+      : role === 'sprite' && $whisperOpen.get() && isSpriteStageShown()
+
+  return visible ? [selected] : []
 }
 
-function isVoiceSurfaceActive(messageId?: string): boolean {
-  return isVoiceSurfaceVisible(messageId) && (projection?.isActive?.(messageId) ?? true)
+function refreshAutoplayEligibility(visible = visibleVoiceSessions()): void {
+  const auth = $auth.get()
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+
+  if (authSessionId !== autoplayAuthSessionId) {
+    autoplayEligibleSince.clear()
+    autoplayAuthSessionId = authSessionId
+  }
+
+  const now = Date.now()
+  autoplayEligibleSince = new Map(
+    projection?.isAutoplay() ? visible.map(id => [id, autoplayEligibleSince.get(id) ?? now]) : []
+  )
+}
+
+export function refreshVoiceBarVisibility(): void {
+  const visible = visibleVoiceSessions()
+  refreshAutoplayEligibility(visible)
+
+  const id = activeId ?? pausedId
+  const sessionId = id ? projection?.getTarget(id)?.sessionId : queue[0]?.sessionId
+
+  if ((id || sessionId) && (!sessionId || !visible.includes(sessionId))) {
+    cancelVoiceBar()
+  }
 }
 
 function stopCurrent(): void {
@@ -104,6 +148,7 @@ export function cancelVoiceBar(): void {
 
 export function setVoiceSurfaceMounted(value: boolean): void {
   mounted = value
+  refreshAutoplayEligibility()
 
   if (!value) {
     cancelVoiceBar()
@@ -112,6 +157,7 @@ export function setVoiceSurfaceMounted(value: boolean): void {
 
 export function setVoiceRecording(value: boolean): void {
   recording = value
+  refreshAutoplayEligibility()
 
   if (value) {
     cancelVoiceBar()
@@ -119,6 +165,8 @@ export function setVoiceRecording(value: boolean): void {
 }
 
 export function refreshVoiceAutoplay(): void {
+  refreshAutoplayEligibility()
+
   if (!voiceProjection().isAutoplay()) {
     queue = []
   }
@@ -131,21 +179,23 @@ function playNext(): void {
     return
   }
 
-  const next = queue[0]
+  for (let next = queue.shift(); next; next = queue.shift()) {
+    const id = proj.resolveId(next)
 
-  if (next && isVoiceSurfaceVisible(next)) {
-    queue.shift()
-    void playItem(next, false)
+    if (id && visibleVoiceSessions().includes(next.sessionId)) {
+      void playItem(id, next, false)
+
+      return
+    }
   }
 }
 
-async function playItem(messageId: string, manual: boolean, fromStart = false): Promise<void> {
+async function playItem(messageId: string, target: VoiceBarTarget, manual: boolean, fromStart = false): Promise<void> {
   const proj = voiceProjection()
   const token = ++playToken
-  const key = proj.getKey(messageId)
 
   const valid = (): boolean =>
-    token === playToken && key !== null && proj.getKey(messageId) === key && isVoiceSurfaceVisible(messageId)
+    token === playToken && proj.resolveId(target) === messageId && visibleVoiceSessions().includes(target.sessionId)
 
   activeId = messageId
   pausedId = null
@@ -229,38 +279,55 @@ async function playItem(messageId: string, manual: boolean, fromStart = false): 
   }
 }
 
-export function enqueueVoiceBars(messageIds: string[]): void {
+export function enqueueVoiceBars(messageIds: string[], receivedAt?: number | null): void {
   const proj = voiceProjection()
+  const visible = visibleVoiceSessions()
 
   for (const id of messageIds) {
-    const key = proj.getKey(id)
+    const target = proj.getTarget(id)
 
-    if (!key || received.has(key)) {
+    if (!target) {
+      continue
+    }
+
+    const key = targetKey(target)
+
+    if (received.has(key)) {
       continue
     }
 
     received.add(key)
+    const eligibleSince = autoplayEligibleSince.get(target.sessionId)
 
     if (
-      isVoiceSurfaceVisible(id) &&
+      receivedAt !== null &&
+      (receivedAt === undefined || (eligibleSince !== undefined && receivedAt > eligibleSince)) &&
+      visible.includes(target.sessionId) &&
       proj.isAutoplay() &&
       !proj.getRecord(id)?.listened &&
-      !queue.includes(id) &&
+      !queue.some(item => targetKey(item) === key) &&
       activeId !== id
     ) {
-      queue.push(id)
+      queue.push(target)
     }
   }
 
   playNext()
 }
 
+function queueFollowing(messageId: string): void {
+  const proj = voiceProjection()
+
+  queue = proj.isAutoplay() ? proj.getFollowingTargets(messageId) : []
+}
+
 export function toggleVoiceBar(messageId: string): void {
-  if (!isVoiceSurfaceActive(messageId)) {
+  const proj = voiceProjection()
+  const target = proj.getTarget(messageId)
+
+  if (!target || !visibleVoiceSessions().includes(target.sessionId) || !proj.isActive(target.sessionId)) {
     return
   }
-
-  const proj = voiceProjection()
 
   if (activeId === messageId) {
     stopCurrent()
@@ -274,40 +341,41 @@ export function toggleVoiceBar(messageId: string): void {
   stopCurrent()
 
   if (!resuming) {
-    queue = proj.isAutoplay() ? proj.getFollowing(messageId) : []
+    queueFollowing(messageId)
   }
 
-  void playItem(messageId, true)
+  void playItem(messageId, target, true)
 }
 
 export function restartVoiceBar(messageId: string): void {
-  if (!isVoiceSurfaceActive(messageId)) {
+  const proj = voiceProjection()
+  const target = proj.getTarget(messageId)
+
+  if (!target || !visibleVoiceSessions().includes(target.sessionId) || !proj.isActive(target.sessionId)) {
     return
   }
 
-  const proj = voiceProjection()
   stopCurrent()
-  queue = proj.isAutoplay() ? proj.getFollowing(messageId) : []
-  void playItem(messageId, true, true)
+  queueFollowing(messageId)
+  void playItem(messageId, target, true, true)
 }
 
 export function bindVoiceBarListeners(): () => void {
-  const cancelIfHidden = (): void => {
-    if (!isVoiceSurfaceVisible(activeId ?? pausedId ?? queue[0])) {
-      cancelVoiceBar()
-    }
-  }
-
   const disposers = [
     bindCallAudioFocus(),
-    $callAudioBusy.listen(cancelIfHidden),
-    presentationPorts().$screenLocked.listen(cancelIfHidden),
-    $surfaceOpen.listen(cancelIfHidden),
-    $surfaceOpenVisible.listen(cancelIfHidden),
-    $surfaceSpriteVisible.listen(cancelIfHidden),
-    $whisperOpen.listen(cancelIfHidden),
-    $auth.listen(cancelIfHidden)
+    $callAudioBusy.listen(refreshVoiceBarVisibility),
+    presentationPorts().$screenLocked.listen(refreshVoiceBarVisibility),
+    $surfaceScreenLocked.listen(refreshVoiceBarVisibility),
+    $surfaceOpen.listen(refreshVoiceBarVisibility),
+    $surfaceOpenVisible.listen(refreshVoiceBarVisibility),
+    $surfaceRole.listen(refreshVoiceBarVisibility),
+    $surfaceSpriteVisible.listen(refreshVoiceBarVisibility),
+    $presentation.listen(refreshVoiceBarVisibility),
+    $whisperOpen.listen(refreshVoiceBarVisibility),
+    $auth.listen(refreshVoiceBarVisibility)
   ]
+
+  refreshAutoplayEligibility()
 
   window.addEventListener('beforeunload', cancelVoiceBar)
 
@@ -315,11 +383,13 @@ export function bindVoiceBarListeners(): () => void {
     disposers.forEach(dispose => dispose())
     window.removeEventListener('beforeunload', cancelVoiceBar)
     cancelVoiceBar()
+    autoplayEligibleSince.clear()
   }
 }
 
 registerStorageClearHandler(() => {
   cancelVoiceBar()
   received.clear()
+  autoplayEligibleSince.clear()
   recording = false
 })

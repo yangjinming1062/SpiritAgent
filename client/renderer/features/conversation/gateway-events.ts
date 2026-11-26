@@ -9,6 +9,7 @@ import { $chatDraftFromUndo, $companionSessionId, showMediaHint } from './conver
 import { rememberPendingMessage } from './pending-messages'
 import { pendingReplyText } from './pending-reply'
 import { invalidateSessionHistory, rememberFullHistory } from './session-history-cache'
+import { conversationVoiceSink } from './voice-link'
 import { removeVoicePlayback } from './voice-playback'
 
 const NO_EFFECTS: ConversationEventEffects = { footGlow: null, syncActivity: false }
@@ -42,6 +43,7 @@ export function handleConversationEvent(
     appendAssistantDelta,
     appendAssistantReasoningDelta,
     appendCompanionBubble,
+    enqueueCompanionVoices,
     beginAssistantMessage,
     bindTrailingAssistantMessageId,
     mergePersistedUserMessages,
@@ -125,6 +127,13 @@ export function handleConversationEvent(
     case 'message.bubble': {
       // 结构化回复逐泡交付：按气泡顺序到达，语音泡的音频已就绪（失败时为空，同 message.voice 降级）。
       const payload = event.payload
+      const delivery = { firstIndex: payload.bubble_index, receivedAt: event.voiceReceivedAt }
+
+      if (event.coveredBySnapshot) {
+        enqueueCompanionVoices(payload.message_id, [payload.bubble], delivery)
+
+        break
+      }
 
       const exists = runtime.$chatMessageList
         .get()
@@ -135,6 +144,7 @@ export function handleConversationEvent(
         )
 
       appendCompanionBubble(payload.message_id, payload.bubble_index, payload.bubble)
+      enqueueCompanionVoices(payload.message_id, [payload.bubble], delivery)
 
       if (!exists) {
         rememberReply(undefined, [payload.bubble])
@@ -259,7 +269,11 @@ export function handleConversationEvent(
       const hadBreak = $turnHadBubbleBreak.get()
 
       if (bubbles && isResourceId(payload.message_id)) {
-        finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning ?? undefined)
+        const newVoiceIds = finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning ?? undefined)
+
+        if (newVoiceIds.length) {
+          conversationVoiceSink().enqueue(newVoiceIds, event.voiceReceivedAt)
+        }
       } else {
         finalizeAssistantMessage(
           hadBreak ? undefined : (payload.text ?? undefined),

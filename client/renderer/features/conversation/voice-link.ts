@@ -37,7 +37,7 @@ export function activeVoiceMessageId(): string | null {
 
 export interface ConversationVoiceSink {
   cancel(sessionId?: string | null, reason?: 'selection'): void
-  enqueue(messageIds: string[]): void
+  enqueue(messageIds: string[], receivedAt?: number | null): void
   setVisible(visible: boolean): void
   setRecording(recording: boolean): void
 }

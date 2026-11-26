@@ -134,11 +134,11 @@
 
 ### 语音播放
 
-speech 持唯一合成与播放队列，自动和点播共用。[conversation-speech.ts](app/workflows/conversation-speech.ts) 用稳定消息 ID、气泡索引及会话映射收听记录，临时组件 ID 和签名 URL 不持久化。乐观进度与主进程版本合并，不回退已听状态或断点。
+speech 持唯一合成与播放队列，自动和点播共用。[conversation-speech.ts](app/workflows/conversation-speech.ts) 按登录会话、会话 ID、消息 ID 和气泡索引标识待播语音，取队首时解析当前气泡行，历史刷新重建行后仍按原序连播。收听记录采用会话、消息和气泡索引，乐观进度与主进程版本合并，不回退已听状态或断点。
 
-自动入队及连播要求所属会话仍有可见视图，点播要求活动资格；失焦或菜单不阻止可见会话的新语音自动播放。视图登记变动在同轮末合并，防止窗口交接误判隐藏；锁屏、录音或真正隐藏使旧下载和播放回包失效，重新打开不自动重启队列。结果区分完成、中断和失败，抢占不等于不可用。
+缓冲的实时语音按本机收帧时间核对所属会话是否持续具备自动播放条件，点播要求活动资格；失焦或菜单不阻止可见会话的新语音自动播放。视图登记变动在同轮末合并，防止窗口交接误判隐藏；锁屏、录音或真正隐藏使旧下载和播放回包失效，重新打开不自动重启队列。结果区分完成、中断和失败，抢占不等于不可用。
 
-语音直接经 HTMLAudioElement 输出；[audio-track.ts](features/speech/audio-track.ts) 通过 IPC 共享主进程的输出就绪结果。启动预热及运行期间的静音保活归主进程，渲染窗口不按播放或闲置时间重复预热。尚未就绪时保留 loading 和原断点，不报告台词进度或已听，取消照常释放本次播放。实际蓝牙首字听感须在对应设备验收，媒体时间轴检查不能证明硬件已出声。固定音色试听使用 `playVoiceSample`。
+语音直接经 HTMLAudioElement 输出。[audio-track.ts](features/speech/audio-track.ts) 在查询通话占用前登记播放请求，取消或后续请求使迟到回包失效。已开始的媒体由当前播放实例结算进度与释放资源。启动预热及运行期间的静音保活归主进程，各渲染窗口通过 IPC 共享就绪结果。等待就绪时显示 loading 并保留原断点。实际蓝牙首字听感须在对应设备验收。固定音色试听使用 `playVoiceSample`。
 
 [通话页](features/conversation/call-surface.tsx) 保留聊天视图和草稿，使用 [realtime-call-service.ts](features/speech/realtime-call-service.ts) 和根 shared 的通话控制、AudioWorklet 与页面组件。主进程经 `voiceConnect` 复用现有票据并独占媒体 WebSocket，渲染层的 `useRealtimeCall` 管理连接、AudioWorklet、静音和结束；AudioWorklet 持续采集/播放并以回声消除、降噪、自动增益和 VAD 产生输入回合。实时二进制音频不进入普通语音气泡的播放队列；出站音频按 100 ms 合帧，传输积压时丢弃过期帧而不是结束通话；插话清空旧代次的播放缓冲；锁屏、换号和视图关闭释放设备。
 

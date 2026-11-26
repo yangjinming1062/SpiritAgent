@@ -88,10 +88,6 @@ export function createCompanionBubbleProjection(
 
     $chatMessageList.set(next)
     $lastAssistantStreaming.set(false)
-
-    if (bubble.type === 'voice') {
-      conversationVoiceSink().enqueue([id])
-    }
   }
 
   function finalizeCompanionReply(
@@ -99,12 +95,13 @@ export function createCompanionBubbleProjection(
     messageId: string,
     reasoning?: string,
     proactive = false
-  ): void {
+  ): string[] {
     if (shared.inflight.value?.messageId === messageId) {
       shared.inflight.value = null
     }
 
     const list = $chatMessageList.get()
+    const newVoiceIds: string[] = []
 
     if (list.some(item => item.backendMessageId === messageId)) {
       const placeholder = list.at(-1)
@@ -116,8 +113,6 @@ export function createCompanionBubbleProjection(
       }
 
       // 已逐泡交付的气泡按补丁对账；丢帧缺失的下标按 replyIndex 空位补建（PROTOCOL「完整气泡对账」）。
-      const voiceIds: string[] = []
-
       bubbles.forEach((bubble, index) => {
         if (patchCompanionBubble(messageId, index, bubble)) {
           return
@@ -125,15 +120,12 @@ export function createCompanionBubbleProjection(
 
         const next = [...$chatMessageList.get()]
         const id = insertCompanionBubbleRow(next, messageId, index, bubble)
-
         $chatMessageList.set(next)
 
-        if (bubble.type === 'voice') {
-          voiceIds.push(id)
+        if (bubble.type === 'voice' && bubble.audio) {
+          newVoiceIds.push(id)
         }
       })
-
-      conversationVoiceSink().enqueue(voiceIds)
 
       // 逐泡交付先建气泡、reasoning 随完成帧到达：挂到首个气泡，与整体交付一致。
       if (reasoning) {
@@ -150,14 +142,13 @@ export function createCompanionBubbleProjection(
         }
       }
 
-      return
+      return newVoiceIds
     }
 
     const last = list.at(-1)
     const streaming = last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
     const placeholder = !proactive && streaming
     const next = streaming ? list.slice(0, -1) : [...list]
-    const voiceIds: string[] = []
 
     if (placeholder && last) {
       $chatMessageBodies.setKey(last.id, undefined)
@@ -169,8 +160,8 @@ export function createCompanionBubbleProjection(
         reasoning: index === 0 ? reasoning : undefined
       })
 
-      if (bubble.type === 'voice') {
-        voiceIds.push(id)
+      if (bubble.type === 'voice' && bubble.audio) {
+        newVoiceIds.push(id)
       }
     })
 
@@ -180,12 +171,44 @@ export function createCompanionBubbleProjection(
 
     $chatMessageList.set(next)
 
-    conversationVoiceSink().enqueue(voiceIds)
-
     if (!proactive) {
       $lastAssistantStreaming.set(false)
     }
+
+    return newVoiceIds
   }
 
-  return { appendCompanionBubble, finalizeCompanionReply }
+  // 实时交付可命中已由快照投影的气泡；仅消费本帧已就绪的语音。
+  const enqueueCompanionVoices: CompanionBubbleProjection['enqueueCompanionVoices'] = (
+    messageId,
+    bubbles,
+    { firstIndex = 0, receivedAt } = {}
+  ) => {
+    if (!bubbles.some(bubble => bubble.type === 'voice' && bubble.audio)) {
+      return
+    }
+
+    const bodies = $chatMessageBodies.get()
+    const voiceIds: string[] = []
+
+    for (const item of $chatMessageList.get()) {
+      const body = bodies[item.id]
+
+      if (item.backendMessageId !== messageId || !body?.replyAudio || body.replyIndex === undefined) {
+        continue
+      }
+
+      const delivered = bubbles[body.replyIndex - firstIndex]
+
+      if (delivered?.type === 'voice' && delivered.audio) {
+        voiceIds.push(item.id)
+      }
+    }
+
+    if (voiceIds.length) {
+      conversationVoiceSink().enqueue(voiceIds, receivedAt)
+    }
+  }
+
+  return { appendCompanionBubble, enqueueCompanionVoices, finalizeCompanionReply }
 }

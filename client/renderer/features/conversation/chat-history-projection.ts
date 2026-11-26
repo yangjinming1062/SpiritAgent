@@ -154,9 +154,10 @@ export function preserveLiveHistoryRows(
 }
 
 export function mergeLiveHistoryRows(
-  history: ChatMessageListItem[],
-  liveList: ChatMessageListItem[]
-): ChatMessageListItem[] {
+  history: ReturnType<typeof projectSessionMessages>,
+  liveList: ChatMessageListItem[],
+  liveBodies: Record<string, ChatMessageBody>
+): ReturnType<typeof projectSessionMessages> {
   const liveGroups = new Map<string, ChatMessageListItem[]>()
 
   for (const item of liveList) {
@@ -167,24 +168,77 @@ export function mergeLiveHistoryRows(
     }
   }
 
-  const replaced = new Set<string>()
+  const savedReplyGroups = new Map<string, Map<number, ChatMessageListItem>>()
 
-  const merged = history.flatMap(item => {
-    if (item.backendMessageId === undefined || !liveGroups.has(item.backendMessageId)) {
+  for (const item of history.items) {
+    const messageId = item.backendMessageId
+    const index = history.bodies[item.id].replyIndex
+
+    if (messageId && liveGroups.has(messageId) && index !== undefined) {
+      const group = savedReplyGroups.get(messageId) ?? new Map<number, ChatMessageListItem>()
+      group.set(index, item)
+      savedReplyGroups.set(messageId, group)
+    }
+  }
+
+  const replaced = new Set<string>()
+  const mergedBodies: Record<string, ChatMessageBody> = {}
+
+  const merged = history.items.flatMap(item => {
+    const messageId = item.backendMessageId
+    const liveGroup = messageId === undefined ? undefined : liveGroups.get(messageId)
+
+    if (messageId === undefined || !liveGroup) {
       return [item]
     }
 
-    if (replaced.has(item.backendMessageId)) {
+    if (replaced.has(messageId)) {
       return []
     }
 
-    replaced.add(item.backendMessageId)
+    replaced.add(messageId)
+    const reply = savedReplyGroups.get(messageId)
 
-    return liveGroups.get(item.backendMessageId) ?? []
+    if (!reply) {
+      return liveGroup
+    }
+
+    // 快照补齐持久回复的气泡，已交付的行沿用原 ID，避免打断正在播放的语音。
+    for (const live of liveGroup) {
+      const body = liveBodies[live.id]
+      const index = body.replyIndex
+
+      if (index === undefined) {
+        continue
+      }
+
+      const saved = reply.get(index)
+
+      if (saved) {
+        const projected = history.bodies[saved.id]
+        mergedBodies[live.id] = {
+          ...projected,
+          reasoning: projected.reasoning ?? body.reasoning,
+          ...(projected.replyType === 'voice' && body.replyType === 'voice' && !projected.replyAudio
+            ? { replyAudio: body.replyAudio }
+            : {})
+        }
+      }
+
+      reply.set(index, saved ? { ...saved, id: live.id, timestamp: saved.timestamp ?? live.timestamp } : live)
+    }
+
+    return [...reply.entries()].sort(([left], [right]) => left - right).map(([, row]) => row)
   })
 
-  return [
+  const items = [
     ...merged,
     ...liveList.filter(item => item.backendMessageId === undefined || !replaced.has(item.backendMessageId))
   ]
+
+  const bodies = Object.fromEntries(
+    items.map(item => [item.id, mergedBodies[item.id] ?? liveBodies[item.id] ?? history.bodies[item.id]])
+  )
+
+  return { ...history, items, bodies }
 }

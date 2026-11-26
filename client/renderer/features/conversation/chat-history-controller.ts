@@ -1,3 +1,4 @@
+import type { SnapshotCoveredEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ActiveTurnSnapshot, SessionMessage, SessionRuntimeInfo, SessionSnapshot } from '@protocol'
 
@@ -50,6 +51,11 @@ export function createChatHistoryController(
   const { bindTrailingUserMessageIds, mergePersistedUserMessages } = submission
 
   let lastSnapshotReadId = 0
+
+  let snapshotVoiceTurns: {
+    activeRequestId: string | null
+    lastSubmission: Pick<NonNullable<SessionSnapshot['last_submission']>, 'request_id' | 'status'> | null
+  } | null = null
 
   function replaceAssistantReplyMessage(replacedMessageId: string, message: SessionMessage): void {
     if (!isCurrent() || !isResourceId(message.id)) {
@@ -236,9 +242,40 @@ export function createChatHistoryController(
       }
     }
 
+    snapshotVoiceTurns =
+      snapshot.snapshot_read_id !== undefined
+        ? {
+            activeRequestId: snapshot.active_turn?.request_id ?? null,
+            lastSubmission: last && { request_id: last.request_id, status: last.status }
+          }
+        : null
     lastSnapshotReadId = snapshot.snapshot_read_id ?? lastSnapshotReadId
 
     return true
+  }
+
+  function acceptsCoveredVoice(requestId: string | null, { readId, turnStatus }: SnapshotCoveredEvent): boolean {
+    if (
+      !requestId ||
+      readId !== lastSnapshotReadId ||
+      !snapshotVoiceTurns ||
+      submission.cancellationRequested(requestId)
+    ) {
+      return false
+    }
+
+    const { activeRequestId, lastSubmission } = snapshotVoiceTurns
+    const status = lastSubmission?.request_id === requestId ? lastSubmission.status : null
+
+    if (status && status !== 'accepted' && status !== 'running') {
+      return status === 'completed'
+    }
+
+    if (turnStatus !== undefined) {
+      return turnStatus === 'completed'
+    }
+
+    return activeRequestId === requestId && submission.acceptsTurnEvent(requestId)
   }
 
   function restoreActiveTurn(snapshot: ActiveTurnSnapshot | null, running: boolean): void {
@@ -320,6 +357,7 @@ export function createChatHistoryController(
   // 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
   function resetChatMessages(): void {
     state.historyReplacementRevision++
+    snapshotVoiceTurns = null
     $sessionCacheUsage.set(null)
     clearReplyState()
     conversationVoiceSink().cancel($chatSessionId.get())
@@ -373,16 +411,7 @@ export function createChatHistoryController(
 
     if (liveList.length > 0) {
       // 活行与投影结果合并后只落库一次，保持展示连续。
-      const next = mergeLiveHistoryRows(projection.items, liveList)
-
-      commitHistory(
-        {
-          ...projection,
-          bodies: Object.fromEntries(next.map(item => [item.id, liveBodies[item.id] ?? projection.bodies[item.id]])),
-          items: next
-        },
-        info
-      )
+      commitHistory(mergeLiveHistoryRows(projection, liveList, liveBodies), info)
       $lastAssistantStreaming.set(liveList.some(item => liveBodies[item.id]?.streaming))
     } else {
       commitHistory(projection, info)
@@ -398,6 +427,7 @@ export function createChatHistoryController(
     replaceAssistantReplyMessage,
     hydrateChatMessages,
     applyRemoteSnapshot,
+    acceptsCoveredVoice,
     resetChatMessages,
     captureHistorySync,
     hydrateSyncedChatMessages

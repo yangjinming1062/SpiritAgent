@@ -95,8 +95,15 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
   const runtime = typeof sessionId === 'string' ? findConversationRuntime(sessionId) : undefined
 
-  if (runtime && !runtime.acceptsTurnEvent(turnRequestId(event) ?? undefined)) {
-    return
+  if (runtime) {
+    const accepted =
+      event.type === 'message.bubble' && event.coveredBySnapshot
+        ? runtime.acceptsCoveredVoice(event.payload.request_id, event.coveredBySnapshot)
+        : runtime.acceptsTurnEvent(turnRequestId(event) ?? undefined)
+
+    if (!accepted) {
+      return
+    }
   }
 
   const isPresentationHost = $gateway.get()?.isPresentationHost ?? false

@@ -1,6 +1,7 @@
 export { $callScreenOpen } from './call-screen'
 export { CallSurface } from './call-surface'
 export type { ConversationRuntime } from './chat-runtime'
+export type { ChatMessageBody } from './chat-runtime-types'
 export {
   $chatSessionId,
   $companionSessionId,

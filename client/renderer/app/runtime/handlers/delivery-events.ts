@@ -38,7 +38,9 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         rememberPendingMessage(payload.session_id, pendingText)
       }
 
-      findConversationRuntime(payload.session_id)?.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
+      const runtime = findConversationRuntime(payload.session_id)
+      runtime?.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
+      runtime?.enqueueCompanionVoices(payload.message_id, bubbles, { receivedAt: event.voiceReceivedAt })
 
       if (displayText && $effectiveTier.get() !== 'still' && isSpriteOverlayVisible()) {
         if (payload.gesture_at) {

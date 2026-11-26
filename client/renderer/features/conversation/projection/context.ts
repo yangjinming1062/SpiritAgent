@@ -67,12 +67,17 @@ export interface MediaProjection {
 
 export interface CompanionBubbleProjection {
   appendCompanionBubble: (messageId: string, index: number, bubble: CompanionBubble) => void
+  enqueueCompanionVoices: (
+    messageId: string,
+    bubbles: CompanionBubble[],
+    delivery?: { firstIndex?: number; receivedAt?: number | null }
+  ) => void
   finalizeCompanionReply: (
     bubbles: CompanionBubble[],
     messageId: string,
     reasoning?: string,
     proactive?: boolean
-  ) => void
+  ) => string[]
 }
 
 export interface TerminalProjection {

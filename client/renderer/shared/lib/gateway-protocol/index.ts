@@ -1,1 +1,1 @@
-export type { ConnectionState, GatewayEvent } from '../../../../../shared/gateway'
+export type { ConnectionState, GatewayEvent, SnapshotCoveredEvent } from '../../../../../shared/gateway'

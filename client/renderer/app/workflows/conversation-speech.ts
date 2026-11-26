@@ -1,9 +1,12 @@
 import { $autoplayVoice, autoplayVoicePref } from '@/features/character'
 import {
+  $chatSessionId,
   $conversationViews,
   activeVoiceMessageId,
   bindVoicePlaybackUpdates,
   captureVoiceProgress,
+  type ChatMessageBody,
+  findConversationRuntime,
   getVoicePlaybackStore,
   isConversationActive,
   runtimeForMessage,
@@ -21,6 +24,7 @@ import {
   cancelVoiceBar,
   enqueueVoiceBars,
   refreshVoiceAutoplay,
+  refreshVoiceBarVisibility,
   restartVoiceBar,
   setVoiceRecording,
   setVoiceSurfaceMounted,
@@ -33,49 +37,44 @@ import { voicePlaybackKey } from '@ipc/contracts'
 
 let dispose: (() => void) | undefined
 
-function voiceReference(id: string) {
-  const runtime = runtimeForMessage(id)
-  const item = runtime?.$chatMessageList.get().find(message => message.id === id)
-  const body = runtime?.$chatMessageBodies.get()[id]
-  const sessionId = runtime?.$chatSessionId.get()
-
-  return runtime && sessionId && item?.backendMessageId && body?.replyType === 'voice' && body.replyIndex !== undefined
-    ? {
-        runtime,
-        sessionId,
-        body,
-        messageId: item.backendMessageId,
-        bubbleIndex: body.replyIndex,
-        key: voicePlaybackKey(item.backendMessageId, body.replyIndex)
-      }
+function savedVoiceBubble(messageId: string | undefined, body: ChatMessageBody | undefined) {
+  return messageId && body?.replyType === 'voice' && body.replyIndex !== undefined
+    ? { messageId, bubbleIndex: body.replyIndex, body }
     : null
 }
 
-function isVoiceViewVisible(messageId?: string): boolean | undefined {
-  const views = $conversationViews.get()
+function voiceReference(id: string) {
+  const runtime = runtimeForMessage(id)
+  const item = runtime?.$chatMessageList.get().find(message => message.id === id)
+  const bubble = savedVoiceBubble(item?.backendMessageId, runtime?.$chatMessageBodies.get()[id])
+  const sessionId = runtime?.$chatSessionId.get()
 
-  if (views.length === 0) {
-    return undefined
-  }
-
-  const sessionId = messageId ? runtimeForMessage(messageId)?.$chatSessionId.get() : null
-
-  return views.some(view => view.visible && (!messageId || view.runtime.$chatSessionId.get() === sessionId))
+  return runtime && sessionId && bubble
+    ? {
+        ...bubble,
+        runtime,
+        sessionId,
+        key: voicePlaybackKey(bubble.messageId, bubble.bubbleIndex)
+      }
+    : null
 }
 
 export function bindConversationSpeech(): void {
   dispose?.()
   bindVoiceBarProjection({
-    isActive: id => {
-      if ($conversationViews.get().length === 0) {
-        return undefined
-      }
+    isActive: sessionId => $conversationViews.get().length === 0 || isConversationActive(sessionId),
+    getVisibleSessionIds: () => {
+      const views = $conversationViews.get()
 
-      const sessionId = id ? runtimeForMessage(id)?.$chatSessionId.get() : null
+      return views.length
+        ? views.flatMap(({ visible, runtime }) => {
+            const sessionId = runtime.$chatSessionId.get()
 
-      return id ? isConversationActive(sessionId ?? null) : $conversationViews.get().some(view => view.eligible)
+            return visible && sessionId && runtime.isCurrent() ? [sessionId] : []
+          })
+        : undefined
     },
-    isVisible: isVoiceViewVisible,
+    getSelectedSessionId: () => $chatSessionId.get(),
     getAudio: id => runtimeForMessage(id)?.$chatMessageBodies.get()[id]?.replyAudio,
     getRecord: id => {
       const reference = voiceReference(id)
@@ -84,25 +83,65 @@ export function bindConversationSpeech(): void {
         ? getVoicePlaybackStore(reference.sessionId).$voicePlaybackRecords.get()[reference.key]
         : undefined
     },
-    getKey: id => {
+    getTarget: id => {
       const reference = voiceReference(id)
       const auth = $auth.get()
 
       return reference && reference.runtime.isCurrent() && auth.kind === 'authenticated'
-        ? [auth.snapshot.sessionId, reference.sessionId, reference.key].join(':')
+        ? {
+            authSessionId: auth.snapshot.sessionId,
+            sessionId: reference.sessionId,
+            messageId: reference.messageId,
+            bubbleIndex: reference.bubbleIndex
+          }
         : null
     },
-    getFollowing: id => {
+    resolveId: ({ authSessionId, sessionId, messageId, bubbleIndex }) => {
+      const auth = $auth.get()
+      const runtime = findConversationRuntime(sessionId)
+
+      if (auth.kind !== 'authenticated' || auth.snapshot.sessionId !== authSessionId || !runtime?.isCurrent()) {
+        return undefined
+      }
+
+      const bodies = runtime.$chatMessageBodies.get()
+
+      return runtime.$chatMessageList.get().find(item => {
+        const body = bodies[item.id]
+
+        return item.backendMessageId === messageId && body?.replyType === 'voice' && body.replyIndex === bubbleIndex
+      })?.id
+    },
+    getFollowingTargets: id => {
       const runtime = runtimeForMessage(id)
-      const list = runtime?.$chatMessageList.get() ?? []
+      const sessionId = runtime?.$chatSessionId.get()
+      const auth = $auth.get()
+
+      if (!runtime?.isCurrent() || !sessionId || auth.kind !== 'authenticated') {
+        return []
+      }
+
+      const list = runtime.$chatMessageList.get()
       const index = list.findIndex(item => item.id === id)
 
-      return index < 0
-        ? []
-        : list
-            .slice(index + 1)
-            .filter(item => runtime?.$chatMessageBodies.get()[item.id]?.replyType === 'voice')
-            .map(item => item.id)
+      if (index < 0) {
+        return []
+      }
+
+      const bodies = runtime.$chatMessageBodies.get()
+      const authSessionId = auth.snapshot.sessionId
+
+      return list.slice(index + 1).flatMap(item => {
+        const bubble = savedVoiceBubble(item.backendMessageId, bodies[item.id])
+
+        if (!bubble) {
+          return []
+        }
+
+        const { messageId, bubbleIndex } = bubble
+
+        return [{ authSessionId, sessionId, messageId, bubbleIndex }]
+      })
     },
     ready: id => voicePlaybackReady(voiceReference(id)?.sessionId ?? null),
     captureProgress: id => {
@@ -175,6 +214,7 @@ export function bindConversationSpeech(): void {
     bindVoicePlaybackUpdates(),
     bindVoiceBarListeners(),
     $autoplayVoice.listen(refreshVoiceAutoplay),
+    $chatSessionId.listen(refreshVoiceBarVisibility),
     $conversationViews.listen(() => {
       if (viewUpdateQueued) {
         return
@@ -185,14 +225,8 @@ export function bindConversationSpeech(): void {
       queueMicrotask(() => {
         viewUpdateQueued = false
 
-        if (disposed) {
-          return
-        }
-
-        const current = activeVoiceMessageId()
-
-        if (current && !isVoiceViewVisible(current)) {
-          cancelVoiceBar()
+        if (!disposed) {
+          refreshVoiceBarVisibility()
         }
       })
     }),

@@ -13,7 +13,6 @@ export interface AudioPlaybackOptions {
   onProgress?: (positionSeconds: number, completed: boolean, flush: boolean) => void
 }
 
-let current: HTMLAudioElement | null = null
 let currentDone: (() => void) | null = null
 let playGen = 0
 
@@ -32,6 +31,12 @@ export function isLatestGen(gen: number): boolean {
 }
 
 export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions = {}): Promise<AudioPlaybackResult> {
+  if ($callAudioBusy.get() || options.signal?.aborted) {
+    return 'interrupted'
+  }
+
+  // 先登记请求，迟到的通话占用回包不能让已取消的播放接管音频。
+  const gen = nextGen()
   let callBusy = false
 
   try {
@@ -40,17 +45,14 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     callBusy = false
   }
 
-  if ($callAudioBusy.get() || options.signal?.aborted || callBusy) {
+  if (!isLatestGen(gen) || $callAudioBusy.get() || options.signal?.aborted || callBusy) {
     return 'interrupted'
   }
 
-  stopAudio()
-  const gen = nextGen()
-  const audio = new Audio(dataUrl)
+  currentDone?.()
+  const audio = new Audio()
   const listeners = new AbortController()
   const { signal } = listeners
-  current = audio
-  let position = Math.max(0, options.startAtSeconds ?? 0)
   let started = false
   let resolvePlayback!: (result: AudioPlaybackResult) => void
 
@@ -70,13 +72,11 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     clearTimeout(preparationTimer)
     options.signal?.removeEventListener('abort', stopDone)
 
-    if (started) {
-      position = audio.currentTime
-    }
-
     // 先结算进度，再释放 src；load() 会把 currentTime 重置为零。
     try {
-      options.onProgress?.(position, result === 'completed', true)
+      if (started || result === 'completed') {
+        options.onProgress?.(audio.currentTime, result === 'completed', true)
+      }
     } catch (error) {
       log.warn('audio-track', 'Could not report final playback progress', error)
     }
@@ -87,13 +87,9 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
       currentDone = null
     }
 
-    if (current === audio) {
-      audio.pause()
-      audio.removeAttribute('src')
-      audio.load()
-      current = null
-    }
-
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load()
     resolvePlayback(result)
   }
 
@@ -112,13 +108,19 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
   void playbackEnded.then(releaseCallListener)
 
   audio.addEventListener('ended', () => fireDone('completed'), { signal })
-  audio.addEventListener('error', () => fireDone('failed'), { signal })
+  audio.addEventListener(
+    'error',
+    () => {
+      log.warn('audio-track', 'Media element failed', audio.error?.code)
+      fireDone('failed')
+    },
+    { signal }
+  )
   audio.addEventListener(
     'timeupdate',
     () => {
       if (started && !fired) {
-        position = audio.currentTime
-        options.onProgress?.(position, false, false)
+        options.onProgress?.(audio.currentTime, false, false)
       }
     },
     { signal }
@@ -132,10 +134,13 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     }
   })
 
-  preparationTimer = setTimeout(() => fireDone('failed'), 30000)
+  preparationTimer = setTimeout(() => {
+    log.warn('audio-track', 'Playback preparation timed out')
+    fireDone('failed')
+  }, 30_000)
+  audio.src = dataUrl
 
-  // 本次播放仍有效：未结算、未被新代次抢占、仍持有播放元素。
-  const alive = (): boolean => !fired && isLatestGen(gen) && current === audio
+  const alive = (): boolean => !fired && currentDone === stopDone
 
   const prepare = async (): Promise<void> => {
     // 输出由主进程在启动时准备并持续保持；各窗口只共享就绪结果，不重复播放预热片段。
@@ -146,8 +151,12 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     }
 
     // 失效断点从头恢复，避免直接 seek 到结尾被误判为已听。
-    position = Number.isFinite(position) && position < audio.duration ? position : 0
-    audio.currentTime = position
+    const position = options.startAtSeconds ?? 0
+
+    if (Number.isFinite(position) && position > 0 && position < audio.duration) {
+      audio.currentTime = position
+    }
+
     await audio.play()
 
     if (alive()) {

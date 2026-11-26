@@ -443,6 +443,8 @@ export function createDesktopGateway(options: GatewayOptions) {
 
     const transport = new GatewayConnection({
       createSocket: url => new net.WebSocket(url),
+      keepCoveredEvent: event =>
+        event.type === 'message.bubble' && event.payload.bubble?.type === 'voice' && !!event.payload.bubble.audio,
       url: async streamId => {
         publish('connecting')
         const backend = await options.ensureBackend()

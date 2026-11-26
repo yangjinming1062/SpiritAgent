@@ -36,6 +36,7 @@ export function createChatMessageController(state: ConversationState) {
       setAssistantTool: assistant.setAssistantTool,
       finalizeAssistantMessage: assistant.finalizeAssistantMessage,
       appendCompanionBubble: bubbles.appendCompanionBubble,
+      enqueueCompanionVoices: bubbles.enqueueCompanionVoices,
       finalizeCompanionReply: bubbles.finalizeCompanionReply,
       updateMediaBubble: media.updateMediaBubble,
       updateVideoQueue: media.updateVideoQueue,

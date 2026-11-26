@@ -22,8 +22,17 @@ export type GatewayNetworkEvent = {
   }
 }[keyof GatewayEventPayloads]
 
+export interface SnapshotCoveredEvent {
+  readId: number
+  turnStatus?: string
+}
+
 export type GatewayEvent =
-  | GatewayNetworkEvent
+  | (GatewayNetworkEvent & {
+      coveredBySnapshot?: SnapshotCoveredEvent
+      /** 本机缓冲收帧时间。null 表示恢复或旧连接，未设置时立即交付。 */
+      voiceReceivedAt?: number | null
+    })
   | {
       type: 'session.snapshot'
       payload: SessionSnapshot
@@ -65,8 +74,14 @@ interface PendingCall {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface BufferedSnapshotEvent {
+  event: GatewayNetworkEvent
+  liveSocket: GatewaySocket | null
+  voiceReceivedAt: number | null
+}
+
 interface SnapshotRead {
-  events: GatewayNetworkEvent[]
+  events: BufferedSnapshotEvent[]
   promise: Promise<SessionSnapshot>
   streamId?: string | null
   draining: boolean
@@ -75,22 +90,20 @@ interface SnapshotRead {
   finishDrain: () => void
 }
 
+function snapshotCoversEvent(event: GatewayEvent, snapshot: SessionSnapshot): boolean {
+  return (
+    event.type !== 'session.snapshot' &&
+    event.stream_id === snapshot.stream_id &&
+    event.seq !== undefined &&
+    snapshot.current_seq !== null &&
+    event.seq <= snapshot.current_seq &&
+    (event.type !== 'command.result' || Boolean(event.payload.result.hydrate)) &&
+    EVENT_POLICIES[event.type].recovery === 'session'
+  )
+}
+
 export function eventsAfterSnapshot(events: GatewayEvent[], snapshot: SessionSnapshot): GatewayEvent[] {
-  return events.filter(event => {
-    if (
-      event.type === 'session.snapshot' ||
-      event.stream_id !== snapshot.stream_id ||
-      event.seq === undefined ||
-      snapshot.current_seq === null ||
-      event.seq > snapshot.current_seq
-    ) {
-      return true
-    }
-    if (event.type === 'command.result' && !event.payload.result.hydrate) {
-      return true
-    }
-    return EVENT_POLICIES[event.type].recovery !== 'session'
-  })
+  return events.filter(event => !snapshotCoversEvent(event, snapshot))
 }
 
 export class JsonRpcGatewayClient {
@@ -115,7 +128,8 @@ export class JsonRpcGatewayClient {
 
   constructor(
     private readonly createSocket: (url: string) => GatewaySocket,
-    private readonly onConsumerError: (error: unknown) => void
+    private readonly onConsumerError: (error: unknown) => void,
+    private readonly keepCoveredEvent?: (event: GatewayNetworkEvent) => boolean
   ) {}
 
   get connectionState(): ConnectionState {
@@ -171,7 +185,7 @@ export class JsonRpcGatewayClient {
     const drained = new Promise<void>(resolve => {
       finishDrain = resolve
     })
-    const events: GatewayNetworkEvent[] = []
+    const events: BufferedSnapshotEvent[] = []
     const snapshotReadId = ++nextSnapshotReadId
     const promise = Promise.resolve().then(async () => {
       let snapshot: SessionSnapshot | undefined
@@ -211,20 +225,49 @@ export class JsonRpcGatewayClient {
             finishDrain?.()
             return
           }
-          for (const event of events) {
-            const hasBaseline = snapshot
-              ? snapshot.stream_id === event.stream_id
-              : this.baselines.get(sessionId) === event.stream_id
+          const baseline = this.baselines.get(sessionId)
+          const turnStatuses = new Map<string, string>()
+          if (this.keepCoveredEvent && snapshot && baseline === snapshot.stream_id && this.socket) {
+            // 同一批缓冲中的终态可确认较早的回合，也核对快照之后已知的失败或取消。
+            for (const { event, liveSocket } of events) {
+              if (liveSocket !== this.socket || event.stream_id !== snapshot.stream_id) {
+                continue
+              }
+              if (event.type === 'session.state' && event.payload.running === false && event.payload.request_id) {
+                turnStatuses.set(event.payload.request_id, event.payload.status)
+              } else if (
+                event.type === 'error' &&
+                event.payload.request_id &&
+                !turnStatuses.has(event.payload.request_id)
+              ) {
+                turnStatuses.set(event.payload.request_id, 'failed')
+              }
+            }
+          }
+
+          for (const { event, liveSocket, voiceReceivedAt } of events) {
+            const hasBaseline = snapshot ? snapshot.stream_id === event.stream_id : baseline === event.stream_id
             if (EVENT_POLICIES[event.type].baseline && !hasBaseline) {
               continue
             }
-            if (!snapshot || eventsAfterSnapshot([event], snapshot).length) {
-              current.dispatching = true
-              try {
-                this.dispatchEvent(event)
-              } finally {
-                current.dispatching = false
+            const fromCurrentSocket = liveSocket !== null && liveSocket === this.socket
+            let covered: SnapshotCoveredEvent | undefined
+            if (snapshot && snapshotCoversEvent(event, snapshot)) {
+              // 覆盖帧的实时副作用只交付给仍属当前就绪连接的事件。
+              if (!fromCurrentSocket || baseline !== event.stream_id || !this.keepCoveredEvent?.(event)) {
+                continue
               }
+              const requestId = event.type === 'message.bubble' ? event.payload.request_id : null
+              covered = {
+                readId: snapshotReadId,
+                turnStatus: requestId ? turnStatuses.get(requestId) : undefined
+              }
+            }
+            current.dispatching = true
+            try {
+              this.dispatchNetworkEvent(event, fromCurrentSocket ? voiceReceivedAt : null, covered)
+            } finally {
+              current.dispatching = false
             }
           }
           if (snapshot?.stream_id === this.activeStreamId) {
@@ -431,7 +474,8 @@ export class JsonRpcGatewayClient {
     ) {
       return
     }
-    const event = params as unknown as GatewayNetworkEvent
+    const { type, payload, seq, stream_id, session_id } = params
+    const event = { type, payload, seq, stream_id, session_id } as GatewayNetworkEvent
     if (this.recovering) {
       this.heldEvents.push(event)
     } else {
@@ -453,16 +497,33 @@ export class JsonRpcGatewayClient {
     }
     this.receivedSeq = event.seq
     const snapshot = event.session_id ? this.snapshots.get(event.session_id) : undefined
+    const liveSocket = this.state === 'open' ? this.socket : null
+    const voiceReceivedAt = liveSocket ? this.lastMessageAt : null
     if (snapshot) {
-      snapshot.events.push(event)
+      snapshot.events.push({ event, liveSocket, voiceReceivedAt })
     } else if (
       !event.session_id ||
       !EVENT_POLICIES[event.type].baseline ||
       this.baselines.get(event.session_id) === this.activeStreamId
     ) {
-      this.dispatchEvent(event)
+      this.dispatchNetworkEvent(event, liveSocket ? undefined : null)
     }
     this.scheduleAck()
+  }
+
+  private dispatchNetworkEvent(
+    event: GatewayNetworkEvent,
+    voiceReceivedAt: number | null | undefined,
+    coveredBySnapshot?: SnapshotCoveredEvent
+  ): void {
+    if (
+      voiceReceivedAt !== undefined &&
+      (event.type === 'message.bubble' || event.type === 'message.complete' || event.type === 'companion.message')
+    ) {
+      this.dispatchEvent({ ...event, voiceReceivedAt, ...(coveredBySnapshot ? { coveredBySnapshot } : {}) })
+    } else {
+      this.dispatchEvent(event)
+    }
   }
 
   private dispatchEvent(event: GatewayEvent): void {
@@ -542,9 +603,10 @@ export class GatewayConnection {
       url: (streamId?: string) => Promise<string>
       onExpired: () => void
       onError: (error: unknown) => void
+      keepCoveredEvent?: (event: GatewayNetworkEvent) => boolean
     }
   ) {
-    this.client = new JsonRpcGatewayClient(options.createSocket, options.onError)
+    this.client = new JsonRpcGatewayClient(options.createSocket, options.onError, options.keepCoveredEvent)
     this.client.onState(state => {
       if (this.enabled && (state === 'closed' || state === 'error')) {
         if (this.client.lastCloseCode === 1008 || this.client.lastCloseCode === 4403) {
