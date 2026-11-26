@@ -17,8 +17,16 @@ use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 const MAGIC: u32 = 0x53545259;
 const VERSION: u32 = 1;
 const PLACEMENT_MAGIC: u32 = 0x5354504c;
+const E_UNEXPECTED: u32 = 0x8000_ffff;
 const STYLE_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_COMPONENT_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub(super) enum TrayAppearance {
+    Transparent = 0,
+    Native = 1,
+}
 
 #[repr(C)]
 struct State {
@@ -34,13 +42,14 @@ struct State {
     status: AtomicI32,
     error: AtomicI32,
     fill_count: AtomicU32,
-    reserved: u32,
+    appearance: u32,
 }
 
 const _: [(); 64] = [(); size_of::<State>()];
 const _: [(); 40] = [(); std::mem::offset_of!(State, active)];
 const _: [(); 48] = [(); std::mem::offset_of!(State, status)];
 const _: [(); 56] = [(); std::mem::offset_of!(State, fill_count)];
+const _: [(); 60] = [(); std::mem::offset_of!(State, appearance)];
 
 #[repr(C)]
 struct PlacementState {
@@ -186,7 +195,7 @@ impl RestoreTrayStyle {
             && state.host_created == self.host_created
             && state.explorer_pid == self.target.pid
             && state.taskbar == self.target.handle
-            && state.reserved == 0
+            && state.appearance <= TrayAppearance::Native as u32
     }
 
     fn matches_placement(&self, state: &PlacementState) -> bool {
@@ -267,7 +276,11 @@ pub(super) struct TrayStyle {
 }
 
 impl TrayStyle {
-    pub(super) fn prepare(journal: &Journal, palette: Palette) -> Result<Option<Self>> {
+    pub(super) fn prepare(
+        journal: &Journal,
+        palette: Palette,
+        appearance: TrayAppearance,
+    ) -> Result<Option<Self>> {
         let Some(target) = journal.shell.first() else {
             return Ok(None);
         };
@@ -305,7 +318,7 @@ impl TrayStyle {
                 status: AtomicI32::new(0),
                 error: AtomicI32::new(0),
                 fill_count: AtomicU32::new(0),
-                reserved: 0,
+                appearance: appearance as u32,
             });
         }
         let placement = Mapping::create(&record.placement_channel(), size_of::<PlacementState>())?;
@@ -438,6 +451,17 @@ impl TrayStyle {
         Ok(())
     }
 
+    pub(super) fn can_use_native_appearance(&self) -> bool {
+        let state = self.mapping.state();
+        !self.ready
+            && self.record.matches(state)
+            && state.appearance == TrayAppearance::Transparent as u32
+            && state.status.load(Ordering::Acquire) < 0
+            && state.error.load(Ordering::Acquire) as u32 == E_UNEXPECTED
+            && state.fill_count.load(Ordering::Acquire) == 0
+            && self.placement.placement().status.load(Ordering::Acquire) >= 0
+    }
+
     fn poll_ready(&mut self) -> Result<bool> {
         let state = self.mapping.state();
         if !self.record.matches(state) {
@@ -456,9 +480,16 @@ impl TrayStyle {
             self.ready = true;
             return Ok(true);
         }
+        if placement_status < 0 || (status < 0 && state.appearance == TrayAppearance::Native as u32) {
+            let error = if placement_status < 0 { &placement.error } else { &state.error };
+            return Err(format!(
+                "系统托盘位置同步未能启用（0x{:08x}）。",
+                error.load(Ordering::Acquire) as u32,
+            ));
+        }
         if status < 0 {
             let error = state.error.load(Ordering::Acquire) as u32;
-            if error == 0x8000_ffff {
+            if error == E_UNEXPECTED {
                 return Err("系统托盘透明样式未能启用，请重启 Windows 资源管理器后重试（0x8000ffff）。".into());
             }
             if error == 0x8007_0102 {
@@ -467,12 +498,6 @@ impl TrayStyle {
             return Err(format!(
                 "系统托盘透明样式未能启用（0x{:08x}）。",
                 error,
-            ));
-        }
-        if placement_status < 0 {
-            return Err(format!(
-                "系统托盘位置同步未能启用（0x{:08x}）。",
-                placement.error.load(Ordering::Acquire) as u32,
             ));
         }
         if self.ready || ![0, 1].contains(&status) || ![0, 1].contains(&placement_status) {
@@ -663,6 +688,7 @@ pub(super) fn attach(explorer_pid: u32, channel: &str) -> Result<()> {
     let state = mapping.state();
     if state.magic != MAGIC
         || state.version != VERSION
+        || state.appearance > TrayAppearance::Native as u32
         || state.explorer_pid != explorer_pid
         || state.host_pid != actual_parent()?
         || !is_explorer(explorer_pid)

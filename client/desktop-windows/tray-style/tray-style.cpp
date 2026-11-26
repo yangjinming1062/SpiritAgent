@@ -98,6 +98,7 @@ struct Session {
     DWORD explorer_pid = 0;
     std::uint64_t host_created = 0;
     HWND taskbar = nullptr;
+    bool native_appearance = false;
 
     explicit Session(std::wstring const& mapping_name, DWORD expected_pid) : name(mapping_name) {
         winrt::check_bool(valid_mapping_name(name));
@@ -107,7 +108,7 @@ struct Session {
         winrt::check_bool(state != nullptr);
         if (state->magic != spirit_tray::state_magic || state->version != spirit_tray::state_version ||
             state->explorer_pid != expected_pid || !state->host_pid || !state->host_created ||
-            state->reserved != 0 || (state->dark != 0 && state->dark != 1)) {
+            state->native_appearance > 1 || (state->dark != 0 && state->dark != 1)) {
             UnmapViewOfFile(state);
             state = nullptr;
             winrt::throw_hresult(E_INVALIDARG);
@@ -116,6 +117,7 @@ struct Session {
         explorer_pid = state->explorer_pid;
         host_created = state->host_created;
         taskbar = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(state->taskbar));
+        native_appearance = state->native_appearance == 1;
         try {
             winrt::check_bool(is_taskbar(taskbar, explorer_pid));
             host.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, host_pid);
@@ -138,7 +140,8 @@ struct Session {
     bool owns_state() const noexcept {
         return state->magic == spirit_tray::state_magic && state->version == spirit_tray::state_version &&
             state->host_pid == host_pid && state->host_created == host_created &&
-            state->explorer_pid == explorer_pid && state->taskbar == reinterpret_cast<std::uintptr_t>(taskbar);
+            state->explorer_pid == explorer_pid && state->taskbar == reinterpret_cast<std::uintptr_t>(taskbar) &&
+            state->native_appearance == static_cast<std::uint32_t>(native_appearance);
     }
 
     bool live() const noexcept {
@@ -563,11 +566,16 @@ struct View : std::enable_shared_from_this<View> {
                 return false;
             }
         }
+        if (!claimed) {
+            // Record pending restoration before touching XAML, then recheck the lease.
+            InterlockedExchange(reinterpret_cast<volatile LONG*>(&owner->state->fill_count), 1);
+            claimed = true;
+            if (!owner->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+        }
         auto property = std::make_shared<Property>(target, dp, value, role, owner);
         property->seen = seen;
         property->observe();
         properties.push_back(property);
-        claimed = true;
         return property->write();
     }
 
@@ -1269,14 +1277,17 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SpiritAgentHook(int code, WPAR
                     owner = std::make_shared<Session>(name, GetCurrentProcessId());
                     if (message->hwnd != owner->taskbar) winrt::throw_hresult(E_ACCESSDENIED);
                     install_placement_guard(owner);
-                    auto request = std::make_unique<BootstrapRequest>();
-                    request->mapping = name;
-                    if (valid_mapping_name(request->mapping) &&
-                        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                            reinterpret_cast<LPCWSTR>(bootstrap), &request->self)) {
-                        auto worker = CreateThread(nullptr, 0, bootstrap, request.get(), 0, nullptr);
-                        if (worker) { request.release(); CloseHandle(worker); }
-                        else FreeLibrary(request->self);
+                    if (owner->native_appearance) {
+                        owner->publish(1);
+                    } else {
+                        auto request = std::make_unique<BootstrapRequest>();
+                        request->mapping = name;
+                        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(bootstrap), &request->self)) {
+                            auto worker = CreateThread(nullptr, 0, bootstrap, request.get(), 0, nullptr);
+                            if (worker) { request.release(); CloseHandle(worker); }
+                            else FreeLibrary(request->self);
+                        }
                     }
                 } catch (...) {
                     if (owner) owner->publish(-1, winrt::to_hresult());
@@ -1292,14 +1303,14 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         if (!mapping_name) return E_POINTER;
         auto target = std::make_shared<Session>(mapping_name, explorer_pid);
         auto deadline = GetTickCount64() + 3500;
-        auto init_result = initialize(explorer_pid, mapping_name, 1000);
+        auto init_result = target->native_appearance ? S_OK : initialize(explorer_pid, mapping_name, 1000);
         // A diagnostics endpoint can take longer than the first bounded probe
         // while Explorer is constructing its XAML tree. Keep the hook-based
         // attach path alive for that case instead of returning a timeout before
         // the delayed watcher has a chance to publish readiness.
         auto result = init_result == wait_timeout ? S_OK : init_result;
         auto wait_started = GetTickCount64();
-        while (SUCCEEDED(result) && GetTickCount64() - wait_started < 250) {
+        while (!target->native_appearance && SUCCEEDED(result) && GetTickCount64() - wait_started < 250) {
             auto status = InterlockedCompareExchange(&target->state->status, 0, 0);
             if (status == 1) break;
             if (status == 2 && !target->active()) return S_OK;
