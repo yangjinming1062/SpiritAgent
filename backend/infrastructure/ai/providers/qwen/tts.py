@@ -117,7 +117,9 @@ class QwenTTSProvider(TTSProvider):
         elif url := audio.get("url"):
             # 临时 URL 24h 过期，下载后交付字节
             try:
-                raw = await download_media_result(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
+                raw = await download_media_result(
+                    url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, service_base_url=self.config.base_url
+                )
             except Exception as exc:
                 raise LLMRuntimeError(
                     ClassifiedError(

@@ -23,6 +23,7 @@ class _Unset:
 _UNSET = _Unset()
 
 
+@dataclass
 class FrameInfo:
     frame_id: str
     url: str

@@ -14,7 +14,7 @@ import httpx
 import qrcode
 from qrcode.exceptions import DataOverflowError
 
-from infrastructure.network import read_capped_response, safe_outbound_async_client
+from infrastructure.network import read_capped_response, trusted_service_async_client
 from infrastructure.text import utc_now
 
 from .social_content import RequestGuard, SocialSourceError, failure_reason
@@ -117,9 +117,9 @@ async def _get(
         await before_request()
     try:
         async with (
-            safe_outbound_async_client(
+            trusted_service_async_client(
+                base,
                 timeout=httpx.Timeout(30, connect=10, pool=10),
-                follow_redirects=False,
                 headers={"user-agent": _USER_AGENT, "referer": "https://www.bilibili.com/"},
             ) as client,
             client.stream("GET", base + path, params=params, cookies=cookies) as response,
@@ -133,7 +133,7 @@ async def _get(
                 ),
             )
             delivered = dict(response.cookies.items())
-    except (httpx.HTTPError, TimeoutError):
+    except (httpx.HTTPError, TimeoutError, ValueError):
         raise SocialSourceError("Bilibili source network error", reason="network_error") from None
     if not 200 <= status_code < 300:
         raise SocialSourceError("Bilibili source request failed", code=status_code, reason=failure_reason(status_code))

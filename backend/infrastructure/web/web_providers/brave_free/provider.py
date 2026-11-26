@@ -1,14 +1,13 @@
 import httpx
 
 from infrastructure.logger import get_logger
-from infrastructure.network import safe_outbound_async_client
+from infrastructure.network import trusted_service_async_client
 from infrastructure.web.web_providers.base import WebSearchData, WebSearchItem, WebSearchProvider, WebSearchResult
 
 logger = get_logger(__name__)
 
-_BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 # 模块级客户端保持连接池预热——每次新建都要重新走 TLS 握手。
-_HTTP_CLIENT = safe_outbound_async_client(timeout=15)
+_HTTP_CLIENT = trusted_service_async_client("https://api.search.brave.com", timeout=15)
 
 
 async def aclose_brave() -> None:
@@ -36,7 +35,7 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
 
         try:
             resp = await _HTTP_CLIENT.get(
-                _BRAVE_ENDPOINT,
+                "res/v1/web/search",
                 params={"q": query, "count": count},
                 headers={"X-Subscription-Token": self._api_key, "Accept": "application/json"},
             )
@@ -44,7 +43,7 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
         except httpx.HTTPStatusError as exc:
             logger.warning("Brave Search HTTP error", extra={"status_code": exc.response.status_code})
             return WebSearchResult(success=False, error=f"Brave Search returned HTTP {exc.response.status_code}")
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, ValueError) as exc:
             logger.warning("Brave Search request error", extra={"error_type": type(exc).__name__})
             return WebSearchResult(success=False, error="Could not reach Brave Search")
 

@@ -1,5 +1,6 @@
 """从已保存资讯或公开网页取得正文，保存有阅读范围的笔记。"""
 
+from functools import partial
 from typing import Any
 
 from features.companion.prompt_runtime import load_companion_prompt_context
@@ -9,7 +10,6 @@ from features.life.prompts import LIFE_FACT_GUIDANCE, life_content_payload
 from features.life.queries import get_pursuit_view, pursuit_evidence
 from features.life.schemas import LifeStepView
 from features.topics.store import read_saved_topics
-from httpcore import ConnectError
 from infrastructure.ai.decision import DecisionOption, decision_enabled, rank_decision_options
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.providers.base import ProviderConfig
@@ -18,9 +18,12 @@ from infrastructure.ai.token_budget import ContextOverflowError, fit_text_prefix
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.network import validate_public_url
 from infrastructure.text import resolve_prompt_text, utc_now
-from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
+from infrastructure.web.extract_provider import (
+    extract_public_documents,
+    resolve_extract_provider,
+    resolve_search_provider,
+)
 from infrastructure.web.web_providers.base import WebSearchItem
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.memory_scope import MemoryScope
@@ -143,13 +146,15 @@ async def _acquire_sources(
         url = urls[index]
         if url not in known:
             await require_web_reading(user_id, search=False)
-            await validate_public_url(url)
-            await save_checkpoint(user_id, step_id, external_pending=url)
-            for doc in await resolve_extract_provider().extract([url]):
+            documents = await extract_public_documents(
+                resolve_extract_provider(),
+                [url],
+                before_extract=partial(save_checkpoint, user_id, step_id, external_pending=url),
+            )
+            for doc in documents:
                 if doc.error or not doc.content.strip() or doc.url in known:
                     continue
                 try:
-                    await validate_public_url(doc.url)
                     source = ReadingSource(
                         url=doc.url,
                         title=doc.title,
@@ -158,8 +163,7 @@ async def _acquire_sources(
                         content_kind=doc.content_kind,
                         excerpted=doc.source_excerpted,
                     )
-                except (ValueError, ConnectError):
-                    # 已取得但来源校验失败的结果不采纳；该 URL 的外部请求已经结束。
+                except ValueError:
                     continue
                 sources.append(source)
                 known.add(doc.url)

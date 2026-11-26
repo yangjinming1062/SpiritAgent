@@ -66,6 +66,7 @@ async def download_and_store_video(
     attempt: int,
     generation_id: str,
     directory: str,
+    service_base_url: str,
     guard: DownloadGuard | None = None,
 ) -> str:
     """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。
@@ -82,7 +83,9 @@ async def download_and_store_video(
     stored = resolve_asset_reference(path)
     if stored is not None and stored[0].is_file():
         return path
-    data = await download_media_result(download_url, max_bytes=SETTINGS.video_gen_download_max_bytes)
+    data = await download_media_result(
+        download_url, max_bytes=SETTINGS.video_gen_download_max_bytes, service_base_url=service_base_url
+    )
     if guard is not None:
         await guard()
     if sniff_media_ext(data) != "mp4":

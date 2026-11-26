@@ -353,7 +353,9 @@ def _validate_image(
     return ext
 
 
-async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES) -> tuple[bytes, str]:
+async def image_asset_bytes(
+    path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES, service_base_url: str | None = None
+) -> tuple[bytes, str]:
     """读取图片链地址：companion-assets 裸路径、供应商 data URI 或原生 URL。"""
     parsed = parse_companion_asset_path(path)
     if parsed is not None:
@@ -369,7 +371,7 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
         except ValueError as exc:
             raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     else:
-        data = await download_capped(path, max_bytes=max_bytes)
+        data = await download_capped(path, max_bytes=max_bytes, service_base_url=service_base_url)
         mime = asset_store.image_mime_for_extension(asset_store.sniff_media_ext(data) or "") or "image/jpeg"
     if len(data) > max_bytes:
         raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
@@ -856,6 +858,10 @@ async def _run_image_chain(
             if state.phase == "storing":
                 # 供应商地址先落库；转存失败后可续下载，不再生成。
                 while state.pending_urls:
+                    index = state.active_index
+                    if index is None or not 0 <= index < len(state.providers):
+                        raise ImageGenerationError("图片结果缺少原尝试的冻结供应商")
+                    provider = state.providers[index]
                     path = None
                     for attempt in range(max(1, store_attempts)):
                         try:
@@ -867,8 +873,9 @@ async def _run_image_chain(
                                 else state.pending_urls[0]
                             )
                             stored_pending = source == state.pending_path
-                            data, _ = await image_asset_bytes(source, max_bytes=inputs.max_image_bytes)
-                            provider = state.providers[state.active_index or 0]
+                            data, _ = await image_asset_bytes(
+                                source, max_bytes=inputs.max_image_bytes, service_base_url=provider.base_url
+                            )
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
@@ -884,7 +891,7 @@ async def _run_image_chain(
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
                                 state.generation_id,
-                                state.active_index or 0,
+                                index,
                                 state.pending_slots[0],
                                 ext,
                                 directory=state.storage_directory,
@@ -894,7 +901,7 @@ async def _run_image_chain(
                                 data,
                                 user_id=user_id,
                                 generation_id=state.generation_id,
-                                attempt=state.active_index or 0,
+                                attempt=index,
                                 slot=state.pending_slots[0],
                                 ext=ext,
                                 directory=state.storage_directory,
@@ -943,7 +950,7 @@ async def _run_image_chain(
                         state.pending_slots.pop(0)
                         await _save_progress(state, save_progress)
                         continue
-                    candidate = MediaCandidate(path=path, attempt=state.active_index or 0, slot=state.pending_slots[0])
+                    candidate = MediaCandidate(path=path, attempt=index, slot=state.pending_slots[0])
                     state.candidates.append(candidate)
                     state.pending_urls.pop(0)
                     state.pending_slots.pop(0)

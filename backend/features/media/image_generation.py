@@ -310,7 +310,7 @@ async def generate_images(
         if request_aspect is None and not exact_size:
             request_aspect = size if ":" in size else SIZE_TO_ASPECT.get(size)
 
-        async def _generate_call(p: ImageGenProvider) -> tuple[ImageGenResult, GenerationOrigin]:
+        async def _generate_call(p: ImageGenProvider) -> tuple[ImageGenResult, GenerationOrigin, str]:
             nonlocal active_provider
             active_provider = p.config.provider_name
             request_background = background
@@ -345,9 +345,11 @@ async def generate_images(
                 error = ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
                 error.classified = ClassifiedError(FailoverReason.empty_result, None, str(error))
                 raise error
-            return result, GenerationOrigin.from_config(p.config)
+            return result, GenerationOrigin.from_config(p.config), p.config.base_url
 
-        result, origin = await execute_with_fallback(chain, ImageGenProvider, _generate_call, user_id=user_id)
+        result, origin, service_base_url = await execute_with_fallback(
+            chain, ImageGenProvider, _generate_call, user_id=user_id
+        )
     except (ImageGenerationError, LlmCallBlockedError):
         raise
     except MissingLlmConfigError as e:
@@ -375,7 +377,9 @@ async def generate_images(
             if asset.url:
                 if persist_user_assets:
                     # 已知成品只重试下载；转存位于生成回退之外，失败不再提交供应商。
-                    data = await download_media_result(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
+                    data = await download_media_result(
+                        asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, service_base_url=service_base_url
+                    )
                     urls.append(await _persist_user_asset_async(data, user_id, persist_directory))
                 else:
                     urls.append(asset.url)

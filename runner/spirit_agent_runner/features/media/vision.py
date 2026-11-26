@@ -10,26 +10,23 @@ from spirit_agent_runner.contracts.interrupt import is_interrupted
 from spirit_agent_runner.contracts.tooling import ToolDefinition
 from spirit_agent_runner.infrastructure.async_bridge import run_in_thread
 from spirit_agent_runner.infrastructure.constants import get_spiritagent_dir, get_spiritagent_home
-from spirit_agent_runner.infrastructure.images import (
-    capped_image_data_url,
-    detect_image_mime_type,
-    download_image,
-    validate_image_url_async,
-)
+from spirit_agent_runner.infrastructure.images import capped_image_data_url, detect_image_mime_type, download_image
 
 logger = logging.getLogger(__name__)
 
 VISION_ANALYZE_SCHEMA = {
     "name": "vision_analyze",
     "description": (
-        "Inspect one image from an HTTP/HTTPS URL or a local PNG, JPEG, GIF, WebP or BMP file. Local paths must "
+        "Inspect one image from a public HTTP/HTTPS URL or a local PNG, JPEG, GIF, WebP or BMP file. Local paths must "
         "already be under cache, external_skills or the current working directory; outside paths are rejected. "
         "Use an allowed path or URL instead of copying files."
     ),
     "parameters": {
         "type": "object",
         "additionalProperties": False,
-        "properties": {"image_url": {"type": "string", "description": "http(s) image URL or local image file path."}},
+        "properties": {
+            "image_url": {"type": "string", "description": "Public HTTP(S) image URL or local image file path."}
+        },
         "required": ["image_url"],
     },
 }
@@ -66,11 +63,9 @@ async def _vision_analyze(args: dict[str, Any]) -> dict[str, Any]:
                     "success": False,
                 }
             temp_path, should_cleanup = local_path, False
-        elif await validate_image_url_async(image_url, config=load_config()):
+        else:
             temp_path = get_spiritagent_dir("cache/vision") / f"temp_image_{uuid.uuid4()}.jpg"
             await download_image(image_url, temp_path, config=load_config())
-        else:
-            raise ValueError("Invalid image source. Provide an HTTP/HTTPS URL or a valid local file path.")
 
         def _prepare_image() -> str:
             if not (mime := detect_image_mime_type(temp_path)):

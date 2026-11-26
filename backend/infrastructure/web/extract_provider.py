@@ -1,8 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
-from infrastructure.web.web_providers.base import WebSearchProvider
+from infrastructure.network import validate_public_source_url
+from infrastructure.web.web_providers.base import WebDocument, WebSearchProvider
 from infrastructure.web.web_providers.brave_free.provider import BraveFreeWebSearchProvider, aclose_brave
 from infrastructure.web.web_providers.ddgs.provider import DDGSWebSearchProvider
 from infrastructure.web.web_providers.tavily.provider import TavilyWebSearchProvider, aclose_tavily
@@ -55,3 +56,34 @@ def resolve_extract_provider() -> WebSearchProvider:
     # 与 web_extract 的 schema 可用性判定共用，统一走 web_extract_backend → web_search_backend → 默认 的链。
     selected = SETTINGS.web_extract_backend or SETTINGS.web_search_backend or _DEFAULT_BY_KIND["extract"]
     return _get_provider(selected, kind="extract")
+
+
+def _source_error(url: str) -> str | None:
+    try:
+        validate_public_source_url(url)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+async def extract_public_documents(
+    provider: WebSearchProvider, urls: list[str], *, before_extract: Callable[[], Awaitable[None]] | None = None
+) -> list[WebDocument]:
+    """逐项隔离不合规来源；只有实际转交的请求才触发提交前回调。"""
+    accepted: dict[str, None] = {}
+    results: list[WebDocument] = []
+    for url in dict.fromkeys(urls):
+        error = _source_error(url)
+        if error is None:
+            accepted[url] = None
+        else:
+            results.append(WebDocument(url=url, error=error))
+    if not accepted:
+        return results
+    if before_extract is not None:
+        await before_extract()
+    for doc in await provider.extract(list(accepted)):
+        if not doc.error and doc.url not in accepted and (error := _source_error(doc.url)) is not None:
+            doc = WebDocument(url=doc.url, error=error)
+        results.append(doc)
+    return results

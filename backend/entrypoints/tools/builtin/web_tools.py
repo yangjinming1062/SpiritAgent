@@ -7,7 +7,11 @@ from infrastructure.ai.user_config import UserLlmConfig
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.text import coerce_int, tool_error
-from infrastructure.web.extract_provider import resolve_extract_provider, resolve_search_provider
+from infrastructure.web.extract_provider import (
+    extract_public_documents,
+    resolve_extract_provider,
+    resolve_search_provider,
+)
 from infrastructure.web.web_providers.base import WebDocument, WebSearchProvider
 from runtime.tools.prompts import (
     WEB_EXTRACT_DESC,
@@ -26,7 +30,7 @@ _MAX_SEARCH_RESULTS = 100
 
 async def _summarize_doc(llm_config: UserLlmConfig, doc: WebDocument) -> None:
     content = doc.content
-    if not content or len(content) <= 1000:
+    if doc.error or not content or len(content) <= 1000:
         return
     room = 0
     try:
@@ -112,20 +116,21 @@ async def web_extract_tool(
 
     logger.info("Web extract", extra={"provider_name": provider.name, "url_count": len(urls)})
     try:
-        documents = await provider.extract(urls)
+        documents = await extract_public_documents(provider, urls)
     except Exception as e:
         return tool_error(f"Extraction error: {e!s}")
 
     if use_llm_processing:
         # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加；摘要沿本回合任务链（注入的 llm_config）。
         await _summarize_documents(documents, llm_config)
-    return json.dumps(
-        {
-            "success": True,
-            "data": {"web": [doc.model_dump(exclude_none=True, exclude_unset=True) for doc in documents]},
-        },
-        ensure_ascii=False,
-    )
+    success = any(not doc.error and doc.content.strip() for doc in documents)
+    result: dict[str, object] = {
+        "success": success,
+        "data": {"web": [doc.model_dump(exclude_none=True, exclude_unset=True) for doc in documents]},
+    }
+    if not success:
+        result["error"] = "No readable source content could be extracted."
+    return json.dumps(result, ensure_ascii=False)
 
 
 WEB_SEARCH_SCHEMA = {

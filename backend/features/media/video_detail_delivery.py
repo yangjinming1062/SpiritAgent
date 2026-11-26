@@ -88,10 +88,16 @@ async def store_performance_video(
     on_queue: Callable[[str, VideoQueueInfo | None], Awaitable[None]] | None = None,
 ) -> str:
     index = chain.current_attempt_index()
-    keys = {"user_id": owner.user_id, "job_id": owner.job_id, "attempt": index, "directory": directory}
-    if not chain.refine_character_faces or not portrait or chain.providers[index].provider != "local":
-        return await download_and_store_video(source_url, generation_id=generation_id, guard=guard, **keys)
     frozen = chain.providers[index]
+    keys = {"user_id": owner.user_id, "job_id": owner.job_id, "attempt": index, "directory": directory}
+    store_video = partial(
+        download_and_store_video,
+        guard=guard,
+        service_base_url=frozen.base_url,
+        **keys,
+    )
+    if not chain.refine_character_faces or not portrait or frozen.provider != "local":
+        return await store_video(source_url, generation_id=generation_id)
     final = asset_store.video_job_asset_path(generation_id=generation_id, **keys)
     if asset_store.resolve_asset_reference(final):
         return final
@@ -109,7 +115,7 @@ async def store_performance_video(
                 await freeze_face_refinement(chain, index, config)
         await save(chain)
     if not chain.face_refinement_by_attempt[index]:
-        return await download_and_store_video(source_url, generation_id=generation_id, guard=guard, **keys)
+        return await store_video(source_url, generation_id=generation_id)
 
     def stage_id(stage: str) -> str:
         return hashlib.sha256(f"{generation_id}:{index}:{stage}".encode()).hexdigest()[:32]
@@ -120,7 +126,7 @@ async def store_performance_video(
             await db.commit()
 
     await guard()
-    draft = await download_and_store_video(source_url, generation_id=stage_id("motion"), guard=guard, **keys)
+    draft = await store_video(source_url, generation_id=stage_id("motion"))
     await protect(draft)
     source = asset_store.resolve_asset_reference(draft)[0]
     original = asset_store.resolve_asset_reference(owned_image_path(portrait, owner.user_id))
@@ -259,7 +265,9 @@ async def store_performance_video(
             if anchors is None:
                 return await save_draft()
             anchor_token, url = anchors
-            data = await download_media_result(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
+            data = await download_media_result(
+                url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, service_base_url=frozen.base_url
+            )
         try:
             guides = await asyncio.to_thread(_split_guides, data, len(track.frames))
         except (OSError, ValueError) as exc:
@@ -278,7 +286,7 @@ async def store_performance_video(
         if motion is None:
             return await save_draft()
         motion_token, url = motion
-        await download_and_store_video(url, generation_id=stage_id("face"), guard=guard, **keys)
+        await store_video(url, generation_id=stage_id("face"))
         local_patch = asset_store.resolve_asset_reference(patch)
     else:
         motion_token = await find_video_attempt(owner, motion_index, frozen)

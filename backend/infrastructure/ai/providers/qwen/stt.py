@@ -8,7 +8,7 @@ from typing import ClassVar
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from websockets.asyncio.client import ClientConnection, connect
+from websockets.asyncio.client import ClientConnection
 
 from infrastructure.ai.providers.base import (
     ProviderCapabilityError,
@@ -19,7 +19,7 @@ from infrastructure.ai.providers.base import (
     STTStreamEvent,
 )
 from infrastructure.ai.providers.openai_compat import transcribe_input_audio
-from infrastructure.network import configured_websocket_proxy
+from infrastructure.network import connect_service_websocket
 
 
 class QwenSTTProvider(STTProvider):
@@ -164,11 +164,10 @@ class QwenSTTProvider(STTProvider):
         websocket: ClientConnection | None = None
         sender: asyncio.Task[None] | None = None
         try:
-            websocket = await connect(
+            websocket = await connect_service_websocket(
                 self._stream_url(),
-                additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
-                proxy=configured_websocket_proxy(self._stream_url()),
             )
             await websocket.send(
                 json.dumps(

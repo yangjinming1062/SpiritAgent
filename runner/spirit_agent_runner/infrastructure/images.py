@@ -4,17 +4,12 @@ import io
 import logging
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from PIL import Image
 
 from spirit_agent_runner.infrastructure.async_bridge import run_in_thread
-from spirit_agent_runner.infrastructure.url_safety import (
-    async_is_safe_url,
-    check_website_access,
-    create_safe_async_client,
-)
+from spirit_agent_runner.infrastructure.url_safety import create_public_image_client, parse_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +30,6 @@ def capped_image_data_url(image_path: Path, mime_type: str | None = None) -> str
         if len(data_url) <= MAX_BASE64_BYTES:
             return data_url
     return resize_image_for_vision(image_path, mime_type=mime)
-
-
-async def validate_image_url_async(url: str, *, config: dict[str, Any] | None = None) -> bool:
-    return bool(
-        url and isinstance(url, str) and url.startswith(("http://", "https://")) and urlparse(url).netloc
-    ) and await async_is_safe_url(url, config=config)
 
 
 def detect_image_mime_type(image_path: Path) -> str | None:
@@ -70,7 +59,8 @@ def _is_retryable_download_error(error: Exception) -> bool:
 
 
 async def download_image(image_url: str, destination: Path, *, config: dict[str, Any] | None = None) -> Path:
-    """下载图片到 destination，含大小上限与可重试错误处理；每跳重定向的安全校验由 SafeAsyncHTTPTransport 承担。"""
+    """下载公网图片，带大小上限，只重试临时网络错误。"""
+    target = parse_http_url(image_url)
 
     def _write_destination(body: bytearray) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -79,15 +69,11 @@ async def download_image(image_url: str, destination: Path, *, config: dict[str,
     last_err: Exception | None = None
     for attempt in range(3):
         try:
-            if blocked := check_website_access(image_url, config=config):
-                raise PermissionError(blocked.message)
             async with (
-                create_safe_async_client(
-                    timeout=_VISION_DOWNLOAD_TIMEOUT_S, follow_redirects=True, config=config
-                ) as client,
+                create_public_image_client(timeout=_VISION_DOWNLOAD_TIMEOUT_S, config=config) as client,
                 client.stream(
                     "GET",
-                    image_url,
+                    target,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         "Accept": "image/*,*/*;q=0.8",
@@ -104,8 +90,6 @@ async def download_image(image_url: str, destination: Path, *, config: dict[str,
                     body.extend(chunk)
                     if len(body) > _VISION_MAX_DOWNLOAD_BYTES:
                         raise ValueError("Image too large")
-                if blocked := check_website_access(str(res.url), config=config):
-                    raise PermissionError(blocked.message)
                 await run_in_thread(_write_destination, body)
             return destination
         except Exception as e:

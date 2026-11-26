@@ -103,9 +103,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 实时语音的增量能力由 [providers/base.py](infrastructure/ai/providers/base.py) 的 `supports_streaming`、按模型判定的 `supports_streaming_config` 与 `provider_supports_streaming` 显式声明；`stream_transcribe_audio` 对声明真实增量的配置走持续识别，其余配置使用累计音频快照并在结束时优先复用最后一次结果；`stream_synthesize_speech` 只选择声明增量的配置，未声明时整段合成再解码。语音链在未指定固定音色时优先排列 Mimo、MiniMax；Mimo 内置音色经 chat/completions 输出 24 kHz PCM 分片。Qwen 适配器目前只支持 `qwen-audio-3.1-asr-flash-streaming` 与 `qwen-audio-3.0-asr-flash-streaming` 的任务式 WebSocket 协议，要求工作区专用 DashScope 端点，并把通话的 24 kHz PCM 按流转换为供应商请求的 16 kHz；`qwen3-asr-flash-realtime` 等其它实时协议不会误路由到此适配器。MiniMax TTS 通过官方 T2A WebSocket `task_start → task_continue → task_finish` 输出 24 kHz PCM 分片，并沿用已绑定的音色与演绎参数。整段适配器不会被伪装成流式实现，也不会在不可重放的音频输入中途切换供应商。
 
-[network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。DDGS 使用 `DDGS_PROXY`。
-
-`SSRF_GUARD_ENABLED` 默认关闭以适配 fake-IP 等代理，可在后台调整。开启后保留网段拒绝规则受 `SSRF_ALLOWED_CIDRS` 有限豁免，域名黑名单、云元数据和 CGNAT 不可豁免。代理地址同样校验，实际代理建连由代理端限制；`NO_PROXY` 不取消守卫，协议、大小和 HTTPS 降级检查始终生效。
+[network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`。进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。媒体下载沿用这些配置，代理负责限制外链的实际出站目标。DDGS 使用 `DDGS_PROXY`。
 
 ## 部署与排障
 
@@ -163,7 +161,7 @@ Backend 镜像在构建时按固定 SHA-256 安装 UltraFace RFB-640（MIT）和
 
 ### 本地供应商
 
-`local` 提供 Responses、embedding 和 ComfyUI，默认地址以 [适配器](infrastructure/ai/providers/local/) 为准。信息库端点须从 Backend 容器可达，不同地址分别登记；无鉴权服务可空密钥，启用 SSRF 守卫时私网仍须满足允许规则。
+`local` 提供 Responses、embedding 和 ComfyUI，默认地址以 [适配器](infrastructure/ai/providers/local/) 为准。信息库端点须从 Backend 容器可达，不同地址分别登记。无鉴权服务可空密钥。
 
 - LLM 卡片填写真实部署模型及实际上下文/输出窗口。[chat.py](infrastructure/ai/providers/local/chat.py) 按 `/props` 缓存识别 llama.cpp/Strata，选择对应无工具结构输出与推理参数；未识别服务依提示词和应用校验。温度按 1:1 下发。
 - embedding 使用记忆任务配置并保留实际维度，验证元素有限、非零及同批宽度；空间不匹配或失败时走关键词召回。Qwen3-Embedding 按模型名在查询侧补官方检索指令，入库向量不加。

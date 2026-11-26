@@ -1783,8 +1783,6 @@ const SETTINGS_SECTIONS = [
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
             ]],
             ['field', bool('diary_nightly_enabled', '开启夜间自主日记')],
-            ['field', bool('ssrf_guard_enabled', '开启出站 SSRF 守卫 (默认关闭)')],
-            ['field', text('ssrf_allowed_cidrs', 'SSRF 豁免 IP 网段 (逗号分隔 CIDR)', '例如 198.18.0.0/15,fdfe:dcba:9876::/64')],
         ],
     },
     {

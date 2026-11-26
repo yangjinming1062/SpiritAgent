@@ -1,8 +1,9 @@
 import json
+from contextlib import nullcontext
 from typing import Any
 
 from infrastructure.logger import get_logger
-from infrastructure.network import read_capped_response, safe_outbound_async_client
+from infrastructure.network import read_capped_response, trusted_service_async_client
 from infrastructure.web.web_providers.base import (
     WebDocument,
     WebSearchData,
@@ -16,7 +17,7 @@ logger = get_logger(__name__)
 TAVILY_TIMEOUT = 60
 TAVILY_DEFAULT_BASE_URL = "https://api.tavily.com"
 # 模块级客户端保持连接池预热——每次新建都要重新走 TLS 握手。
-_HTTP_CLIENT = safe_outbound_async_client(timeout=TAVILY_TIMEOUT)
+_HTTP_CLIENT = trusted_service_async_client(TAVILY_DEFAULT_BASE_URL, timeout=TAVILY_TIMEOUT)
 
 
 async def aclose_tavily() -> None:
@@ -66,7 +67,7 @@ def _normalize_tavily_documents(response: dict[str, Any], fallback_url: str = ""
 class TavilyWebSearchProvider(WebSearchProvider):
     def __init__(self, *, api_key: str = "", base_url: str = "") -> None:
         self._api_key = api_key.strip()
-        self._base_url = base_url.strip() or TAVILY_DEFAULT_BASE_URL
+        self._base_url = base_url.strip().rstrip("/") or TAVILY_DEFAULT_BASE_URL
 
     @property
     def name(self) -> str:
@@ -88,9 +89,16 @@ class TavilyWebSearchProvider(WebSearchProvider):
 
     async def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         """调用方先经 is_available 确认密钥存在。"""
-        url = f"{self._base_url}/{endpoint}"
-        logger.info("Tavily request", extra={"endpoint": endpoint, "url": url})
-        async with _HTTP_CLIENT.stream("POST", url, json={**payload, "api_key": self._api_key}) as response:
+        client_context = (
+            nullcontext(_HTTP_CLIENT)
+            if self._base_url == TAVILY_DEFAULT_BASE_URL
+            else trusted_service_async_client(self._base_url, timeout=TAVILY_TIMEOUT)
+        )
+        logger.info("Tavily request", extra={"endpoint": endpoint})
+        async with (
+            client_context as client,
+            client.stream("POST", endpoint, json={**payload, "api_key": self._api_key}) as response,
+        ):
             response.raise_for_status()
             body = await read_capped_response(
                 response, max_bytes=16 * 1024 * 1024, too_large=ValueError("Tavily response too large")

@@ -14,7 +14,7 @@ from twscrape.models import Tweet, parse_tweet, parse_tweets
 from twscrape.utils import encode_params, find_obj
 from twscrape.xclid import XClIdAccountError, XClIdGen, XClIdParseError, get_tw_page_text, load_keys
 
-from infrastructure.network import read_capped_response, safe_outbound_async_client
+from infrastructure.network import read_capped_response, trusted_service_async_client
 from infrastructure.text import utc_now
 
 from .social_content import (
@@ -29,7 +29,8 @@ from .social_credentials import parse_x_search_cookies
 from .social_parsing import mapping as _mapping
 from .social_parsing import text as _text
 
-_X_GRAPHQL_URL = "https://x.com/i/api/graphql"
+_X_BASE_URL = "https://x.com"
+_X_GRAPHQL_URL = _X_BASE_URL + "/i/api/graphql"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
@@ -128,8 +129,12 @@ class XSource:
                 cookies = httpx.Cookies()
                 for key, value in self._x_cookies.items():
                     cookies.set(key, value, domain=".x.com")
-                async with safe_outbound_async_client(
-                    timeout=45, follow_redirects=False, cookies=cookies, headers={"user-agent": _USER_AGENT}
+                async with trusted_service_async_client(
+                    _X_BASE_URL,
+                    "https://abs.twimg.com",
+                    timeout=45,
+                    cookies=cookies,
+                    headers={"user-agent": _USER_AGENT},
                 ) as client:
                     bootstrap = _XBootstrapClient(client, before_request)
                     try:
@@ -151,7 +156,7 @@ class XSource:
                             raise SocialSourceError(
                                 "X signing bootstrap network error", reason="network_error"
                             ) from None
-                        if isinstance(exc, (XClIdParseError, ValueError, TypeError, IndexError, KeyError)):
+                        if isinstance(exc, XClIdParseError | ValueError | TypeError | IndexError | KeyError):
                             raise SocialSourceError(
                                 "X signing bootstrap could not be parsed", code=422, reason="bootstrap_failed"
                             ) from None
@@ -179,7 +184,7 @@ class XSource:
             await before_request()
         try:
             async with (
-                safe_outbound_async_client(timeout=45, follow_redirects=False) as client,
+                trusted_service_async_client(_X_BASE_URL, timeout=45) as client,
                 client.stream(
                     "GET", f"{_X_GRAPHQL_URL}/{operation}", params=params, headers=headers, cookies=self._x_cookies
                 ) as response,

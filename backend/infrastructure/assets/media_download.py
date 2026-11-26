@@ -12,11 +12,13 @@ logger = get_logger(__name__)
 VIDEO_DOWNLOAD_ATTEMPTS = 3
 
 
-async def download_media_result(url: str, *, max_bytes: int, timeout: float | None = None) -> bytes:
+async def download_media_result(
+    url: str, *, max_bytes: int, service_base_url: str, timeout: float | None = None
+) -> bytes:
     """仅重试传输失败与 5xx，超限、协议及 4xx 保持确定失败。"""
     for attempt in range(VIDEO_DOWNLOAD_ATTEMPTS):
         try:
-            return await download_capped(url, max_bytes=max_bytes, timeout=timeout)
+            return await download_capped(url, max_bytes=max_bytes, timeout=timeout, service_base_url=service_base_url)
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
                 raise

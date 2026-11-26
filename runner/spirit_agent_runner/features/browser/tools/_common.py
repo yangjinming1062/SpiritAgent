@@ -1,8 +1,7 @@
-import socket
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.contracts.tooling import tool_error
@@ -13,25 +12,11 @@ from spirit_agent_runner.features.browser.supervisor import CDPSupervisor
 from spirit_agent_runner.infrastructure.redact import SECRET_PREFIX_RE
 from spirit_agent_runner.infrastructure.url_safety import (
     check_website_access,
-    is_always_blocked_url,
-    is_safe_url,
-    normalize_url_for_request,
+    parse_browser_url,
+    validate_browser_address,
 )
 
 NO_SUPERVISOR_MSG = "No browser session active. Call browser_navigate first."
-PRIVATE_URL_BLOCKED_MSG = (
-    "Blocked: URL targets a private or internal address (intranet access is turned off in settings)"
-)
-
-
-def unsafe_url_error(url: str) -> str:
-    """``is_safe_url`` 拒绝时的错误文案：域名解析失败与内网开关无关，须分开报告，避免误导用户去改设置。"""
-    host = urlsplit(url).hostname or ""
-    try:
-        socket.getaddrinfo(host, None)
-    except (OSError, UnicodeError):
-        return f"Cannot open URL: host {host!r} could not be resolved (DNS lookup failed)"
-    return PRIVATE_URL_BLOCKED_MSG
 
 
 def no_supervisor() -> dict[str, Any]:
@@ -46,7 +31,7 @@ def _blocked(error: str) -> dict[str, Any]:
     return {"success": False, "error": error}
 
 
-def website_policy_error(url: str) -> dict[str, Any] | None:
+def _website_policy_error(url: str) -> dict[str, Any] | None:
     """站点黑名单命中时返回错误对象。"""
     blocked = check_website_access(url, config=load_config())
     if blocked is None:
@@ -59,26 +44,26 @@ def website_policy_error(url: str) -> dict[str, Any] | None:
 
 
 def guard_browser_url(url: str, *, allow_private: bool | None = None) -> tuple[str, dict[str, Any] | None]:
-    """浏览器 URL 预检（凭据/协议/SSRF/站点策略）；返回 (url, error|None)。页面内跳转不经此。
-
-    allow_private 供调用方在单次请求内复用同一配置读取结果（navigate 的跳转复核）。
-    """
+    """工具请求的 URL 预检，不约束浏览器内部连接。"""
     if url == "about:blank":
         return url, None
     if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(unquote(url)):
         return url, _blocked(
             "Blocked: URL contains what appears to be an API key or token. Secrets must not be sent in URLs."
         )
-    normalized = normalize_url_for_request(url)
-    if urlsplit(normalized).scheme.lower() not in {"http", "https"}:
-        return url, _blocked("Blocked: only http and https URLs can be opened")
-    if is_always_blocked_url(normalized):
-        return url, _blocked("Blocked: URL targets a cloud metadata endpoint")
-    effective_allow = allow_private_urls() if allow_private is None else allow_private
-    if not effective_allow and not is_safe_url(normalized, config=load_config()):
-        return url, _blocked(unsafe_url_error(normalized))
-    if (policy_error := website_policy_error(normalized)) is not None:
+    try:
+        target, normalized = parse_browser_url(url)
+    except ValueError as exc:
+        return url, _blocked(f"Blocked: {exc}")
+    if (policy_error := _website_policy_error(normalized)) is not None:
         return url, policy_error
+    try:
+        validate_browser_address(target, allow_private=allow_private_urls() if allow_private is None else allow_private)
+    except (OSError, UnicodeError):
+        host = target.raw_host.decode("ascii")
+        return url, _blocked(f"Cannot open URL: host {host!r} could not be resolved (DNS lookup failed)")
+    except ValueError as exc:
+        return url, _blocked(f"Blocked: {exc}")
     return normalized, None
 
 

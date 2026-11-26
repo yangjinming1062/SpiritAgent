@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from typing import ClassVar
 from urllib.parse import urlsplit
 
-from websockets.asyncio.client import ClientConnection, connect
+from websockets.asyncio.client import ClientConnection
 
 from infrastructure.ai.providers.base import (
     ProviderCapabilityError,
@@ -21,7 +21,7 @@ from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.minimax._errors import extract_minimax_audio, raise_for_minimax_response
 from infrastructure.ai.providers.speech_style import speech_style_matches, styled_speech_text
 from infrastructure.ai.speech_contracts import MiniMaxSpeechStyle, SpeechStyle
-from infrastructure.network import configured_websocket_proxy
+from infrastructure.network import connect_service_websocket
 
 
 class MiniMaxTTSProvider(TTSProvider):
@@ -776,11 +776,10 @@ class MiniMaxTTSProvider(TTSProvider):
         stream_text = payload.pop("text", text)
         websocket: ClientConnection | None = None
         try:
-            websocket = await connect(
+            websocket = await connect_service_websocket(
                 self._stream_url(),
-                additional_headers={"Authorization": f"Bearer {self.config.api_key}"},
+                headers={"Authorization": f"Bearer {self.config.api_key}"},
                 open_timeout=30,
-                proxy=configured_websocket_proxy(self._stream_url()),
             )
             async with asyncio.timeout(30):
                 connected = self._json_message(await websocket.recv())

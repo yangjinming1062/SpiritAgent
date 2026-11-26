@@ -912,6 +912,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cua-driver", marker = "sys_platform == 'darwin'" },
     { name = "httpx", extra = ["socks"] },
+    { name = "idna" },
     { name = "mcp" },
     { name = "mss", marker = "sys_platform == 'win32'" },
     { name = "numpy" },
@@ -941,6 +942,7 @@ requires-dist = [
     { name = "cua-driver", marker = "sys_platform == 'darwin'", specifier = "==0.21.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = "==1.8.20" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
+    { name = "idna", specifier = "==3.15" },
     { name = "mcp", specifier = "==1.27.0" },
     { name = "mss", marker = "sys_platform == 'win32'", specifier = ">=10.2.0" },
     { name = "numpy", specifier = ">=1.26.0" },

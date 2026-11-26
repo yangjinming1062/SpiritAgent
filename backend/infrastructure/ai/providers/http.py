@@ -4,6 +4,7 @@ import threading
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import httpx
@@ -12,7 +13,7 @@ from openai import AsyncOpenAI, NotGiven, OpenAIError
 from infrastructure.config import SETTINGS
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
-from infrastructure.network import ai_http_timeout, download_capped, safe_outbound_async_transport
+from infrastructure.network import ai_http_timeout, download_capped, trusted_service_async_transport
 
 logger = get_logger(__name__)
 
@@ -47,7 +48,7 @@ class ProviderResultUnknownError(OpenAIError):
 
 
 async def download_bytes(url: str) -> bytes:
-    """下载供应商资产；走安全 transport（SSRF 守卫）并限制大小。"""
+    """下载外部资产并限制大小。"""
     return await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
 
 
@@ -256,19 +257,19 @@ def _settings_snapshot() -> _ClientSettings:
 _generation = _ClientGeneration(_settings_snapshot())
 
 
-def _raw_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
+def _raw_transport(base_url: str, settings: _ClientSettings) -> httpx.AsyncBaseTransport:
     return _RetryAsyncTransport(
-        safe_outbound_async_transport(),
+        trusted_service_async_transport(base_url),
         max_retries=settings.max_retries,
         base_delay=settings.base_retry_delay,
         max_delay=settings.max_retry_delay,
     )
 
 
-def _openai_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
+def _openai_transport(base_url: str, settings: _ClientSettings) -> httpx.AsyncBaseTransport:
     # SDK 独占重试预算；结果未知须作为 OpenAIError 直接上抛，不能落入 SDK 的连接重试。
     return _RetryAsyncTransport(
-        safe_outbound_async_transport(),
+        trusted_service_async_transport(base_url),
         max_retries=0,
         base_delay=settings.base_retry_delay,
         max_delay=settings.max_retry_delay,
@@ -464,7 +465,7 @@ def get_http(base_url: str, api_key: str, *, auth_header: dict[str, str] | None 
             timeout=ai_http_timeout(),
             headers=headers,
             follow_redirects=False,
-            transport_factory=_raw_transport,
+            transport_factory=partial(_raw_transport, key[0]),
         )
         _clients[key] = client
         return client
@@ -480,7 +481,9 @@ def get_async_client(api_key: str, base_url: str) -> AsyncOpenAI:
         if client is not None:
             return client
         settings = _generation.settings
-        http_client = _RotatingAsyncClient(timeout=ai_http_timeout(), transport_factory=_openai_transport)
+        http_client = _RotatingAsyncClient(
+            timeout=ai_http_timeout(), transport_factory=partial(_openai_transport, key[1])
+        )
         client = _RetryAwareAsyncOpenAI(
             api_key=api_key,
             base_url=key[1],

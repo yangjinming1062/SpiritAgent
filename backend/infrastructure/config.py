@@ -117,9 +117,6 @@ class Settings(BaseSettings):
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
     companion_asset_signing_key: str = Field(min_length=32)
-    # 默认关闭：DNS 污染 / fake-ip 代理易误拦正常出站，部署者权衡内网风险后自行开启。
-    ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
-    ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
     llm_max_retry_attempts: int = Field(default=3, ge=0, validation_alias="LLM_MAX_RETRY_ATTEMPTS")
     llm_base_retry_delay: float = Field(default=5.0, ge=0, validation_alias="LLM_BASE_RETRY_DELAY")

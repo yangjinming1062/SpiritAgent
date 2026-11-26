@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.contracts.tooling import ToolDefinition
 from spirit_agent_runner.features.browser.camofox import camofox_back, camofox_navigate, is_camofox_mode
 from spirit_agent_runner.features.browser.check import check_browser_native_requirements
@@ -12,10 +11,7 @@ from spirit_agent_runner.features.browser.tools._common import (
     compact_snapshot,
     guard_browser_url,
     no_supervisor,
-    unsafe_url_error,
-    website_policy_error,
 )
-from spirit_agent_runner.infrastructure.url_safety import is_always_blocked_url, is_safe_url
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +33,17 @@ BLOCKED_PATTERNS = [
 
 
 def _reject_redirect(final_url: str, original_url: str, allow_private: bool) -> dict[str, Any] | None:
-    """跳转落点的站点策略与 SSRF 复核；命中即返回错误对象。请求此时已发出，只能阻止继续读取落点页面。"""
+    """请求已经发出；落点校验只能阻止继续读取页面。"""
     if not final_url or final_url == original_url:
         return None
-    if (policy_error := website_policy_error(final_url)) is not None:
-        return policy_error
-    if is_always_blocked_url(final_url):
-        return {"success": False, "error": "Blocked: redirect landed on a cloud metadata endpoint"}
-    if not allow_private and not is_safe_url(final_url, config=load_config()):
-        return {"success": False, "error": f"{unsafe_url_error(final_url)} after redirect"}
-    return None
+    _, error = guard_browser_url(final_url, allow_private=allow_private)
+    if error is not None:
+        error["error"] = f"Redirect refused: {error['error']}"
+    return error
 
 
 def browser_navigate(url: str) -> dict[str, Any]:
-    """导航到指定 URL 并返回结果对象（含首屏快照、跳转后 SSRF 校验、bot 检测提示）。"""
+    """导航到指定 URL，复核 CDP 跳转落点并返回首屏快照。"""
     if not url.strip():
         return {"success": False, "error": "url is required"}
     allow_private = allow_private_urls()

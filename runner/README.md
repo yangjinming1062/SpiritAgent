@@ -47,9 +47,9 @@ uv run --frozen python -I -m spirit_agent_runner --check
 
 ### 网络与路径
 
-HTTP 共用 `httpx[socks]`。[url_safety.py](spirit_agent_runner/infrastructure/url_safety.py) 的图像下载在预检、建连和每跳重定向校验地址，以已核 IP 建连并保留 Host、TLS SNI 与证书校验，DNS 移出事件循环。
+读图支持公网链接和允许目录内的本地文件。图像下载使用桌面启动环境中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。代理负责限制读图请求的实际出站目标。
 
-浏览器只预检传入 URL，CDP 导航另查落点；新标签、下载、Camofox、页内脚本和原始 CDP 没有相同复核。`browser.allow_private_urls` 只管浏览器，`security.allow_private_urls` 还影响图像下载，云元数据始终阻断。网站黑名单加载失败会诊断并放行，不能当作强隔离。文件禁区由 `file_safety.py` 与文件工具分别核对；Windows 句柄规范化覆盖短名、链接、联接点及未建后缀，大小写不敏感，备用数据流按基础路径校验。
+浏览器按 `browser.allow_private_urls` 预检传入 URL，CDP 导航另查落点。新标签、下载、Camofox、页内脚本和原始 CDP 没有相同复核。网站黑名单加载失败会诊断并放行。文件禁区由 `file_safety.py` 与文件工具分别核对。Windows 句柄规范化覆盖短名、链接、联接点及未建后缀，大小写不敏感，备用数据流按基础路径校验。
 
 ### 终端与子进程
 
