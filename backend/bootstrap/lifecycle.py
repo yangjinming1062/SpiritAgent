@@ -34,6 +34,7 @@ from runtime.background import BackgroundTask
 from runtime.events.loop import start_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE
 from runtime.user_maintenance import user_request_scope
+from workflows.life_media import recover_episode_media
 
 from .runtime_lifecycle import configure_runtime_lifecycle
 
@@ -87,6 +88,7 @@ async def _cleanup_formal_assets(*, discover: bool) -> None:
             await _best_effort("image recovery", recover_image_jobs(user_id), level=logging.WARNING)
             await _best_effort("video recovery", resume_pending_video_jobs(user_id), level=logging.WARNING)
             await _best_effort("media continuations", reconcile_media_waits(user_id), level=logging.WARNING)
+            await _best_effort("life episode media", recover_episode_media(user_id), level=logging.WARNING)
             await _best_effort("manual media operations", recover_manual_operations(user_id), level=logging.WARNING)
             await cleanup_user_assets(user_id, discover=discover)
 

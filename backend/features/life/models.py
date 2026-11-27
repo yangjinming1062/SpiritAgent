@@ -25,6 +25,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from .schemas import EpisodeMediaKind, EpisodeMediaState
+
 RESULT_REFERENCE_FIELDS = {
     "job_id": "result_job_id",
     "visual_id": "result_visual_id",
@@ -267,6 +269,65 @@ class LifeEvent(ModelBase, TimestampMixin):
         Index("ix_life_events_pursuit_occurred", "user_id", "pursuit_id", text("occurred_at DESC"), text("id DESC")),
         Index("ix_life_events_user_kind", "user_id", "kind"),
     )
+
+
+class LifeEpisodeMedia(ModelBase, TimestampMixin):
+    __tablename__ = "life_episode_media"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "event_id"],
+            ["life_events.user_id", "life_events.id"],
+            ondelete="CASCADE",
+            name="fk_life_episode_media_event_id_owner",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "job_id"],
+            ["jobs.user_id", "jobs.id"],
+            ondelete="SET NULL (job_id)",
+            name="fk_life_episode_media_job_id_owner",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "asset_id"],
+            ["assets.user_id", "assets.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_life_episode_media_asset_id_owner",
+        ),
+        ForeignKeyConstraint(
+            ["user_id", "poster_asset_id"],
+            ["assets.user_id", "assets.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_life_episode_media_poster_asset_id_owner",
+        ),
+        UniqueConstraint("user_id", "event_id", "position", name="uq_life_episode_media_position"),
+        CheckConstraint("kind IN ('image', 'video')", name="kind"),
+        CheckConstraint("source IN ('original', 'generated')", name="source"),
+        CheckConstraint("state IN ('queued', 'running', 'succeeded', 'failed', 'unknown')", name="state"),
+        CheckConstraint("position >= 0", name="position"),
+        CheckConstraint("(state = 'succeeded') = (asset_id IS NOT NULL)", name="asset_state"),
+        CheckConstraint("poster_asset_id IS NULL OR (kind = 'video' AND asset_id IS NOT NULL)", name="poster"),
+        Index(
+            "ix_life_episode_media_pending",
+            "updated_at",
+            "id",
+            postgresql_where=text("state IN ('queued', 'running', 'unknown')"),
+        ),
+        Index("ix_life_episode_media_owner_job", "user_id", "job_id"),
+    )
+
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    event_id: Mapped[int] = mapped_column(BigInteger)
+    position: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[EpisodeMediaKind] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(12))
+    state: Mapped[EpisodeMediaState] = mapped_column(String(12))
+    alt: Mapped[str] = mapped_column(String(180))
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    checkpoint: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
+    job_id: Mapped[int | None] = mapped_column(BigInteger)
+    asset_id: Mapped[int | None] = mapped_column(BigInteger)
+    poster_asset_id: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class LifeGrowth(ModelBase, TimestampMixin):

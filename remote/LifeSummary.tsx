@@ -5,6 +5,7 @@ import { initialLifeReader, isLifeReaderState, type LifeReaderState } from '../s
 import type { ReadLife } from '../shared/use-life-reader-data'
 
 import type { RemoteApi } from './api'
+import { RemoteLifeMediaTile } from './LifeMedia'
 import { LifeResultPreviews } from './LifeResults'
 import { usePageState } from './page-state'
 
@@ -27,6 +28,7 @@ export function LifeSummary({ api, refresh }: { api: RemoteApi; refresh: number 
     <LifeReader
       getScroller={scrollContainer}
       locale="zh"
+      mediaTile={RemoteLifeMediaTile}
       read={read}
       results={ref => <LifeResultPreviews api={api} reference={ref} />}
       revision={refresh}

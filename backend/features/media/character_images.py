@@ -761,16 +761,23 @@ async def generate_scene_images(
 
 
 async def run_frozen_image_chain(
-    user_id: int, state: ImageChainState, *, task: AiTaskKey, save_progress: ImageProgressWriter
+    user_id: int,
+    state: ImageChainState,
+    *,
+    task: AiTaskKey,
+    save_progress: ImageProgressWriter,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> list[str]:
     if state.inputs is None or not state.providers:
         raise ImageGenerationError("原任务缺少可重做的冻结输入")
 
-    async def before_submit() -> None:
+    async def check_submission() -> None:
         require_new_generation_call(user_id)
         async with SESSION_LOCAL() as db:
             if not await user_is_active(db, user_id):
                 raise GenerationWorkPaused()
+        if before_submit is not None:
+            await before_submit()
 
     return await _run_image_chain(
         state,
@@ -779,7 +786,7 @@ async def run_frozen_image_chain(
         configs={},
         save_progress=save_progress,
         store_attempts=3,
-        before_submit=before_submit,
+        before_submit=check_submission,
     )
 
 
@@ -866,21 +873,30 @@ async def _run_image_chain(
                     for attempt in range(max(1, store_attempts)):
                         try:
                             # 已落盘的转存文件优先续用，不再下载短时效供应商地址。
-                            pending = parse_companion_asset_path(state.pending_path)
-                            source = (
-                                state.pending_path
-                                if state.pending_path and pending and asset_store.resolve_companion_asset_path(*pending)
-                                else state.pending_urls[0]
-                            )
-                            stored_pending = source == state.pending_path
-                            data, _ = await image_asset_bytes(
-                                source, max_bytes=inputs.max_image_bytes, service_base_url=provider.base_url
+                            stored_pending = None
+                            if state.pending_path and (pending := parse_companion_asset_path(state.pending_path)):
+                                try:
+                                    if asset_store.resolve_companion_asset_path(*pending):
+                                        stored_pending = await image_asset_bytes(
+                                            state.pending_path, max_bytes=inputs.max_image_bytes
+                                        )
+                                except OSError as exc:
+                                    if save_progress is None:
+                                        raise
+                                    raise ImageResultDownloadError(
+                                        "已转存的图片暂时无法读取；保留原结果等待继续接收",
+                                        internal=f"{type(exc).__name__}: {exc}",
+                                    ) from exc
+                            data, _ = stored_pending or await image_asset_bytes(
+                                state.pending_urls[0],
+                                max_bytes=inputs.max_image_bytes,
+                                service_base_url=provider.base_url,
                             )
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
                                 size=provider.image_size or provider.image_aspect_ratio or inputs.size,
-                                size_enforced=inputs.size_enforced and not stored_pending,
+                                size_enforced=inputs.size_enforced and stored_pending is None,
                                 exact_size=scene or provider.image_exact_size,
                             )
                             if isinstance(inputs, ReviewedImageInput) and inputs.prefer_transparent_background:
@@ -897,16 +913,26 @@ async def _run_image_chain(
                                 directory=state.storage_directory,
                             )
                             await _save_progress(state, save_progress)
-                            path = await asset_store.save_image_chain_asset_async(
-                                data,
-                                user_id=user_id,
-                                generation_id=state.generation_id,
-                                attempt=index,
-                                slot=state.pending_slots[0],
-                                ext=ext,
-                                directory=state.storage_directory,
-                            )
+                            try:
+                                path = await asset_store.save_image_chain_asset_async(
+                                    data,
+                                    user_id=user_id,
+                                    generation_id=state.generation_id,
+                                    attempt=index,
+                                    slot=state.pending_slots[0],
+                                    ext=ext,
+                                    directory=state.storage_directory,
+                                )
+                            except OSError as exc:
+                                if save_progress is None:
+                                    raise
+                                raise ImageResultDownloadError(
+                                    "图片已生成，但成品暂时无法保存；保留原结果等待继续接收",
+                                    internal=f"{type(exc).__name__}: {exc}",
+                                ) from exc
                             break
+                        except ImageResultDownloadError:
+                            raise
                         except Exception as exc:
                             if isinstance(exc, VideoProcessError):
                                 raise ImageGenerationError(str(exc), internal=exc.internal) from exc

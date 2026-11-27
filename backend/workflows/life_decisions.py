@@ -23,6 +23,8 @@ from features.life.context import read_life_context_in_session
 from features.life.prompts import LIFE_FACT_GUIDANCE, LIFE_NARRATIVE_GUIDANCE
 from features.life.queries import completed_personal_works, get_life_state_view, list_pursuits, pursuit_evidence
 from features.life.schemas import (
+    EpisodeImagesPlan,
+    EpisodeVideoPlan,
     LifeContext,
     LifeDecisionRequest,
     LifeEventView,
@@ -55,6 +57,7 @@ from infrastructure.ai.decision import (
     fit_decision_state,
 )
 from infrastructure.ai.error_classifier import LLMRuntimeError
+from infrastructure.ai.media_guidance import MEDIA_CHOICE_GUIDANCE
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
@@ -71,6 +74,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.life_capabilities import life_capability_context, validate_visual_materials
 from workflows.life_execution import run_life_execution
+from workflows.life_media import episode_media_capabilities, prepare_life_share_media, wake_episode_media
+from workflows.life_shared_original import resolve_shared_original
 
 
 class PursuitChangeNarrative(BaseModel):
@@ -266,7 +271,7 @@ choice 决定自己的生活，share 单独决定有没有哪段经历想让对�
 
 决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，新的入睡时刻须在相邻两次起床之间并且还未到来。
 growth 只记录自己因有依据的独处经历或成果而产生的变化。引用来源 id；本次新片段的来源填 null。新兴趣或独立认识可以并存，修订或撤回某一条用它的 growth_id。outlook 概括今后选择上的倾向，省去来源细节和用户私事。撤回时 text、outlook 都填 null。核心身份与基本性格是起点。
-私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活近况，diary 留给日记。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
+私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写一个愿意公开的标题。life 分享到近况，diary 把文字摘选留给日记。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
 自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可选择需要的资讯和原文，依据笔记及未解问题决定是否再读。用中文输出符合 schema 的决定。""",
     "en": """Decide how you want to spend this moment as the person described by persona. Carrying on is a complete choice. Consider your current activity, personal outlook and recorded experience. Knowing the other person informs how you relate; it supplies neither your motivation nor a mutual agreement.
 Life_context gives your state, pursuits and recent experiences. Topic_heads gives the latest episode in each thread. A new explicit arrangement in recent_exchange overrides an older user memory only on that point. Execution lists actual capabilities and materials.
@@ -280,11 +285,16 @@ Use choice for your own life. Decide separately in share whether you want the ot
 
 Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, keeping the new bedtime in the future between consecutive rise times.
 Use growth for a change in yourself grounded in a solo episode or confirmed result. Cite the event id, or null for this turn's new solo episode. Distinct interests and understandings coexist. Only revise or withdraw a particular one by growth_id. Outlook describes how you now tend to act without disclosing the source or user details. To withdraw it, give null text and outlook. Keep your core identity and temperament.
-Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page or diary to save an excerpt for diary writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
+Solo experiences are yours to keep. When you want to share, select one source and write a title limited to what you choose to tell. Use life for the life page or diary to save a text excerpt for diary writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
 When can_recall is true, use choice=recall and fill lookup with a topic or a known event_id, pursuit_id or growth_id if earlier material is needed before deciding. Leave share null and omit all other decision fields during lookup. Last_lookup is the completed query; its results are in the current life material. Decide from those results unless you need different evidence.
 You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read selected discoveries and original sources; use the notes and open questions to decide whether to read further. Return your decision in English using the schema.""",
 }
 
+
+_SHARE_MEDIA_GUIDANCE = {
+    "zh": """近况保留简短标题。可只写 narrative，或用 media 分享一组有顺序的图片或一段视频；画面足以表达时，narrative 填 null。组图的各张图应各自展示一个有意义的细节。可用的原件更贴合这段经历时选择 original，选择已完成的原件来源；私下原件须明确选择 release_work。生成只从本次愿意公开的片段取材。画面可表现虚拟情境或对真实经历的创作性表达，保持原有事实性质。按画面是否可辨认地出现自己填写 depicts_self，按可见内容写简短 alt。share_media_capabilities 给出当前可制作的题材，images 的 plain/self 为可用性，video 的 plain/self 为可用短片时长（秒）。空列表表示该题材不可用。chat 和 diary 只写文字。""",
+    "en": """Keep a short title on a life update. Use narrative for text, or media for an ordered set of images or one video. Set narrative to null if the visuals stand on their own. Give each image a distinct, meaningful detail. Choose original if a completed source work fits the experience and explicitly set release_work for a private original you wish to disclose. Generate only from the part you choose to share. A visual can depict an imagined scene or creatively illustrate an experience while preserving its factual status. Set depicts_self when you are recognizable in the frame, and write brief alt text describing what is visible. Share_media_capabilities describes what can currently be made. The images plain/self flags indicate availability, and the video plain/self lists contain available durations in seconds. An empty list means that subject is unavailable. Chat and diary excerpts use text.""",
+}
 
 _CANDIDATE_REVIEW = {
     "zh": """本轮审阅的是生活选择。source.fact_type=virtual_activity 按结构化契约说明整段正在写成一段新的虚拟独处经历。虚拟日常里的新行动、观察和结果是本次创作内容，符合提供的人设及情境即可，无需证据表明同一细节过去已经发生。只有草稿把内容说成现实活动、已完成的工具行动或外部作品时，才对该项寻找现实证据。逐段核对参与者与行为指向，拒绝虚构用户参与、替用户安排、观察用户行为或等待用户，也拒绝与已知虚拟情境的明确冲突。draft.publication_intent 的 JSON 是舞台候选描述，允许符合当前片段的虚拟道具和状态，保留素材准确名称及枚举。当片段涉及可辨认的外部资料，核对伙伴实际取得的是文字、图像还是摘要。可以想象原型或画自己的草图；把草图的材质、尺寸或年代说成原件的观察和测量，需要原资料支持。根据 topic_heads 和 recent_events 核对有没有新的变化。继续已有主题时，改用新方法或认识足以构成新变化，原样等待或换一个说法才是重复。
@@ -314,6 +324,9 @@ _DISCLOSURE_REVIEW = {
         "是否额外公布了没有选择的经历或用户私事。creation_brief 说明当时为什么制作及设计内容，已完成的制作说明有成品，预期效果仍按实际结果表达。此刻愿意分享是当前决定。draft.text 是拟长期保存的个人认识，核对 growth_source "
         "是否支持伙伴自身具体变化，是否误写用户喜好、虚构共同经历或改写核心人设。outlook 只保留可以影响相处的倾向，不能透露具体私事与来源。"
         "有 contact_context 时，publication_intent 表示在选定时段主动发起这次交流。结合对方的原话、日期和适用范围，若与仍有效的明确免打扰要求或由对方先开启该话题的约定冲突，标记 publication_intent。无需事先获邀，普通安静偏好只按其情境理解。交流资料只能帮助判断联系是否合适，不可补作经历的依据。"
+        "没有 contact_context 时，publication_intent 可包含这条近况的画面计划和简短说明。将 JSON 字段名和枚举视为参数。"
+        "核对画面主体与 share_source 中本次愿意公开的部分、标题和配文相符。镜头位置、构图与渲染光线可由创作决定。"
+        "涉及事实的描述须保留来源的性质。发现私事、虚构用户参与或把想象当成现场证据时，标记 publication_intent。"
     ),
     "en": (
         "Check whether draft.title and body stay within share_source and preserve who did what, when, and its factual status. "
@@ -321,12 +334,25 @@ _DISCLOSURE_REVIEW = {
         "change. Check that growth_source supports a change in the companion itself, without claims about a user's "
         "preferences, invented shared experiences, or a change to the configured identity. Outlook must express only a tendency, without revealing private specifics or sources."
         " When contact_context is supplied, publication_intent means initiating this particular conversation in the chosen window. Flag publication_intent if it conflicts with a still-applicable explicit request for quiet or to let the other person raise that topic. Respect the person's actual wording, dates and scope. A prior invitation is optional and an ordinary preference for quiet is contextual. The exchange informs contact suitability, not the facts of the experience."
+        " Without contact_context, publication_intent can contain a visual plan and short descriptions for this update."
+        " Treat JSON keys and enum values as parameters. Verify the subject against the part of share_source chosen for"
+        " disclosure, the title and any caption. Camera position, composition and rendered lighting can be creative"
+        " choices. Keep factual details grounded in the source. Flag publication_intent for private details,"
+        " invented participation by the user or imagery presented as documentary evidence of an imagined scene."
     ),
 }
 
 
-async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> LifeEventView | None:
-    saved = await share_life_event_in_session(db, user_id, share, source.id)
+async def _save_share(
+    db: AsyncSession,
+    user_id: int,
+    share: LifeShare,
+    source: LifeEventView,
+    media_plans: list[dict[str, Any]] | None = None,
+) -> LifeEventView | None:
+    saved = await share_life_event_in_session(
+        db, user_id, share, source.id, media_plans=media_plans or (), original_resolver=resolve_shared_original
+    )
     if saved and share.release_work and "visual_id" in source.result_ref:
         await notify_visuals_updated(db, user_id)
     return saved
@@ -342,7 +368,7 @@ async def share_finished_work(user_id: int, share: LifeShare, config: UserLlmCon
     review = await review_narrative(
         config,
         {"share_source": sources[0].prompt_payload()},
-        {"title": share.title, "body": share.narrative},
+        {"title": share.title, **({"body": share.narrative} if share.narrative else {})},
         language,
         requirements=resolve_prompt_text(_DISCLOSURE_REVIEW, language),
     )
@@ -591,7 +617,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
     }
     share_evidence = candidates.get(decision.share.event_id) if decision.share is not None else None
     growth_evidence = candidates.get(decision.growth.evidence_event_id) if decision.growth is not None else None
-    disclosure_draft = {}
+    disclosure_draft: dict[str, str] = {}
+    media_plans: list[dict[str, Any]] | None = None
     disclosure_source = {"persona": context.persona_extras}
     new_episode_payload = (
         {"fact_type": "virtual_activity", **episode.model_dump(mode="json")} if episode is not None else None
@@ -605,7 +632,11 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         )
         if source is not None:
             disclosure_source["share_source"] = source
-            disclosure_draft.update(title=share.title, body=share.narrative)
+            disclosure_draft["title"] = share.title
+            if share.narrative is not None:
+                disclosure_draft["body"] = share.narrative
+            if share.media is not None:
+                disclosure_draft["publication_intent"] = share.media.model_dump_json()
             if share.contact is not None:
                 disclosure_source["contact_context"] = {
                     "local_time": context.current_time,
@@ -646,11 +677,23 @@ async def _consider_life(user_id: int) -> dict[str, object]:
             if growth is not None and growth.text is not None:
                 growth = None
         else:
-            if any(issue.field in ("title", "body", "publication_intent") for issue in review.issues):
+            issue_fields = {issue.field for issue in review.issues}
+            if issue_fields & {"title", "body"}:
                 share = None
-            if any(issue.field in ("text", "outlook") for issue in review.issues):
+            elif "publication_intent" in issue_fields and share is not None:
+                share = (
+                    share.model_copy(update={"media": None, "release_work": False})
+                    if share.media and share.narrative
+                    else None
+                )
+            if issue_fields & {"text", "outlook"}:
                 growth = None
+    if share is not None and isinstance(share.media, (EpisodeImagesPlan, EpisodeVideoPlan)):
+        media_plans = await prepare_life_share_media(user_id, share.media)
+        if not media_plans:
+            share = share.model_copy(update={"media": None}) if share.narrative else None
     focus = await _successor_focus(life.state, pursuit, life.active_pursuits) if pursuit is not None else None
+    media_queued = False
     async with SESSION_LOCAL() as db:
         if (
             is_user_in_maintenance(user_id)
@@ -689,7 +732,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 if source is None:
                     raise LifeInputError("分享需要已保存的经历")
                 async with db.begin_nested() as sharing:
-                    saved = await _save_share(db, user_id, share, source)
+                    saved = await _save_share(db, user_id, share, source, media_plans)
+                    media_queued = bool(saved and media_plans)
                     if saved and share.contact is not None:
                         due, expires_at = share.contact.bounds(utc_now())
                         accepted = await enqueue_companion_intent(
@@ -709,6 +753,8 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         except LifeStateConflictError:
             return {"status": "state_changed"}
         await db.commit()
+    if media_queued:
+        await wake_episode_media(user_id)
     if pursuit is not None and pursuit.next_action is not None:
         await run_life_execution(user_id)
     changed = decision.choice != "keep" or any((share, growth, decision.bedtime_change))
@@ -738,6 +784,13 @@ async def _choose_life(
         .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
         .replace("{life_narrative}", resolve_prompt_text(LIFE_NARRATIVE_GUIDANCE, context.language))
     )
+    instructions += (
+        "\n\n"
+        + resolve_prompt_text(MEDIA_CHOICE_GUIDANCE, context.language)
+        + "\n"
+        + resolve_prompt_text(_SHARE_MEDIA_GUIDANCE, context.language)
+    )
+    share_media_capabilities = await episode_media_capabilities(user_id)
     personal = {
         "persona": context.persona_extras,
         "topic_heads": [item.trajectory_payload() for item in life.topic_heads],
@@ -755,6 +808,7 @@ async def _choose_life(
         "rhythm": rhythm.model_dump(mode="json", exclude_none=True),
         "current_time": context.current_time,
         "private_episode_allowed": True,
+        "share_media_capabilities": share_media_capabilities,
     }
     evidence_ids = [str(item.id) for item in evidence.events]
     has_active, has_paused = bool(life.active_pursuits), bool(life.paused_pursuits)
@@ -890,6 +944,7 @@ async def _choose_life(
                     raw_share.get("show_activity", False),
                     raw_share.get("contact"),
                     raw_share.get("release_work", False),
+                    raw_share.get("media"),
                 )
                 if isinstance(raw_share, dict) and "event_id" in raw_share
                 else None
@@ -955,6 +1010,16 @@ async def _choose_life(
             and decision.share.event_id not in {item.id for item in life.private_works}
         ):
             raise ValueError("公开原件需要从 private_works 选择一件仍在手里的作品")
+        media = decision.share.media if decision.share else None
+        if isinstance(media, EpisodeImagesPlan) and any(
+            not share_media_capabilities["images"]["self" if image.depicts_self else "plain"] for image in media.images
+        ):
+            raise LlmJsonValidationError("life_image_unavailable", fields=("share", "media"))
+        if (
+            isinstance(media, EpisodeVideoPlan)
+            and not share_media_capabilities["video"]["self" if media.depicts_self else "plain"]
+        ):
+            raise LlmJsonValidationError("life_video_unavailable", fields=("share", "media"))
         return decision
 
     fixed["execution"] = execution
@@ -968,7 +1033,8 @@ async def _choose_life(
         parse_output=parse_decision,
         repair_prompt=(
             "Keep the original pursuit id, next_action, timing and library choice. Repair structure, not the plan. "
-            "Keep the share source, channel and stage permission. Use null for share when no original share was recoverable. "
+            "Keep the share source, channel, stage permission and media plan. Use null for share if its original scope "
+            "was not recoverable or its selected media is unavailable. "
             "For progress or completion, only cite matching results from pursuit_evidence.events. If only the plan "
             "changed, leave progress null and evidence_event_ids empty. A pursuit with a step still outstanding "
             "cannot register another step or finish."

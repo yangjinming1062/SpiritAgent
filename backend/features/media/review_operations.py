@@ -8,6 +8,7 @@ from infrastructure.request_errors import RequestError
 from features.jobs.service import owned_job_control, owned_job_kind
 
 from .continuations import available_media_actions, continue_manual_outfit_waits
+from .queries import conversation_video_job
 from .review_views import MediaContinueRequest, MediaJobView
 
 type ReviewQuery = Callable[[int, int], Awaitable[MediaJobView]]
@@ -43,7 +44,11 @@ async def query_media_job(user_id: int, job_id: int) -> MediaJobView:
 async def continue_media_job(user_id: int, job_id: int, request: MediaContinueRequest) -> MediaJobView:
     async with SESSION_LOCAL() as db:
         job = await owned_job_control(db, user_id, job_id, lock=True)
-        if job is None or job.kind not in _HANDLERS:
+        if (
+            job is None
+            or job.kind not in _HANDLERS
+            or (job.kind == "media.video" and await conversation_video_job(db, user_id, job_id) is None)
+        ):
             raise RequestError(status_code=404, message="找不到可检查的媒体任务")
         if job.revision != request.expected_revision:
             raise RequestError(status_code=409, message="任务状态已变化，请刷新")

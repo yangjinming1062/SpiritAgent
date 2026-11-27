@@ -19,8 +19,9 @@ async def list_user_ids(db: AsyncSession) -> list[int]:
     return list(await db.scalars(select(User.id)))
 
 
-async def user_is_active(db: AsyncSession, user_id: int) -> bool:
-    return bool(await db.scalar(select(User.is_active).where(User.id == user_id)))
+async def user_is_active(db: AsyncSession, user_id: int, *, share_lock: bool = False) -> bool:
+    statement = select(User.is_active).where(User.id == user_id)
+    return bool(await db.scalar(statement.with_for_update(read=True) if share_lock else statement))
 
 
 async def require_account(db: AsyncSession, user_id: int) -> AccountIdentity:

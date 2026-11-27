@@ -1,7 +1,7 @@
 """生活状态的公开 DTO 与请求。"""
 
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, field_serializer, model_validator
@@ -15,6 +15,8 @@ from .prompts import life_content_payload
 FactType = Literal["intent", "virtual_activity", "execution", "result"]
 PursuitStatus = Literal["active", "paused", "completed", "abandoned"]
 TrajectoryKind = Literal["virtual", "milestone", "result"]
+EpisodeMediaKind = Literal["image", "video"]
+EpisodeMediaState = Literal["queued", "running", "succeeded", "failed", "unknown"]
 
 UNRESOLVED_STEP_STATES = frozenset({"planned", "running", "unknown"})
 TERMINAL_STEP_STATES = frozenset({"completed", "failed", "cancelled", "unknown"})
@@ -197,6 +199,14 @@ class LifePursuitView(LifeResultView):
     updated_at: datetime
 
 
+class LifeEpisodeMediaView(BaseModel):
+    id: ResourceId
+    kind: EpisodeMediaKind
+    url: str
+    alt: str
+    poster_url: str | None
+
+
 class LifeTrajectoryEntry(LifeResultView):
     id: ResourceId
     kind: TrajectoryKind
@@ -212,6 +222,7 @@ class LifeTrajectoryEntry(LifeResultView):
     pursuit_id: ResourceId | None
     reading_result: ReadingResultView | None = None
     result_ref: dict
+    media: list[LifeEpisodeMediaView]
 
 
 class LifeTrajectoryListResponse(BaseModel):
@@ -540,6 +551,36 @@ class LifeContactWindow(ContactWindow):
     after_seconds: int = Field(ge=0, description="多久后适合联系，以秒计，0 表示此刻")
 
 
+class EpisodeImagePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    prompt: str = Field(min_length=1, max_length=1600, description="这个画面要表现的一个具体瞬间")
+    alt: str = Field(min_length=1, max_length=180, description="帮助读者理解画面主题的简短说明")
+    depicts_self: StrictBool = Field(description="画面中能否认出你本人")
+
+
+class EpisodeImagesPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["images"]
+    images: list[EpisodeImagePlan] = Field(min_length=1, max_length=4, description="按阅读顺序排列的不同画面")
+
+
+class EpisodeVideoPlan(EpisodeImagePlan):
+    kind: Literal["video"]
+    prompt: str = Field(min_length=1, max_length=1600, description="可见的开场、值得看的变化与自然收束")
+
+
+class EpisodeOriginalPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["original"]
+    alt: str = Field(min_length=1, max_length=180, description="帮助读者理解这份原件的简短说明")
+
+
+LifeShareMedia = Annotated[EpisodeImagesPlan | EpisodeVideoPlan | EpisodeOriginalPlan, Field(discriminator="kind")]
+
+
 class LifeShare(BaseModel):
     """伙伴按所选渠道分享的一段表达。"""
 
@@ -548,7 +589,8 @@ class LifeShare(BaseModel):
     event_id: ResourceId | None = Field(description="要分享的已有经历。仅分享本轮新生成的独处片段时填 null。")
     channel: LifeShareChannel = Field(default="life", description="选择生活近况、日记或一次直接交流")
     title: str = Field(min_length=1, max_length=120, description="愿意公开的标题")
-    narrative: str = Field(min_length=1, max_length=600, description="愿意公开的第一人称片段")
+    narrative: str | None = Field(min_length=1, max_length=600, description="愿意公开的第一人称片段。纯媒体近况填 null")
+    media: LifeShareMedia | None = Field(default=None, description="仅生活近况可附上一组图片、一段视频或这段经历的原件")
     release_work: StrictBool = Field(
         default=False, description="同时公开这项已完成的私下作品及其素材；只分享感想时保持 false"
     )
@@ -557,8 +599,16 @@ class LifeShare(BaseModel):
 
     @model_validator(mode="after")
     def check_channel(self) -> "LifeShare":
+        if self.media is not None and self.channel != "life":
+            raise ValueError("只有生活近况可以选择媒体")
+        if self.narrative is None and self.media is None:
+            raise ValueError("分享需要文字或媒体")
+        if isinstance(self.media, EpisodeOriginalPlan) and self.event_id is None:
+            raise ValueError("仅已有成果可展示原件")
         if self.release_work and (self.channel != "life" or self.event_id is None):
             raise ValueError("公开完整作品需要从已有成果选择生活页")
+        if self.release_work and isinstance(self.media, EpisodeImagesPlan | EpisodeVideoPlan):
+            raise ValueError("公开原作品与生成新画面是不同的分享选择")
         if (self.contact is not None) != (self.channel == "chat"):
             raise ValueError("只有直接交流需要选择联系时间和有效期")
         return self

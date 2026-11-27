@@ -83,6 +83,7 @@ from features.companion.schemas import (
     PortraitConfirmRequest,
 )
 from features.companion.views import get_persona_view, update_persona_view
+from features.life.episode_media import EPISODE_MEDIA_DIRECTORY, episode_media_file_is_visible
 from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
@@ -602,13 +603,15 @@ async def serve_companion_asset(
     session: OptionalSession,
     expires: int | None = None,
     sig: str | None = None,
+    episode_media: bool = False,
 ) -> Response:
     is_authed = session is not None and (session[0].id == user_id)
-    if not is_authed and not verify_signed_asset_request(user_id, asset_path, expires, sig):
+    is_signed = verify_signed_asset_request(user_id, asset_path, expires, sig)
+    if not is_authed and not is_signed:
         raise HTTPException(status_code=403, detail="Invalid or expired signature")
-    if asset_path.partition("/")[0].casefold() == "private-work" and not verify_signed_asset_request(
-        user_id, asset_path, expires, sig
-    ):
+    directory = asset_path.partition("/")[0].casefold()
+    check_episode = episode_media or directory == EPISODE_MEDIA_DIRECTORY
+    if directory == "private-work" and not is_signed:
         parts = asset_path.split("/", 2)
         try:
             work_id = parse_resource_id(parts[1])
@@ -617,8 +620,15 @@ async def serve_companion_asset(
         async with SESSION_LOCAL() as db:
             if not await released_work_file(db, user_id, work_id, f"companion-assets/{user_id}/{asset_path}"):
                 raise HTTPException(status_code=404, detail="Asset not found")
+    if check_episode:
+        async with SESSION_LOCAL() as db:
+            if not await episode_media_file_is_visible(db, user_id, f"companion-assets/{user_id}/{asset_path}"):
+                raise HTTPException(status_code=404, detail="Asset not found")
     result = resolve_companion_asset_path(user_id, asset_path)
     if result is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     path, content_type = result
-    return await serve_ranged_file(request, path, content_type)
+    response = await serve_ranged_file(request, path, content_type)
+    if check_episode:
+        response.headers["Cache-Control"] = "private, no-store"
+    return response

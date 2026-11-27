@@ -3,9 +3,11 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from secrets import token_hex
+from typing import Any
 
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import release_private_work, released_work, visible_library_work
+from infrastructure.logger import get_logger
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import or_, select
@@ -14,6 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.configuration.settings.timezone import resolve_user_timezone
 
 from .actions import CREATION_CAPABILITIES
+from .episode_media import (
+    EpisodeOriginalResolver,
+    add_generated_episode_media,
+    add_original_episode_media,
+    episode_asset_ids,
+    link_episode_share_topic,
+)
 from .execution import enqueue_action, notify_shared_step
 from .lifecycle import transition_pursuit
 from .models import LifeEvent, LifeGrowth, LifeState, LifeStep
@@ -30,6 +39,9 @@ from .queries import (
     step_view,
 )
 from .schemas import (
+    EpisodeImagesPlan,
+    EpisodeOriginalPlan,
+    EpisodeVideoPlan,
     LifeDecisionRequest,
     LifeEventInput,
     LifeEventView,
@@ -62,6 +74,8 @@ from .service import (
 )
 from .settlement import settle_business_steps
 from .trajectory import list_trajectory, public_result_reference
+
+logger = get_logger(__name__)
 
 
 async def read_state(user_id: int) -> LifeStateView:
@@ -314,7 +328,13 @@ async def commit_private_episode_in_session(
 
 
 async def share_life_event_in_session(
-    db: AsyncSession, user_id: int, share: LifeShare, source_id: int
+    db: AsyncSession,
+    user_id: int,
+    share: LifeShare,
+    source_id: int,
+    *,
+    original_resolver: EpisodeOriginalResolver | None = None,
+    media_plans: Sequence[dict[str, Any]] = (),
 ) -> LifeEventView | None:
     """按所选渠道保存摘选，保留来源记录及其可见范围。"""
     await get_or_create_state(db, user_id, lock=True)
@@ -338,8 +358,10 @@ async def share_life_event_in_session(
             or not result
             or ("visual_id" in result and "visual_version_id" not in result)
         ):
-            raise LifeInputError("原作品已不可用")
-        if not public_artifact:
+            if not isinstance(share.media, EpisodeOriginalPlan):
+                raise LifeInputError("原作品已不可用")
+            public_artifact = False
+        elif not public_artifact:
             release = await release_private_work(db, user_id, work_id)
     if not release and await db.scalar(
         select(LifeEvent.id)
@@ -371,7 +393,32 @@ async def share_life_event_in_session(
         if "scene_id" in result or "action_id" in result:
             emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     public = share.channel == "life"
-    return await accept_event_in_session(
+    media = share.media
+    asset = None
+    asset_ids = None
+    if (
+        public
+        and public_artifact
+        and original_resolver
+        and (isinstance(media, EpisodeOriginalPlan) or share.release_work)
+        and (asset := await original_resolver(db, user_id, result))
+    ):
+        try:
+            async with db.begin_nested():
+                asset_ids = await episode_asset_ids(db, user_id, asset)
+        except (OSError, ValueError):
+            logger.info("Life share original asset is unavailable", extra={"user_id": user_id, "event_id": source_id})
+    if isinstance(media, EpisodeImagesPlan):
+        items, kind = media.images, "image"
+    elif isinstance(media, EpisodeVideoPlan):
+        items, kind = [media], "video"
+    else:
+        items, kind = [], "image"
+    generate = bool(items) and len(items) == len(media_plans)
+    visible = public and (share.narrative is not None or asset_ids is not None)
+    if public and not visible and not generate:
+        return None
+    episode = await record_event(
         db,
         user_id,
         LifeEventInput(
@@ -385,9 +432,25 @@ async def share_life_event_in_session(
             # 摘选有自己的轨迹身份，成果事实和完整阅读笔记仍属于来源事件。
             trajectory_kind=("virtual" if original.trajectory_kind == "virtual" else "milestone") if public else None,
             result_ref=result if public and public_artifact else {},
-            shared_with_user=public,
+            shared_with_user=visible,
         ),
     )
+    if public:
+        await link_episode_share_topic(db, episode, original)
+    if asset is not None and asset_ids is not None:
+        alt = media.alt if isinstance(media, EpisodeOriginalPlan) else share.title
+        add_original_episode_media(db, user_id, episode.id, asset.kind, alt, asset_ids)
+    if generate:
+        try:
+            async with db.begin_nested():
+                await add_generated_episode_media(db, user_id, episode.id, kind, items, media_plans)
+        except (OSError, ValueError):
+            logger.info("Life share media inputs are unavailable", extra={"user_id": user_id, "event_id": source_id})
+    if visible:
+        emit_ws_event(
+            db, user_id=user_id, event_type="companion.life.updated", payload={"event_key": episode.event_key}
+        )
+    return event_view(episode)
 
 
 async def update_personal_growth_in_session(

@@ -18,6 +18,7 @@ from features.visuals.lifecycle import runtime_participants as visuals_participa
 from infrastructure.ai.decision import cancel_decision_request
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
+from workflows.life_media import drain_episode_media, recover_episode_media
 from workflows.onboarding.initial_appearance import resume_initial_appearance
 from workflows.scheduling import drain as drain_scheduling
 from workflows.visual_events import drain_visual_events
@@ -58,6 +59,12 @@ def configure_runtime_lifecycle() -> None:
             *social_account_participants(),
             *memory_participants(),
             LIFE_SEARCH_WORKER.participant(),
+            RuntimeParticipant(
+                "life.episode_media",
+                recover=recover_episode_media,
+                resume_user=recover_episode_media,
+                drain=drain_episode_media,
+            ),
             DIARY_SEARCH_WORKER.participant(),
             RuntimeParticipant("chat.submissions", prepare=recover_interrupted_submissions),
             RuntimeParticipant("chat.calls", prepare=recover_call_records),

@@ -15,6 +15,7 @@ _BASE_RESP_TO_HTTP: dict[int, int] = {
     1027: 400,  # content filter — 下游按消息关键字分类
     1039: 429,  # concurrency / quota
     2013: 400,  # invalid param
+    2056: 402,  # token plan exhausted
 }
 
 # MiniMax 把套餐/额度拒单归到通用 invalid-param 码下，单凭内部码无法与真正格式错误区分。
@@ -49,9 +50,17 @@ def raise_for_minimax_response(resp: httpx.Response) -> dict:
     if "base_resp" in body:
         _raise_for_base_resp(body.get("base_resp") or {}, retry_after_seconds=response_retry_after(resp))
     if resp.status_code >= 400:
+        error = body.get("error")
+        status = resp.status_code
+        if (
+            status == 429
+            and isinstance(error, dict)
+            and (str(error.get("code")) == "2056" or str(error.get("message", "")).rstrip().endswith("(2056)"))
+        ):
+            status = 402
         raise ProviderError(
             f"minimax HTTP {resp.status_code}: {body}",
-            status_code=resp.status_code,
+            status_code=status,
             body=body,
             retry_after_seconds=response_retry_after(resp),
         )

@@ -1,9 +1,10 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import timedelta
 
 from infrastructure.assets.references import asset_paths
+from infrastructure.models import id_in
 from infrastructure.text import utc_now
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.references import scanned_asset_paths
@@ -38,6 +39,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             VideoGenJob.user_id == user_id,
             VideoGenJob.cleanup_requested_at.is_(None),
             VideoGenJob.state.in_(("queued", "running", "paused", "unknown", "succeeded")),
+            or_(VideoGenJob.conversation_id.is_not(None), VideoGenJob.checkpoint.is_not(None)),
         ),
     )
     selected_tokens = custom_voice_tokens(await get_user_setting(db, user_id, "companion.voice_id"))
@@ -64,6 +66,23 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     }
     referenced.update((await asset_paths_in_session(db, user_id, ids)).values())
     return referenced
+
+
+async def pending_video_delivery_asset_paths(db: AsyncSession, user_id: int, job_ids: Collection[int]) -> set[str]:
+    """等待业务采纳的已通过视频和检查依据沿原任务保留，独立于任务诊断保留期。"""
+    if not job_ids:
+        return set()
+    return await scanned_asset_paths(
+        db,
+        user_id,
+        select(VideoGenJob.video_url, VideoGenJob.review_result_json).where(
+            VideoGenJob.user_id == user_id,
+            id_in(VideoGenJob.id, job_ids),
+            VideoGenJob.conversation_id.is_(None),
+            VideoGenJob.cleanup_requested_at.is_(None),
+            VideoGenJob.state == "succeeded",
+        ),
+    )
 
 
 async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:

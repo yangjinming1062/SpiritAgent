@@ -31,6 +31,7 @@ class MediaWait(BaseModel):
 
 type ContinuationHandler = Callable[[AsyncSession, MediaWait], Awaitable[dict | None]]
 _HANDLERS: dict[str, ContinuationHandler] = {}
+MEDIA_CONTINUATION_REQUESTED = "media.continuation.requested"
 logger = get_logger(__name__)
 
 
@@ -46,6 +47,11 @@ async def finish_media_operation(db: AsyncSession, user_id: int, operation_id: s
 
 def configure_continuation_handler(kind: str, handler: ContinuationHandler) -> None:
     _HANDLERS[kind] = handler
+
+
+def notify_media_review(db: AsyncSession, user_id: int, job_id: int, *, client_visible: bool = True) -> None:
+    event_type = "media.review.updated" if client_visible else MEDIA_CONTINUATION_REQUESTED
+    emit_ws_event(db, user_id=user_id, event_type=event_type, payload={"job_id": str(job_id)})
 
 
 async def authorize_media_waits(db: AsyncSession, user_id: int, owner_job_id: int, owner_kind: str) -> None:
@@ -71,6 +77,7 @@ async def wait_for_media(
     operation_id: str,
     automatic: bool,
     context: dict,
+    client_visible: bool = True,
 ) -> None:
     row = await db.scalar(
         select(MediaContinuation)
@@ -96,7 +103,7 @@ async def wait_for_media(
         context,
     ):
         raise ValueError("原继续操作不能绑定不同的媒体依据")
-    emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(dependency_job_id)})
+    notify_media_review(db, user_id, dependency_job_id, client_visible=client_visible)
 
 
 async def _apply_wait(db: AsyncSession, row: MediaContinuation) -> dict | None:

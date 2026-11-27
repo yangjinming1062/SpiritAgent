@@ -12,6 +12,7 @@ import { LifeReader } from '../../../../../shared/life-reader'
 import styles from '../life.module.css'
 import { $lifeRevision } from '../store'
 
+import { DesktopLifeMediaTile } from './life-media'
 import { LifeResultLinks } from './life-results'
 import { $lifeUi, $lifeUiRestoreRevision, enterLifeOverview, updateLifeUi } from './life-state'
 
@@ -47,6 +48,7 @@ export function LifeOverviewPage({ visible = true }: { visible?: boolean }) {
         getScroller={scrollContainer}
         key={auth.kind === 'authenticated' ? auth.snapshot.sessionId : auth.kind}
         locale={locale}
+        mediaTile={DesktopLifeMediaTile}
         read={requestResource}
         restoreRevision={restore}
         results={ref => <LifeResultLinks reference={ref} />}

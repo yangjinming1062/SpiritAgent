@@ -36,7 +36,11 @@ from features.conversation.reply_media import (
     deliver_image_job_result,
     deliver_video_result,
 )
-from features.media.continuations import configure_continuation_handler, media_review_updated
+from features.media.continuations import (
+    MEDIA_CONTINUATION_REQUESTED,
+    configure_continuation_handler,
+    media_review_updated,
+)
 from features.media.delivery import set_image_result_handler, set_video_result_handler
 from features.media.image_jobs import image_job_view
 from features.media.manual_reviews import configure_manual_handler
@@ -95,6 +99,7 @@ from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
+from workflows.life_media import VIDEO_CONTINUATION_KIND, continue_episode_video
 from workflows.life_presentation import read_ready_stage_scene
 from workflows.visual_events import (
     initialize_visuals,
@@ -164,6 +169,7 @@ def register_tools() -> None:
 
 def register_internal_event_handlers() -> None:
     register_internal_event_handler("media.review.updated", media_review_updated)
+    register_internal_event_handler(MEDIA_CONTINUATION_REQUESTED, media_review_updated)
     register_internal_event_handler("visual.preparation.continue", preparation_continue_requested)
     register_internal_event_handler("outfit.creation.continue", outfit_creation_continue_requested)
     for event_type in COMPANION_TURN_EVENTS:
@@ -201,6 +207,7 @@ def register_all() -> None:
     configure_continuation_handler("visuals.preparation", continue_base_preparation)
     configure_continuation_handler("chat.image", continue_chat_image)
     configure_continuation_handler("chat.video", continue_chat_video)
+    configure_continuation_handler(VIDEO_CONTINUATION_KIND, continue_episode_video)
     register_asset_contributions()
     set_configuration_reader(user_ai_config)
     configure_video_queue_ports({"media": inspect_media_video_owner, "visuals": inspect_visual_video_owner})

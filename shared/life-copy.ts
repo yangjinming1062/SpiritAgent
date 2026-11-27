@@ -58,6 +58,14 @@ export const lifeCopy = {
     pursuitsFailed: '暂时无法读取在意的事。',
     detailFailed: '暂时无法读取这件事。',
     retry: '重试',
+    media: {
+      openImage: '放大查看图片',
+      playVideo: '播放视频',
+      closeImage: '关闭图片',
+      loading: '正在加载画面…',
+      failed: '暂时无法加载画面。',
+      retry: '重试'
+    },
     episodeLabels: {
       virtual: '虚拟日常',
       milestone: '事情进展',
@@ -125,6 +133,14 @@ export const lifeCopy = {
     pursuitsFailed: 'Could not load pursuits.',
     detailFailed: 'Could not load this pursuit.',
     retry: 'Retry',
+    media: {
+      openImage: 'Enlarge image',
+      playVideo: 'Play video',
+      closeImage: 'Close image',
+      loading: 'Loading media…',
+      failed: 'Could not load this media.',
+      retry: 'Retry'
+    },
     episodeLabels: {
       virtual: 'Virtual daily life',
       milestone: 'Pursuit update',

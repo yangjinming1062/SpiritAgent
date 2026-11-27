@@ -54,7 +54,7 @@ from features.media.chain import (
     video_failure_message,
     video_provider_failure_reason,
 )
-from features.media.continuations import wait_for_media
+from features.media.continuations import notify_media_review, wait_for_media
 from features.media.contracts import VideoJobSnapshot, video_delivery_error
 from features.media.delivery import deliver_video_result
 from features.media.identity_contracts import CharacterReferenceRole, VisualIdentitySnapshot
@@ -67,7 +67,12 @@ from features.media.prompts import (
     character_reference_roles,
     personal_performance_goal,
 )
-from features.media.queries import chat_video_by_media_id, reject_video_delivery, video_job_snapshot_async
+from features.media.queries import (
+    chat_video_by_media_id,
+    conversation_video_job,
+    reject_video_delivery,
+    video_job_snapshot_async,
+)
 from features.media.reference_reader import visual_identity_is_current
 from features.media.review_contracts import (
     MediaSelection,
@@ -307,6 +312,35 @@ def _supports_video_output(
         duration=duration, reference_images=bool(reference_count), include_upscaled=include_upscaled
     )
     return bool(native and native.upper() in {item.upper() for item in available})
+
+
+async def video_output_options(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    task: AiTaskKey,
+    reference_count: int,
+    preferred_resolutions: tuple[str, ...],
+) -> dict[int, str]:
+    """按可交付原生规格，为每个时长选择第一档可用分辨率。"""
+    chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
+    providers = [build_provider(config, VideoGenProvider) for config in chain]
+    return {
+        duration: resolution
+        for duration in sorted({value for provider in providers for value in provider.durations or ()})
+        if (
+            resolution := next(
+                (
+                    native
+                    for preferred in preferred_resolutions
+                    for provider in providers
+                    if _supports_video_output(provider, duration, preferred, reference_count)
+                    and (native := provider.native_resolution(preferred))
+                ),
+                None,
+            )
+        )
+    }
 
 
 async def ensure_video_capability(
@@ -573,7 +607,7 @@ async def _record_failure(job_id: int, *, reason: str, settle_unknown: bool = Fa
         await _sync_changed_job_assets(db)
         await db.flush()
         await deliver_video_result(db, await video_job_snapshot_async(db, row))
-        emit_ws_event(db, user_id=row.user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
+        notify_media_review(db, row.user_id, job_id, client_visible=row.conversation_id is not None)
         await db.commit()
 
 
@@ -637,7 +671,7 @@ async def _finalize_best_video(job_id: int) -> None:
         await _sync_changed_job_assets(db)
         await db.flush()
         await deliver_video_result(db, await video_job_snapshot_async(db, row))
-        emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
+        notify_media_review(db, user_id, job_id, client_visible=row.conversation_id is not None)
         await db.commit()
 
 
@@ -885,14 +919,14 @@ async def _evaluate_stored_video(job_id: int) -> str:
         current.review_result_json = entry.review.model_dump(mode="json")
         await db.flush()
         await deliver_video_result(db, await video_job_snapshot_async(db, current))
-        emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
+        notify_media_review(db, user_id, job_id, client_visible=current.conversation_id is not None)
         await db.commit()
     return decision
 
 
 async def video_review_view(user_id: int, job_id: int) -> MediaJobView:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id))
+        row = await conversation_video_job(db, user_id, job_id)
         if row is None or _abandoned(row):
             raise RequestError(status_code=404, message="找不到视频任务")
         ready = row.state == "succeeded"
@@ -934,7 +968,7 @@ async def inspect_video_queue_owner(
             or job.state in {"succeeded", "failed", "cancelled"}
         ):
             return "gone"
-        if before_submit and job.state == "unknown":
+        if before_submit and (job.state == "unknown" or not await user_is_active(db, job.user_id)):
             return "paused"
         state = MediaChainState.model_validate(job.checkpoint or {})
         if state.generation_id != owner.generation_id:
@@ -1056,7 +1090,7 @@ async def _queue_progress(job_id: int, request_id: str, info: VideoQueueInfo | N
     """队列进度只作为 WS 事件转发；权威状态在供应商尝试行，不落业务检查点。"""
     async with SESSION_LOCAL() as db:
         current = await db.get(VideoGenJob, job_id)
-        if current is None or _settled(current):
+        if current is None or _settled(current) or current.conversation_id is None:
             return
         state = MediaChainState.model_validate(current.checkpoint or {})
         if state.active_queue_request != request_id:
@@ -1067,7 +1101,7 @@ async def _queue_progress(job_id: int, request_id: str, info: VideoQueueInfo | N
             event_type="video_gen.queue",
             payload={
                 "task_id": str(job_id),
-                "session_id": str(current.conversation_id) if current.conversation_id is not None else None,
+                "session_id": str(current.conversation_id),
                 "media_id": current.media_id,
                 "video_queue": info.model_dump(mode="json") if info else None,
             },
@@ -1449,7 +1483,7 @@ async def receive_video_result(user_id: int, job_id: int) -> VideoJobSnapshot:
             current.candidate_video_url = candidate if local else None
             current.checkpoint = state.model_dump(mode="json")
             current.error = current.error_reason = None
-            emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(job_id)})
+            notify_media_review(db, user_id, job_id, client_visible=current.conversation_id is not None)
             await db.flush()
             await deliver_video_result(db, await video_job_snapshot_async(db, current))
             await _sync_changed_job_assets(db)

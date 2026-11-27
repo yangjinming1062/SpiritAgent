@@ -2,6 +2,7 @@ import { type ReactNode, useMemo } from 'react'
 
 import type { ApiSchemas } from './api.generated'
 import type { lifeCopy } from './life-copy'
+import { LifeMedia, type LifeMediaTile } from './life-media'
 import type { LifeDestination } from './life-reader-state'
 import {
   groupLifeEpisodes,
@@ -76,19 +77,23 @@ export function LifePursuitDetail({
 }
 
 export function LifeEpisodes({
+  active,
   entries,
   locale,
   context,
   navigate,
   t,
-  results
+  results,
+  mediaTile
 }: {
+  active: boolean
   entries: LifeEpisode[]
   locale: string
   context: LifeDestination
   navigate: (place: LifeDestination) => void
   t: Copy
   results: LifeResultsView
+  mediaTile: LifeMediaTile
 }) {
   const days = useMemo(() => groupLifeEpisodes(entries), [entries])
   const formatter = useMemo(() => lifeDayFormatter(locale), [locale])
@@ -110,6 +115,7 @@ export function LifeEpisodes({
                       <span className="life-kind">{t.episodeLabels[lifeEpisodeLabel(entry)]}</span>
                     </header>
                     {entry.narrative && <p>{entry.narrative}</p>}
+                    <LifeMedia active={active} media={entry.media} t={t.media} Tile={mediaTile} />
                     {entry.reading_result && <ReadingNotes reading={entry.reading_result} t={t} />}
                     <div className="life-actions">
                       {results(entry.result_ref)}

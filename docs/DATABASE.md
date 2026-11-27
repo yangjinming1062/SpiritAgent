@@ -141,6 +141,7 @@ flowchart LR
     life_pursuits -->|previous| life_pursuits
     life_steps --> life_pursuits
     life_event_search_index --> life_events
+    life_episode_media --> life_events
     life_events --> life_steps
     life_growth --> life_events
     companion_intents --> life_events
@@ -156,6 +157,8 @@ flowchart LR
 当前生活、持续事项、执行步骤和事实事件分开；结果外键及完成证据连接实际成果。阅读成果长期保留，不放入临时检查点。`life_action_admissions` 按请求独立保存执行能力、受理时间和提交事实；删除结果指针不抹掉已发生事实。
 
 生活事件和日记各有可重建检索文本与向量，来源和索引以账户联合外键约束，文本改变立即撤销旧向量；只比较内容指纹、模型与实际维度一致的向量。
+
+近况媒体按账户、生活事件和图片位置保存。媒体槽位保留制作恢复所需的进度和关联，分开记录共享原件来源和生成任务；交付由槽位持有正式资产。账户或经历删除时清理相应关系。原发生时间和事实仍从生活事件读取。
 
 夜间账本按本地业务日保存阶段与实际动作。Cron 管计划，陪伴意图管有界等待和回合，在线信号不成为长期事实。行为和恢复分别见 [生活](PROTOCOL.md#生活状态与生活事件)及[调度](PROTOCOL.md#调度)。
 

@@ -5,11 +5,14 @@ import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import { ErrorBanner, LoadingBlock } from '@/ui'
 
+import { LifeMedia } from '../../../../../shared/life-media'
 import { lifeDayFormatter, lifeEpisodeLabel } from '../../../../../shared/life-trajectory'
 import styles from '../life.module.css'
 import { $lifeError, $lifeLoading, $lifeState, refreshLife } from '../store'
 
-export function LifeNarrative() {
+import { DesktopLifeThumbnail } from './life-media'
+
+export function LifeNarrative({ visible }: { visible: boolean }) {
   const state = useStore($lifeState)
   const loading = useStore($lifeLoading)
   const failed = useStore($lifeError)
@@ -18,6 +21,7 @@ export function LifeNarrative() {
   const strings = useStrings()
   const t = strings.life
   const entry = state?.latest_episode
+  const preview = entry?.media[0]
 
   return (
     <>
@@ -29,6 +33,9 @@ export function LifeNarrative() {
           </div>
           {entry.title && <h3>{entry.title}</h3>}
           {entry.narrative && <p className={styles.activity}>{entry.narrative}</p>}
+          {preview && (preview.kind === 'image' || preview.poster_url) && (
+            <LifeMedia active={visible} compact media={[preview]} t={t.media} Tile={DesktopLifeThumbnail} />
+          )}
         </article>
       ) : !state && loading ? (
         <LoadingBlock label={t.loading} />

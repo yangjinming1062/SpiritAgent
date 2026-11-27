@@ -154,6 +154,18 @@ async def referenced_asset_paths(db: AsyncSession, user_id: int, asset_ids: Sele
     )
 
 
+async def has_referenced_asset_path(
+    db: AsyncSession, user_id: int, path: str, asset_ids: Select | CompoundSelect
+) -> bool:
+    return bool(
+        await db.scalar(
+            select(Asset.id).where(
+                Asset.user_id == user_id, Asset.path == path, Asset.state != "deleted", Asset.id.in_(asset_ids)
+            )
+        )
+    )
+
+
 async def asset_paths_in_session(db: AsyncSession, user_id: int, asset_ids: Collection[int]) -> dict[int, str]:
     if not asset_ids:
         return {}

@@ -8,6 +8,7 @@ import { archiveSearchCopy, emptyArchiveSearch } from './archive-search'
 import { ArchiveSearchFeedback, ArchiveSearchForm } from './archive-search-form'
 import { lifeCopy } from './life-copy'
 import { LifeEpisodes, LifePursuitDetail, type LifeResultsView } from './life-episodes'
+import type { LifeMediaTile } from './life-media'
 import {
   type LifeDestination,
   type LifeFrame,
@@ -85,6 +86,7 @@ export function LifeReader({
   setState,
   restoreRevision = 0,
   results,
+  mediaTile,
   statusSelect,
   getScroller
 }: {
@@ -96,6 +98,7 @@ export function LifeReader({
   setState: Dispatch<SetStateAction<LifeReaderState>>
   restoreRevision?: number
   results: LifeResultsView
+  mediaTile: LifeMediaTile
   statusSelect: (props: StatusSelectProps) => ReactNode
   getScroller: (root: HTMLElement) => HTMLElement | null
 }) {
@@ -293,7 +296,16 @@ export function LifeReader({
       )}
       {events.failed && <Retry label={t.retry} message={t.eventsFailed} onRetry={events.retry} />}
       {entries.length > 0 && (
-        <LifeEpisodes context={context} entries={entries} locale={locale} navigate={navigate} results={results} t={t} />
+        <LifeEpisodes
+          active={visible}
+          context={context}
+          entries={entries}
+          locale={locale}
+          mediaTile={mediaTile}
+          navigate={navigate}
+          results={results}
+          t={t}
+        />
       )}
       {frame.kind === 'topic' && events.data && !events.failed && entries.length === 0 && (
         <p className="life-empty">{t.emptyTopic}</p>

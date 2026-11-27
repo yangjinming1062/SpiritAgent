@@ -48,6 +48,16 @@ async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoJobSnapsh
     return await video_job_snapshot_async(db, row) if row is not None else None
 
 
+async def conversation_video_job(db: AsyncSession, user_id: int, job_id: int) -> VideoGenJob | None:
+    return await db.scalar(
+        select(VideoGenJob).where(
+            VideoGenJob.id == job_id,
+            VideoGenJob.user_id == user_id,
+            VideoGenJob.conversation_id.is_not(None),
+        )
+    )
+
+
 async def chat_video_by_media_id(
     db: AsyncSession, user_id: int, session_id: str, request_scope: str, media_id: str
 ) -> VideoJobSnapshot | None:

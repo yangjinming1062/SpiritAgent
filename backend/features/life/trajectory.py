@@ -10,6 +10,7 @@ from sqlalchemy.orm import aliased
 
 from features.configuration.settings.timezone import resolve_user_timezone
 
+from .episode_media import public_episode_media
 from .models import LifeEvent, LifeStep
 from .queries import event_view, result_reference, step_view
 from .schemas import LifeEventView, LifeTrajectoryEntry, LifeTrajectoryListResponse
@@ -89,6 +90,7 @@ async def trajectory_entries(db: AsyncSession, user_id: int, events: Sequence[Li
         else {}
     )
     zone = ZoneInfo(await resolve_user_timezone(db, user_id) or "UTC")
+    media = await public_episode_media(db, user_id, {row.id for row in events})
     entries = []
     for row in events:
         if row.trajectory_kind is None:
@@ -111,6 +113,7 @@ async def trajectory_entries(db: AsyncSession, user_id: int, events: Sequence[Li
                 pursuit_id=row.pursuit_id,
                 reading_result=readings.get(row.step_id),
                 result_ref=public_result_reference(row),
+                media=media.get(row.id, []),
             )
         )
     return entries

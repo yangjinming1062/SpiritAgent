@@ -10,6 +10,7 @@
 | 行动结构、能力政策与执行 | [actions.py](actions.py)、[execution.py](execution.py)、[life_capabilities.py](../../workflows/life_capabilities.py)、[life_execution.py](../../workflows/life_execution.py) |
 | 事务提交、事项转换与结算 | [use_cases.py](use_cases.py)、[lifecycle.py](lifecycle.py)、[service.py](service.py)、[settlement.py](settlement.py) |
 | 阅读与内容事件 | [life_reading.py](../../workflows/life_reading.py)、[life_events.py](../../workflows/life_events.py) |
+| 近况媒体、文件交付与恢复 | [episode_media.py](episode_media.py)、[life_media.py](../../workflows/life_media.py) |
 | 上下文与只读接口 | [context.py](context.py)、[queries.py](queries.py)、[trajectory.py](trajectory.py)、[search.py](search.py)、[prompts.py](prompts.py)、[HTTP](../../entrypoints/http/routes/companion_life.py) |
 | 聊天调整与呈现 | [life_tool.py](../../entrypoints/tools/builtin/life_tool.py)、[life_presentation.py](../../workflows/life_presentation.py) |
 

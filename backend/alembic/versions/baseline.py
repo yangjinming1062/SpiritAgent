@@ -1565,6 +1565,76 @@ def upgrade() -> None:
         postgresql_where=sa.text("trajectory_result_key IS NOT NULL"),
     )
     op.create_table(
+        "life_episode_media",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("event_id", sa.BigInteger(), nullable=False),
+        sa.Column("position", sa.Integer(), nullable=False),
+        sa.Column("kind", sa.String(length=8), nullable=False),
+        sa.Column("source", sa.String(length=12), nullable=False),
+        sa.Column("state", sa.String(length=12), nullable=False),
+        sa.Column("alt", sa.String(length=180), nullable=False),
+        sa.Column("plan_json", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column(
+            "checkpoint", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'"), nullable=False
+        ),
+        sa.Column("job_id", sa.BigInteger(), nullable=True),
+        sa.Column("asset_id", sa.BigInteger(), nullable=True),
+        sa.Column("poster_asset_id", sa.BigInteger(), nullable=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.CheckConstraint("kind IN ('image', 'video')", name=op.f("ck_life_episode_media_kind")),
+        sa.CheckConstraint("source IN ('original', 'generated')", name=op.f("ck_life_episode_media_source")),
+        sa.CheckConstraint(
+            "state IN ('queued', 'running', 'succeeded', 'failed', 'unknown')",
+            name=op.f("ck_life_episode_media_state"),
+        ),
+        sa.CheckConstraint("position >= 0", name=op.f("ck_life_episode_media_position")),
+        sa.CheckConstraint(
+            "(state = 'succeeded') = (asset_id IS NOT NULL)", name=op.f("ck_life_episode_media_asset_state")
+        ),
+        sa.CheckConstraint(
+            "poster_asset_id IS NULL OR (kind = 'video' AND asset_id IS NOT NULL)",
+            name=op.f("ck_life_episode_media_poster"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "event_id"],
+            ["life_events.user_id", "life_events.id"],
+            ondelete="CASCADE",
+            name="fk_life_episode_media_event_id_owner",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "job_id"],
+            ["jobs.user_id", "jobs.id"],
+            ondelete="SET NULL (job_id)",
+            name="fk_life_episode_media_job_id_owner",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "asset_id"],
+            ["assets.user_id", "assets.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_life_episode_media_asset_id_owner",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "poster_asset_id"],
+            ["assets.user_id", "assets.id"],
+            deferrable=True,
+            initially="DEFERRED",
+            name="fk_life_episode_media_poster_asset_id_owner",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("life_episode_media_pkey")),
+        sa.UniqueConstraint("user_id", "id", name="uq_life_episode_media_owner_id"),
+        sa.UniqueConstraint("user_id", "event_id", "position", name="uq_life_episode_media_position"),
+    )
+    op.create_index(
+        "ix_life_episode_media_pending",
+        "life_episode_media",
+        ["updated_at", "id"],
+        postgresql_where=sa.text("state IN ('queued', 'running', 'unknown')"),
+    )
+    op.create_index("ix_life_episode_media_owner_job", "life_episode_media", ["user_id", "job_id"], unique=False)
+    op.create_table(
         "messages",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("conversation_id", sa.BigInteger(), nullable=False),
@@ -3045,7 +3115,7 @@ def downgrade() -> None:
             companion_scenes, companion_topic_batches, companion_topic_candidates, companion_topic_feedback,
             companion_topic_usages, companion_topics, conversations, cron_jobs, custom_voices, diary_entries, diary_search_index,
             fullbody_review_jobs, image_gen_jobs, job_assets, job_requests, jobs,
-            library_works, life_action_admissions, life_event_search_index, life_events, life_growth,
+            library_works, life_action_admissions, life_episode_media, life_event_search_index, life_events, life_growth,
             life_pursuits, life_states, life_steps, login_records, media_continuations, media_manual_operations,
             memories, memory_embeddings, memory_evidence, memory_fingerprints, memory_revisions, message_assets,
             message_voice_refs, messages, nightly_activity_actions, nightly_activity_logs, outfit_creation_jobs,

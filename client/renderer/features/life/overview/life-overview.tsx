@@ -57,7 +57,7 @@ export function LifeOverview({
   return (
     <section aria-label={t.now} className={styles.overview}>
       <span className={styles.eyebrow}>{t.now}</span>
-      <LifeNarrative />
+      <LifeNarrative visible={visible} />
       <div className={styles.focused}>
         <span className={styles.eyebrow}>{t.ongoing}</span>
         {pursuit ? (
