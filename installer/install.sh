@@ -90,6 +90,7 @@ stage_welcome() {
     echo "SPIRITAGENT_HOME not writable: $SPIRITAGENT_HOME" >&2
     return 1
   fi
+  rm -f "$SPIRITAGENT_HOME/.spiritagent-bootstrap-complete"
 }
 
 # 阶段 2：安装 Python
@@ -103,7 +104,7 @@ stage_install_python() {
 # 阶段 3：解包运行器
 stage_unpack_runner() {
   # 每阶段独立进程，须重新推导 uv 与 Python 版本（可能落在 3.14 回退）
-  if [[ -z "$UV_CMD" ]] && ! test_python; then
+  if ! test_python; then
     echo "Python runtime not available (uv or Python missing)" >&2
     return 1
   fi
@@ -153,7 +154,7 @@ stage_unpack_runner() {
 }
 
 # 阶段 4：解包桌面端
-stage_unpack_desktop() {
+stage_unpack_desktop() (
   if [[ -z "$BUNDLED_DESKTOP_DIR" ]]; then
     echo "SPIRITAGENT_BUNDLED_DESKTOP_DIR is required" >&2
     return 1
@@ -183,26 +184,24 @@ stage_unpack_desktop() {
 
   # 挂载 DMG，拷 SpiritAgent.app 到 /Applications，卸载并清 xattr
   local mount_point
-  mount_point=$(hdiutil attach -nobrowse -readonly "$artifact" 2>/dev/null | awk '/\/Volumes/{print $3; exit}')
-  if [[ -z "$mount_point" ]]; then
+  mount_point=$(mktemp -d "${TMPDIR:-/tmp}/spiritagent-dmg.XXXXXX")
+  if ! hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$artifact"; then
+    rmdir "$mount_point" || true
     echo "failed to mount $artifact" >&2
     return 1
   fi
+  trap 'hdiutil detach "$mount_point" || true; rmdir "$mount_point" 2>/dev/null || true' EXIT
   if [[ ! -d "$mount_point/SpiritAgent.app" ]]; then
-    hdiutil detach "$mount_point" 2>/dev/null || true
     echo "SpiritAgent.app not found in DMG $artifact" >&2
     return 1
   fi
   rm -rf /Applications/SpiritAgent.app
-  # 拷贝失败须先卸载 DMG，避免 set -e 退出时挂载点泄漏
   if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
-    hdiutil detach "$mount_point" 2>/dev/null || true
     echo "failed to copy SpiritAgent.app from $artifact" >&2
     return 1
   fi
-  hdiutil detach "$mount_point" 2>/dev/null || true
   xattr -cr /Applications/SpiritAgent.app 2>/dev/null || true
-}
+)
 
 # 阶段 5：安装技能
 stage_install_skills() {
@@ -215,7 +214,6 @@ stage_install_skills() {
     return 1
   fi
 
-  # 尊重 .no-bundled-skills 标记（skipped 语义由 Tauri 侧按退出码判断）
   if [[ -f "$SPIRITAGENT_HOME/.no-bundled-skills" ]]; then
     return 0
   fi

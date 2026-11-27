@@ -156,10 +156,11 @@ mod tests {
                 .any(|n| n.contains("runner/spirit_agent-") && n.ends_with(".whl")),
             "expected runner wheel in payload zip"
         );
+        let desktop_extension = if cfg!(target_os = "windows") { ".exe" } else { ".dmg" };
         assert!(
             names
                 .iter()
-                .any(|n| n.starts_with("client/") && n.ends_with(".exe")),
+                .any(|n| n.starts_with("client/") && n.ends_with(desktop_extension)),
             "expected desktop installer in payload zip"
         );
     }

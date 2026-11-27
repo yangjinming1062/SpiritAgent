@@ -13,6 +13,7 @@ import { isRecord } from '../shared/is-record'
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError } from './api'
 import { ArchiveSearchPanel } from './ArchiveSearch'
+import { mergePagedRows } from './library-pages'
 import { usePageScroll, usePageState } from './page-state'
 import { useAlive, useTask } from './tasks'
 import type { Diary, Post } from './types'
@@ -76,13 +77,7 @@ export function Posts({
         return
       }
 
-      setPosts(previous => {
-        const incoming = new Set(result.posts.map(post => post.id))
-
-        return more
-          ? [...previous, ...result.posts.filter(post => !previous.some(old => old.id === post.id))]
-          : [...result.posts, ...previous.filter(post => !incoming.has(post.id))]
-      })
+      setPosts(previous => (more ? mergePagedRows(previous, result.posts) : mergePagedRows(result.posts, previous)))
 
       if (more || !initialized.current) {
         setCursor(result.next_cursor)

@@ -18,7 +18,7 @@ uv tool run --python 3.13 pre-commit run -a
 | Python | 导入门禁；Backend 或 Runner 边界变化另跑本页架构检查 |
 | Client | `pnpm --dir client lint`、`pnpm --dir client typecheck`；preload、资源或构建入口变化再跑 `pnpm --dir client build` 并检查产物 |
 | Remote | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复另测 iOS Safari 与 Android Chrome |
-| 共享协议／预设 | `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他平台用 Backend Python），再跑 Client 和 Remote 的 lint、typecheck、build |
+| 共享协议／预设 | `uv run --project backend --locked python scripts/generate_protocol.py --check`，再跑 Client 和 Remote 的 lint、typecheck、build |
 | Windows 原生 | `pnpm --dir client build:native` 构建 Rust host 与同架构托盘 DLL；`cargo check --locked` 只覆盖 Rust，另执行 Windows 实机清单 |
 | macOS 原生 | 在 macOS 执行 `pnpm --dir client build:native`，再以 `pnpm --dir client exec electron-builder --dir --mac --arm64` 构建对应包（x64 替换架构参数），并执行本页实机清单 |
 | Installer／wheel | `pnpm --dir installer build`、完整载荷下的目标平台 Tauri 构建及安装修复；wheel 另做隔离安装检查 |
@@ -159,7 +159,7 @@ Runner 在临时源码副本构建；暂存只接受目标版本的唯一 wheel�
 uv run --no-project --python 3.13 python scripts/check_runner_package.py
 ```
 
-载荷由 [build_helpers.py](lib/build_helpers.py)暂存，Installer 构建期校验载荷完整（安装脚本、Runner wheel、桌面产物和技能），缺项直接失败。macOS 输出安装器 DMG 及规范文件名副本；Windows 输出 Setup EXE。
+载荷由 [build_helpers.py](lib/build_helpers.py)暂存，Installer 构建期校验安装脚本、Runner wheel、桌面产物和技能。发布产物为 `SpiritAgent-Setup-<version>.dmg` 或 `SpiritAgent-Setup-<version>.exe`。
 
 `--sign-identity`／`--notary-profile` 与 `--cert-thumbprint` 作用于桌面产物，不签 Installer 本身；Client `.app` 公证另由上一节配置控制。
 

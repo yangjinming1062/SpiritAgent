@@ -27,7 +27,7 @@
 | [ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) | 项目架构图谱：拓扑、分层、构建与部署图示 |
 | [DATABASE.md](docs/DATABASE.md)、[DATABASE_FIELDS.md](docs/DATABASE_FIELDS.md) | 实体关系、设计理由、删除语义与测量依据；字段语义及权威源码索引 |
 | [DESIGN.md](docs/DESIGN.md) | 产品目标、体验取舍、用户可见行为及故障表现 |
-| [PROTOCOL.md](docs/PROTOCOL.md) | 跨模块通信、交付、状态、安全与兼容契约 |
+| [PROTOCOL.md](docs/PROTOCOL.md) | 跨模块通信、交付、状态与安全契约 |
 | [PIPELINE.md](docs/PIPELINE.md) | 形象生成流程、供应商能力、产物与恢复要求 |
 | 模块 README | 模块职责、内部约束、任务导航与独有操作 |
 | [scripts/README.md](scripts/README.md) | 仓库级检查、调试、构建与发布入口 |

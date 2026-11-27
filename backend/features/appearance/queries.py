@@ -1,5 +1,6 @@
 """外观模块公开的身份引用。"""
 
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -18,9 +19,13 @@ async def active_identity_reference(db: AsyncSession, user_id: int) -> str | Non
     )
 
 
-async def appearance_readiness(db: AsyncSession, user_id: int) -> AppearanceReadiness | None:
-    row = await db.scalar(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
-    return AppearanceReadiness(row.seed_fullbody_url, row.is_fullbody_confirmed) if row is not None else None
+async def appearance_readiness(db: AsyncSession, user_ids: Collection[int]) -> dict[int, AppearanceReadiness]:
+    rows = await db.execute(
+        select(AvatarAsset.user_id, AvatarAsset.seed_fullbody_url, AvatarAsset.identity_revision).where(
+            AvatarAsset.user_id.in_(user_ids), AvatarAsset.active.is_(True)
+        )
+    )
+    return {user_id: AppearanceReadiness(path, revision >= 1) for user_id, path, revision in rows}
 
 
 async def confirmed_media_reference_paths(db: AsyncSession, user_id: int) -> tuple[str, ...]:

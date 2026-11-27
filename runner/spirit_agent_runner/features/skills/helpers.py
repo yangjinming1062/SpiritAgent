@@ -5,8 +5,8 @@ from typing import Any
 
 import yaml
 
-from spirit_agent_runner.contracts.config import get_disabled_config_names
 from spirit_agent_runner.features.skills.scope import visible_skill_path, visible_skill_roots
+from spirit_agent_runner.infrastructure.constants import IS_WINDOWS
 from spirit_agent_runner.infrastructure.file_safety import has_traversal_component
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
@@ -27,14 +27,14 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
 
 def iter_skill_files(root: Path) -> Iterator[Path]:
     """按路径序产出可见 SKILL.md；跳过隐藏/依赖目录与越出 root 或跨学习域的路径。"""
-    if not root.is_dir():
-        return
-    for skill_md in sorted(root.rglob("SKILL.md")):
-        rel_parts = skill_md.relative_to(root).parts
-        if any(p.startswith(".") or p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-            continue
-        if visible_skill_path(skill_md, root):
-            yield skill_md
+    candidates = []
+    for directory, subdirs, files in root.walk():
+        subdirs[:] = [name for name in subdirs if not name.startswith(".") and name not in _EXCLUDED_DIR_NAMES]
+        if IS_WINDOWS:
+            candidates.extend(directory / name for name in files if name.lower() == "skill.md")
+        elif "SKILL.md" in files:
+            candidates.append(directory / "SKILL.md")
+    yield from (path for path in sorted(candidates) if path.is_file() and visible_skill_path(path, root))
 
 
 def skill_lookup_path_error(name: str) -> str | None:
@@ -80,8 +80,3 @@ def get_spiritagent_metadata(frontmatter: dict[str, Any]) -> dict[str, Any]:
         return {}
     spiritagent = metadata.get("spiritagent")
     return spiritagent if isinstance(spiritagent, dict) else {}
-
-
-def get_disabled_skill_names() -> set[str]:
-    """从内存配置中读取 ``skills.disabled`` 列表。"""
-    return get_disabled_config_names("skills")

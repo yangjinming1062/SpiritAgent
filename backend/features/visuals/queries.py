@@ -10,8 +10,9 @@ from infrastructure.assets.asset_store import client_asset_url
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import utc_now
 from runtime.presentation import visual_surface_accepts
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 from sqlalchemy.sql.elements import ColumnElement
 
 from features.action_library.queries import action_by_preset_key, action_preset_keys
@@ -31,9 +32,9 @@ from .eligibility import actor_body_ready, automatic_media_blocks, automatic_med
 from .geometry import visual_aspect_matches
 from .import_jobs import import_job_view
 from .import_operations import import_analysis_state
-from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion
+from .models import VisualImportJob, VisualItem, VisualJob, VisualPresentation, VisualVersion, stage_version_conditions
 from .policy import full_stage_rest_in_progress
-from .ports import read_stage_scene, request_stage_recovery, scene_reference_exists
+from .ports import existing_scene_references, read_stage_scene, request_stage_recovery, scene_reference_exists
 from .quality import quality_failure_message
 from .repository import (
     VisualNotFoundError,
@@ -174,16 +175,14 @@ class StageCatalogRow(Protocol):
     """舞台目录查询共用的准入字段。"""
 
     asset_kind: str
-    clip_kind: str | None
     width: int | None
     height: int | None
-    body_json: dict | None
 
     @property
     def source(self) -> dict | None: ...
 
 
-def _stage_ready(
+def _stage_compatible(
     row: StageCatalogRow,
     *,
     outfit: ComboMaterialRef | None,
@@ -191,16 +190,14 @@ def _stage_ready(
     target_width: int | None = None,
     target_height: int | None = None,
 ) -> bool:
-    """舞台目录共同准入：身份造型一致、画幅可用；actor 另要求合成数据齐全。"""
+    """核对候选与舞台冻结身份、造型和目标画幅。"""
 
     source = row.source or {}
     if not _source_matches_stage(source, outfit=outfit, identity_hash=identity_hash):
         return False
-    if not _fits_target_area(
+    return _fits_target_area(
         row.width, row.height, asset_kind=row.asset_kind, target_width=target_width, target_height=target_height
-    ):
-        return False
-    return row.asset_kind != "actor" or actor_body_ready(row.body_json, row.clip_kind)
+    )
 
 
 async def creation_request(user_id: int, request_id: str) -> tuple[VisualJobView, VisualSnapshot] | None:
@@ -307,6 +304,7 @@ async def reusable_actor_clip(
                 VisualItem.status == "ready",
                 VisualItem.outfit_id == source.outfit.material_id,
                 VisualItem.action_id == source.action.action_id,
+                *stage_version_conditions(user_id, source.identity_hash, source.outfit.content_hash),
             )
             .order_by(VisualVersion.id.desc())
         )
@@ -927,7 +925,7 @@ async def _default_wallpaper(
     ):
         return None
     scene = getattr(source, "scene", None)
-    if scene is None or not existing_asset(scene.path) or not await scene_reference_usable(db, user_id, scene):
+    if not await scene_reference_usable(db, user_id, scene):
         return None
     if item.asset_kind == "cinematic":
         outfit, identity_hash = frozen_stage_reference(state)
@@ -1148,26 +1146,12 @@ def _presentation_catalog(
     return [*actors, *[*reserved.values(), *remaining][:_STAGE_REACTION_LIMIT]]
 
 
-async def _layer_media(
-    db: AsyncSession, user_id: int, visual_id: int | None, version: int | None
-) -> StageLayerMedia | None:
+def _layer_media(item: VisualItem, version_row: VisualVersion) -> StageLayerMedia | None:
     """按组合引用的版本装配该层可播媒体；引用缺失或文件不完整时返回 None。"""
 
-    if visual_id is None or version is None:
-        return None
-    row = (
-        await db.execute(
-            select(VisualItem, VisualVersion)
-            .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
-            .where(VisualItem.id == visual_id, VisualItem.user_id == user_id, VisualVersion.number == version)
-        )
-    ).one_or_none()
-    if row is None:
-        return None
-    item, version_row = row
-    # 存在性按引用版本自身的文件核对；组合可能引用非当前版本。
     if existing_asset(version_row.media_path) is None:
         return None
+    snapshot = VisualSnapshot.model_validate(version_row.snapshot_json)
     source = version_row.snapshot_json.get("source") or {}
     scene = source.get("scene") or {}
     return StageLayerMedia(
@@ -1175,7 +1159,7 @@ async def _layer_media(
         version=version_row.number,
         media_kind=item.media_kind,
         asset_kind=item.asset_kind,
-        clip_kind=visual_clip_kind(version_view(item, version_row)),
+        clip_kind=visual_clip_kind(item, snapshot),
         media_url=client_asset_url(version_row.media_path),
         poster_url=client_asset_url(version_row.poster_path) if version_row.poster_path else None,
         width=version_row.width,
@@ -1263,8 +1247,7 @@ async def ambient_catalog(
             asset_kind.in_(("actor", "cinematic")),
             # 完整场景的静态图片同样是可持续画面；actor 仍只能以视频进入目录。
             or_(VisualItem.media_kind == "video", asset_kind == "cinematic"),
-            VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
-            VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
+            *stage_version_conditions(state.user_id, identity_hash, outfit.content_hash),
         )
     )
     buckets: dict[tuple, list[StageMediaCandidate]] = {
@@ -1343,6 +1326,14 @@ async def ambient_catalog(
                 or (row.asset_kind == "cinematic" and len(bucket) >= limit)
             ):
                 continue
+            if not _stage_compatible(
+                row,
+                outfit=outfit,
+                identity_hash=identity_hash,
+                target_width=state.target_width,
+                target_height=state.target_height,
+            ):
+                continue
             if not automatic_media_ready(
                 media_kind=row.media_kind,
                 asset_kind=row.asset_kind,
@@ -1356,14 +1347,6 @@ async def ambient_catalog(
                 media_content_hash=row.media_content_hash,
                 scene_reference=bool(source.get("scene")),
                 action_clip_kind=(source.get("action") or {}).get("clip_kind"),
-            ):
-                continue
-            if not _stage_ready(
-                row,
-                outfit=outfit,
-                identity_hash=identity_hash,
-                target_width=state.target_width,
-                target_height=state.target_height,
             ):
                 continue
             action = ActionMaterialRef.model_validate(source["action"]) if source.get("action") else None
@@ -1441,8 +1424,10 @@ async def _has_idle_actor(db: AsyncSession, state: VisualPresentation) -> bool:
     idle = await action_by_preset_key(db, state.user_id, "idle")
     if idle is None:
         return False
-    versions = await db.scalars(
-        select(VisualVersion)
+    versions = await db.stream(
+        select(
+            VisualVersion.snapshot_json, VisualVersion.media_path, VisualVersion.body_json, VisualVersion.content_hash
+        )
         .join(VisualItem, VisualItem.id == VisualVersion.visual_id)
         .where(
             VisualItem.user_id == state.user_id,
@@ -1451,37 +1436,40 @@ async def _has_idle_actor(db: AsyncSession, state: VisualPresentation) -> bool:
             VisualItem.media_kind == "video",
             VisualVersion.action_id == idle.id,
             _frozen_clip_kind() == "loop",
-            VisualVersion.snapshot_json["source"]["identity_hash"].astext == identity_hash,
-            VisualVersion.snapshot_json["source"]["outfit"]["content_hash"].astext == outfit.content_hash,
+            *stage_version_conditions(state.user_id, identity_hash, outfit.content_hash),
         )
-        .order_by(VisualVersion.id.desc())
+        .order_by(VisualVersion.id.desc()),
+        execution_options={"yield_per": 32},
     )
-    for version in versions:
-        snapshot = VisualSnapshot.model_validate(version.snapshot_json)
-        frozen = snapshot.source
-        if (
-            isinstance(frozen, (ActorClipSource, AnalyzingVisualSource))
-            and (frozen.kind != "analysis" or (frozen.asset_kind == "actor" and frozen.presentation_approved))
-            and frozen.outfit is not None
-            and frozen.action is not None
-            and frozen.identity_hash == identity_hash
-            and frozen.outfit.content_hash == outfit.content_hash
-            and (frozen.clip_kind if frozen.kind == "analysis" else frozen.action.clip_kind) == "loop"
-            and automatic_media_ready(
-                media_kind="video",
-                asset_kind="actor",
-                media_path=version.media_path,
-                auto_selectable=_frozen_auto_selectable(frozen),
-                clip_kind="loop",
-                body=version.body_json,
-                presentation_approved=frozen.presentation_approved,
-                review_result=snapshot.review_result,
-                reference_source=frozen.model_dump(mode="json"),
-                media_content_hash=version.content_hash,
-                action_clip_kind=frozen.action.clip_kind,
-            )
-        ):
-            return True
+    try:
+        async for version in versions:
+            snapshot = VisualSnapshot.model_validate(version.snapshot_json)
+            frozen = snapshot.source
+            if (
+                isinstance(frozen, (ActorClipSource, AnalyzingVisualSource))
+                and (frozen.kind != "analysis" or (frozen.asset_kind == "actor" and frozen.presentation_approved))
+                and frozen.outfit is not None
+                and frozen.action is not None
+                and frozen.identity_hash == identity_hash
+                and frozen.outfit.content_hash == outfit.content_hash
+                and (frozen.clip_kind if frozen.kind == "analysis" else frozen.action.clip_kind) == "loop"
+                and automatic_media_ready(
+                    media_kind="video",
+                    asset_kind="actor",
+                    media_path=version.media_path,
+                    auto_selectable=_frozen_auto_selectable(frozen),
+                    clip_kind="loop",
+                    body=version.body_json,
+                    presentation_approved=frozen.presentation_approved,
+                    review_result=snapshot.review_result,
+                    reference_source=frozen.model_dump(mode="json"),
+                    media_content_hash=version.content_hash,
+                    action_clip_kind=frozen.action.clip_kind,
+                )
+            ):
+                return True
+    finally:
+        await versions.close()
     return False
 
 
@@ -1566,12 +1554,30 @@ def _subtle_motion(declared: str | None, observed: str | None) -> bool:
     return declared == observed == "subtle"
 
 
+async def _candidate_scene_ids(db: AsyncSession, user_id: int, candidates: list[StageMediaCandidate]) -> set[int]:
+    scene_ids = {
+        scene.scene_id
+        for candidate in candidates
+        if (scene := candidate.scene) is not None and scene.scene_id is not None
+    }
+    return await existing_scene_references(db, user_id, scene_ids)
+
+
+def _candidate_scene_usable(scene: SceneMediaRef, scene_ids: set[int], paths: dict[str, bool]) -> bool:
+    if scene.scene_id is not None and scene.scene_id not in scene_ids:
+        return False
+    if scene.path not in paths:
+        paths[scene.path] = existing_asset(scene.path) is not None
+    return paths[scene.path]
+
+
 async def _usable_cinematics(
     db: AsyncSession, user_id: int, candidates: list[StageMediaCandidate]
 ) -> list[StageMediaCandidate]:
     approved: list[tuple[int, StageMediaCandidate]] = []
     modes: dict[str, tuple[int, StageMediaCandidate]] = {}
-    known: dict[tuple[int | None, str], bool] = {}
+    scene_ids = await _candidate_scene_ids(db, user_id, candidates)
+    paths: dict[str, bool] = {}
     scene_hash: str | None = None
     for index, candidate in enumerate(candidates):
         scene = candidate.scene
@@ -1586,10 +1592,7 @@ async def _usable_cinematics(
             mode = "subtle"
         if len(approved) == _STAGE_CINEMATIC_LIMIT and (mode is None or mode in modes):
             continue
-        key = (scene.scene_id, scene.path)
-        if key not in known:
-            known[key] = await scene_reference_usable(db, user_id, scene)
-        if not known[key]:
+        if not _candidate_scene_usable(scene, scene_ids, paths):
             continue
         if scene_hash is None:
             scene_hash = scene.content_hash
@@ -1610,16 +1613,13 @@ async def _cinematic_scene_options(
     db: AsyncSession, user_id: int, candidates: list[StageMediaCandidate]
 ) -> list[SceneMediaRef]:
     scenes: dict[int | str, SceneMediaRef] = {}
-    checked: set[tuple[int | None, str]] = set()
+    scene_ids = await _candidate_scene_ids(db, user_id, candidates)
+    paths: dict[str, bool] = {}
     for candidate in candidates:
         scene = candidate.scene
         if scene is None or (key := scene.scene_id or scene.path) in scenes:
             continue
-        ref = (scene.scene_id, scene.path)
-        if ref in checked:
-            continue
-        checked.add(ref)
-        if await scene_reference_usable(db, user_id, scene):
+        if _candidate_scene_usable(scene, scene_ids, paths):
             scenes[key] = scene
         if len(scenes) == _STAGE_CINEMATIC_LIMIT:
             break
@@ -1848,26 +1848,35 @@ async def composition_with_media(
 
     if composition is None:
         return None
-    media = None
-    if composition.mode == "layered":
-        media = StageCompositionMedia(
-            mode="layered",
-            scene=await _layer_media(db, user_id, composition.scene_visual_id, composition.scene_version),
-            actor=await _layer_media(db, user_id, composition.actor.visual_id, composition.actor.version)
-            if composition.actor
-            else None,
+    scene = (
+        (composition.scene_visual_id, composition.scene_version)
+        if composition.scene_visual_id is not None and composition.scene_version is not None
+        else None
+    )
+    actor = (composition.actor.visual_id, composition.actor.version) if composition.actor else None
+    cinematic = (composition.cinematic.visual_id, composition.cinematic.version) if composition.cinematic else None
+    references = {ref for ref in (scene, actor, cinematic) if ref is not None}
+    media_by_ref: dict[tuple[int, int], StageLayerMedia | None] = {}
+    if references:
+        rows = await db.execute(
+            select(VisualItem, VisualVersion)
+            .join(VisualVersion, VisualVersion.visual_id == VisualItem.id)
+            .where(VisualItem.user_id == user_id, tuple_(VisualItem.id, VisualVersion.number).in_(references))
+            .options(lazyload(VisualItem.current_version))
         )
-    else:
-        media = StageCompositionMedia(
-            mode="cinematic",
-            cinematic=await _layer_media(db, user_id, composition.cinematic.visual_id, composition.cinematic.version)
-            if composition.cinematic
-            else None,
-        )
+        media_by_ref = {(item.id, version.number): _layer_media(item, version) for item, version in rows}
+    media = StageCompositionMedia(
+        mode=composition.mode,
+        scene=media_by_ref.get(scene) if scene else None,
+        actor=media_by_ref.get(actor) if actor else None,
+        cinematic=media_by_ref.get(cinematic) if cinematic else None,
+    )
     return composition.model_copy(update={"media": media})
 
 
-async def _presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
+async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
+    """读取实际显示的冻结成品与素材；缺失文件的对应路径为空。"""
+
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VisualPresentation).where(VisualPresentation.user_id == user_id))
         presence = get_presentation_snapshot(user_id)
@@ -1965,18 +1974,6 @@ async def _presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
         )
 
 
-async def actual_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
-    """实际呈现快照：冻结造型与环境资料加成品描述；素材缺失的字段为空。"""
-
-    return await _presentation_snapshot(user_id)
-
-
-async def prompt_presentation_snapshot(user_id: int) -> ActualPresentationSnapshot:
-    """供伙伴判断和媒体策划使用的模式无关快照。"""
-
-    return await _presentation_snapshot(user_id)
-
-
 async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOption]:
     """按动作触发条件过滤可播影像；播放方式与条件来自冻结输入的动作引用。"""
 
@@ -2018,7 +2015,7 @@ async def visual_play_catalog(user_id: int, trigger: str) -> list[VisualPlayOpti
         for row in rows:
             if not visual_surface_accepts(presence.surface, row.asset_kind):
                 continue
-            if not _stage_ready(
+            if not _stage_compatible(
                 row,
                 outfit=outfit,
                 identity_hash=identity_hash,
@@ -2127,14 +2124,15 @@ async def action_media_implementations(
                 outfit_id=row.outfit_id,
                 outfit_name=row.outfit_name or "",
                 version=row.version,
-                stage_ready=_stage_ready(
+                stage_ready=_stage_compatible(
                     row,
                     outfit=outfit,
                     identity_hash=identity_hash,
                     target_width=state.target_width if state else None,
                     target_height=state.target_height if state else None,
                 )
-                and existing_asset(row.media_path) is not None,
+                and existing_asset(row.media_path) is not None
+                and (row.asset_kind != "actor" or actor_body_ready(row.body_json, row.clip_kind)),
                 updated_at=row.updated_at,
             )
             for row in rows[:limit]

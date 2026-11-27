@@ -6,7 +6,6 @@ import {
   pushEffectiveDisturbanceTier,
   setSpriteState
 } from '@/features/character'
-import { refreshVisuals } from '@/features/creation/visuals'
 import { cancelVoiceBar, stopSpeaking } from '@/features/speech'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
@@ -43,7 +42,6 @@ export function startPresentationGateway(authSessionId: string): () => void {
         pushEffectiveDisturbanceTier(tier)
       }
 
-      void refreshVisuals()
       void fetchSlashCommandMeta()
       clearVfx('sleep_zzz')
 

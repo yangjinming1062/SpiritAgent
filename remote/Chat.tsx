@@ -36,6 +36,7 @@ import {
   readTurnReceipt
 } from './chat-state'
 import { Bubble, Message } from './ChatMessage'
+import { mergePagedRows } from './library-pages'
 import { useRemoteRealtimeCall } from './realtime-call-service'
 import { useAlive, useTask } from './tasks'
 import { TopicFeedbackProvider } from './TopicLink'
@@ -92,7 +93,8 @@ export function Chat({
   const [stoppingId, setStoppingId] = useState<string | null>(null)
   const turnRef = useRef(turn)
   turnRef.current = turn
-  const [readOnly, setReadOnly] = useState(false)
+  const [sessionInfo, setSessionInfo] = useState<ApiResponse<'sessions.snapshot'>['info'] | null>(null)
+  const readOnly = sessionInfo?.is_automation === true
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -106,16 +108,26 @@ export function Chat({
     url => setAttachments(previous => [...previous, { type: 'audio', url }]),
     setFailure
   )
-  const selectedSession = selected ? sessions.find(session => session.id === selected) : undefined
+  const callEligible = connected && sessionInfo?.system_preset_id === 'companion' && !readOnly
   const realtimeCall = useRemoteRealtimeCall({
     api,
     sessionId: selected,
-    eligible: connected && selectedSession?.system_preset_id === 'companion' && !readOnly
+    eligible: callEligible
   })
   const callView = useCallView(selected, realtimeCall.snapshot.state === 'stopped')
   const recordId = callView.recordId
   const [callIdentity, setCallIdentity] = useState({ name: '', avatar: '' })
   const liveOpen = callView.isOpen && !recordId
+  const visibleTurn = turn && !turn.replace_reply_message_id && !activeReplyIsPersisted(turn, messages) ? turn : null
+  const liveBubbles = visibleTurn?.bubbles
+  const topicIds = useMemo(
+    () =>
+      [
+        ...messages.flatMap(message => (message.content_type === 'companion_reply' ? message.bubbles : [])),
+        ...(liveBubbles ?? [])
+      ].flatMap(bubble => (bubble?.type === 'link' ? [bubble.topic_id] : [])),
+    [messages, liveBubbles]
+  )
 
   useEffect(() => {
     if (!callView.isOpen) {
@@ -216,11 +228,7 @@ export function Chat({
       const result = await api.invoke('sessions.list_sessions', { query: { limit: 100, cursor } })
 
       if (alive() && revision === sessionListRevision.current) {
-        setSessions(previous =>
-          cursor
-            ? [...previous, ...result.sessions.filter(session => !previous.some(old => old.id === session.id))]
-            : result.sessions
-        )
+        setSessions(previous => (cursor ? mergePagedRows(previous, result.sessions) : result.sessions))
         setSessionNextCursor(result.next_cursor)
       }
     },
@@ -255,7 +263,12 @@ export function Chat({
 
   const resume = useCallback(
     async (id: string) => {
+      if (!alive() || selectedRef.current !== id) {
+        return
+      }
+
       const revision = ++navigation.current
+      const current = (): boolean => alive() && revision === navigation.current && selectedRef.current === id
       const buffered = {
         sessionId: id,
         events: [] as GatewayEvent[]
@@ -265,10 +278,11 @@ export function Chat({
       try {
         const result = await gateway.snapshot(id)
 
-        if (!alive() || revision !== navigation.current || selectedRef.current !== id) {
+        if (!current()) {
           return
         }
 
+        setSessionInfo(result.info)
         const incoming = mergeMessages(result.messages, result.active_turn?.messages ?? [])
         const firstId = incoming[0]?.id
         // 快照已覆盖的全量替换仍使旧分页失效，不能重放它的旧正文。
@@ -305,7 +319,7 @@ export function Chat({
         if (prior && !confirmed) {
           const known = await readTurnReceipt(api, { sessionId: id, requestId: prior.id })
           confirmed = known !== null
-          if (!alive() || revision !== navigation.current || selectedRef.current !== id) {
+          if (!current()) {
             return
           }
           if (known && (known.status === 'failed' || known.status === 'interrupted')) {
@@ -319,11 +333,10 @@ export function Chat({
         if (prior && confirmed) {
           confirmPrompt(id, prior)
         }
-        setReadOnly(result.info.is_automation)
         setHasMore(result.truncated === true || Boolean(result.next_cursor))
         const stopId = sessionStorage.getItem(cancellationKey(id))
+        setStoppingId(stopId)
         if (stopId) {
-          setStoppingId(stopId)
           void cancellations.request({ sessionId: id, requestId: stopId })
         }
         if (document.visibilityState === 'visible') {
@@ -344,7 +357,7 @@ export function Chat({
         if (hydration.current === buffered) {
           hydration.current = null
 
-          if (alive() && selectedRef.current === id && revision === navigation.current) {
+          if (current()) {
             buffered.events.forEach(event => applyEvent.current(event))
           }
         }
@@ -553,20 +566,24 @@ export function Chat({
   }, [messages, turn])
 
   const openSession = async (id: string) => {
+    const prior = readPendingPrompt(promptKey(id))
+    const draft = (prior?.replace ? undefined : prior?.text) ?? sessionStorage.getItem(draftKey(id)) ?? ''
     releaseRecording()
     selectedRef.current = id
     setSelected(id)
     setMessages([])
     setTurn(null)
-    const prior = readPendingPrompt(promptKey(id))
-    setDraft((prior?.replace ? undefined : prior?.text) ?? sessionStorage.getItem(draftKey(id)) ?? '')
+    setSessionInfo(null)
+    setHasMore(false)
+    setStoppingId(null)
+    setDraft(draft)
     setAttachments(prior?.attachments ?? [])
     setFailure('')
     setRetryMessage(null)
     pending.current = prior
     await resume(id)
     requestAnimationFrame(() => {
-      if (listRef.current) {
+      if (alive() && selectedRef.current === id && listRef.current) {
         listRef.current.scrollTop = listRef.current.scrollHeight
       }
     })
@@ -575,7 +592,7 @@ export function Chat({
   const submit = async (retry?: string, replace?: string) => {
     const id = selectedRef.current
 
-    if (!id || readOnly || turn?.running) {
+    if (!id || id !== selected || !sessionInfo || readOnly || turn?.running) {
       return
     }
 
@@ -782,14 +799,6 @@ export function Chat({
     void run(() => resume(selected))
   }
 
-  const visibleTurn = turn && !turn.replace_reply_message_id && !activeReplyIsPersisted(turn, messages) ? turn : null
-  const topicIds = [
-    ...messages.flatMap(message => (message.content_type === 'companion_reply' ? message.bubbles : [])),
-    ...(visibleTurn?.bubbles ?? [])
-  ]
-    .filter(bubble => bubble.type === 'link')
-    .map(bubble => bubble.topic_id)
-
   const content = (
     <div className={`chat-page ${callView.isOpen ? 'sa-call-covered' : ''}`} inert={callView.isOpen}>
       <header className="chat-header">
@@ -951,7 +960,11 @@ export function Chat({
         ) : null}
         {error || failure ? (
           <Notice error={failure || error}>
-            {retryMessage ? (
+            {!sessionInfo ? (
+              <button disabled={busy} onClick={refreshMessages} type="button">
+                重新读取会话
+              </button>
+            ) : retryMessage ? (
               <button onClick={() => run(() => submit(retryMessage))} type="button">
                 重试回复
               </button>
@@ -965,7 +978,7 @@ export function Chat({
       </div>
       {readOnly ? (
         <div className="read-only">自动化会话可查看，任务由原来的计划管理。</div>
-      ) : (
+      ) : sessionInfo ? (
         <form
           className="composer"
           onSubmit={event => {
@@ -1033,10 +1046,7 @@ export function Chat({
               aria-label="开始实时通话"
               className="icon-button"
               disabled={
-                !connected ||
-                !selected ||
-                selectedSession?.system_preset_id !== 'companion' ||
-                readOnly ||
+                !callEligible ||
                 busy ||
                 Boolean(turn?.running) ||
                 Boolean(pending.current) ||
@@ -1098,7 +1108,7 @@ export function Chat({
             ref={fileRef}
           />
         </form>
-      )}
+      ) : null}
     </div>
   )
 

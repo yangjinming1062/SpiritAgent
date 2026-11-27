@@ -9,8 +9,7 @@ from .schemas import VisualAutoPlayBlock
 
 
 def existing_asset(reference: str | None) -> str | None:
-    resolved = resolve_asset_reference(reference)
-    return reference if resolved is not None and resolved[0].is_file() else None
+    return reference if resolve_asset_reference(reference) is not None else None
 
 
 def actor_body_ready(body: dict | None, clip_kind: str | None) -> bool:
@@ -83,8 +82,7 @@ def automatic_media_blocks(
         report = None
 
     required = {"goal", "quality"} | ({"identity"} if asset_kind in {"actor", "cinematic"} else set())
-    resolved = resolve_asset_reference(media_path)
-    asset_exists = resolved is not None and resolved[0].is_file()
+    asset_exists = existing_asset(media_path) is not None
     if (
         not asset_exists
         or media_content_hash is None

@@ -6,7 +6,7 @@ export interface StageInfo {
   title: string
 }
 
-export type StageState = 'running' | 'succeeded' | 'skipped' | 'failed'
+export type StageState = 'running' | 'succeeded' | 'failed'
 
 export interface StageRecord {
   state: StageState | null
@@ -19,7 +19,7 @@ export interface BootstrapStateModel {
   stageOrder: StageInfo[]
   currentStage: string | null
   error: string | null
-  logs: Array<{ line: string; stream?: 'stdout' | 'stderr' }>
+  logs: Array<{ line: string; stream: 'stdout' | 'stderr' }>
 }
 
 const INITIAL: BootstrapStateModel = {
@@ -43,17 +43,14 @@ export function stageTitle(stages: StageInfo[], name: string | null): string {
 }
 
 export const $progress = computed($bootstrap, (b) => {
-  const done = b.stageOrder.filter((s) => {
-    const state = b.stages[s.name]?.state
-    return state === 'succeeded' || state === 'skipped'
-  }).length
+  const done = b.stageOrder.filter((s) => b.stages[s.name]?.state === 'succeeded').length
   return { done, total: b.stageOrder.length }
 })
 
 type BootstrapEvent =
   | { type: 'manifest'; stages: StageInfo[] }
-  | { type: 'stage'; name: string; state: StageState; durationMs?: number; error?: string }
-  | { type: 'log'; line: string; stream?: 'stdout' | 'stderr' }
+  | { type: 'stage'; name: string; state: StageState; durationMs?: number }
+  | { type: 'log'; line: string; stream: 'stdout' | 'stderr' }
   | { type: 'complete' }
   | { type: 'failed'; error: string }
 

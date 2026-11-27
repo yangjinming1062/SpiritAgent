@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from websockets.asyncio.client import ClientConnection
 
+from infrastructure.ai.providers._provider_errors import parse_stream_event
 from infrastructure.ai.providers.base import (
     ProviderCapabilityError,
     ProviderConfig,
@@ -725,16 +726,6 @@ class MiniMaxTTSProvider(TTSProvider):
         return f"{scheme}://{parsed.netloc}/ws/v1/t2a_v2"
 
     @staticmethod
-    def _json_message(raw: str | bytes) -> dict:
-        try:
-            value = json.loads(raw)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ProviderError("MiniMax streaming TTS returned invalid JSON", status_code=502) from exc
-        if not isinstance(value, dict):
-            raise ProviderError("MiniMax streaming TTS returned an invalid event", status_code=502)
-        return value
-
-    @staticmethod
     def _check_event(event: dict, expected: str) -> None:
         base = event.get("base_resp")
         status = base.get("status_code", 0) if isinstance(base, dict) else 0
@@ -756,7 +747,7 @@ class MiniMaxTTSProvider(TTSProvider):
         payload["audio_setting"] = {"sample_rate": 24000, "bitrate": 128000, "format": "pcm", "channel": 1}
         await websocket.send(json.dumps(payload, ensure_ascii=False))
         async with asyncio.timeout(30):
-            started = self._json_message(await websocket.recv())
+            started = parse_stream_event(await websocket.recv(), channel="MiniMax streaming TTS")
         self._check_event(started, "task_started")
 
     async def synthesize_stream(
@@ -782,13 +773,13 @@ class MiniMaxTTSProvider(TTSProvider):
                 open_timeout=30,
             )
             async with asyncio.timeout(30):
-                connected = self._json_message(await websocket.recv())
+                connected = parse_stream_event(await websocket.recv(), channel="MiniMax streaming TTS")
             self._check_event(connected, "connected_success")
             await self._start_stream(websocket, voice, speech_style)
             await websocket.send(json.dumps({"event": "task_continue", "text": stream_text}, ensure_ascii=False))
             while True:
                 async with asyncio.timeout(120):
-                    event = self._json_message(await websocket.recv())
+                    event = parse_stream_event(await websocket.recv(), channel="MiniMax streaming TTS")
                 if event.get("event") == "task_failed":
                     self._check_event(event, "task_continued")
                 self._check_event(event, "task_continued")

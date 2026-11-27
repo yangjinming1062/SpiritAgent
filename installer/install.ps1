@@ -146,6 +146,10 @@ function Stage-Welcome {
     if (-not (Test-Path $SpiritAgentHome -PathType Container)) {
         return Fail "could not create SPIRITAGENT_HOME: $SpiritAgentHome"
     }
+    $marker = Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete"
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+        Remove-Item -LiteralPath $marker -Force
+    }
     return 0
 }
 

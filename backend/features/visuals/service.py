@@ -624,14 +624,12 @@ async def _playback_is_current(
         and item.version == play.visual_version
         and visual_surface_accepts(presentation.surface, item.asset_kind)
         and bool(play.snapshot_json)
-        and play.snapshot_json.get("target_surface") in (None, presentation.surface)
+        and play.snapshot_json.get("target_surface") == presentation.surface
         and await _life_playback_is_current(db, state.user_id, state, play)
     )
 
 
-async def claim_playback(
-    user_id: int, play_id: str, *, client_id: str, target_surface: PlayableSurface | None = None
-) -> bool:
+async def claim_playback(user_id: int, play_id: str, *, client_id: str, target_surface: PlayableSurface) -> bool:
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         play = await playback_row(db, user_id, play_id)
@@ -647,7 +645,7 @@ async def claim_playback(
         if play.client_id is not None and play.client_id != client_id:
             return False
         frozen_surface = (play.snapshot_json or {}).get("target_surface")
-        if frozen_surface is not None and frozen_surface != target_surface:
+        if frozen_surface != target_surface:
             return False
         item = await presented_version(db, user_id, play.version_id)
         stale = not await _playback_is_current(db, state, play, item)
@@ -681,7 +679,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             if (
                 pending is not None
                 and visual_surface_accepts(presence.surface, pending.asset_kind)
-                and pending.target_surface in (None, presence.surface)
+                and pending.target_surface == presence.surface
                 and pending.presentation_epoch == presence.revision
                 and pending.state_revision == state.state_revision
             ):

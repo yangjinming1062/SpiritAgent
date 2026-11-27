@@ -45,9 +45,9 @@ def cfg_int(section: dict[str, Any], key: str, default: int = 0) -> int:
         return default
 
 
-def get_disabled_config_names(section: str = "skills") -> set[str]:
+def get_disabled_config_names(config: dict[str, Any], section: str) -> set[str]:
     """读取 ``{section}.disabled`` 列表（适用于 ``skills``、``toolsets`` 等）。"""
-    raw = cfg_get(load_config(), section, "disabled", default=[])
+    raw = cfg_get(config, section, "disabled", default=[])
     if not isinstance(raw, list):
         return set()
-    return {str(item).strip() for item in raw if isinstance(item, str) and item.strip()}
+    return {name for item in raw if isinstance(item, str) and (name := item.strip())}

@@ -1,3 +1,4 @@
+import json
 import math
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -73,6 +74,17 @@ def response_json(resp: httpx.Response) -> dict:
     if isinstance(body, dict):
         return body
     return {"raw": str(body)} if body else {}
+
+
+def parse_stream_event(raw: str | bytes, *, channel: str) -> dict:
+    """解析供应商音频流的 WebSocket 事件对象。"""
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ProviderError(f"{channel} returned invalid JSON", status_code=502) from exc
+    if not isinstance(value, dict):
+        raise ProviderError(f"{channel} returned an invalid event", status_code=502)
+    return value
 
 
 def _format_err(family: str, err: object) -> str:

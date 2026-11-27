@@ -17,8 +17,7 @@ use crate::AppState;
 
 /// bootstrap 运行句柄；供取消与防重入。
 pub struct BootstrapHandle {
-    pub cancel_tx: mpsc::Sender<()>,
-    pub running: bool,
+    cancel_tx: mpsc::Sender<()>,
     finished: watch::Receiver<bool>,
 }
 
@@ -32,23 +31,21 @@ pub async fn start_bootstrap(
     if state.closing.load(Ordering::Acquire) {
         return Err("Installer is closing".into());
     }
-    if guard.as_ref().is_some_and(|h| h.running) {
+    if guard.is_some() {
         return Err("Bootstrap is already running".into());
     }
 
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
     let (finished_tx, finished_rx) = watch::channel(false);
-    *guard = Some(BootstrapHandle { cancel_tx, running: true, finished: finished_rx });
+    *guard = Some(BootstrapHandle { cancel_tx, finished: finished_rx });
     drop(guard);
 
     let state_for_task = state.inner().clone();
     tokio::spawn(async move {
         let _ = run_bootstrap(app, Some(cancel_rx), on_event).await;
         let mut guard = state_for_task.bootstrap.lock().await;
-        if let Some(h) = guard.as_mut() {
-            h.running = false;
-        }
         let _ = finished_tx.send(true);
+        *guard = None;
     });
 
     Ok(())
@@ -62,17 +59,13 @@ pub async fn cancel_bootstrap(state: State<'_, Arc<AppState>>) -> Result<(), Str
 
 pub(crate) async fn cancel_and_wait(state: &AppState) {
     let guard = state.bootstrap.lock().await;
-    let Some(handle) = guard.as_ref().filter(|handle| handle.running) else {
+    let Some(handle) = guard.as_ref() else {
         return;
     };
     let _ = handle.cancel_tx.try_send(());
     let mut finished = handle.finished.clone();
     drop(guard);
-    while !*finished.borrow() {
-        if finished.changed().await.is_err() {
-            break;
-        }
-    }
+    let _ = finished.wait_for(|done| *done).await;
 }
 
 /// 启动已安装桌面端后退出安装器；二进制缺失时返回可读错误供前端提示。
@@ -146,7 +139,7 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     }
 }
 
-/// 与 Client 更新器共用包内健康检查入口。
+/// 从已安装的 Runner venv 执行包内静态检查。
 fn runner_venv_is_healthy() -> bool {
     use std::process::{Command, Stdio};
 
@@ -270,7 +263,6 @@ async fn run_bootstrap(
             name: stage.name.clone(),
             state: StageState::Running,
             duration_ms: None,
-            error: None,
         });
 
         let stage_result = run_install_script(
@@ -300,7 +292,6 @@ async fn run_bootstrap(
             name: stage.name.clone(),
             state,
             duration_ms: Some(started.elapsed().as_millis() as u64),
-            error: error.clone(),
         });
         if let Some(error) = error {
             return Err(fail_bootstrap(&on_event, error));
@@ -386,8 +377,8 @@ fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
                 "manifest received"
             );
         }
-        BootstrapEvent::Stage { name, state, duration_ms, error, .. } => {
-            tracing::info!(stage = %name, ?state, duration_ms = ?duration_ms, ?error, "stage transition");
+        BootstrapEvent::Stage { name, state, duration_ms } => {
+            tracing::info!(stage = %name, ?state, duration_ms = ?duration_ms, "stage transition");
         }
         BootstrapEvent::Complete => tracing::info!("bootstrap complete"),
         BootstrapEvent::Failed { error } => tracing::error!(error = %error, "bootstrap FAILED"),

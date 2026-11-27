@@ -198,12 +198,8 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
 
 
 def _patch_skill(
-    name: str, old_string: str, new_string: str | None, file_path: str | None = None, replace_all: bool = False
+    name: str, old_string: str, new_string: str, file_path: str | None, replace_all: bool
 ) -> dict[str, Any]:
-    if not old_string:
-        return {"success": False, "error": "old_string is required for 'patch'."}
-    if new_string is None:
-        return {"success": False, "error": "new_string is required for 'patch'."}
     rel_path = file_path or "SKILL.md"
     if rel_path != "SKILL.md" and (err := _validate_file_path(rel_path)):
         return {"success": False, "error": err}
@@ -215,11 +211,11 @@ def _patch_skill(
     if not source.exists():
         return {"success": False, "error": f"File not found: {rel_path}"}
     content = source.read_text(encoding="utf-8")
-    new_content, match_count, _, match_error = fuzzy_find_and_replace(content, old_string, new_string, replace_all)
+    new_content, match_count, match_error = fuzzy_find_and_replace(content, old_string, new_string, replace_all)
     if match_error:
         return {
             "success": False,
-            "error": match_error + format_no_match_hint(match_error, match_count, old_string, content),
+            "error": match_error + format_no_match_hint(match_error, old_string, content),
             "file_preview": content[:500] + ("..." if len(content) > 500 else ""),
         }
     if err := _validate_content_size(new_content, label=rel_path):
@@ -364,7 +360,7 @@ def skill_manage(
         elif action == "edit":
             result = _edit_skill(name, content or "")
         elif action == "patch":
-            result = _patch_skill(name, old_string or "", new_string, file_path, replace_all)
+            result = _patch_skill(name, old_string or "", new_string or "", file_path, replace_all)
         elif action == "delete":
             result = _delete_skill(name, absorbed_into=absorbed_into)
         elif action == "write_file":

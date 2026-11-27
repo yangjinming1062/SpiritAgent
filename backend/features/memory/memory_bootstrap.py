@@ -1,15 +1,12 @@
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.text import resolve_prompt_text
-from runtime.events.emit import emit_ws_event
-from runtime.memory_scope import MemoryScope, MemorySource
+from runtime.memory_scope import MemoryScope
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.memory.memory_store import MemorySlotWrite, active_memory_filter, scope_filter, upsert_memory_slots
+from features.memory.memory_store import active_memory_filter, scope_filter
 from features.memory.models import Memory
 from features.memory.prompts import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
-
-_USER_PROFILE_TAGS = ["onboarding", "user_profile"]
 
 
 async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Memory]:
@@ -20,12 +17,7 @@ async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Mem
 
 
 async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, str]:
-    """record_user_profile 的逆操作：以 {raw_key: content} 返回用户当前的 user_* 回答。"""
-    out: dict[str, str] = {}
-    for row in await _active_profile_rows(db, scope):
-        if row.slot_key:
-            out[row.slot_key] = row.content or ""
-    return out
+    return {row.slot_key: row.content or "" for row in await _active_profile_rows(db, scope) if row.slot_key}
 
 
 async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
@@ -43,24 +35,3 @@ async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, lan
         display = row.context.replace("_", " ").capitalize()
         lines.append(f"- **{display}**: {row.content}")
     return "\n".join(lines)
-
-
-async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dict[str, str]) -> None:
-    """保存引导回答；空值跳过，明确遗忘由记忆维护入口处理。"""
-    writes = [
-        MemorySlotWrite(
-            kind="user_profile",
-            slot_key=key,
-            content=value,
-            context=CONTEXT_LABELS[key],
-            tags=_USER_PROFILE_TAGS,
-            source=MemorySource("onboarding"),
-        )
-        for key, value in profile.items()
-        if value
-    ]
-    await upsert_memory_slots(db, scope, writes)
-    if writes:
-        emit_ws_event(
-            db, user_id=scope.user_id, event_type="memory.changed", payload={"system_preset_id": scope.system_preset_id}
-        )

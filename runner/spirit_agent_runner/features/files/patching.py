@@ -162,7 +162,7 @@ def _apply_hunks(content: str, hunks: list[Hunk]) -> tuple[str, str | None]:
             new_content, error = _retry_windowed(content, search, replace, hunk.context_hint)
         if error is not None:
             label = f"'{hunk.context_hint}'" if hunk.context_hint else "(no hint)"
-            return content, f"hunk {label} not found — {error}" + format_no_match_hint(error, 0, search, content)
+            return content, f"hunk {label} not found — {error}" + format_no_match_hint(error, search, content)
         content = new_content
     return content, None
 

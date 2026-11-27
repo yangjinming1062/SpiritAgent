@@ -1,4 +1,4 @@
-import { deriveStagePlan, staticPresentationKey } from '@/features/creation/visuals'
+import { deriveStagePlan, reportLocalFrame, staticPresentationKey } from '@/features/creation/visuals'
 import type {
   $ambientLoopChoice,
   $failedStageMedia,
@@ -220,4 +220,32 @@ export function deriveVisualPresentationTarget(
     sceneKey: video ?? poster,
     clear
   }
+}
+
+export function reportStageFrame(
+  target: Pick<
+    ReturnType<typeof deriveFullPresentationTarget>,
+    'localSceneHash' | 'visualId' | 'visualVersion' | 'presentationEpoch'
+  >,
+  surface: FullPresentationInput['surface'],
+  kind: 'empty' | 'image' | 'video',
+  isCurrent: () => boolean
+): Promise<void> {
+  const frame =
+    kind === 'empty'
+      ? {}
+      : target.localSceneHash
+        ? { scene_hash: target.localSceneHash }
+        : target.visualId && target.visualVersion
+          ? { visual_id: target.visualId, visual_version: target.visualVersion }
+          : null
+
+  if (!frame) {
+    return Promise.resolve()
+  }
+
+  return reportLocalFrame(
+    { ...frame, presentation_epoch: target.presentationEpoch, receipt_kind: kind, target_surface: surface },
+    isCurrent
+  )
 }

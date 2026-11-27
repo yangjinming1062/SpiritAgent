@@ -2,6 +2,7 @@
 """SpiritAgent 跨平台客户端构建总入口（流程与产物说明见 scripts/README.md）。"""
 
 import argparse
+import json
 import os
 import platform
 import shutil
@@ -21,20 +22,15 @@ from build_helpers import (  # noqa: E402
 )
 
 
-def run_cmd(
-    cmd: list[str] | str,
-    cwd: Path | None = None,
-    shell: bool = False,
-    env: dict[str, str] | None = None,
-) -> None:
-    display_cmd = cmd if isinstance(cmd, str) else " ".join(cmd)
+def run_cmd(cmd: list[str], cwd: Path | None = None) -> None:
+    display_cmd = " ".join(cmd)
     print(f"==> [exec] {display_cmd} (in {cwd or '.'})")
-    if not shell and isinstance(cmd, list) and os.name == "nt":
+    if os.name == "nt":
         # Windows CreateProcess 不按 PATHEXT 解析；经 which 落到完整路径，否则 pnpm 等 .cmd shim 会 WinError 2。
         resolved = shutil.which(cmd[0])
         if resolved:
             cmd = [resolved, *cmd[1:]]
-    ret = subprocess.run(cmd, cwd=cwd, shell=shell, env=env, check=False)
+    ret = subprocess.run(cmd, cwd=cwd, check=False)
     if ret.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {ret.returncode}: {display_cmd}")
 
@@ -48,17 +44,6 @@ def check_required_tools(tools: list[str]) -> None:
 def build_runner(repo_root: Path) -> None:
     print("==> Building runner (uv build wheel → dist/spirit_agent-*.whl)")
     runner_dir = repo_root / "runner"
-    run_cmd(["uv", "sync", "--frozen", "--extra", "dev"], cwd=runner_dir)
-    # 项目规范不提交测试代码（RULES.md「代码验证规范」）；tests/ 仅在本地临时存在时才跑。
-    if (runner_dir / "tests").is_dir():
-        try:
-            run_cmd(["uv", "run", "--frozen", "--no-sync", "pytest", "tests/", "-q"], cwd=runner_dir)
-        except RuntimeError as exc:
-            raise RuntimeError(
-                "runner test suite failed — see pytest output. Fix the env (try `uv cache clean` + `uv sync`) before retrying the build.",
-            ) from exc
-    else:
-        print("==> No runner tests/ directory — skipping pytest (project ships no test code)")
     # setuptools 会复用 build/lib；使用独立源码副本，确保 wheel 仅包含当前包。
     with tempfile.TemporaryDirectory(prefix="spiritagent-runner-build-") as tmp:
         source = Path(tmp)
@@ -80,6 +65,17 @@ def build_desktop(repo_root: Path, target: str) -> None:
     # typecheck 已由 dist:* 的 build 链内含（两遍 tsc --noEmit），client 无独立测试脚本。
     pnpm_target = "dist:mac:dmg" if target == "mac" else "dist:win:nsis"
     run_cmd(["pnpm", "run", pnpm_target], cwd=client_dir)
+
+
+def find_installer_dmg(installer_dir: Path, version: str) -> Path:
+    tauri_dir = installer_dir / "src-tauri"
+    config = json.loads((tauri_dir / "tauri.conf.json").read_text(encoding="utf-8"))
+    bundle_dir = tauri_dir / "target" / "release" / "bundle" / "dmg"
+    prefix = f"{config['productName']}_{version}_"
+    matches = [p for p in bundle_dir.glob("*.dmg") if p.is_file() and p.name.startswith(prefix)]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one {prefix}*.dmg in {bundle_dir}, found {len(matches)}")
+    return matches[0]
 
 
 def main() -> int:
@@ -147,9 +143,8 @@ def main() -> int:
         return 1
     print(f"==> Desktop artifact: {desktop_artifact}")
 
-    stage_payload(repo_root, target=target)
+    stage_payload(repo_root)
     dest_desktop_path = repo_root / "installer" / "payload" / "client" / desktop_artifact.name
-    shutil.copy2(desktop_artifact, dest_desktop_path)
 
     if target == "mac" and args.sign_identity:
         print(f"==> Code-signing {desktop_artifact.name}")
@@ -179,7 +174,6 @@ def main() -> int:
                 ],
             )
             run_cmd(["xcrun", "stapler", "staple", str(desktop_artifact)])
-        shutil.copy2(desktop_artifact, dest_desktop_path)
     elif target == "win" and args.cert_thumbprint:
         print(f"==> Code-signing {desktop_artifact.name}")
         run_cmd(
@@ -198,7 +192,7 @@ def main() -> int:
                 str(desktop_artifact),
             ],
         )
-        shutil.copy2(desktop_artifact, dest_desktop_path)
+    shutil.copy2(desktop_artifact, dest_desktop_path)
 
     installer_dir = repo_root / "installer"
     print("==> Tauri build")
@@ -211,21 +205,10 @@ def main() -> int:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     if target == "mac":
-        bundle_dir = repo_root / "installer" / "src-tauri" / "target" / "release" / "bundle" / "dmg"
-        dmg_files = sorted(bundle_dir.glob(f"SpiritAgent-Setup_{args.version}_*.dmg"))
-        if not dmg_files:
-            dmg_files = sorted(bundle_dir.glob(f"SpiritAgent_{args.version}_*.dmg"))
-        if not dmg_files:
-            dmg_files = sorted(bundle_dir.glob("*.dmg"))
-        if not dmg_files:
-            print(f"error: Tauri build did not produce dmg in {bundle_dir}", file=sys.stderr)
-            return 1
-        final_dmg = dmg_files[0]
+        final_dmg = find_installer_dmg(installer_dir, args.version)
         final_name = f"SpiritAgent-Setup-{args.version}.dmg"
-        shutil.copy2(final_dmg, output_dir / final_dmg.name)
-        if final_dmg.name != final_name:
-            shutil.copy2(final_dmg, output_dir / final_name)
-        print(f"\n==> Final installer: {output_dir / final_name} (also {output_dir / final_dmg.name})")
+        shutil.copy2(final_dmg, output_dir / final_name)
+        print(f"\n==> Final installer: {output_dir / final_name}")
     else:
         target_dir = repo_root / "installer" / "src-tauri" / "target" / "release"
         exe_file = target_dir / "SpiritAgent-Setup.exe"

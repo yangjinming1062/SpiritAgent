@@ -28,14 +28,18 @@ fn main() {
 /// 单 exe 与 bundle 共用同一份载荷，缺任一项都会在安装阶段失败。
 fn require_payload(payload: &Path) {
     let non_empty_dir = |dir: &Path| {
-        std::fs::read_dir(dir)
-            .map(|mut entries| entries.next().is_some())
-            .unwrap_or(false)
+        dir.symlink_metadata().is_ok_and(|metadata| metadata.is_dir())
+            && std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
     };
 
     let mut missing: Vec<&str> = ["install.sh", "install.ps1"]
         .into_iter()
-        .filter(|name| !payload.join(name).is_file())
+        .filter(|name| {
+            !payload
+                .join(name)
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_file())
+        })
         .collect();
     for dir in ["runner", "client", "skills"] {
         if !non_empty_dir(&payload.join(dir)) {
@@ -45,7 +49,7 @@ fn require_payload(payload: &Path) {
 
     if !missing.is_empty() {
         panic!(
-            "installer payload incomplete at {}: missing or empty {:?}\n\
+            "installer payload incomplete at {}: missing, empty or non-regular {:?}\n\
              run `python scripts/build.py --version <version> --target <win|mac>` to stage a complete payload",
             payload.display(),
             missing

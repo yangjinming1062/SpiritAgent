@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
 from typing import Any
 
+from spirit_agent_runner.contracts.config import get_disabled_config_names
 from spirit_agent_runner.contracts.context import invocation_scope
 from spirit_agent_runner.contracts.tooling import ToolContext, ToolDefinition, ToolError
 from spirit_agent_runner.infrastructure.async_bridge import run_in_thread
@@ -64,23 +65,17 @@ class ToolCatalog:
         definition = self._tools.get(name)
         if definition is None:
             raise ToolError(f"Tool '{name}' not found locally.")
-        disabled = context.config.get("toolsets", {})
-        disabled = disabled.get("disabled", []) if isinstance(disabled, dict) else []
-        disabled_ids = (
-            {item.strip() for item in disabled if isinstance(item, str)} if isinstance(disabled, list) else set()
-        )
-        if definition.toolset_id in disabled_ids:
+        if definition.toolset_id in get_disabled_config_names(context.config, "toolsets"):
             raise ToolError(f"Tool '{name}' is disabled in the user's tool settings")
         return definition
 
     def schemas(self, context: ToolContext) -> list[dict[str, Any]]:
         schemas = []
-        for name in self._tools:
-            try:
-                definition = self.definition(name, context)
-            except ToolError:
-                continue
-            if self.availability.available(definition.check_fn, context.config_generation):
+        disabled = get_disabled_config_names(context.config, "toolsets")
+        for definition in self._tools.values():
+            if definition.toolset_id not in disabled and self.availability.available(
+                definition.check_fn, context.config_generation
+            ):
                 schema = definition.schema
                 schemas.append(schema() if callable(schema) else schema)
         return schemas

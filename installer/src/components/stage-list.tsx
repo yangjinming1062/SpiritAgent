@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef } from 'react'
-import { Check, X, ChevronRight, Loader2 } from 'lucide-react'
+import { Check, X, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { BootstrapStateModel, StageState } from '../store'
 
@@ -27,7 +27,6 @@ export function StageList({ bootstrap }: { bootstrap: BootstrapStateModel }): Re
                   'flex items-center gap-3 rounded-md px-3 py-1.5 text-xs transition-colors',
                   rec.state === 'running' && 'bg-accent-soft font-medium text-text-strong',
                   rec.state === 'succeeded' && 'text-text-strong',
-                  rec.state === 'skipped' && 'text-text-muted',
                   rec.state === 'failed' && 'bg-destructive/15 text-destructive',
                   !rec.state && 'text-text-faint'
                 )}
@@ -75,9 +74,6 @@ function StateIcon({ state }: { state: StageState | null }) {
   }
   if (state === 'succeeded') {
     return <Check size={13} className="text-success" />
-  }
-  if (state === 'skipped') {
-    return <ChevronRight size={13} className="text-text-muted" />
   }
   if (state === 'failed') {
     return <X size={13} className="text-destructive" />

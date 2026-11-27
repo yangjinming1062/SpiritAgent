@@ -1463,9 +1463,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                     context=review_payload,
                     media_path=candidate.media_path,
                 )
-            progress.video_evidence = await freeze_video_overview(
-                user_id, progress.video_evidence, retry=original_evidence is not None
-            )
+            progress.video_evidence = await freeze_video_overview(user_id, progress.video_evidence)
             if progress.video_evidence is not original_evidence:
                 review.evidence = merge_review_evidence(progress.identity_evidence, progress.video_evidence)
                 await _save_progress(user_id, job.id, progress, stage="review")
@@ -1984,9 +1982,7 @@ async def _evaluate_scene_candidate(user_id: int, job: VisualJob, progress: Visu
                     context=payload,
                     media_path=candidate.media_path,
                 )
-            progress.video_evidence = await freeze_video_overview(
-                user_id, progress.video_evidence, retry=original_evidence is not None
-            )
+            progress.video_evidence = await freeze_video_overview(user_id, progress.video_evidence)
             if progress.video_evidence is not original_evidence:
                 review.evidence = progress.video_evidence
                 await _save_progress(user_id, job.id, progress, stage="review")

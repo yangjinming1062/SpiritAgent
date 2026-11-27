@@ -85,7 +85,7 @@ from features.posts.store import (
     prepare_publication_in_session,
 )
 from features.scenes.queries import get_scene_state, scene_environment
-from features.visuals.queries import prompt_presentation_snapshot
+from features.visuals.queries import actual_presentation_snapshot
 
 logger = get_logger(__name__)
 _TASKS = TaskScope("posts.publication")
@@ -155,7 +155,7 @@ async def _post_capabilities(user_id: int) -> tuple[list[str], dict[str, list[in
 async def _creation_input(user_id: int, excerpt_ids: list[int]) -> dict:
     types, video_durations = await _post_capabilities(user_id)
     ctx = await load_post_prompt_context(user_id, publication=True)
-    presentation = await prompt_presentation_snapshot(user_id)
+    presentation = await actual_presentation_snapshot(user_id)
     async with SESSION_LOCAL() as db:
         excerpts = await selected_post_excerpts(db, user_id, excerpt_ids)
         config = await resolve_user_llm_config(db, user_id, AiTaskKey.posts)
@@ -511,7 +511,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     identity = None
     visual_plan = None
     if plan.depicts_self and row.video_job_id is None and not progress.get("image_chain"):
-        presentation = await prompt_presentation_snapshot(row.user_id)
+        presentation = await actual_presentation_snapshot(row.user_id)
         visual_plan = await load_self_visual_context(row.user_id, presentation)
     if visual_plan is not None:
         identity = visual_plan.context.identity

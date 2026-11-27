@@ -1,5 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
 
+/** 重叠条目以首个列表的当前记录为准。 */
+export function mergePagedRows<Row extends { id: string }>(leading: Row[], trailing: Row[]): Row[] {
+  const ids = new Set(leading.map(row => row.id))
+
+  return [...leading, ...trailing.filter(row => !ids.has(row.id))]
+}
+
 interface Page<Row> {
   rows: Row[]
   next_cursor: string | null

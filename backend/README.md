@@ -55,7 +55,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-启动执行 `alembic upgrade head`。[完整基线](alembic/versions/0001_baseline.py) 的编号为 `0001`。在隔离库执行 `alembic downgrade base` 会删除业务表及触发器函数，保留共享扩展。
+启动执行 `alembic upgrade head`。部署时沿 [数据库修订](alembic/versions/)应用结构与数据操作。`alembic downgrade base` 删除业务表及触发器函数，仅用于隔离库验证。
 
 ### 装配与启停
 
@@ -103,7 +103,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 实时语音的增量能力由 [providers/base.py](infrastructure/ai/providers/base.py) 的 `supports_streaming`、按模型判定的 `supports_streaming_config` 与 `provider_supports_streaming` 显式声明；`stream_transcribe_audio` 对声明真实增量的配置走持续识别，其余配置使用累计音频快照并在结束时优先复用最后一次结果；`stream_synthesize_speech` 只选择声明增量的配置，未声明时整段合成再解码。语音链在未指定固定音色时优先排列 Mimo、MiniMax；Mimo 内置音色经 chat/completions 输出 24 kHz PCM 分片。Qwen 适配器目前只支持 `qwen-audio-3.1-asr-flash-streaming` 与 `qwen-audio-3.0-asr-flash-streaming` 的任务式 WebSocket 协议，要求工作区专用 DashScope 端点，并把通话的 24 kHz PCM 按流转换为供应商请求的 16 kHz；`qwen3-asr-flash-realtime` 等其它实时协议不会误路由到此适配器。MiniMax TTS 通过官方 T2A WebSocket `task_start → task_continue → task_finish` 输出 24 kHz PCM 分片，并沿用已绑定的音色与演绎参数。整段适配器不会被伪装成流式实现，也不会在不可重放的音频输入中途切换供应商。
 
-[network.py](infrastructure/network.py) 按协议使用 `HTTP_PROXY`/`HTTPS_PROXY`，回退 `ALL_PROXY`。进程环境优先于文件。`NO_PROXY` 支持域名、IP、端口、通配与 CIDR，网段只匹配 URL 中的 IP，服务短名称须显式包含。媒体下载沿用这些配置，代理负责限制外链的实际出站目标。DDGS 使用 `DDGS_PROXY`。
+[network.py](infrastructure/network.py) 处理服务连接与媒体下载的代理路由。进程环境优先于文件，`NO_PROXY` 的 CIDR 只匹配 URL 中的 IP，内部服务短名称须显式包含。代理负责限制经代理发出的外链请求。
 
 ## 部署与排障
 
@@ -127,11 +127,11 @@ Compose 与后端共用数据库凭据，默认连 `postgres:5432`；显式数�
 
 默认发布 HTTP/WS `10620` 和 PostgreSQL `15432`，端口映射见 Compose。桌面激活地址为 `http://<服务器地址>:10620`，管理端为 `/admin/`；实际访问仍取决于防火墙与网络。
 
-管理后台的 `public_base_url` 用于激活码地址、手机入口及供应商读取视频附件，须对实际访问方可达。反向代理透传 WS 升级及 Origin。调整 Compose 后重新 `up -d` 应用；移除旧服务时核对孤立容器，保留数据卷。
+管理后台的 `public_base_url` 用于激活、手机入口与供应商下载附件，须对这些访问方可达。反向代理透传 WS 升级及 Origin。
 
 反向代理部署时，`FORWARDED_ALLOW_IPS` 只填写实际受信代理的地址。入口代理覆盖客户端传入的 `X-Forwarded-For` 并转发真实来源，供认证限流使用。
 
-更新后从实际对外入口确认 `/openapi.json`、`/docs`、`/redoc` 和 `/docs/oauth2-redirect` 均返回 404，`/health` 返回 200。若代理缓存过文档响应，清理对应缓存后复验。
+从实际对外入口验证 `/health` 返回 200，`/openapi.json`、`/docs`、`/redoc` 和 `/docs/oauth2-redirect` 返回 404。
 
 ### 透明素材模型
 

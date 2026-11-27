@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""客户端构建管线跨平台共享助手：版本同步、payload 暂存、Tauri 配置补丁与桌面产物定位。"""
+"""客户端构建的版本同步、载荷暂存和桌面产物定位。"""
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -33,50 +32,10 @@ def set_version(version: str, repo_root: Path | None = None) -> None:
         data["version"] = version
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
-    cargo_toml = root / "installer" / "src-tauri" / "Cargo.toml"
-    if cargo_toml.is_file():
-        text = cargo_toml.read_text(encoding="utf-8")
+    for p in (root / "installer" / "src-tauri" / "Cargo.toml", root / "runner" / "pyproject.toml"):
+        text = p.read_text(encoding="utf-8")
         text = re.sub(r'^version = "[^"]+"', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
-        cargo_toml.write_text(text, encoding="utf-8", newline="\n")
-    else:
-        raise FileNotFoundError(f"Missing Cargo.toml: {cargo_toml}")
-
-    runner_pyproject = root / "runner" / "pyproject.toml"
-    if runner_pyproject.is_file():
-        text = runner_pyproject.read_text(encoding="utf-8")
-        text = re.sub(r'^version = "[^"]+"', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
-        runner_pyproject.write_text(text, encoding="utf-8", newline="\n")
-    else:
-        raise FileNotFoundError(f"Missing runner/pyproject.toml: {runner_pyproject}")
-
-
-def _link_or_copy(src: Path, dst: Path, is_dir: bool = False) -> None:
-    """跨平台创建软链/硬链/Junction，失败时回退为拷贝。"""
-    if dst.is_symlink() or dst.is_file():
-        dst.unlink(missing_ok=True)
-    elif dst.is_dir():
-        shutil.rmtree(dst)
-
-    if sys.platform == "win32":
-        if is_dir:
-            cmd = f'mklink /J "{dst}" "{src}"'
-            ret = subprocess.run(["cmd", "/c", cmd], capture_output=True, text=True, check=False)
-            if ret.returncode != 0:
-                shutil.copytree(src, dst)
-        else:
-            cmd = f'mklink /H "{dst}" "{src}"'
-            ret = subprocess.run(["cmd", "/c", cmd], capture_output=True, text=True, check=False)
-            if ret.returncode != 0:
-                shutil.copy2(src, dst)
-    else:
-        try:
-            rel_target = os.path.relpath(src, dst.parent)
-            dst.symlink_to(rel_target, target_is_directory=is_dir)
-        except OSError:
-            if is_dir:
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
+        p.write_text(text, encoding="utf-8", newline="\n")
 
 
 def _read_runner_pyproject_version(root: Path) -> str:
@@ -103,13 +62,15 @@ def _select_runner_wheel(dist_dir: Path, version: str) -> Path:
     return exact[0]
 
 
-def stage_payload(repo_root: Path | None = None, target: str | None = None) -> None:
+def stage_payload(repo_root: Path | None = None) -> None:
     """暂存 payload 至 installer/payload/（Runner wheel、技能与安装脚本）。"""
     root = repo_root or get_repo_root()
     print("==> [build_helpers] Staging payload in installer/payload/")
 
-    payload_runner = root / "installer" / "payload" / "runner"
-    payload_client = root / "installer" / "payload" / "client"
+    installer = root / "installer"
+    payload = installer / "payload"
+    payload_runner = payload / "runner"
+    payload_client = payload / "client"
 
     if payload_runner.exists():
         shutil.rmtree(payload_runner)
@@ -136,18 +97,18 @@ def stage_payload(repo_root: Path | None = None, target: str | None = None) -> N
         cwd=root,
     )
 
-    skills_src = root / "installer" / "skills"
-    skills_dst = root / "installer" / "payload" / "skills"
-    if skills_src.exists():
-        _link_or_copy(skills_src, skills_dst, is_dir=True)
+    # 内嵌 ZIP 只收录普通文件和目录。
+    skills_dst = payload / "skills"
+    if skills_dst.is_symlink() or skills_dst.is_file():
+        skills_dst.unlink()
+    elif skills_dst.is_dir():
+        shutil.rmtree(skills_dst)
+    shutil.copytree(installer / "skills", skills_dst)
 
-    install_sh = root / "installer" / "install.sh"
-    if install_sh.is_file():
-        _link_or_copy(install_sh, root / "installer" / "payload" / "install.sh", is_dir=False)
-
-    install_ps1 = root / "installer" / "install.ps1"
-    if install_ps1.is_file():
-        _link_or_copy(install_ps1, root / "installer" / "payload" / "install.ps1", is_dir=False)
+    for name in ("install.sh", "install.ps1"):
+        target = payload / name
+        target.unlink(missing_ok=True)
+        shutil.copy2(installer / name, target)
 
     wheel_size = (payload_runner / wheel.name).stat().st_size
     print(f"    runner wheel: {wheel.name} ({wheel_size} bytes)")

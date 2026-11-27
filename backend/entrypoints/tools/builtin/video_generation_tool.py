@@ -14,7 +14,7 @@ from features.media.prompts import VIDEO_REFERENCE_GUIDANCE
 from features.media.queries import chat_video_by_media_id, get_job
 from features.media.turn_state import MediaArtifact, MediaTurnState
 from features.media.video_jobs import enqueue_video_job, ensure_video_capability
-from features.visuals.queries import prompt_presentation_snapshot
+from features.visuals.queries import actual_presentation_snapshot
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.tasks import AiTaskKey
@@ -77,7 +77,7 @@ async def _submit_video(
     references = (reference_image,) if reference_image else ()
     reference_guidance = ""
     if subject == "self":
-        presentation = await prompt_presentation_snapshot(turn.user_id)
+        presentation = await actual_presentation_snapshot(turn.user_id)
         visual_plan = await load_self_visual_context(turn.user_id, presentation, outfit_override=outfit_override)
         inputs = await build_self_video_inputs(visual_plan, reference_image)
         reference_guidance, references = inputs.reference_guidance, inputs.references

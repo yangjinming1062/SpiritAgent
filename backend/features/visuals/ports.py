@@ -20,13 +20,13 @@ class VisualPlanningContext(BaseModel):
 
 PlanningReader = Callable[[int, ActorClipSource | CinematicSource], Awaitable[VisualPlanningContext]]
 ReadyHandler = Callable[[int], None]
-SceneExistenceReader = Callable[[AsyncSession, int, int], Awaitable[bool]]
+SceneExistenceReader = Callable[[AsyncSession, int, set[int]], Awaitable[set[int]]]
 StageSceneReader = Callable[[AsyncSession, int, str], Awaitable[SceneMediaRef | None]]
 _planning_reader: PlanningReader | None = None
 _ready_handler: ReadyHandler | None = None
 _preparation_handler: ReadyHandler | None = None
 _recovery_handler: ReadyHandler | None = None
-_scene_exists: SceneExistenceReader | None = None
+_existing_scene_ids: SceneExistenceReader | None = None
 _stage_scene_reader: StageSceneReader | None = None
 
 
@@ -36,15 +36,16 @@ def configure_visual_hooks(
     ready_handler: ReadyHandler,
     preparation_handler: ReadyHandler,
     recovery_handler: ReadyHandler,
-    scene_exists: SceneExistenceReader,
+    existing_scene_ids: SceneExistenceReader,
     stage_scene_reader: StageSceneReader,
 ) -> None:
-    global _planning_reader, _ready_handler, _preparation_handler, _recovery_handler, _scene_exists, _stage_scene_reader
+    global _planning_reader, _ready_handler, _preparation_handler, _recovery_handler, _existing_scene_ids
+    global _stage_scene_reader
     _planning_reader = planning_reader
     _ready_handler = ready_handler
     _preparation_handler = preparation_handler
     _recovery_handler = recovery_handler
-    _scene_exists = scene_exists
+    _existing_scene_ids = existing_scene_ids
     _stage_scene_reader = stage_scene_reader
 
 
@@ -71,12 +72,16 @@ def request_stage_recovery(user_id: int) -> None:
         _recovery_handler(user_id)
 
 
-async def scene_reference_exists(db: AsyncSession, user_id: int, scene_id: int) -> bool:
+async def existing_scene_references(db: AsyncSession, user_id: int, scene_ids: set[int]) -> set[int]:
     """未装配时按仍存在处理，避免读取路径误删有效引用。"""
 
-    if _scene_exists is None:
-        return True
-    return await _scene_exists(db, user_id, scene_id)
+    if _existing_scene_ids is None or not scene_ids:
+        return scene_ids
+    return await _existing_scene_ids(db, user_id, scene_ids)
+
+
+async def scene_reference_exists(db: AsyncSession, user_id: int, scene_id: int) -> bool:
+    return scene_id in await existing_scene_references(db, user_id, {scene_id})
 
 
 async def read_stage_scene(db: AsyncSession, user_id: int, title: str) -> SceneMediaRef | None:

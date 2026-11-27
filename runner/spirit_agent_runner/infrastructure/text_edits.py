@@ -1,6 +1,7 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from difflib import SequenceMatcher
+from itertools import accumulate
 
 UNICODE_MAP = {
     "\u201c": '"',
@@ -36,8 +37,13 @@ def fuzzy_find_and_replace(
     if old_string == new_string:
         return content, 0, "old_string and new_string are identical"
 
-    strategies: list[tuple[str, Callable]] = [
-        ("exact", _strategy_exact),
+    if match_count := content.count(old_string):
+        if match_count > 1 and not replace_all:
+            return _ambiguous_match(content, match_count)
+        effective_new = _maybe_unescape_new_string(new_string, (old_string,))
+        return content.replace(old_string, effective_new), match_count, None
+
+    strategies: list[tuple[str, Callable[[str, str], list[tuple[int, int]]]]] = [
         ("line_trimmed", _strategy_line_trimmed),
         ("whitespace_normalized", _strategy_whitespace_normalized),
         ("indentation_flexible", _strategy_indentation_flexible),
@@ -52,29 +58,27 @@ def fuzzy_find_and_replace(
 
         if matches:
             if len(matches) > 1 and not replace_all:
-                return (
-                    content,
-                    0,
-                    f"Found {len(matches)} matches for old_string. Provide more context to make it unique, or use replace_all=True.",
-                )
+                return _ambiguous_match(content, len(matches))
 
-            # 转义漂移防护：非 exact 命中时若 new 含 \'/\" 而匹配区没有，按序列化漂移拒绝写入。
-            if strategy_name != "exact":
-                drift_err = _detect_escape_drift(content, matches, old_string, new_string)
-                if drift_err:
-                    return content, 0, drift_err
+            if drift_err := _detect_escape_drift(content, matches, old_string, new_string):
+                return content, 0, drift_err
 
             # escape_normalized 命中时 new 也须一并反转义，否则字面 \n 会写进文件。
             if strategy_name == "escape_normalized":
                 old_string, new_string = _unescape_controls(old_string), _unescape_controls(new_string)
-            # 非 exact 命中时按 old_string 把 new_string 缩进对齐文件。
-            effective_new = _maybe_unescape_new_string(new_string, content, matches)
-            new_content = _apply_replacements(
-                content, matches, effective_new, old_string=old_string if strategy_name != "exact" else None
-            )
+            effective_new = _maybe_unescape_new_string(new_string, (content[start:end] for start, end in matches))
+            new_content = _apply_replacements(content, matches, effective_new, old_string)
             return new_content, len(matches), None
 
     return content, 0, "Could not find a match for old_string in the file"
+
+
+def _ambiguous_match(content: str, count: int) -> tuple[str, int, str]:
+    return (
+        content,
+        0,
+        f"Found {count} matches for old_string. Provide more context to make it unique, or use replace_all=True.",
+    )
 
 
 def _detect_escape_drift(content: str, matches: list[tuple[int, int]], old_string: str, new_string: str) -> str | None:
@@ -147,12 +151,12 @@ def _reindent_replacement(file_region: str, old_string: str, new_string: str) ->
     return "\n".join(out_lines)
 
 
-def _maybe_unescape_new_string(new_string: str, content: str, matches: list[tuple[int, int]]) -> str:
+def _maybe_unescape_new_string(new_string: str, regions: Iterable[str]) -> str:
     """匹配区域含真实 tab/CR 时才反转义 ``\\t``/``\\r``；``\\n`` 故意不反转义。"""
     if "\\t" not in new_string and "\\r" not in new_string:
         return new_string
 
-    matched_regions = "".join(content[start:end] for start, end in matches)
+    matched_regions = "".join(regions)
     out = new_string
     if "\\t" in out and "\t" in matched_regions:
         out = out.replace("\\t", "\t")
@@ -161,19 +165,13 @@ def _maybe_unescape_new_string(new_string: str, content: str, matches: list[tupl
     return out
 
 
-def _apply_replacements(
-    content: str, matches: list[tuple[int, int]], new_string: str, old_string: str | None = None
-) -> str:
+def _apply_replacements(content: str, matches: list[tuple[int, int]], new_string: str, old_string: str) -> str:
     """在给定位置应用替换；非精确匹配时按 old_string 重新缩进 new_string。"""
     sorted_matches = sorted(matches, key=lambda x: x[0], reverse=True)
 
     result = content
     for start, end in sorted_matches:
-        if old_string is not None:
-            file_region = content[start:end]
-            adjusted = _reindent_replacement(file_region, old_string, new_string)
-        else:
-            adjusted = new_string
+        adjusted = _reindent_replacement(content[start:end], old_string, new_string)
         result = result[:start] + adjusted + result[end:]
 
     return result
@@ -192,12 +190,10 @@ def _strategy_exact(content: str, pattern: str) -> list[tuple[int, int]]:
 def _strategy_line_trimmed(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 2：逐行 trim 首尾空白后再匹配。"""
     pattern_lines = [line.strip() for line in pattern.split("\n")]
-    pattern_normalized = "\n".join(pattern_lines)
-
     content_lines = content.split("\n")
     content_normalized_lines = [line.strip() for line in content_lines]
 
-    return _find_normalized_matches(content, content_lines, content_normalized_lines, pattern, pattern_normalized)
+    return _find_normalized_matches(content_lines, content_normalized_lines, pattern_lines)
 
 
 def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
@@ -223,7 +219,7 @@ def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int
     content_stripped_lines = [line.lstrip() for line in content_lines]
     pattern_lines = [line.lstrip() for line in pattern.split("\n")]
 
-    return _find_normalized_matches(content, content_lines, content_stripped_lines, pattern, "\n".join(pattern_lines))
+    return _find_normalized_matches(content_lines, content_stripped_lines, pattern_lines)
 
 
 def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
@@ -239,33 +235,25 @@ def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, i
 def _strategy_trimmed_boundary(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 6：仅 trim 首行与末行的空白，处理边界空白差异。"""
     pattern_lines = pattern.split("\n")
-    if not pattern_lines:
-        return []
-
     pattern_lines[0] = pattern_lines[0].strip()
     if len(pattern_lines) > 1:
         pattern_lines[-1] = pattern_lines[-1].strip()
 
-    modified_pattern = "\n".join(pattern_lines)
-
     content_lines = content.split("\n")
 
-    matches = []
+    line_starts = []
     pattern_line_count = len(pattern_lines)
 
     for i in range(len(content_lines) - pattern_line_count + 1):
-        block_lines = content_lines[i : i + pattern_line_count]
-
-        check_lines = block_lines.copy()
+        check_lines = content_lines[i : i + pattern_line_count]
         check_lines[0] = check_lines[0].strip()
         if len(check_lines) > 1:
             check_lines[-1] = check_lines[-1].strip()
 
-        if "\n".join(check_lines) == modified_pattern:
-            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + pattern_line_count, len(content))
-            matches.append((start_pos, end_pos))
+        if check_lines == pattern_lines:
+            line_starts.append(i)
 
-    return matches
+    return _map_line_matches(content_lines, line_starts, pattern_line_count)
 
 
 def _build_orig_to_norm_map(original: str) -> list[int]:
@@ -347,54 +335,44 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
         ):
             potential_matches.append(i)
 
-    matches = []
+    line_starts = []
     candidate_count = len(potential_matches)
 
     # 单候选阈值 0.50，多候选 0.70，避免误命中无关块。
     threshold = 0.50 if candidate_count == 1 else 0.70
+    pattern_middle = "\n".join(pattern_lines[1:-1])
 
     for i in potential_matches:
         if pattern_line_count <= 2:
             similarity = 1.0
         else:
             content_middle = "\n".join(norm_content_lines[i + 1 : i + pattern_line_count - 1])
-            pattern_middle = "\n".join(pattern_lines[1:-1])
             similarity = SequenceMatcher(None, content_middle, pattern_middle).ratio()
 
         if similarity >= threshold:
-            start_pos, end_pos = _calculate_line_positions(orig_content_lines, i, i + pattern_line_count, len(content))
-            matches.append((start_pos, end_pos))
+            line_starts.append(i)
 
-    return matches
+    return _map_line_matches(orig_content_lines, line_starts, pattern_line_count)
 
 
-def _calculate_line_positions(
-    content_lines: list[str], start_line: int, end_line: int, content_length: int
-) -> tuple[int, int]:
-    """根据行号区间计算原字符串的字符起止位置。"""
-    start_pos = sum(len(line) + 1 for line in content_lines[:start_line])
-    end_pos = sum(len(line) + 1 for line in content_lines[:end_line]) - 1
-    end_pos = min(content_length, end_pos)
-    return start_pos, end_pos
+def _map_line_matches(content_lines: list[str], line_starts: list[int], line_count: int) -> list[tuple[int, int]]:
+    if not line_starts:
+        return []
+    offsets = list(accumulate((len(line) + 1 for line in content_lines), initial=0))
+    return [(offsets[start], offsets[start + line_count] - 1) for start in line_starts]
 
 
 def _find_normalized_matches(
-    content: str, content_lines: list[str], content_normalized_lines: list[str], pattern: str, pattern_normalized: str
+    content_lines: list[str], normalized_lines: list[str], pattern_lines: list[str]
 ) -> list[tuple[int, int]]:
     """在归一化内容中查找匹配，再映射回原内容坐标。"""
-    pattern_norm_lines = pattern_normalized.split("\n")
-    num_pattern_lines = len(pattern_norm_lines)
-
-    matches = []
-
-    for i in range(len(content_normalized_lines) - num_pattern_lines + 1):
-        block = "\n".join(content_normalized_lines[i : i + num_pattern_lines])
-
-        if block == pattern_normalized:
-            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + num_pattern_lines, len(content))
-            matches.append((start_pos, end_pos))
-
-    return matches
+    line_count = len(pattern_lines)
+    line_starts = [
+        i
+        for i in range(len(normalized_lines) - line_count + 1)
+        if normalized_lines[i : i + line_count] == pattern_lines
+    ]
+    return _map_line_matches(content_lines, line_starts, line_count)
 
 
 def _map_whitespace_positions(original: str, normalized_matches: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -464,11 +442,8 @@ def find_closest_lines(old_string: str, content: str, context_lines: int = 2, ma
     return "\n---\n".join(parts)
 
 
-def format_no_match_hint(error: str | None, match_count: int, old_string: str, content: str) -> str:
-    """仅对真正未命中返回「是不是想找……」；多匹配/漂移等 0 命中不误导。"""
-    if match_count != 0:
-        return ""
-    if not error or not error.startswith("Could not find"):
+def format_no_match_hint(error: str, old_string: str, content: str) -> str:
+    if not error.startswith("Could not find"):
         return ""
     hint = find_closest_lines(old_string, content)
     if not hint:

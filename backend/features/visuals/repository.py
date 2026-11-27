@@ -144,7 +144,7 @@ def presented_frame(
         formal is not None
         and formal.presentation_epoch == presence.revision
         and visual_surface_accepts(presence.surface, formal.asset_kind)
-        and formal.target_surface in (None, presence.surface)
+        and formal.target_surface == presence.surface
     ):
         return formal
     return None

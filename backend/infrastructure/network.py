@@ -32,7 +32,7 @@ _METADATA_IPS = frozenset({ipaddress.ip_address("100.100.100.200"), ipaddress.ip
 _NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
 _URL_HOST = re.compile(rb"[A-Za-z0-9._:-]+")
 _SOURCE_URL_HOST = re.compile(r"^(https?://)([^:/?#@\[\]]+)(?=[:/?#]|$)", re.IGNORECASE)
-_LEGACY_IPV4_HOST = re.compile(r"(?:[0-9]+|0x[0-9a-f]*)(?:\.(?:[0-9]+|0x[0-9a-f]*))*")
+_IPV4_LIKE_HOST = re.compile(r"(?:[0-9]+|0x[0-9a-f]*)(?:\.(?:[0-9]+|0x[0-9a-f]*))*")
 _DNS_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 _CONNECT_TIMEOUT = 10.0
 _MAX_REDIRECTS = 5
@@ -66,7 +66,7 @@ def _check_host(host: str, *, public_only: bool) -> _IPAddress | None:
     try:
         address = ipaddress.ip_address(normalized)
     except ValueError:
-        if _LEGACY_IPV4_HOST.fullmatch(normalized):
+        if _IPV4_LIKE_HOST.fullmatch(normalized):
             raise ValueError("IPv4 addresses must use canonical dotted decimal notation") from None
         return None
     _check_ip(address, public_only=public_only)

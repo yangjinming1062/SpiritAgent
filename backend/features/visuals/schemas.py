@@ -1011,7 +1011,7 @@ class VisualPlayCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     play_id: str
-    target_surface: PlayableSurface | None = None
+    target_surface: PlayableSurface
     status: Literal["queued"] = "queued"
     asset_kind: VisualAssetKind
     visual_id: ResourceId
@@ -1184,7 +1184,7 @@ class VisualClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: str = Field(min_length=1, max_length=80)
-    target_surface: PlayableSurface | None = None
+    target_surface: PlayableSurface
 
 
 class VisualReceiptRequest(BaseModel):

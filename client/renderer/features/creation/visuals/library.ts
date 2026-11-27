@@ -39,11 +39,15 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   }
 
   if (query) {
-    if (query.section !== visualsState.refreshQuery.section) {
+    if (query.section !== visualsState.refreshQuery?.section) {
       $visualsError.set(null)
     }
 
     visualsState.refreshQuery = query
+  }
+
+  if (!visualsState.refreshQuery) {
+    return
   }
 
   visualsState.refreshQueued = true
@@ -57,7 +61,7 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   $visualsLoading.set(true)
 
   const request = (async (): Promise<void> => {
-    while (visualsState.refreshQueued && current()) {
+    while (visualsState.refreshQueued && current() && visualsState.refreshQuery) {
       const pending = visualsState.refreshQuery
       visualsState.refreshQueued = false
 
@@ -381,7 +385,7 @@ export function handleVisualEvent(
 
 function resetVisualsForAccount(): void {
   visualsState.epoch += 1
-  visualsState.refreshQuery = {}
+  visualsState.refreshQuery = null
   visualsState.refreshQueued = false
   visualsState.refreshRequest = null
   visualsState.detailRequest = null

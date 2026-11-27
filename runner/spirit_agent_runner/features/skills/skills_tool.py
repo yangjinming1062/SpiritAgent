@@ -3,11 +3,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from spirit_agent_runner.contracts.config import get_disabled_config_names, load_config
 from spirit_agent_runner.contracts.interrupt import is_interrupted
 from spirit_agent_runner.contracts.tooling import ToolDefinition
 from spirit_agent_runner.features.skills.helpers import (
     find_skill_candidates,
-    get_disabled_skill_names,
     get_skill_description,
     get_spiritagent_metadata,
     iter_skill_files,
@@ -39,9 +39,8 @@ def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
     return _HOST_PLATFORM in {_PLATFORM_ALIASES.get(str(v).lower(), str(v).lower()) for v in values}
 
 
-def _get_category_from_path(skill_path: Path) -> str | None:
-    dirs = visible_skill_roots()
-    for d in dirs:
+def _get_category_from_path(skill_path: Path, roots: list[Path]) -> str | None:
+    for d in roots:
         try:
             if len(parts := skill_path.relative_to(d).parts) >= 3:
                 return parts[0]
@@ -141,11 +140,13 @@ def _is_disabled(name: str, category: str | None, disabled: set[str]) -> bool:
 def _find_all_skills() -> list[dict[str, Any]]:
     skills = []
     seen_names = set()
-    disabled = get_disabled_skill_names()
-    for d in visible_skill_roots():
+    disabled = get_disabled_config_names(load_config(), "skills")
+    roots = visible_skill_roots()
+    for d in roots:
         for skill_md in iter_skill_files(d):
             try:
-                frontmatter, body = parse_frontmatter(skill_md.read_text(encoding="utf-8")[:4000])
+                with skill_md.open(encoding="utf-8") as file:
+                    frontmatter, body = parse_frontmatter(file.read(4000))
                 if not skill_matches_platform(frontmatter):
                     continue
                 raw_name = frontmatter.get("name", skill_md.parent.name)
@@ -156,7 +157,7 @@ def _find_all_skills() -> list[dict[str, Any]]:
                     )
                     continue
                 name = raw_name[:MAX_NAME_LENGTH]
-                category = _get_category_from_path(skill_md)
+                category = _get_category_from_path(skill_md, roots)
                 if name in seen_names or _is_disabled(name, category, disabled):
                     continue
 
@@ -246,7 +247,8 @@ def skill_view(name: str, file_path: str | None = None) -> dict[str, Any]:
             return {"success": False, "error": f"Skill '{name}' is not supported on this platform."}
 
         resolved_name = parsed_frontmatter.get("name", skill_dir.name)
-        if _is_disabled(resolved_name, _get_category_from_path(skill_md), get_disabled_skill_names()):
+        category = _get_category_from_path(skill_md, visible_skill_roots())
+        if _is_disabled(resolved_name, category, get_disabled_config_names(load_config(), "skills")):
             return {"success": False, "error": f"Skill '{resolved_name}' is disabled in the user's skill settings."}
 
         if file_path:

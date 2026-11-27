@@ -22,10 +22,13 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
+    literal_column,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql.elements import ColumnElement
 
 
 class VisualItem(LibraryMaterial, ModelBase, TimestampMixin):
@@ -199,6 +202,27 @@ class VisualVersion(LibraryMaterial, ModelBase):
     input_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
+# 固定的 JSON 路径让预编译舞台查询也能使用表达式索引。
+_STAGE_IDENTITY_HASH = VisualVersion.snapshot_json.op("#>>", return_type=Text)(
+    literal_column("'{source,identity_hash}'::text[]")
+)
+_STAGE_OUTFIT_HASH = VisualVersion.snapshot_json.op("#>>", return_type=Text)(
+    literal_column("'{source,outfit,content_hash}'::text[]")
+)
+Index(
+    "ix_visual_versions_stage_character",
+    VisualVersion.user_id,
+    _STAGE_IDENTITY_HASH,
+    _STAGE_OUTFIT_HASH,
+    VisualVersion.id,
+    postgresql_where=and_(_STAGE_IDENTITY_HASH.is_not(None), _STAGE_OUTFIT_HASH.is_not(None)),
+)
+
+
+def stage_version_conditions(user_id: int, identity_hash: str, outfit_hash: str) -> tuple[ColumnElement[bool], ...]:
+    return (VisualVersion.user_id == user_id, identity_hash == _STAGE_IDENTITY_HASH, outfit_hash == _STAGE_OUTFIT_HASH)
 
 
 class VisualVersionAsset(ModelBase):

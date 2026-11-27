@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass, field
 
-from features.visuals.queries import prompt_presentation_snapshot, visual_play_catalog
+from features.visuals.queries import actual_presentation_snapshot, visual_play_catalog
 from features.visuals.schemas import ActualPresentationSnapshot, VisualPlayOption
 from infrastructure.text import resolve_language
 
@@ -60,7 +60,7 @@ class ActionViewSnapshot:
 async def build_action_view(user_id: int, *, trigger: str = "chat") -> ActionViewSnapshot:
     """读取实际呈现快照与可播影像；空库也可用制作工具开始第一次组合。"""
 
-    presentation_snapshot = await prompt_presentation_snapshot(user_id)
+    presentation_snapshot = await actual_presentation_snapshot(user_id)
     items = tuple(await visual_play_catalog(user_id, trigger=trigger))
     names = set(_ALWAYS_AVAILABLE)
     if items:

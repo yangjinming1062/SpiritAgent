@@ -20,7 +20,6 @@ pub struct Manifest {
 pub enum StageState {
     Running,
     Succeeded,
-    Skipped,
     Failed,
 }
 
@@ -44,8 +43,6 @@ pub enum BootstrapEvent {
         state: StageState,
         #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
     },
     /// 脚本 stdout/stderr 原始行。
     Log { line: String, stream: LogStream },

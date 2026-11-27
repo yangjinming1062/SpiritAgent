@@ -26,7 +26,7 @@ export const visualsState = {
   epoch: 0,
   jobSummaryRequest: 0,
   presentationRequest: 0,
-  refreshQuery: {} as VisualsListQuery,
+  refreshQuery: null as VisualsListQuery | null,
   refreshQueued: false,
   refreshRequest: null as Promise<void> | null
 }

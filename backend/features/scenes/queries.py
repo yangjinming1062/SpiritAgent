@@ -5,7 +5,8 @@ from typing import Any
 
 from infrastructure.assets import asset_store
 from infrastructure.domain_locks import lock_domain
-from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
+from sqlalchemy import BigInteger, ColumnElement, Select, and_, any_, case, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -30,15 +31,17 @@ async def get_scene(db: AsyncSession, user_id: int, scene_id: int) -> CompanionS
     )
 
 
-async def scene_exists(db: AsyncSession, user_id: int, scene_id: int) -> bool:
-    """判定环境素材是否仍在库中；呈现侧据此作废指向已删除环境的冻结引用。"""
-
-    return (
-        await db.scalar(
-            select(CompanionScene.id).where(CompanionScene.id == scene_id, CompanionScene.user_id == user_id)
+async def existing_scene_ids(db: AsyncSession, user_id: int, scene_ids: set[int]) -> set[int]:
+    """批量核对账户可见的冻结环境引用。"""
+    if not scene_ids:
+        return set()
+    rows = await db.scalars(
+        select(CompanionScene.id).where(
+            CompanionScene.user_id == user_id,
+            CompanionScene.id == any_(literal(sorted(scene_ids), type_=ARRAY(BigInteger))),
         )
-        is not None
     )
+    return set(rows)
 
 
 async def account_has_pending_scene_task(db: AsyncSession, user_id: int) -> bool:

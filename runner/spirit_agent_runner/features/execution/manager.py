@@ -114,18 +114,19 @@ class ExecutionManager:
             logger.warning("Environment cleanup failed", exc_info=True)
 
     def cleanup_inactive(self, lifetime_seconds: int) -> None:
-        with self._environment_lock:
-            environment = self._environment
-            if environment is None:
-                return
-            now = time.monotonic()
-            if environment.in_use or self.processes.has_active_processes():
-                self._last_activity = now
-                return
-            if now - self._last_activity <= lifetime_seconds:
-                return
-            self._environment = None
-        self._stop_environment(environment)
+        with self._creation_lock:
+            with self._environment_lock:
+                environment = self._environment
+                if environment is None:
+                    return
+                now = time.monotonic()
+                if environment.in_use or self.processes.has_active_processes():
+                    self._last_activity = now
+                    return
+                if now - self._last_activity <= lifetime_seconds:
+                    return
+                self._environment = None
+            self._stop_environment(environment)
 
     def _cleanup_worker(self) -> None:
         while not self._stop_event.is_set():

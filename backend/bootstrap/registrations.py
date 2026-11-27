@@ -47,7 +47,7 @@ from features.media.video_jobs import video_review_view
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.posts.ports import set_post_published_handler
 from features.posts.publication import publication_continue_requested, resume_post_media
-from features.scenes.queries import scene_exists
+from features.scenes.queries import existing_scene_ids
 from features.scenes.reviews import manually_review_scene, run_manual_scene_job, scene_review_view
 from features.scenes.service import schedule_initial_scene
 from features.visuals.import_reviews import import_review_view, manually_review_import
@@ -225,7 +225,7 @@ def register_all() -> None:
         ready_handler=schedule_presentation_refresh,
         preparation_handler=schedule_base_motion_preparation,
         recovery_handler=schedule_presentation_refresh,
-        scene_exists=scene_exists,
+        existing_scene_ids=existing_scene_ids,
         stage_scene_reader=read_ready_stage_scene,
     )
     set_appearance_readiness_reader(appearance_readiness)

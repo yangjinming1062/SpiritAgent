@@ -30,9 +30,7 @@ Tauri 安装器负责首次安装、覆盖安装和环境修复。macOS 安装�
 
 仅 macOS 在未指定 `--repair`／`--reinstall` 时尝试快路径：完成标记、桌面二进制和 Runner 包内 `python -I -m spirit_agent_runner --check` 均有效才启动并退出。探针超时或启动失败回安装 UI；Windows 从桌面快捷方式启动。
 
-升级时退出桌面应用，使用目标版本的完整安装器覆盖安装；macOS 已安装环境用 `--reinstall` 跳过快路径。
-
-阶段真源为两端脚本 manifest：准备 → Python → Runner → 桌面包 → 技能 → 完成。每阶段是独立进程，不能依赖前阶段 shell 变量；Runner 使用 uv 管理 Python 和独立 venv，优先已有 3.13、再 3.14，否则安装 3.13。仅 finalize 写完成标记。
+两端脚本 manifest 定义准备、Python、Runner、桌面包、技能和完成阶段。每阶段使用独立进程。Runner 使用 uv 管理 Python 和独立 venv，优先已有 3.13、再 3.14，否则安装 3.13。准备阶段清除完成标记，收尾阶段写入。
 
 编排经 `-Manifest`／`-Stage` 调用脚本，环境变量 `SPIRITAGENT_BUNDLED_*` 与 `SPIRITAGENT_INSTALLER_FORMAT` 传递载荷。manifest 只解析带哨兵的单行 JSON，普通日志不能充当结果；阶段成败与原因经退出码及 stderr 回传。[失败页](src/routes/failure.tsx) 提供日志和重试入口。
 
@@ -44,9 +42,9 @@ Tauri 安装器负责首次安装、覆盖安装和环境修复。macOS 安装�
 |---|---|
 | 依赖下载 | Runner 依赖可按 `SPIRITAGENT_PYPI_INDEX_URL`／`PIP_INDEX_URL` 或默认镜像回退；uv、Python、OfficeCLI 不共享该回退 |
 | 技能与 OfficeCLI | 同名覆盖，用户内容保留；`.no-bundled-skills` 同时跳过技能和 OfficeCLI，后者安装失败不阻断主体；后续技能同步由 [Client](../client/main/lifecycle/bundled-skills.ts) 管理 |
-| 安装器副本 | 尽力复制到 Home 下 `spiritagent-setup[.exe]`，失败不阻断。修复优先原完整安装器加 `--repair`；macOS 暂存符号链接不进入内嵌 ZIP，脱离 `.app` resources 的副本不保证独立修复 |
+| 安装器副本 | 尽力复制到 Home 下 `spiritagent-setup[.exe]`。修复优先使用完整安装器加 `--repair` |
 | macOS 签名 | 自拷贝清 quarantine 后检查，未签名或损坏 ad-hoc 可补签，证书签名只验不降级；桌面 `.app` 仅清扩展属性 |
-| Windows 桌面 | 默认静默运行内嵌 NSIS；手动 ZIP 模式需自备 ZIP，释放到 Home 下 `apps/SpiritAgent/`，完成页可启动但不创建快捷方式；NSIS 卸载保留 Home 数据 |
+| Windows 桌面 | Tauri 安装器运行内嵌 NSIS，卸载保留 Home 数据。`install.ps1` 手动 ZIP 模式将用户提供的 ZIP 释放到 Home 下 `apps/SpiritAgent/` |
 
 ## 内置技能文档
 

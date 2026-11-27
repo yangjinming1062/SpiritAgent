@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from websockets.asyncio.client import ClientConnection
 
+from infrastructure.ai.providers._provider_errors import parse_stream_event
 from infrastructure.ai.providers.base import (
     ProviderCapabilityError,
     ProviderConfig,
@@ -117,16 +118,6 @@ class QwenSTTProvider(STTProvider):
         if samples:
             yield struct.pack("<h", samples[-1])
 
-    @staticmethod
-    def _event(raw: str | bytes) -> dict:
-        try:
-            value = json.loads(raw)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ProviderError("Qwen streaming STT returned invalid JSON", status_code=502) from exc
-        if not isinstance(value, dict):
-            raise ProviderError("Qwen streaming STT returned an invalid event", status_code=502)
-        return value
-
     async def _send_audio(self, websocket: ClientConnection, audio: AsyncIterable[bytes], task_id: str) -> None:
         async for chunk in audio:
             if chunk:
@@ -185,7 +176,7 @@ class QwenSTTProvider(STTProvider):
                 )
             )
             async with asyncio.timeout(30):
-                started = self._event(await websocket.recv())
+                started = parse_stream_event(await websocket.recv(), channel="Qwen streaming STT")
             if started.get("header", {}).get("event") != "task-started":
                 raise ProviderError("Qwen realtime STT task did not start", status_code=502, body=started)
             sender = asyncio.create_task(
@@ -194,7 +185,7 @@ class QwenSTTProvider(STTProvider):
             )
             while True:
                 async with asyncio.timeout(120):
-                    event = self._event(await websocket.recv())
+                    event = parse_stream_event(await websocket.recv(), channel="Qwen streaming STT")
                 header = event.get("header") or {}
                 event_type = header.get("event")
                 if event_type == "task-failed":

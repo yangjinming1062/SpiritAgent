@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from 'react'
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   type CompanionLinkBubble,
@@ -47,28 +47,43 @@ export function TopicFeedbackProvider({
   const snapshots = useRef(feedback)
   const pending = useRef(new Set<string>())
   const reads = useRef(new Map<string, number>())
-  const topicKey = [...new Set(topicIds)].sort(compareResourceIds).join(',')
-  const ids = useRef(topicIds)
-  ids.current = topicKey ? topicKey.split(',') : []
+  const visible = useMemo(() => new Set(topicIds), [topicIds])
+  const topicKey = useMemo(() => [...visible].sort(compareResourceIds).join(','), [visible])
+  const ids = useRef(visible)
+  ids.current = visible
 
   const apply = useCallback(
-    (value: TopicFeedbackSnapshot) => {
-      if (
-        alive() &&
-        ids.current.includes(value.topic_id) &&
-        topicFeedbackIsCurrent(value, snapshots.current[value.topic_id])
-      ) {
-        snapshots.current = { ...snapshots.current, [value.topic_id]: value }
-        setFeedback(snapshots.current)
-        return true
+    (incoming: Iterable<TopicFeedbackSnapshot>) => {
+      if (!alive()) {
+        return false
       }
-      return false
+
+      const saved = snapshots.current
+      let next = saved
+
+      for (const value of incoming) {
+        if (ids.current.has(value.topic_id) && topicFeedbackIsCurrent(value, next[value.topic_id])) {
+          if (next === saved) {
+            next = { ...saved }
+          }
+
+          next[value.topic_id] = value
+        }
+      }
+
+      if (next === saved) {
+        return false
+      }
+
+      snapshots.current = next
+      setFeedback(next)
+      return true
     },
     [alive]
   )
 
   const load = useCallback(async () => {
-    const requested = ids.current
+    const requested = [...ids.current]
     await Promise.all(
       Array.from({ length: Math.ceil(requested.length / 100) }, async (_, index) => {
         const batch = requested.slice(index * 100, (index + 1) * 100)
@@ -78,29 +93,36 @@ export function TopicFeedbackProvider({
           return revision
         })
         const current = (id: string, offset: number) =>
-          alive() && ids.current.includes(id) && reads.current.get(id) === revisions[offset]
+          alive() && ids.current.has(id) && reads.current.get(id) === revisions[offset]
+        const errors: Record<string, string> = {}
         try {
           const result = await api.invoke('companion_topics.read_feedback', { query: { topic_ids: batch } })
           if (!Array.isArray(result)) {
             throw new Error('无法读取话题反馈')
           }
           const incoming = new Map(result.filter(isTopicFeedbackSnapshot).map(value => [value.topic_id, value]))
+          const confirmed: TopicFeedbackSnapshot[] = []
           batch.forEach((id, offset) => {
             const snapshot = incoming.get(id)
             // 读取代次只隔离错误；快照按服务端时间合并，避免重放事件丢弃更新回包。
             if (snapshot) {
-              apply(snapshot)
+              confirmed.push(snapshot)
             }
             if (current(id, offset)) {
-              setErrors(previous => ({ ...previous, [id]: snapshot ? '' : '无法读取话题反馈' }))
+              errors[id] = snapshot ? '' : '无法读取话题反馈'
             }
           })
+          apply(confirmed)
         } catch (failure) {
+          const error = errorText(failure)
           batch.forEach((id, offset) => {
             if (current(id, offset)) {
-              setErrors(previous => ({ ...previous, [id]: errorText(failure) }))
+              errors[id] = error
             }
           })
+        }
+        if (Object.keys(errors).length) {
+          setErrors(previous => ({ ...previous, ...errors }))
         }
       })
     )
@@ -114,7 +136,7 @@ export function TopicFeedbackProvider({
     const removeEvent = gateway.subscribeEvent(event => {
       if (event.type === 'companion.topic_feedback.updated' && isTopicFeedbackSnapshot(event.payload)) {
         const id = event.payload.topic_id
-        if (apply(event.payload)) {
+        if (apply([event.payload])) {
           reads.current.set(id, (reads.current.get(id) ?? 0) + 1)
           setErrors(previous => ({ ...previous, [id]: '' }))
         }
@@ -136,7 +158,7 @@ export function TopicFeedbackProvider({
 
   const update = async (id: string, value: TopicFeedbackValue): Promise<void> => {
     const current = snapshots.current[id]
-    if (!alive() || !ids.current.includes(id) || !current || pending.current.has(id)) {
+    if (!alive() || !ids.current.has(id) || !current || pending.current.has(id)) {
       return
     }
     pending.current.add(id)
@@ -152,7 +174,7 @@ export function TopicFeedbackProvider({
       if (!isTopicFeedbackSnapshot(result) || result.topic_id !== id) {
         throw new Error('无法保存话题反馈')
       }
-      apply(result)
+      apply([result])
     } catch (failure) {
       if (alive()) {
         setErrors(previous => ({ ...previous, [id]: errorText(failure) }))

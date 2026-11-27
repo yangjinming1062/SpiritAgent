@@ -1,6 +1,6 @@
 """伙伴引导读取身份确认状态，由装配层接入资料拥有者。"""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +12,7 @@ class AppearanceReadiness:
     is_fullbody_confirmed: bool
 
 
-AppearanceReadinessReader = Callable[[AsyncSession, int], Awaitable[AppearanceReadiness | None]]
+AppearanceReadinessReader = Callable[[AsyncSession, Collection[int]], Awaitable[dict[int, AppearanceReadiness]]]
 _readiness_reader: AppearanceReadinessReader | None = None
 
 
@@ -21,7 +21,9 @@ def set_appearance_readiness_reader(reader: AppearanceReadinessReader) -> None:
     _readiness_reader = reader
 
 
-async def read_appearance_readiness(db: AsyncSession, user_id: int) -> AppearanceReadiness | None:
+async def read_appearance_readiness(db: AsyncSession, user_ids: Collection[int]) -> dict[int, AppearanceReadiness]:
+    if not user_ids:
+        return {}
     if _readiness_reader is None:
         raise RuntimeError("Appearance readiness reader has not been registered")
-    return await _readiness_reader(db, user_id)
+    return await _readiness_reader(db, user_ids)

@@ -338,7 +338,7 @@ async def _review_media(
                 labels=labels,
                 media_path=media_path,
             )
-        evidence = await freeze_video_overview(user_id, evidence, retry=original is not None)
+        evidence = await freeze_video_overview(user_id, evidence)
         if save_evidence and evidence is not original:
             await save_evidence(evidence)
         config = await require_image_goal_review_config(user_id, task)
@@ -925,9 +925,7 @@ async def review_media_quality(
                     *sequence_labels,
                 ),
             )
-        evidence = await freeze_video_overview(
-            user_id, evidence, retry=previous is not None and previous.status in {"invalid", "unavailable"}
-        )
+        evidence = await freeze_video_overview(user_id, evidence)
         if save_evidence and evidence is not original:
             await save_evidence(evidence)
         config = await require_image_goal_review_config(user_id, task)

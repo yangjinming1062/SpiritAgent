@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { $motionLevel, isCharacterMediaVisible, observeCharacterStageVisibility } from '@/features/character'
 import {
@@ -16,7 +16,6 @@ import {
   recordLocalStagePlayback,
   recordStageMediaFailure,
   refreshVisualPresentation,
-  reportLocalFrame,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
@@ -30,7 +29,7 @@ import { $presentation } from '@/shared/store/presentation'
 import { visualSurface } from '@/shared/store/surfaces'
 import { $lifeStageMedia, type LifeFrameStatus } from '@/shared/store/window-stage'
 
-import { createCompletePlaybackAttempt, deriveFullPresentationTarget } from './visual-presentation'
+import { createCompletePlaybackAttempt, deriveFullPresentationTarget, reportStageFrame } from './visual-presentation'
 
 function observeLifeStage(notify: () => void): () => void {
   const stopVisibility = observeCharacterStageVisibility(notify)
@@ -65,7 +64,7 @@ export function useLifeVisualPresentation(): void {
   const [motionEnabled, setMotionEnabled] = useState(false)
   const [claimed, setClaimed] = useState<VisualPlayCommand | null>(null)
   const [playbackAttempt] = useState(createCompletePlaybackAttempt)
-  const claimClient = useRef(crypto.randomUUID())
+  const [claimClient] = useState(() => crypto.randomUUID())
   const settled = useRef(new Set<string>())
   const failedMedia = useStore($failedStageMedia)
   const ambient = useStore($ambientLoopChoice)
@@ -116,7 +115,7 @@ export function useLifeVisualPresentation(): void {
 
     const scope = captureAuthScope()
     let active = true
-    void claimVisualPlay(pending.play_id, claimClient.current, 'life')
+    void claimVisualPlay(pending.play_id, claimClient, 'life')
       .then(async accepted => {
         if (!accepted || !scope?.()) {
           return
@@ -135,7 +134,7 @@ export function useLifeVisualPresentation(): void {
     return () => {
       active = false
     }
-  }, [sessionId, visible, pending, motionEnabled])
+  }, [sessionId, visible, pending, motionEnabled, claimClient])
 
   const command =
     visible && claimed && claimed.play_id === pending?.play_id && (claimed.media_kind === 'image' || motionEnabled)
@@ -151,18 +150,22 @@ export function useLifeVisualPresentation(): void {
   }, [claimed, motionEnabled, pending?.play_id, visible])
   const staticTarget = pendingStaticPresentation(projection)
 
-  const target = deriveFullPresentationTarget({
-    projection,
-    activeCommand: command,
-    staticTarget,
-    surface: 'life',
-    subtle: motion === 'subtle',
-    motionEnabled,
-    paused: !visible,
-    failedMedia,
-    ambient,
-    wake
-  })
+  const target = useMemo(
+    () =>
+      deriveFullPresentationTarget({
+        projection,
+        activeCommand: command,
+        staticTarget,
+        surface: 'life',
+        subtle: motion === 'subtle',
+        motionEnabled,
+        paused: !visible,
+        failedMedia,
+        ambient,
+        wake
+      }),
+    [projection, command, staticTarget, motion, motionEnabled, visible, failedMedia, ambient, wake]
+  )
 
   const url = (target.video ?? target.poster)?.split('?')[0] ?? null
   const mediaKind = target.video ? 'video' : 'image'
@@ -247,25 +250,9 @@ export function useLifeVisualPresentation(): void {
           void acknowledgeStatic(status, error)
         }
       } else if (status === 'started') {
-        const frame = target.localSceneHash
-          ? { scene_hash: target.localSceneHash }
-          : target.visualId && target.visualVersion
-            ? { visual_id: target.visualId, visual_version: target.visualVersion }
-            : null
-
-        if (!frame) {
-          return
-        }
-
-        void reportLocalFrame(
-          {
-            ...frame,
-            presentation_epoch: target.presentationEpoch,
-            receipt_kind: mediaKind,
-            target_surface: 'life'
-          },
-          isCurrent
-        ).catch(error => log.warn('life-stage', 'Local frame receipt failed', error))
+        void reportStageFrame(target, 'life', mediaKind, isCurrent).catch(error =>
+          log.warn('life-stage', 'Local frame receipt failed', error)
+        )
       }
     }
 
@@ -296,10 +283,9 @@ export function useLifeVisualPresentation(): void {
 
           if (stillEmpty()) {
             recordDisplayedCompleteVideo(null)
-            void reportLocalFrame(
-              { presentation_epoch: target.presentationEpoch, receipt_kind: 'empty', target_surface: 'life' },
-              stillEmpty
-            ).catch(error => log.warn('life-stage', 'Local frame receipt failed', error))
+            void reportStageFrame(target, 'life', 'empty', stillEmpty).catch(error =>
+              log.warn('life-stage', 'Local frame receipt failed', error)
+            )
           }
         }
       })
@@ -335,16 +321,7 @@ export function useLifeVisualPresentation(): void {
     visualKey,
     command,
     staticTarget,
-    target.playId,
-    target.kind,
-    target.transition,
-    target.backgroundKind,
-    target.visualId,
-    target.visualVersion,
-    target.localSceneHash,
-    target.sceneHash,
-    target.expiresAt,
-    target.presentationEpoch
+    target
   ])
 
   useLayoutEffect(

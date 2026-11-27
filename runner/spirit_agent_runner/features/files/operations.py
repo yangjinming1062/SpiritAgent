@@ -88,7 +88,7 @@ class FileOperations(ABC):
         old_string, new_string = _to_lf(old_string)[0], _to_lf(new_string)[0]
         new_content, _count, error = fuzzy_find_and_replace(content, old_string, new_string, replace_all)
         if error is not None:
-            return PatchResult(error=error + format_no_match_hint(error, 0, old_string, content))
+            return PatchResult(error=error + format_no_match_hint(error, old_string, content))
         written = self.write_file(path, _restore_line_endings(new_content, ending))
         if written.error:
             return PatchResult(error=f"Failed to write changes: {written.error}")

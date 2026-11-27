@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from itertools import batched, groupby
@@ -25,9 +26,28 @@ FACE_MOTION_LABEL = "同一镜头的面部运动，每行 M 为原表演、F 为
 FACE_TRANSITION_LABEL = "短时面部变化，每行 A、B、C 为同一时段的三个真实画格"
 SCENE_TRANSITION_LABEL = "开场环境对照，逐列为实际时刻，上行是全帧，其余行放大对应画面的边缘区域"
 FACE_DETAIL_PREFIX = "候选视频面部局部，"
+_FULL_FRAME_PREFIX = "候选视频全帧，时间 "
+_OVERVIEW_PREFIXES = {kind: f"候选视频{kind}，从左到右逐行对应 " for kind in ("全帧", "同刻面部局部")}
+_OVERVIEW_LABELS = tuple(_OVERVIEW_PREFIXES.values())
 _OVERVIEW_GROUP_SIZE = 12
 _MAX_SINGLE_VIEWS = 4
-_OVERVIEW_LABELS = ("候选视频全帧，从左到右逐行对应 ", "候选视频同刻面部局部，从左到右逐行对应 ")
+
+type _TimedFrame = tuple[ReviewImage, float]
+
+
+@dataclass(frozen=True)
+class _TimelinePage:
+    kind: str
+    frames: tuple[_TimedFrame, ...]
+    faces: tuple[_TimedFrame, ...]
+
+    def label(self) -> str:
+        times = "、".join(f"{time:g}" for _, time in self.frames)
+        label = f"{_OVERVIEW_PREFIXES[self.kind]}{times} 秒"
+        if self.faces:
+            face_times = "、".join(f"{time:g}" for _, time in self.faces)
+            label += f"。末行面部局部对应 {face_times} 秒"
+        return label
 
 
 def review_image_labels(
@@ -37,7 +57,7 @@ def review_image_labels(
         raise ValueError("检查图片数量与时间轴不一致")
     return (
         *(f"参考图 {index + 1}（创作依据，不属于候选画面或视频时间轴）" for index in range(reference_count)),
-        *(f"候选视频全帧，时间 {time:g} 秒" for time in times),
+        *(f"{_FULL_FRAME_PREFIX}{time:g} 秒" for time in times),
         *(f"候选画面 {index + 1}" for index in range(candidate_count) if not times),
         *(f"{FACE_DETAIL_PREFIX}取自 {time:g} 秒全帧（同一时刻，不是新镜头）" for time in detail_times),
     )
@@ -95,31 +115,27 @@ def _read_image(entry: ReviewImage) -> str:
 
 
 def _timed_view(entry: ReviewImage) -> str:
-    if entry.role.startswith("候选视频全帧，时间 "):
+    if entry.role.startswith(_FULL_FRAME_PREFIX):
         return "全帧"
     return "同刻面部局部" if entry.role.startswith(FACE_DETAIL_PREFIX) else ""
 
 
-def _timeline_sheet(
-    items: tuple[ReviewImage, ...], kind: str, max_width: int, face_samples: tuple[ReviewImage, ...] = ()
-) -> tuple[str, str]:
-    columns = max(math.ceil(math.sqrt(len(items))), len(face_samples))
-    size = min(400 if kind == "全帧" else 240, max_width // columns)
-    rows = math.ceil(len(items) / columns)
-    times: list[str] = []
-    face_times: list[str] = []
-    with Image.new("RGB", (columns * size, (rows + bool(face_samples)) * (size + 25)), "#edeae6") as sheet:
+def _timed_frame(entry: ReviewImage) -> _TimedFrame:
+    prefix = _FULL_FRAME_PREFIX if entry.role.startswith(_FULL_FRAME_PREFIX) else FACE_DETAIL_PREFIX + "取自 "
+    return entry, float(entry.role.removeprefix(prefix).split(" 秒", 1)[0])
+
+
+def _timeline_sheet(page: _TimelinePage, max_width: int) -> str:
+    columns = max(math.ceil(math.sqrt(len(page.frames))), len(page.faces))
+    size = min(400 if page.kind == "全帧" else 240, max_width // columns)
+    rows = math.ceil(len(page.frames) / columns)
+    with Image.new("RGB", (columns * size, (rows + bool(page.faces)) * (size + 25)), "#edeae6") as sheet:
         draw = ImageDraw.Draw(sheet)
         font = ImageFont.load_default(size=17)
-        for index, entry in enumerate((*items, *face_samples)):
-            is_face = index >= len(items)
-            prefix = "候选视频全帧，时间 " if kind == "全帧" and not is_face else FACE_DETAIL_PREFIX + "取自 "
-            time = float(entry.role.removeprefix(prefix).split(" 秒", 1)[0])
-            if is_face:
-                face_times.append(f"{time:g}")
-                x, y = (index - len(items)) * size, rows * (size + 25)
+        for index, (entry, time) in enumerate((*page.frames, *page.faces)):
+            if index >= len(page.frames):
+                x, y = (index - len(page.frames)) * size, rows * (size + 25)
             else:
-                times.append(f"{time:g}")
                 x, y = (index % columns) * size, (index // columns) * (size + 25)
             with (
                 Image.open(BytesIO(_verified_image(entry)[0])) as source,
@@ -133,38 +149,29 @@ def _timeline_sheet(
             draw.text((x + 6, y + 2), f"{time:.2f} s", fill="#202020", font=font)
         with BytesIO() as buf:
             sheet.save(buf, format="WEBP", lossless=True)
-            label = f"候选视频{kind}，从左到右逐行对应 {'、'.join(times)} 秒"
-            if face_times:
-                label += f"。末行面部局部对应 {'、'.join(face_times)} 秒"
-            return build_data_uri(buf.getvalue(), "image/webp"), label
+            return build_data_uri(buf.getvalue(), "image/webp")
 
 
-async def freeze_video_overview(user_id: int, evidence: ReviewEvidence, *, retry: bool = False) -> ReviewEvidence:
-    """逐格原件与专项索引保留原位，整体送检使用带时间标记的相邻画面。"""
+async def freeze_video_overview(user_id: int, evidence: ReviewEvidence) -> ReviewEvidence:
+    """从冻结原件推导整体布局，原件与专项索引保留原位。"""
     context = json.loads(evidence.context_json)
     previous = context.get("video_overview_indices")
     has_sequence = "face_sequence_index" in context
     focus_indices = {context[key] for key in ("face_transition_index", "scene_transition_index") if key in context}
-    if len(evidence.images) <= _MAX_SINGLE_VIEWS and not has_sequence and not focus_indices:
+    source_count = len(evidence.images)
+    if previous is not None:
+        # 整体拼图是追加到冻结原件和专项图之后的派生产物。
+        while source_count and evidence.images[source_count - 1].role.startswith(_OVERVIEW_LABELS):
+            source_count -= 1
+        if not source_count:
+            raise ValueError("视频检查证据缺少冻结原帧")
+    if previous is None and source_count <= _MAX_SINGLE_VIEWS and not has_sequence and not focus_indices:
         return evidence
-    images = list(evidence.images)
-    legacy_layout = previous is not None and (
-        (has_sequence and not context.get("video_overview_compact_faces"))
-        or (context.get("video_overview_group_size", 4) < _OVERVIEW_GROUP_SIZE and len(previous) > _MAX_SINGLE_VIEWS)
-    )
-    if retry and legacy_layout:
-        # 只从同次冻结的原图调整整体送检布局，保留原始专项索引。
-        first_sheet = next(
-            (i for i, entry in enumerate(images) if entry.role.startswith(_OVERVIEW_LABELS)), len(images)
-        )
-        images = images[:first_sheet]
-        previous = None
+    images = evidence.images[:source_count]
     # 主体头部锚点使用实际首帧的归一化坐标，送检时须保留该帧的独立画布。
     anchor_frame = context.get("reference_frame_count") if context.get("isolated_subject") else None
     # 整体检查保留代表性局部，完整时序和制作底片交由专项检查。
-    indices = previous if previous is not None else list(range(len(images)))
-    if focus_indices:
-        indices = [index for index in indices if index not in focus_indices]
+    indices = [index for index in range(len(images)) if index not in focus_indices]
     if anchor_frame is not None and anchor_frame not in indices:
         indices = [*indices[:anchor_frame], anchor_frame, *indices[anchor_frame:]]
     if has_sequence:
@@ -178,13 +185,10 @@ async def freeze_video_overview(user_id: int, evidence: ReviewEvidence, *, retry
             i
             for i in indices
             if i not in {context.get("face_motion_index"), context["face_sequence_index"]}
-            and not (
-                (images[i].role.startswith(FACE_DETAIL_PREFIX) and i not in keep_details)
-                or (previous is not None and images[i].role.startswith("候选视频同刻面部局部，") and legacy_layout)
-            )
+            and (not images[i].role.startswith(FACE_DETAIL_PREFIX) or i in keep_details)
         ]
-        context["video_overview_compact_faces"] = True
-    if previous is None and len(indices) > _MAX_SINGLE_VIEWS:
+    pages: list[_TimelinePage] = []
+    if len(indices) > _MAX_SINGLE_VIEWS:
         retained = []
         face_samples = (
             tuple(images[i] for i in indices if images[i].role.startswith(FACE_DETAIL_PREFIX)) if has_sequence else ()
@@ -199,35 +203,41 @@ async def freeze_video_overview(user_id: int, evidence: ReviewEvidence, *, retry
                 if not kind or (len(group) == 1 and not faces):
                     retained.extend(group)
                     continue
-                # 面部已有原尺寸局部，整体画格以动作与空间为主，为模型判定留出输出空间。
-                width = 1024 if has_sequence else 1280
-                uri, label = await asyncio.to_thread(
-                    _timeline_sheet, tuple(images[i] for i in group), kind, width, faces
+                retained.append(source_count + len(pages))
+                pages.append(
+                    _TimelinePage(kind, tuple(_timed_frame(images[i]) for i in group), tuple(map(_timed_frame, faces)))
                 )
                 if faces:
                     face_samples = ()
-                packed = await freeze_review_evidence(
-                    user_id, (uri,), prompt=evidence.policy_prompt, context={}, labels=(label,)
-                )
-                retained.append(len(images))
-                images.extend(packed.images)
         indices = retained
-        context["video_overview_group_size"] = _OVERVIEW_GROUP_SIZE
-    if indices == previous or (previous is None and len(indices) == len(evidence.images)):
+    labels = tuple(page.label() for page in pages)
+    if indices == previous and labels == tuple(image.role for image in evidence.images[source_count:]):
         return evidence
-    context["video_overview_indices"] = indices
-    return evidence.model_copy(update={"images": tuple(images), "context_json": review_context(context)})
+    if previous is None and indices == list(range(source_count)) and not pages:
+        return evidence
+    derived: list[ReviewImage] = []
+    # 面部专项保留原尺寸局部，整体检查限制时间图尺寸，为结论留出预算。
+    width = 1024 if has_sequence else 1280
+    for page, label in zip(pages, labels, strict=True):
+        uri = await asyncio.to_thread(_timeline_sheet, page, width)
+        packed = await freeze_review_evidence(
+            user_id, (uri,), prompt=evidence.policy_prompt, context={}, labels=(label,)
+        )
+        derived.extend(packed.images)
+    context = {key: value for key, value in context.items() if not key.startswith("video_overview_")}
+    if indices != list(range(source_count)) or pages:
+        context["video_overview_indices"] = indices
+    return evidence.model_copy(update={"images": (*images, *derived), "context_json": review_context(context)})
 
 
 def video_overview(evidence: ReviewEvidence) -> ReviewEvidence:
     context = json.loads(evidence.context_json)
-    context.pop("video_overview_group_size", None)
-    context.pop("video_overview_compact_faces", None)
-    indices = context.pop("video_overview_indices", None)
+    indices = context.get("video_overview_indices")
     if indices is None:
         return evidence
     if not indices or any(type(index) is not int or not 0 <= index < len(evidence.images) for index in indices):
         raise ValueError("视频送检顺序与证据不一致")
+    context = {key: value for key, value in context.items() if not key.startswith("video_overview_")}
     context.pop("face_motion_index", None)
     context.pop("face_transition_index", None)
     context.pop("face_transition_policy", None)

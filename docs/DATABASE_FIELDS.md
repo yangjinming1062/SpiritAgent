@@ -1,6 +1,6 @@
 # 数据库字段语义字典
 
-本页用于从业务含义定位字段所有者，说明容易混用的字段组。列名、类型、空值、默认值、枚举、索引和外键以链接的 ORM 及[完整基线](../backend/alembic/versions/0001_baseline.py)为准；完整注册见 [bootstrap.models](../backend/bootstrap/models.py)。关系与删除理由见 [DATABASE](DATABASE.md)，不在此复制 DDL 或逐表说明通用字段。
+本页按业务含义定位易混用的字段。列定义以各节的 ORM 和[数据库修订](../backend/alembic/versions/)为准，完整注册见 [bootstrap.models](../backend/bootstrap/models.py)，关系与删除语义见 [DATABASE](DATABASE.md)。
 
 ## 公共字段与关系入口
 
@@ -86,4 +86,4 @@
 
 [记忆模型](../backend/features/memory/models.py)只承载普通认知、用户资料和相处理解，分别保存当前内容、原始证据、修订、遗忘指纹和向量：分类及槽位有显式字段，`context` 仅是展示话题；证据消息缺失不能产生新事实。指纹可失去原记忆指针，继续抑制同一来源重学；向量按内容版本、模型和实际维度保存，只比较同作用域同空间的有效内容。
 
-保留期与删除关系见 [必要历史](DATABASE.md#必要历史)，人工编辑、审阅与遗忘的行为见 [记忆模块](../backend/features/memory/README.md)。
+保留期与删除关系见 [业务记录保留](DATABASE.md#业务记录保留)，人工编辑、审阅与遗忘的行为见 [记忆模块](../backend/features/memory/README.md)。

@@ -48,7 +48,7 @@ class TurnDecision:
 
 
 async def choose_turn_decision(
-    legacy_query: str,
+    default_query: str,
     current: Mapping[int, str],
     history: Sequence[MessageSnapshot],
     *,
@@ -91,7 +91,7 @@ async def choose_turn_decision(
     if reply_can_stay_silent and len(current) == 1 and 0 < len(current_text) <= 310:
         questions["participation"] = _SILENCE_QUESTION
     if not questions:
-        return TurnDecision(legacy_query)
+        return TurnDecision(default_query)
     state = {
         "current_messages": [text[-310:] for text in current.values() if text.strip()][-5:],
         "current_messages_excerpted": len(current) > 5 or any(len(text) > 310 for text in current.values()),
@@ -99,14 +99,14 @@ async def choose_turn_decision(
         "trigger": trigger[:220],
     }
     if not decision_input_fits(state, questions=questions):
-        return TurnDecision(legacy_query)
+        return TurnDecision(default_query)
     answers = await choose_decisions("chat_turn_material", state=state, questions=questions, wait_seconds=3.5)
     if answers.get("participation") == "silent":
         return TurnDecision("", stay_silent=True)
     memory = answers.get("memory")
     if memory == "skip" and state["current_messages_excerpted"]:
         memory = None
-    query = "" if memory == "skip" else candidates.get(memory or "", legacy_query)
+    query = "" if memory == "skip" else candidates.get(memory or "", default_query)
     if memory is not None and memory.startswith("earlier_") and current_text:
         query = f"{query}\n{current_text}"
     return TurnDecision(query, direct_call_reply=answers.get("call_reply") == "direct")
