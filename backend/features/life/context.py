@@ -1,15 +1,14 @@
 """生活领域的统一只读上下文。
 
-跨业务流程只通过这里取得生活状态、持续事项和近期事实，避免聊天、影像、动态
-和日记分别拼出互相漂移的背景。
+聊天、影像和日记通过这里取得同源的生活状态、持续事项和近期事实。
 """
 
-from collections.abc import AsyncIterator, Collection, Sequence
+from collections.abc import Collection
 from datetime import datetime
 
 from infrastructure.search import extract_search_terms
 from infrastructure.text import format_local_iso, utc_now
-from sqlalchemy import Select, case, func, or_, select, tuple_
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -23,7 +22,7 @@ from .queries import (
     pursuit_view,
     visible_completion_results,
 )
-from .schemas import LifeContext, LifeShareChannel, PersonalGrowth
+from .schemas import LifeContext, PersonalGrowth
 from .trajectory import trajectory_scope, trajectory_topic_heads
 
 
@@ -172,64 +171,25 @@ async def contact_excerpt_sources(db: AsyncSession, user_id: int, ids: Collectio
     }
 
 
-async def read_life_share_excerpts(
-    db: AsyncSession, user_id: int, *, channel: LifeShareChannel, since: datetime, until: datetime
+async def read_diary_excerpts(
+    db: AsyncSession, user_id: int, *, since: datetime, until: datetime
 ) -> list[dict[str, str | None]]:
-    """只把伙伴指定给本渠道的展示片段交给创作模型。"""
-    query = _share_excerpts(user_id, channel).where(LifeEvent.created_at >= since, LifeEvent.created_at < until)
-    return await _excerpt_payload(db, user_id, query)
-
-
-async def selected_post_excerpts(
-    db: AsyncSession, user_id: int, excerpt_ids: Collection[int]
-) -> list[dict[str, str | None]]:
-    if not excerpt_ids:
-        return []
-    query = _share_excerpts(user_id, "post").where(LifeEvent.id.in_(excerpt_ids))
-    return await _excerpt_payload(db, user_id, query)
-
-
-async def previous_post_excerpt_pages(
-    db: AsyncSession, user_id: int, source_ids: Collection[int], *, exclude: Collection[int] = ()
-) -> AsyncIterator[list[dict[str, str | None]]]:
-    if not source_ids:
-        return
-    query = _share_excerpts(user_id, "post").where(
-        LifeEvent.fact_json["event_id"].as_string().in_([str(source_id) for source_id in source_ids]),
-        LifeEvent.id.not_in(exclude),
-    )
-    timezone = await resolve_user_timezone(db, user_id)
-    page = query
-    while rows := (await db.scalars(page.limit(64))).all():
-        yield _format_excerpts(rows, timezone)
-        if len(rows) < 64:
-            return
-        page = query.where(tuple_(LifeEvent.created_at, LifeEvent.id) < (rows[-1].created_at, rows[-1].id))
-
-
-def _share_excerpts(user_id: int, channel: LifeShareChannel) -> Select[tuple[LifeEvent]]:
-    return (
+    """按挑选日期读取供日记使用的片段，保留经历原本的发生时间。"""
+    query = (
         select(LifeEvent)
         .where(
             LifeEvent.user_id == user_id,
             LifeEvent.kind == "life.share.prepared",
-            LifeEvent.fact_json["channel"].as_string() == channel,
+            LifeEvent.fact_json["channel"].as_string() == "diary",
+            LifeEvent.created_at >= since,
+            LifeEvent.created_at < until,
         )
         .order_by(LifeEvent.created_at.desc(), LifeEvent.id.desc())
     )
-
-
-async def _excerpt_payload(
-    db: AsyncSession, user_id: int, query: Select[tuple[LifeEvent]]
-) -> list[dict[str, str | None]]:
     excerpts = (await db.scalars(query)).all()
     if not excerpts:
         return []
     timezone = await resolve_user_timezone(db, user_id)
-    return _format_excerpts(excerpts, timezone)
-
-
-def _format_excerpts(excerpts: Sequence[LifeEvent], timezone: str | None) -> list[dict[str, str | None]]:
     return [
         {
             "id": str(row.id),

@@ -9,12 +9,11 @@ from zoneinfo import ZoneInfo
 
 from features.companion.narrative_prompts import NARRATIVE_REVIEW_TEXTS, NARRATIVE_REVISION_TEXTS
 from features.companion.narrative_quality import NarrativeQualityError, NarrativeReview, review_narrative
-from features.entries.diary_search import schedule_diary_embeddings
+from features.journal.diary_search import schedule_diary_embeddings
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DiaryContent
-from features.life.context import read_life_context_in_session, read_life_share_excerpts
+from features.life.context import read_diary_excerpts, read_life_context_in_session
 from features.memory.memory_narratives import load_companion_reflection
-from features.posts.store import PostInteractions
 from infrastructure.ai.decision import (
     DecisionOption,
     DecisionQuestion,
@@ -51,7 +50,6 @@ async def project_today(
     log_id: int,
     has_activity: bool,
     messages: list[dict[str, str]],
-    posts: PostInteractions,
     persona: dict[str, str],
     language: str,
     contextual_memories: dict[str, str],
@@ -79,8 +77,8 @@ async def project_today(
                     db, user_id, event_start=start, event_end=end, event_limit=None, publication_events_only=True
                 )
             ).prompt_payload(shared_only=True)
-            life_context_payload["selected_life_excerpts"] = await read_life_share_excerpts(
-                db, user_id, channel="diary", since=start, until=end
+            life_context_payload["selected_life_excerpts"] = await read_diary_excerpts(
+                db, user_id, since=start, until=end
             )
             if not (
                 has_activity or life_context_payload["recent_events"] or life_context_payload["selected_life_excerpts"]
@@ -102,7 +100,6 @@ async def project_today(
         [message for message in messages if message.get("role") == "user"],
         target_date,
         persona,
-        posts.threads,
         language,
         contextual_memories,
         background_memories,
@@ -115,9 +112,7 @@ async def project_today(
         if not SETTINGS.diary_nightly_enabled:
             composed = False
         if isinstance(composed, DiaryContent):
-            diary = await publish_diary(
-                db, user_id, entry_date=target_date, content=composed, post_ids=posts.posted_ids
-            )
+            diary = await publish_diary(db, user_id, entry_date=target_date, content=composed)
             await record_diary_published(db, user_id, diary)
         await save_narrative_result(db, log_id, "journal", composed is not False)
         await db.commit()
@@ -336,7 +331,6 @@ async def _compose_diary(
     clean_messages: list[dict[str, str]],
     target_date: date,
     persona: dict[str, str],
-    post_interactions: list[dict[str, Any]],
     language: str,
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
@@ -349,7 +343,6 @@ async def _compose_diary(
     payload = {
         "local_date": target_date.isoformat(),
         "today_conversations": clean_messages,
-        "post_interactions": post_interactions,
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,
         "previous_reflection": previous_reflection,
@@ -382,7 +375,6 @@ async def _compose_diary(
             "day_exchanges": list(dict.fromkeys(text[:160] for text in exchanges)),
             "chosen_diary_passages": [_diary_event_brief(row) for row in life["selected_life_excerpts"][:4]],
             "life_events": [_diary_event_brief(row) for row in life["recent_events"][:6]],
-            "post_interactions": [str(item)[:150] for item in post_interactions[:4]],
         }
         state = fit_decision_state(
             {"date": payload["local_date"], "persona": str(persona)[:170]}, groups, questions=questions
@@ -390,7 +382,7 @@ async def _compose_diary(
         # 日记素材有摘要、抽样或预算裁剪时，依据完整上下文继续决定是否留空。
         complete_dialogue = len(exchanges) == len(clean_messages) and exchanges == state["day_exchanges"]
         complete_material = complete_dialogue and not (
-            post_interactions or life_context["recent_events"] or life_context["selected_life_excerpts"]
+            life_context["recent_events"] or life_context["selected_life_excerpts"]
         )
         if before_call is not None:
             await before_call()

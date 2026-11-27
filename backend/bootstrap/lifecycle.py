@@ -20,7 +20,6 @@ from features.media.manual_reviews import recover_manual_operations
 from features.media.video_jobs import cleanup_user_video_jobs, resume_pending_video_jobs
 from features.media.video_queue.lifecycle import video_queue_lifespan
 from features.media.video_queue.service import cleanup_video_queue
-from features.posts.publication import gc_autonomous_publications
 from features.realtime_voice.session import CALL_MANAGER
 from filelock import FileLock, Timeout
 from infrastructure.ai.providers.http import aclose_all
@@ -116,7 +115,6 @@ async def _running_services() -> AsyncGenerator[None]:
                 for step, operation in (
                     ("video queue", cleanup_video_queue),
                     ("temp files", partial(run_blocking, cleanup_expired)),
-                    ("publications", gc_autonomous_publications),
                 ):
                     await _best_effort(step, operation(), level=logging.WARNING)
 

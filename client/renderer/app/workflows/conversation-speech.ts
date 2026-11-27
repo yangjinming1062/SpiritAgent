@@ -1,4 +1,4 @@
-import { $autoplayVoice, autoplayVoicePref } from '@/features/character'
+import { $autoplayVoice, setAutoplayVoice } from '@/features/character'
 import {
   $chatSessionId,
   $conversationViews,
@@ -203,7 +203,7 @@ export function bindConversationSpeech(): void {
   setVoiceBarControl({
     $autoplay: $autoplayVoice,
     restart: restartVoiceBar,
-    setAutoplay: autoplayVoicePref.set,
+    setAutoplay: setAutoplayVoice,
     toggle: toggleVoiceBar
   })
 

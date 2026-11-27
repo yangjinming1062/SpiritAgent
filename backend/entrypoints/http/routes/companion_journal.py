@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi import HTTPException, Query
 from features.journal.journal_service import (
-    has_unread_diary,
+    diary_read_state,
     list_diary,
     mark_diary_read,
     search_diary,
@@ -49,9 +49,9 @@ async def get_diary(
 
 @router.get("/diary/read-state", response_model=DiaryUnreadResponse)
 async def get_diary_unread(user: CurrentUser, db: DbSession) -> DiaryUnreadResponse:
-    return DiaryUnreadResponse(has_unread=await has_unread_diary(db, user.id))
+    return await diary_read_state(db, user.id)
 
 
 @router.patch("/diary/read-state", response_model=DiaryUnreadResponse)
 async def read_diary(user: CurrentUser, db: DbSession, body: DiaryReadRequest) -> DiaryUnreadResponse:
-    return DiaryUnreadResponse(has_unread=await mark_diary_read(db, user.id, body.diary_ids))
+    return await mark_diary_read(db, user.id, body.diary_ids)

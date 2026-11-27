@@ -28,8 +28,8 @@ from .models import (
 )
 from .queries import result_reference, shared_pursuit_ids
 from .schemas import (
+    DIARY_PUBLISHED_KIND,
     EVIDENCE_EVENT_KINDS,
-    PUBLISHED_ENTRY_KINDS,
     UNRESOLVED_STEP_STATES,
     FactType,
     LifeDecisionRequest,
@@ -314,7 +314,7 @@ async def _evidence_events(
             or not event.is_meaningful
             or event.pursuit_id not in (None, pursuit.id)
             or event.kind not in EVIDENCE_EVENT_KINDS
-            or (event.kind in PUBLISHED_ENTRY_KINDS and event.result_entry_id is None)
+            or (event.kind == DIARY_PUBLISHED_KIND and event.result_entry_id is None)
             or event.fact_type != "result"
             or not result_reference(event)
         ):

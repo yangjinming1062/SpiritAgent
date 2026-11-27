@@ -1,4 +1,4 @@
-import { atom, type WritableAtom } from 'nanostores'
+import { atom } from 'nanostores'
 
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import {
@@ -46,7 +46,6 @@ function reloadMotionLevel(): void {
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = 'da.companion.autoplayVoice'
-const POSTS_ENABLED_STORAGE_KEY = 'da.companion.postsEnabled'
 
 // localStorage 是各窗口的即时缓存；本地编辑经 prefs:set 合入主进程镜像并上云。服务端确认的音色先同步镜像，再由水合广播回写缓存与 atom。
 function reportCloud(key: string, value: unknown): void {
@@ -100,34 +99,13 @@ registerStorageRestoreHandler(() => {
   $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
 })
 
-interface BooleanPref {
-  $atom: WritableAtom<boolean>
-  reload: () => void
-  set: (value: boolean) => void
+const autoplayVoice = definePersistedBoolean({ key: AUTOPLAY_VOICE_STORAGE_KEY, fallback: true })
+export const $autoplayVoice = autoplayVoice.$atom
+
+export function setAutoplayVoice(value: boolean): void {
+  autoplayVoice.set(value)
+  reportCloud('companion.autoplay_voice', value)
 }
-
-function makeBooleanPref(key: string, fallback: boolean, cloudKey: string): BooleanPref {
-  const persisted = definePersistedBoolean({ key, fallback })
-
-  return {
-    $atom: persisted.$atom,
-    reload: persisted.reload,
-    set(value: boolean): void {
-      persisted.set(value)
-      reportCloud(cloudKey, value)
-    }
-  }
-}
-
-const postsEnabledPref = makeBooleanPref(POSTS_ENABLED_STORAGE_KEY, true, 'companion.posts_enabled')
-export const $postsEnabled = postsEnabledPref.$atom
-export { postsEnabledPref }
-
-export const autoplayVoicePref = makeBooleanPref(AUTOPLAY_VOICE_STORAGE_KEY, true, 'companion.autoplay_voice')
-export const $autoplayVoice = autoplayVoicePref.$atom
-
-// 云端水合时按序回写的布尔偏好（companion 节键 → 偏好）。
-const HYDRATED_BOOLEAN_PREFS = [['posts_enabled', postsEnabledPref]] as const
 
 // 云端水合应用：只接受类型匹配的键；音色仅回写缓存，其他偏好沿用 setter，主进程消解与已上云内容相同的回写。
 export function initCompanionPrefsSync(): () => void {
@@ -137,7 +115,7 @@ export function initCompanionPrefsSync(): () => void {
     }
 
     if (event.key === accountStorageKey(AUTOPLAY_VOICE_STORAGE_KEY) || event.key === null) {
-      autoplayVoicePref.reload()
+      autoplayVoice.reload()
     }
 
     if (event.key === accountStorageKey(RESPONSE_PREFERENCE_STORAGE_KEY) || event.key === null) {
@@ -146,10 +124,6 @@ export function initCompanionPrefsSync(): () => void {
 
     if (event.key === accountStorageKey(MOTION_LEVEL_STORAGE_KEY) || event.key === null) {
       reloadMotionLevel()
-    }
-
-    if (event.key === accountStorageKey(POSTS_ENABLED_STORAGE_KEY) || event.key === null) {
-      postsEnabledPref.reload()
     }
 
     syncDisturbanceFromStorage(event.key)
@@ -172,7 +146,7 @@ export function initCompanionPrefsSync(): () => void {
     pending = null
 
     if (typeof companion.autoplay_voice === 'boolean') {
-      autoplayVoicePref.set(companion.autoplay_voice)
+      setAutoplayVoice(companion.autoplay_voice)
     }
 
     if (typeof companion.voice_id === 'string') {
@@ -181,14 +155,6 @@ export function initCompanionPrefsSync(): () => void {
 
     if (companion.response_preference === 'text' || companion.response_preference === 'voice') {
       setResponsePreference(companion.response_preference)
-    }
-
-    for (const [key, pref] of HYDRATED_BOOLEAN_PREFS) {
-      const value = companion[key]
-
-      if (typeof value === 'boolean') {
-        pref.set(value)
-      }
     }
 
     // 减少透明效果（玻璃降级手动开关）：跨窗口、跨端经 companion 节同步。

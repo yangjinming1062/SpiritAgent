@@ -12,7 +12,6 @@ import {
 import { hydrateCreationActivity } from '@/features/creation'
 import { hydrateScene } from '@/features/creation/environment'
 import { hydrateDiaryUnread } from '@/features/life/diary'
-import { hydratePostsUnread } from '@/features/life/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { notifyError } from '@/shared/store/notifications'
 import { $uiStateReady } from '@/shared/store/ui-state'
@@ -53,7 +52,6 @@ export function useMainWindowHydration({
       return
     }
 
-    void hydratePostsUnread()
     void hydrateDiaryUnread()
   }, [visible, foreground, authenticated, accountId, gatewayState])
 }
@@ -83,7 +81,6 @@ export function useDesktopWindowHydration({
     void hydratePortrait()
     void hydrateScene()
     void hydrateCreationActivity()
-    void hydratePostsUnread()
     void hydrateDiaryUnread()
   }, [accountId, gatewayState])
 }

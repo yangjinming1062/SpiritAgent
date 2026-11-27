@@ -75,7 +75,6 @@ _INTERNAL_CONTENT_FIELDS = frozenset(
         "previous_pursuit_id",
         "step_id",
         "event_id",
-        "post_id",
         "diary_id",
         "avatar_id",
         "outfit_id",

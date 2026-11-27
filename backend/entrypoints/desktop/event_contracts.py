@@ -14,7 +14,6 @@ from features.conversation.replies import VoiceBubbleView
 from features.conversation.schemas import UndoAnchor
 from features.journal.schemas import DiaryEntryResponse
 from features.media.video_queue.contracts import VideoQueueInfo
-from features.posts.schemas import PostCommentResponse, PostResponse
 from features.topics.schemas import TopicFeedbackSnapshot
 from features.visuals.schemas import PlaybackReceiptKind, PlaybackStatus, VisualPlayCommand
 from infrastructure.api_ids import ResourceId
@@ -262,16 +261,6 @@ class VideoFailedEvent(BaseModel):
     status_text: str | None
 
 
-class PostCommentEvent(BaseModel):
-    post_id: str
-    comment: PostCommentResponse
-
-
-class PostCommentDeletedEvent(BaseModel):
-    post_id: str
-    comment_id: str
-
-
 class MediaReviewUpdatedEvent(BaseModel):
     job_id: ResourceId
 
@@ -329,10 +318,6 @@ EVENT_CONTRACTS: dict[str, EventContract] = {
     "video_gen.queue": EventContract(VideoQueueEvent, "all", "resource"),
     "video_gen.completed": EventContract(VideoCompletedEvent, "all", "resource"),
     "video_gen.failed": EventContract(VideoFailedEvent, "all", "resource"),
-    "companion.post.created": EventContract(PostResponse, "all", "resource"),
-    "companion.post.comment": EventContract(PostCommentEvent, "all", "resource"),
-    "companion.post.comment.deleted": EventContract(PostCommentDeletedEvent, "all", "resource"),
-    "companion.posts.read": EventContract(EmptyResult, "all", "resource"),
     "companion.diary.created": EventContract(DiaryEntryResponse, "all", "resource"),
     "companion.diary.read": EventContract(EmptyResult, "all", "resource"),
     "companion.topic_feedback.updated": EventContract(TopicFeedbackSnapshot, "all", "resource"),

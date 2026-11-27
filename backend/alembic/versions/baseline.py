@@ -176,55 +176,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_assets_user_id"), "assets", ["user_id"], unique=False)
     op.create_table(
-        "companion_entries",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("kind", sa.String(length=16), nullable=False),
-        sa.Column("activity_date", sa.Date(), nullable=False),
-        sa.Column("published_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("is_read", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("content_type", sa.String(length=16), server_default=sa.text("'text'"), nullable=False),
-        sa.Column("title", sa.String(length=128), server_default=sa.text("''"), nullable=False),
-        sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column(
-            "context_json",
-            postgresql.JSONB(astext_type=sa.Text()),
-            server_default=sa.text("'{}'::jsonb"),
-            nullable=False,
-        ),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint(
-            "content_type IN ('text', 'image', 'video', 'audio')", name=op.f("ck_companion_entries_entry_content_type")
-        ),
-        sa.CheckConstraint("kind IN ('post', 'diary')", name=op.f("ck_companion_entries_entry_kind")),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("companion_entries_user_id_fkey"), ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("companion_entries_pkey")),
-        sa.UniqueConstraint("user_id", "id", name="uq_entries_user_id"),
-    )
-    op.create_index(
-        "ix_entries_timeline",
-        "companion_entries",
-        ["user_id", "kind", sa.literal_column("published_at DESC"), sa.literal_column("id DESC")],
-        unique=False,
-    )
-    op.create_index(
-        "ix_entries_unread",
-        "companion_entries",
-        ["user_id", "kind"],
-        unique=False,
-        postgresql_where=sa.text("is_read IS FALSE"),
-    )
-    op.create_index(
-        "uq_entries_diary_date",
-        "companion_entries",
-        ["user_id", "activity_date"],
-        unique=True,
-        postgresql_where=sa.text("kind = 'diary'"),
-    )
-    op.create_table(
         "companion_topic_batches",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("system_preset_id", sa.String(length=32), nullable=False),
@@ -906,6 +857,28 @@ def upgrade() -> None:
     )
     op.create_index("uq_custom_voice_token", "custom_voices", ["user_id", "token"], unique=True)
     op.create_table(
+        "diary_entries",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("entry_date", sa.Date(), nullable=False),
+        sa.Column("is_read", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("title", sa.String(length=128), nullable=False),
+        sa.Column("body", sa.Text(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("diary_entries_user_id_fkey"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("diary_entries_pkey")),
+        sa.UniqueConstraint("user_id", "entry_date", name="uq_diary_entries_user_date"),
+        sa.UniqueConstraint("user_id", "id", name="uq_diary_entries_owner_id"),
+    )
+    op.create_index(
+        "ix_diary_entries_unread",
+        "diary_entries",
+        ["user_id"],
+        unique=False,
+        postgresql_where=sa.text("is_read IS FALSE"),
+    )
+    op.create_table(
         "diary_search_index",
         sa.Column("record_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -922,7 +895,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["user_id", "record_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
+            ["diary_entries.user_id", "diary_entries.id"],
             name="fk_diary_search_index_record_id_owner",
             ondelete="CASCADE",
         ),
@@ -941,115 +914,6 @@ def upgrade() -> None:
         postgresql_using="gin",
         postgresql_ops={"search_text": "gin_trgm_ops"},
     )
-    op.create_table(
-        "entry_assets",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("entry_id", sa.BigInteger(), nullable=False),
-        sa.Column("asset_id", sa.BigInteger(), nullable=False),
-        sa.Column("role", sa.String(length=32), nullable=False),
-        sa.Column("position", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.CheckConstraint("position >= 0", name=op.f("ck_entry_assets_entry_asset_position")),
-        sa.ForeignKeyConstraint(
-            ["user_id", "asset_id"],
-            ["assets.user_id", "assets.id"],
-            name="fk_entry_assets_asset",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "entry_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_entry_assets_entry",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("entry_assets_user_id_fkey"), ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id", name=op.f("entry_assets_pkey")),
-        sa.UniqueConstraint("entry_id", "role", "position", name="uq_entry_asset_role"),
-        sa.UniqueConstraint("user_id", "id", name="uq_entry_assets_owner_id"),
-    )
-    op.create_index("ix_entry_assets_asset", "entry_assets", ["asset_id"], unique=False)
-    op.create_table(
-        "entry_comments",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("post_id", sa.BigInteger(), nullable=False),
-        sa.Column("role", sa.String(length=16), nullable=False),
-        sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("reply_to_comment_id", sa.BigInteger(), nullable=True),
-        sa.Column("reply_status", sa.String(length=16), server_default=sa.text("'none'"), nullable=False),
-        sa.Column("reply_error", sa.String(length=160), nullable=True),
-        sa.Column("reply_attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("reply_not_before", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("reply_followup", sa.Text(), nullable=True),
-        sa.Column("reply_expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "(role = 'companion') = (reply_status = 'none')", name=op.f("ck_entry_comments_entry_comment_delivery")
-        ),
-        sa.CheckConstraint(
-            "reply_status IN ('none', 'pending', 'running', 'deferred', 'completed', 'silent', 'failed')",
-            name=op.f("ck_entry_comments_entry_comment_state"),
-        ),
-        sa.CheckConstraint("role IN ('user', 'companion')", name=op.f("ck_entry_comments_entry_comment_role")),
-        sa.CheckConstraint("reply_attempts >= 0", name=op.f("ck_entry_comments_entry_comment_attempts")),
-        sa.ForeignKeyConstraint(
-            ["user_id", "post_id", "reply_to_comment_id"],
-            ["entry_comments.user_id", "entry_comments.post_id", "entry_comments.id"],
-            name="fk_entry_comments_reply",
-            initially="DEFERRED",
-            deferrable=True,
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "post_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_entry_comments_entry",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("entry_comments_user_id_fkey"), ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("entry_comments_pkey")),
-        sa.UniqueConstraint("reply_to_comment_id", name="uq_entry_comment_reply"),
-        sa.UniqueConstraint("user_id", "id", name="uq_entry_comments_owner_id"),
-        sa.UniqueConstraint("user_id", "post_id", "id", name="uq_entry_comment_scope"),
-    )
-    op.create_index("ix_entry_comments_order", "entry_comments", ["post_id", "created_at", "id"], unique=False)
-    op.create_index(
-        "ix_entry_comments_pending",
-        "entry_comments",
-        ["user_id", "post_id"],
-        unique=False,
-        postgresql_where=sa.text("role = 'user' AND reply_status IN ('pending', 'running', 'deferred')"),
-    )
-    op.create_table(
-        "entry_links",
-        sa.Column("user_id", sa.BigInteger(), nullable=False),
-        sa.Column("source_id", sa.BigInteger(), nullable=False),
-        sa.Column("target_id", sa.BigInteger(), nullable=False),
-        sa.Column("kind", sa.String(length=32), server_default=sa.text("'diary_source'"), nullable=False),
-        sa.Column("position", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.CheckConstraint("position >= 0 AND source_id != target_id", name=op.f("ck_entry_links_entry_link_position")),
-        sa.ForeignKeyConstraint(
-            ["user_id", "source_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_entry_links_source",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["user_id", "target_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_entry_links_target",
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("entry_links_user_id_fkey"), ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id", name=op.f("entry_links_pkey")),
-        sa.UniqueConstraint("source_id", "target_id", "kind", name="uq_entry_link"),
-        sa.UniqueConstraint("user_id", "id", name="uq_entry_links_owner_id"),
-    )
-    op.create_index("ix_entry_links_target", "entry_links", ["target_id"], unique=False)
     op.create_table(
         "job_assets",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -1495,7 +1359,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["user_id", "result_entry_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
+            ["diary_entries.user_id", "diary_entries.id"],
             name="fk_life_steps_result_entry_id_owner",
             ondelete="SET NULL (result_entry_id)",
         ),
@@ -1613,7 +1477,7 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["user_id", "result_entry_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
+            ["diary_entries.user_id", "diary_entries.id"],
             name="fk_life_events_result_entry_id_owner",
             ondelete="SET NULL (result_entry_id)",
         ),
@@ -2509,41 +2373,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("owner_id", "id", name="uq_fullbody_review_jobs_owner_id"),
     )
     op.create_table(
-        "post_publications",
-        sa.Column("id", sa.BigInteger(), nullable=False),
-        sa.Column("owner_id", sa.BigInteger(), nullable=False),
-        sa.Column("activity_date", sa.Date(), nullable=False),
-        sa.Column("outcome", sa.String(length=24), nullable=True),
-        sa.Column("request_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column(
-            "review_result_json",
-            postgresql.JSONB(astext_type=sa.Text()),
-            server_default=sa.text("'{}'"),
-            nullable=False,
-        ),
-        sa.Column("plan_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
-        sa.Column("video_job_id", sa.BigInteger(), nullable=True),
-        sa.Column("post_id", sa.BigInteger(), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["owner_id", "id"], ["jobs.user_id", "jobs.id"], name="fk_post_publications_id_owner", ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["owner_id", "post_id"],
-            ["companion_entries.user_id", "companion_entries.id"],
-            name="fk_post_publications_post_id_owner",
-            ondelete="SET NULL (post_id)",
-        ),
-        sa.ForeignKeyConstraint(
-            ["owner_id", "video_job_id"],
-            ["video_gen_jobs.owner_id", "video_gen_jobs.id"],
-            name="fk_post_publications_video_job_id_owner",
-            ondelete="SET NULL (video_job_id)",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("post_publications_pkey")),
-        sa.UniqueConstraint("owner_id", "id", name="uq_post_publications_owner_id"),
-    )
-    op.create_index(op.f("ix_post_publications_video_job_id"), "post_publications", ["video_job_id"], unique=False)
-    op.create_table(
         "submission_messages",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("submission_id", sa.BigInteger(), nullable=False),
@@ -3211,16 +3040,16 @@ def downgrade() -> None:
     op.execute("""
         DROP TABLE
             action_definitions, admin_sessions, appearance_assets, appearance_image_jobs,
-            appearance_preparation_jobs, assets, avatar_assets, companion_entries,
+            appearance_preparation_jobs, assets, avatar_assets,
             companion_fullbody_candidates, companion_intents, companion_outfits, companion_rhythms,
             companion_scenes, companion_topic_batches, companion_topic_candidates, companion_topic_feedback,
-            companion_topic_usages, companion_topics, conversations, cron_jobs, custom_voices, diary_search_index, entry_assets,
-            entry_comments, entry_links, fullbody_review_jobs, image_gen_jobs, job_assets, job_requests, jobs,
+            companion_topic_usages, companion_topics, conversations, cron_jobs, custom_voices, diary_entries, diary_search_index,
+            fullbody_review_jobs, image_gen_jobs, job_assets, job_requests, jobs,
             library_works, life_action_admissions, life_event_search_index, life_events, life_growth,
             life_pursuits, life_states, life_steps, login_records, media_continuations, media_manual_operations,
             memories, memory_embeddings, memory_evidence, memory_fingerprints, memory_revisions, message_assets,
             message_voice_refs, messages, nightly_activity_actions, nightly_activity_logs, outfit_creation_jobs,
-            personas, post_publications, prompt_submissions, provider_attempts, provider_lanes,
+            personas, prompt_submissions, provider_attempts, provider_lanes,
             pursuit_evidence, remote_pairings, remote_sessions, scene_jobs, submission_messages,
             system_settings, user_model_configs, user_settings, user_social_accounts, users,
             video_gen_jobs, visual_import_jobs, visual_items, visual_jobs, visual_observation_jobs,

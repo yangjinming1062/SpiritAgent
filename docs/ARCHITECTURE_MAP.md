@@ -40,7 +40,7 @@ flowchart TD
         Maint[maintenance 账户维护]
     end
     subgraph FE[features 数据与规则]
-        F1["conversation · memory · life · entries · posts · journal"]
+        F1["conversation · memory · life · journal"]
         F2["appearance · scenes · action_library · visuals · media"]
         F3["companion · topics · automation"]
         F4["accounts · configuration · jobs · assets · updates"]

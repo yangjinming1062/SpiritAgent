@@ -2381,7 +2381,7 @@ async def _prepare_visual_inputs(
         else:
             await _prepare_opening(user_id, job, snapshot.source, progress, directory)
         if job.target_kind == "image":
-            # 图片成品同样提供桌面与动态读取的画面描述；描述不可用时不阻断发布。
+            # 图片成品也提供呈现快照所用的画面描述；描述不可用时继续发布。
             if allow_model_steps:
                 await _describe_frame(user_id, job_id, progress, asset_kind=snapshot.kind)
             await _save_progress(user_id, job_id, progress, stage="review")

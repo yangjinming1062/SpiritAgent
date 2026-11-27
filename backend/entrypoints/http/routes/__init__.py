@@ -5,7 +5,6 @@ from .companion import router as companion_router
 from .companion_actions import router as companion_actions_router
 from .companion_journal import router as companion_journal_router
 from .companion_life import router as companion_life_router
-from .companion_posts import router as companion_posts_router
 from .companion_scenes import router as companion_scenes_router
 from .companion_topics import router as companion_topics_router
 from .companion_visuals import router as companion_visuals_router
@@ -31,7 +30,6 @@ ROUTERS = (
     companion_visuals_router,
     companion_journal_router,
     companion_life_router,
-    companion_posts_router,
     companion_scenes_router,
     companion_topics_router,
     resource_catalog_router,

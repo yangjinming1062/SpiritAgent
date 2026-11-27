@@ -507,7 +507,7 @@ function MemoryEditor({
       {conflict && draft ? (
         <div className="creation-status">
           <p>这条记忆已在其他设备修改。请核对最新内容后继续。</p>
-          <p className="post-body">{row.content}</p>
+          <p className="memory-conflict-content">{row.content}</p>
           <button
             disabled={busy}
             onClick={() => onDraftsChange(storeMemoryDraft(drafts, row, acceptMemoryConflict(row, draft)))}

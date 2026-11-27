@@ -5,10 +5,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { $userPreferredTier, type DisturbanceTier, selectDisturbanceTier } from '@/features/character'
 import {
   $motionLevel,
-  $postsEnabled,
   $responsePreference,
   type MotionLevel,
-  postsEnabledPref,
   type ResponsePreference,
   setMotionLevel,
   setResponsePreference
@@ -20,16 +18,7 @@ import { cn } from '@/shared/lib/utils'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import {
-  CapsuleTabs,
-  HINT_TEXT,
-  PanelSelect,
-  SECTION_TITLE,
-  SettingCard,
-  SettingRow,
-  SettingsSectionIntro,
-  Toggle
-} from '@/ui'
+import { CapsuleTabs, HINT_TEXT, PanelSelect, SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro } from '@/ui'
 
 const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'autonomous']
 
@@ -45,7 +34,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
   const tier = useStore($userPreferredTier)
   const motionLevel = useStore($motionLevel)
   const responsePreference = useStore($responsePreference)
-  const postsEnabled = useStore($postsEnabled)
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
   const [isSavingRecordTime, setIsSavingRecordTime] = useState(false)
@@ -206,16 +194,6 @@ export function InteractionPage({ part = 'companionship' }: { part?: 'companions
                   </button>
                 )
               })}
-            </SettingCard>
-          </section>
-
-          <section>
-            <p className={cn(SECTION_TITLE, 'mb-1')}>{t.smartHeading}</p>
-            <p className={cn(HINT_TEXT, 'mb-2')}>{t.smartHint}</p>
-            <SettingCard>
-              <SettingRow description={t.postsEnabledDesc} label={t.postsEnabled}>
-                <Toggle ariaLabel={t.postsEnabled} checked={postsEnabled} onChange={postsEnabledPref.set} />
-              </SettingRow>
             </SettingCard>
           </section>
         </>

@@ -13,7 +13,7 @@
 | 动作素材与影像 | [影像成品](docs/PROTOCOL.md#影像成品与模式隔离)、[动作素材与播放](docs/PROTOCOL.md#动作素材与影像播放)、[组合制作](docs/PIPELINE.md#组合影像制作) | [影像](backend/features/visuals/README.md)、[动作素材](backend/features/action_library/README.md)、[渲染层](client/renderer/README.md#角色呈现契约) |
 | 记忆学习、编辑与遗忘，学习技能 | [记忆作用域](docs/PROTOCOL.md#预设记忆与学习作用域) | [记忆模块](backend/features/memory/README.md)、[Runner 学习技能](runner/README.md#按预设学习技能) |
 | 主动陪伴、Cron 与夜间 | [在线与夜间体验](docs/DESIGN.md#主动陪伴)、[调度契约](docs/PROTOCOL.md#调度) | [Backend 任务入口](backend/README.md#任务入口) |
-| 动态与日记 | [动态体验](docs/DESIGN.md#生活动态)、[日记体验](docs/DESIGN.md#第一人称日记)、[契约](docs/PROTOCOL.md#动态与日记) | [Backend 任务入口](backend/README.md#任务入口) |
+| 日记 | [日记体验](docs/DESIGN.md#第一人称日记)、[契约](docs/PROTOCOL.md#日记) | [Backend 任务入口](backend/README.md#任务入口) |
 | 手机扫码、远程页面与本机能力 | [远程访问](docs/PROTOCOL.md#远程访问) | [Remote](remote/README.md)、[Backend 远程](backend/README.md#远程网页)、[Client](client/README.md#远程网页)、[Runner](runner/README.md#任务入口) |
 | 窗口、拖拽、主题、多屏 | [窗口与会话](docs/DESIGN.md#窗口与会话)、[主题](docs/DESIGN.md#主题与图片查看)、[精灵表现](docs/DESIGN.md#窗口精灵表现与移动) | [Client 任务入口](client/README.md#任务入口)、[窗口与主题约束](client/README.md#窗口与主题) |
 | 桌面模式、Dock 与异常恢复 | [桌面体验](docs/DESIGN.md#桌面模式)、[影像呈现](docs/PROTOCOL.md#影像成品与模式隔离)、[呈现与启动器](docs/PROTOCOL.md#桌面呈现与本机启动器) | [主进程](client/main/README.md#桌面承载与恢复)、[影像](backend/features/visuals/README.md)、[Windows 宿主](client/desktop-windows/README.md)、[macOS 模块](client/desktop-macos/README.md)、[Windows 验收](scripts/README.md#windows-桌面验收)、[macOS 验收](scripts/README.md#macos-桌面验收) |

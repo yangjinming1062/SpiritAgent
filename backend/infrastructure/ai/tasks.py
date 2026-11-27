@@ -13,7 +13,6 @@ class AiTaskKey(StrEnum):
     memory_review = "memory_review"
     memory_embedding = "memory_embedding"
     nightly = "nightly"
-    posts = "posts"
     appearance = "appearance"
     outfit = "outfit"
     scene = "scene"
@@ -94,17 +93,6 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
     ),
     _task(
         AiTaskKey.nightly, "夜间", "夜间", {"llm": ("夜间记忆整理", "自主活动规划", "相处理解反思", "日记决定与创作")}
-    ),
-    _task(
-        AiTaskKey.posts,
-        "动态",
-        "动态",
-        {
-            "llm": ("发布决定与内容计划", "评论回复", "出镜身份检查"),
-            "image_gen": ("动态配图生成",),
-            "video_gen": ("动态视频生成",),
-            "tts": ("语音动态合成", "动态视频旁白"),
-        },
     ),
     _task(
         AiTaskKey.appearance,

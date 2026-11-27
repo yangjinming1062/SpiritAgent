@@ -45,8 +45,6 @@ from features.media.review_operations import configure_review_handler
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
 from features.media.video_jobs import video_review_view
 from features.media.video_queue.ports import configure_video_queue_ports
-from features.posts.ports import set_post_published_handler
-from features.posts.publication import publication_continue_requested, resume_post_media
 from features.scenes.queries import existing_scene_ids
 from features.scenes.reviews import manually_review_scene, run_manual_scene_job, scene_review_view
 from features.scenes.service import schedule_initial_scene
@@ -97,7 +95,6 @@ from runtime.events.contracts import COMPANION_TURN_EVENTS
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
-from workflows.life_events import record_post_published
 from workflows.life_presentation import read_ready_stage_scene
 from workflows.visual_events import (
     initialize_visuals,
@@ -167,7 +164,6 @@ def register_tools() -> None:
 
 def register_internal_event_handlers() -> None:
     register_internal_event_handler("media.review.updated", media_review_updated)
-    register_internal_event_handler("post.publication.continue", publication_continue_requested)
     register_internal_event_handler("visual.preparation.continue", preparation_continue_requested)
     register_internal_event_handler("outfit.creation.continue", outfit_creation_continue_requested)
     for event_type in COMPANION_TURN_EVENTS:
@@ -203,7 +199,6 @@ def register_all() -> None:
     configure_review_handler("appearance.fullbody_review", fullbody_review_view)
     configure_continuation_handler("outfit.create", continue_outfit_creation)
     configure_continuation_handler("visuals.preparation", continue_base_preparation)
-    configure_continuation_handler("post.publish", resume_post_media)
     configure_continuation_handler("chat.image", continue_chat_image)
     configure_continuation_handler("chat.video", continue_chat_video)
     register_asset_contributions()
@@ -212,7 +207,6 @@ def register_all() -> None:
     register_channel_lifecycle(
         ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions)
     )
-    set_post_published_handler(record_post_published)
     set_media_reference_readers(
         MediaReferenceReaders(
             active_identity=active_identity_reference,

@@ -314,9 +314,9 @@ async def commit_private_episode_in_session(
 
 
 async def share_life_event_in_session(
-    db: AsyncSession, user_id: int, share: LifeShare, source_id: int, *, decision_slot: str | None = None
+    db: AsyncSession, user_id: int, share: LifeShare, source_id: int
 ) -> LifeEventView | None:
-    """公开一段独立写就的片段。保留原记录及其可见范围。"""
+    """按所选渠道保存摘选，保留来源记录及其可见范围。"""
     await get_or_create_state(db, user_id, lock=True)
     original = await db.scalar(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.id == source_id))
     if original is None:
@@ -341,26 +341,17 @@ async def share_life_event_in_session(
             raise LifeInputError("原作品已不可用")
         if not public_artifact:
             release = await release_private_work(db, user_id, work_id)
-    if share.channel == "post":
-        if not decision_slot:
-            raise LifeInputError("选给动态的摘录需要本次生活决定身份")
-        key = f"life-share:post:{decision_slot}"
-        existing = await db.scalar(select(LifeEvent).where(LifeEvent.user_id == user_id, LifeEvent.event_key == key))
-        if existing:
-            return event_view(existing)
-    else:
-        if not release and await db.scalar(
-            select(LifeEvent.id)
-            .where(
-                LifeEvent.user_id == user_id,
-                LifeEvent.source == "life_share",
-                LifeEvent.fact_json["event_id"].as_string() == str(source_id),
-                LifeEvent.fact_json["channel"].as_string() == share.channel,
-            )
-            .limit(1)
-        ):
-            return None
-        key = f"life-share:{token_hex(12)}"
+    if not release and await db.scalar(
+        select(LifeEvent.id)
+        .where(
+            LifeEvent.user_id == user_id,
+            LifeEvent.source == "life_share",
+            LifeEvent.fact_json["event_id"].as_string() == str(source_id),
+            LifeEvent.fact_json["channel"].as_string() == share.channel,
+        )
+        .limit(1)
+    ):
+        return None
     if release:
         public_artifact = True
         if "scene_id" in result:
@@ -384,7 +375,7 @@ async def share_life_event_in_session(
         db,
         user_id,
         LifeEventInput(
-            event_key=key,
+            event_key=f"life-share:{token_hex(12)}",
             kind="life.episode.shared" if public else "life.share.prepared",
             source="life_share",
             fact_type=original.fact_type,

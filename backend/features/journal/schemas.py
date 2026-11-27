@@ -17,11 +17,12 @@ class DiaryContent(BaseModel):
 
 
 class DiaryEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: ResourceId
     entry_date: date
     title: str
     body: str
-    post_ids: list[ResourceId] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -38,6 +39,7 @@ class DiarySearchResponse(BaseModel):
 
 class DiaryUnreadResponse(BaseModel):
     has_unread: bool
+    unread_diary_ids: list[ResourceId]
 
 
 class DiaryReadRequest(BaseModel):

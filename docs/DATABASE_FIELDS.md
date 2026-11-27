@@ -61,13 +61,11 @@
 
 成品/版本成对外键还校验版本属于该成品；循环指针可分阶段写入，提交时必须完整。显示事实不得从生活活动、待播指令或文件存在推断。
 
-## 动态与日记
+## 日记
 
 | 字段组与模型入口 | 语义 |
 |---|---|
-| 内容、评论与附件：[entries/models.py](../backend/features/entries/models.py) | 动态/日记共享正文和阅读状态，日记按账户/业务日期唯一；来源动态用有方向和顺序的关联保存，评论回复限定同账户同内容，延后回复的原始截止时刻保存在 `reply_expires_at` |
-| 日记检索：同一[内容模型](../backend/features/entries/models.py) | `diary_search_index` 保存来源、可重建文本、内容指纹和兼容空间向量；来源删除级联索引，正文不复制进记忆 |
-| 发布工作：[publication_models.py](../backend/features/posts/publication_models.py) | 冻结输入保存获准考虑的摘录，计划的 `excerpt_uses` 标记各摘录对应的交付字段，成稿的 `used_excerpt_ids` 保存最终采用的摘录。空列表表示独立创作，历史记录的空值表示无法核实。计划、媒体任务和结果归发布详情；`outcome` 表示业务事实，继承的执行状态表示进度，二者不能互换 |
+| 日记与检索索引：[journal/models.py](../backend/features/journal/models.py) | 日记保存本地归属日、正文和已读状态。`diary_search_index` 保存来源、可重建文本、内容指纹和兼容空间向量。正文删除时级联清理索引 |
 
 ## 生活、夜间与调度
 

@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 
-from infrastructure.text import ensure_utc, utc_now
+from infrastructure.text import utc_now
 from pydantic import JsonValue
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import ColumnElement, select
@@ -21,15 +20,6 @@ CHECKPOINT_SUBTYPES = frozenset({CHECKPOINT_SUBTYPE, PRIVATE_CHECKPOINT_SUBTYPE}
 
 def context_visible_subtype() -> ColumnElement[bool]:
     return Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, *CHECKPOINT_SUBTYPES))
-
-
-@dataclass(frozen=True)
-class CompanionDialogue:
-    window_start: datetime
-    window_end: datetime
-    user_timezone: str
-    timezone_configured: bool
-    content: str
 
 
 async def _context_checkpoint(
@@ -70,41 +60,6 @@ async def load_context_messages(db: AsyncSession, conv: Conversation | Conversat
     stmt = select(Message).where(Message.conversation_id == conv.id, Message.id > watermark, context_visible_subtype())
     rows = list((await db.scalars(stmt.order_by(Message.id))).all())
     return [checkpoint, *rows] if checkpoint is not None else rows
-
-
-async def load_companion_dialogue(db: AsyncSession, user_id: int, *, now: datetime | None = None) -> CompanionDialogue:
-    """完整读取陪伴预设的顶层用户对话；05:00 前连同前一自然日，逐会话尊重清空水位。"""
-    now = ensure_utc(now or utc_now())
-    timezone = await resolve_user_timezone(db, user_id)
-    zone = ZoneInfo(timezone or "UTC")
-    local_now = now.astimezone(zone)
-    day = local_now.date() - timedelta(days=1) if local_now.hour < 5 else local_now.date()
-    start = datetime.combine(day, time.min, zone)
-    msgs = (
-        (
-            await db.execute(
-                select(Message)
-                .join(Conversation)
-                .where(
-                    Conversation.user_id == user_id,
-                    Conversation.system_preset_id == COMPANION_PRESET_ID,
-                    user_authored_conversation(),
-                    Message.id > Conversation.context_after_message_id,
-                    Message.role.in_(("user", "assistant")),
-                    context_visible_subtype(),
-                    Message.tool_calls.is_(None),
-                    Message.created_at >= start.astimezone(UTC),
-                    Message.created_at <= now,
-                )
-                .order_by(Message.created_at, Message.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return CompanionDialogue(
-        start, local_now, zone.key, bool(timezone), format_messages_compact(list(msgs), user_local_tz=zone.key)
-    )
 
 
 @dataclass(frozen=True)

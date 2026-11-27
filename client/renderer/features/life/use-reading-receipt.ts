@@ -8,31 +8,28 @@ interface ReadingReceiptState {
   scope: string
   refreshKey: number
   confirmed: ReadonlySet<string>
-  blocked: boolean
+  blockedId?: string
 }
 
 export function useReadingReceipt({
   scope,
   refreshKey,
   foreground,
-  snapshot,
-  displayedIds,
+  displayedId,
   ready,
   markRead
 }: {
   scope: string
   refreshKey: number
   foreground: boolean
-  snapshot: readonly string[] | null
-  displayedIds: readonly string[]
+  displayedId?: string
   ready: boolean
   markRead: (ids: string[]) => Promise<boolean>
 }): void {
   const [state, setState] = useState<ReadingReceiptState>(() => ({
     scope,
     refreshKey,
-    confirmed: new Set(),
-    blocked: false
+    confirmed: new Set()
   }))
 
   const requestRef = useRef<Promise<boolean> | undefined>(undefined)
@@ -43,12 +40,17 @@ export function useReadingReceipt({
     setState(current => ({
       scope,
       refreshKey,
-      confirmed: current.scope === scope ? current.confirmed : new Set(),
-      blocked: false
+      confirmed: current.scope === scope ? current.confirmed : new Set()
     }))
   }, [scope, refreshKey])
 
-  useForegroundRestored(foreground, () => setState(current => ({ ...current, blocked: false })))
+  useForegroundRestored(foreground, () => setState(current => ({ ...current, blockedId: undefined })))
+
+  useEffect(() => {
+    if (state.blockedId && state.blockedId !== displayedId) {
+      setState(current => ({ ...current, blockedId: undefined }))
+    }
+  }, [displayedId, state.blockedId])
 
   useEffect(() => {
     if (
@@ -56,8 +58,9 @@ export function useReadingReceipt({
       state.refreshKey !== refreshKey ||
       !ready ||
       !foreground ||
-      snapshot === null ||
-      state.blocked ||
+      !displayedId ||
+      state.confirmed.has(displayedId) ||
+      state.blockedId === displayedId ||
       requestRef.current !== undefined ||
       document.visibilityState !== 'visible' ||
       !document.hasFocus()
@@ -65,15 +68,8 @@ export function useReadingReceipt({
       return
     }
 
-    // 进入前的提醒统一确认；后续内容只确认当前实际展示的条目。
-    const ids = [...new Set([...snapshot, ...displayedIds])].filter(id => !state.confirmed.has(id))
-
-    if (ids.length === 0) {
-      return
-    }
-
     const isLive = beginAsync()
-    const request = markRead(ids)
+    const request = markRead([displayedId])
     requestRef.current = request
     void request.then(ok => {
       if (!isLive() || requestRef.current !== request) {
@@ -82,8 +78,10 @@ export function useReadingReceipt({
 
       requestRef.current = undefined
       setState(current =>
-        ok ? { ...current, confirmed: new Set([...current.confirmed, ...ids]) } : { ...current, blocked: true }
+        ok
+          ? { ...current, confirmed: new Set([...current.confirmed, displayedId]) }
+          : { ...current, blockedId: displayedId }
       )
     })
-  }, [state, scope, refreshKey, ready, foreground, snapshot, displayedIds, markRead, beginAsync])
+  }, [state, scope, refreshKey, ready, foreground, displayedId, markRead, beginAsync])
 }

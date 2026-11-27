@@ -15,7 +15,6 @@ import { AccountMenu } from '@/features/accounts/account-menu'
 import { $persona, $portraitUrl } from '@/features/character'
 import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
-import { $postsHasUnread } from '@/features/life/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
@@ -48,7 +47,6 @@ export function MainRail({
   const page = useStore($appPage)
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
-  const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const creationAttention = useStore($creationAttention)
   const strings = useStrings()
@@ -61,7 +59,7 @@ export function MainRail({
 
   const unreadByPage: Partial<Record<RailPage, boolean>> = {
     chat: chatUnread,
-    life: postsUnread || diaryUnread,
+    life: diaryUnread,
     creation: creationAttention
   }
 

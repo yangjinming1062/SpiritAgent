@@ -90,11 +90,16 @@
 }
 
 .dot {
-  background: var(--ui-accent);
+  background: var(--ui-text-muted);
   border-radius: 50%;
   height: 4px;
   margin-top: 2px;
   width: 4px;
+}
+
+.dotUnread {
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 1px var(--ui-accent);
 }
 
 .entry {

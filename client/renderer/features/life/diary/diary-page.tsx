@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import type React from 'react'
 
 import { $persona } from '@/features/character'
@@ -19,7 +19,7 @@ import { DiaryArchiveSearch } from './diary-search'
 import { $diaryUi, updateDiaryUi } from './diary-state'
 import styles from './diary.module.css'
 import { diarySearch } from './search'
-import { $diaryByDate, $diaryLoading, hydrateDiary, markDiaryRead } from './store'
+import { $diaryByDate, $diaryLoading, $diaryUnreadIds, hydrateDiary, markDiaryRead } from './store'
 
 function localDateKey(d: Date): string {
   const year = d.getFullYear()
@@ -67,6 +67,7 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
   const persona = useStore($persona)
   const diaryByDate = useStore($diaryByDate)
   const loading = useStore($diaryLoading)
+  const unreadIds = useStore($diaryUnreadIds)
   const auth = useStore($auth)
   const authKind = auth.kind
   const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
@@ -93,15 +94,8 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
 
   const [loadFailed, setLoadFailed] = useState(false)
   const { reloadKey, reload } = useReadingReload()
-  const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
-  const snapshotCaptured = useRef(false)
 
   const foreground = useReadingForeground(suppliedForeground)
-
-  useEffect(() => {
-    snapshotCaptured.current = false
-    setReadSnapshot(null)
-  }, [sessionId, reloadKey])
 
   useForegroundRestored(foreground, () => {
     if (loadFailed) {
@@ -112,7 +106,6 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
   const displayName = persona?.name || tRail.companionFallback
   const isToday = selectedDate === todayKey()
 
-  // 月份翻阅只加载正文，首轮成功加载捕获进入页面时的未读快照。
   useEffect(() => {
     const cursorStart = cursorMonthStart(cursor)
     const cursorEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
@@ -128,14 +121,9 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
     let cancelled = false
     setLoadFailed(false)
 
-    void hydrateDiary({ from: startKey, to: endKey }).then(snapshot => {
+    void hydrateDiary({ from: startKey, to: endKey }).then(loaded => {
       if (!cancelled) {
-        setLoadFailed(snapshot === null)
-
-        if (snapshot !== null && !snapshotCaptured.current) {
-          snapshotCaptured.current = true
-          setReadSnapshot(snapshot)
-        }
+        setLoadFailed(!loaded)
       }
     })
 
@@ -152,9 +140,8 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
     scope: sessionId ?? authKind,
     refreshKey: reloadKey,
     foreground,
-    snapshot: readSnapshot,
-    displayedIds: entry ? [entry.id] : [],
-    ready: authKind === 'authenticated' && !loading && !loadFailed && !ui.search.applied,
+    displayedId: ui.search.applied ? undefined : entry?.id,
+    ready: authKind === 'authenticated' && !loading && !loadFailed,
     markRead: markDiaryRead
   })
 
@@ -213,18 +200,20 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
             <div className={styles.grid}>
               {days.map((d, index) => {
                 const key = localDateKey(d)
-                const hasEntry = Boolean(diaryByDate[key])
+                const dayEntry = diaryByDate[key]
+                const unread = dayEntry !== undefined && unreadIds.has(dayEntry.id)
+                const dateLabel = formatSelectedDate(key, t)
                 const selected = key === selectedDate
 
                 return (
                   <button
                     aria-current={key === todayKey() ? 'date' : undefined}
-                    aria-label={formatSelectedDate(key, t)}
+                    aria-label={unread ? `${dateLabel} · ${t.unread}` : dateLabel}
                     aria-pressed={selected}
                     className={cn(
                       styles.dayCell,
                       selected && styles.dayCellSelected,
-                      hasEntry && styles.dayCellHasEntry
+                      dayEntry && styles.dayCellHasEntry
                     )}
                     key={key}
                     onClick={() => setSelectedDate(key)}
@@ -232,7 +221,7 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground: bool
                     type="button"
                   >
                     {d.getDate()}
-                    {hasEntry && <span className={styles.dot} />}
+                    {dayEntry && <span aria-hidden="true" className={cn(styles.dot, unread && styles.dotUnread)} />}
                   </button>
                 )
               })}

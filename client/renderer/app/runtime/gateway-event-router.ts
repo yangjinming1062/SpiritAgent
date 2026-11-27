@@ -17,7 +17,6 @@ import { onSceneEvent } from '@/features/creation/environment'
 import { enqueueInteraction, handleVisualEvent, refreshVisualPresentation } from '@/features/creation/visuals'
 import { handleLifeUpdated } from '@/features/life'
 import { onJournalEvent } from '@/features/life/diary'
-import { onPostEvent } from '@/features/life/posts'
 import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
@@ -251,17 +250,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       onSceneEvent()
       // 环境就绪或删除会改变当前舞台引用的素材，读取一次最新呈现才能换掉旧背景。
       void refreshVisualPresentation()
-
-      break
-
-    case 'companion.post.created':
-
-    case 'companion.posts.read':
-
-    case 'companion.post.comment':
-
-    case 'companion.post.comment.deleted':
-      onPostEvent(event)
 
       break
 

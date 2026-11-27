@@ -182,10 +182,6 @@ export const settings = {
         normal: { label: '偶尔主动问候', hint: '用文字轻轻打个招呼，保持在原处' },
         autonomous: { label: '自由互动', hint: '可以主动说话并与你自然互动' }
       },
-      smartHeading: '伙伴的日常',
-      smartHint: '伙伴可以自己记录生活，与陪伴档位独立设置。',
-      postsEnabled: '动态创作',
-      postsEnabledDesc: '即使你离线，伙伴也能自主发布文字、图片、视频或语音动态。',
       motionHeading: '动态表现',
       motionHint: '控制伙伴形象的画面活动强度，与主动联系互不影响；临时安静不会停止静音的待机动画。',
       motionAriaLabel: '动态表现档位',

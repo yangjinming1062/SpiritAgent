@@ -64,7 +64,6 @@ flowchart LR
     scene_jobs --> jobs
     visual_jobs --> jobs
     video_gen_jobs --> jobs
-    post_publications --> jobs
 ```
 
 任务详情复用 `jobs` 主键。共享父表只管理执行控制，业务详情管理输入、目标和采纳；请求身份与制作身份分离，允许多个请求复用在途工作，也允许后续新请求制作相同组合。任务种类须匹配唯一详情。
@@ -121,21 +120,17 @@ flowchart LR
 
 `visual_stage_preparations` 保存每个账户的整景制作决定、已读输入修订、复查时间和工作项引用。`visual_stage_preparation_inputs` 随公开输入变更事件在同一事务推进修订；进程内唤醒丢失时，调度按未读修订恢复。工作项受理提交前复核决定与输入修订。`visual_presentations.local_snapshot_json` 冻结客户端实际显示的整景版本或环境图，绑定宿主与呈现代次。呈现代次由持久序列分配，后端重启后不会复用。正式点播的认领和回执仍归播放账本。
 
-## 动态、日记与评论
+## 日记
 
 ```mermaid
 flowchart LR
-    diary_search_index --> companion_entries
-    entry_links -->|source / target| companion_entries
-    entry_comments --> companion_entries
-    entry_comments -->|reply target| entry_comments
-    entry_assets --> companion_entries
-    entry_assets --> assets
-    post_publications --> companion_entries
-    post_publications --> video_gen_jobs
+    diary_entries --> users
+    diary_search_index --> diary_entries
+    life_events --> diary_entries
+    life_steps --> diary_entries
 ```
 
-动态和日记共享正文、阅读状态与附件，因此使用内容实体；创作与发布政策仍由 posts/journal 拥有。日记日期唯一性、来源动态与评论回复通过关系校验。列表只读取评论数量，正文独立分页；日记独立检索索引可从正文重建。
+日记按账户和本地归属日唯一。检索索引可从已发布的正文重建，生活成果引用和检索索引均校验账户归属。
 
 ## 生活、夜间与调度
 
@@ -193,7 +188,7 @@ flowchart LR
 | 关系 | 删除后必须保持 |
 |---|---|
 | 账户 → 所属数据 | 先进入维护态并收敛任务/文件；不可把远端未知当作未执行 |
-| 会话 → 消息；内容 → 评论/附件/引用 | 依附数据级联，保留的评论回复先解除被删目标 |
+| 会话 → 消息，日记 → 检索索引 | 依附数据级联，日记删除时解除生活成果引用 |
 | 源素材 → 冻结版本；事项/步骤 → 事实 | 可解除来源和结果指针，冻结内容及事实保留 |
 | 资产、声音版本 → 活引用 | 有引用时限制删除，关系释放与文件回收分阶段执行 |
 | 任务 → 远端尝试 | 可解除本地关系，远端占用独立核对 |
@@ -205,7 +200,7 @@ flowchart LR
 
 ## 查询设计与验证
 
-列表使用稳定游标和所需列，精确总数按需计算。动态页与全部未读 ID 取自同一查询快照，未读集合只传输一次。舞台和生活调度按账户批量读取所需素材与引导状态。资产回收在数据库内关联业务引用与文件路径，按已收集的资产或版本 ID 筛选时传入一个数组参数。索引服务消息顺序、用户预览、内容时间线、任务恢复、生活事件与记忆作用域。
+列表使用稳定游标和所需列，精确总数按需计算。舞台和生活调度按账户批量读取所需素材与引导状态。资产回收在数据库内关联业务引用与文件路径，按已收集的资产或版本 ID 筛选时传入一个数组参数。索引服务消息顺序、用户预览、内容时间线、任务恢复、生活事件与记忆作用域。
 
 常驻角色素材按账户、冻结身份和造型使用复合表达式索引，按版本倒序读取。
 

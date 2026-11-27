@@ -19,7 +19,6 @@ from features.memory.memory_learning import evidence_fingerprint, forgotten_sour
 from features.memory.memory_narratives import load_companion_reflection, save_companion_reflection
 from features.memory.memory_review import review_memories
 from features.memory.memory_store import memory_write_lock, schedule_embedding_rebuild
-from features.posts.store import collect_post_interactions
 from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -139,7 +138,6 @@ async def _stage_4_reflection(
     background_memories: dict[str, str],
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
-    post_interactions: list[dict[str, Any]],
     life_context: dict[str, Any],
     persona: dict[str, str],
     language: str,
@@ -168,7 +166,6 @@ async def _stage_4_reflection(
         "background_memories": background_memories,
         "previous_reflection": previous_reflection,
         "nightly_autonomous_actions": autonomous_actions,
-        "post_interactions": post_interactions,
         "life_context": life_context,
         "local_date": local_date_str,
         "language": language,
@@ -191,7 +188,6 @@ async def _stage_4_reflection(
                     {"role": message["role"], "content": str(message.get("content", ""))[:180]}
                     for message in reversed(clean_messages[-6:])
                 ],
-                "post_interactions": [str(item)[:140] for item in post_interactions[:4]],
                 "completed_activities": [str(item)[:135] for item in autonomous_actions[:4]],
             },
             instructions=(
@@ -413,9 +409,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         today_messages = await nightly_messages(db, user_id, scope.system_preset_id, utc_start, utc_end)
         forgotten = await forgotten_source_fingerprints(db, scope)
         user_language = resolve_language(await get_user_setting(db, user_id, "language"))
-        posts = await collect_post_interactions(
-            db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
-        )
         past_7_count = await nightly_user_message_count(
             db, user_id, scope.system_preset_id, utc_start - timedelta(days=7), utc_start
         )
@@ -510,7 +503,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 date_context,
                 anomaly_stats,
                 clean_messages,
-                posts.threads,
                 log_id=log_id,
                 persona=persona_snapshot,
                 life_context=life_context,
@@ -539,14 +531,9 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     else:
         _record_stage(stages, {"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
-    # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
-    async with SESSION_LOCAL() as db:
-        posts = await collect_post_interactions(
-            db, user_id, local_date=target_date, user_timezone=tz_str, utc_start=utc_start, utc_end=utc_end
-        )
     action_facts = _successful_action_facts(action_results)
     has_readable_messages = any(message["role"] == "user" for message in clean_messages)
-    has_material = bool(has_readable_messages or action_facts or posts.threads)
+    has_material = bool(has_readable_messages or action_facts)
     if has_material:
         await _run_stage(
             stages,
@@ -559,7 +546,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 background_memories,
                 local_date_str,
                 action_facts,
-                posts.threads,
                 life_context,
                 persona,
                 user_language,
@@ -591,7 +577,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             background_memories=background_memories,
             user_timezone=tz_str,
             messages=clean_messages,
-            posts=posts,
             persona=persona,
             language=user_language,
             diagnostics=stage_diagnostics.setdefault("journal nightly", []),

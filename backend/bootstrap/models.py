@@ -12,14 +12,13 @@ import features.configuration.models
 import features.configuration.settings.models
 import features.conversation.models
 import features.conversation.submission_models
-import features.entries.models
 import features.jobs.models  # noqa: F401 -- 持久任务与请求登记。
+import features.journal.models
 import features.life.models
 import features.media.models
 import features.media.video_queue.models
 import features.media.voice_models
 import features.memory.models
-import features.posts.publication_models
 import features.scenes.models
 import features.topics.models
 import features.visuals.models  # noqa: F401 -- 显式 ORM 登记。

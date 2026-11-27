@@ -40,7 +40,6 @@ from features.life.queries import due_review_user_ids
 from features.life.use_cases import pending_presentation_users
 from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import review_memories
-from features.posts.autonomous import autonomous_post_users, request_autonomous_post, resume_autonomous_submissions
 from features.topics.store import collecting_batches, has_unshared_topics
 from features.visuals.stage_preparation import due_preparation_users
 from infrastructure.ai.tasks import AiTaskKey
@@ -354,7 +353,6 @@ async def run_tick() -> None:
         "nightly_activity", interval=SETTINGS.nightly_scan_interval_seconds, discover=_discover_nightly_activity
     )
     _SCANS.every("topic_discovery", interval=0, discover=_discover_topic_batches)
-    _SCANS.every("post_impulse", interval=0, discover=_discover_autonomous_posts)
     _SCANS.every("memory_review", interval=600, discover=_discover_memory_reviews)
     _SCANS.every("outbox_gc", interval=900, discover=_discover_gc)
     await _SCANS.tick()
@@ -513,12 +511,3 @@ async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:
     if target != now.astimezone(zone).date() - timedelta(days=1):
         return
     await run_nightly_pipeline(scope, target)
-
-
-async def _discover_autonomous_posts() -> list[ScheduledWork]:
-    work = [ScheduledWork("resume", resume_autonomous_submissions)]
-    work.extend(
-        ScheduledWork("decide", partial(request_autonomous_post, user_id), user_id, interval=(45 * 60, 90 * 60))
-        for user_id in await autonomous_post_users()
-    )
-    return work

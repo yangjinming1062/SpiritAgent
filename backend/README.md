@@ -12,7 +12,7 @@
 | 记忆、证据、编辑与遗忘 | [记忆](features/memory/README.md) |
 | 头像、视觉身份、衣柜与环境 | [外观](features/appearance/README.md)、[场景](features/scenes/README.md) |
 | 动作、影像与公共媒体 | [动作](features/action_library/README.md)、[影像](features/visuals/README.md)、[媒体](features/media/README.md) |
-| 动态与日记 | [动态](features/posts/README.md)、[内容存储](features/entries/README.md)、[journal_service.py](features/journal/journal_service.py) |
+| 日记 | [journal_service.py](features/journal/journal_service.py)、[journal_nightly.py](workflows/nightly/journal_nightly.py) |
 | Cron、主动陪伴与夜间 | [业务调度](#业务调度)、[cron.py](entrypoints/scheduler/cron.py)、[cron_jobs.py](features/automation/cron_jobs.py) |
 | 资讯采集、来源引用与反馈 | [话题](features/topics/README.md)、[social_accounts.py](features/configuration/social_accounts.py) |
 | 手机访问 | [远程授权](features/accounts/remote/README.md)、[remote.py](entrypoints/http/routes/remote.py) |
@@ -33,7 +33,7 @@
 
 ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入使用公开操作；跨域原子变更使用事务内操作共享短事务，供应商等待在事务外。Pydantic 校验外部结构，dataclass 表达进程内值对象；纯 DTO、枚举与静态词表不承担业务操作。
 
-[JobRecord](infrastructure/job_models.py) 是共享任务基础契约，业务可继承并拥有 joined-table 详情；这一例外不允许访问别的业务详情 ORM。共享正文归 entries，任务归 jobs，文件归 assets，具体关系归数据库文档。媒体通过显式业务关联和结果端口交付，不反查消费方正文或 JSON。
+[JobRecord](infrastructure/job_models.py) 是共享任务基础契约，业务可继承并拥有 joined-table 详情；这一例外不允许访问别的业务详情 ORM。日记归 journal，任务归 jobs，文件归 assets，具体关系归数据库文档。媒体通过显式业务关联和结果端口交付，不反查消费方正文或 JSON。
 
 边界由 [check_services_architecture.py](../scripts/check_services_architecture.py) 检查，新增依赖仍须核实数据所有者、事务与权限，不能仅以检查通过为依据。
 
@@ -55,7 +55,7 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-启动执行 `alembic upgrade head`。空库从 [`0001` 基线](alembic/versions/baseline.py)一次建立当前结构，位于该修订的数据库直接使用已有数据。清空基线须显式执行 `alembic downgrade base`，会删除业务表、触发器函数和播放序列，仅用于隔离库验证。
+启动执行 `alembic upgrade head`。空库从 [`0001` 基线](alembic/versions/baseline.py)一次建立当前结构，从旧结构更新到当前基线时使用空库重新部署。清空基线须显式执行 `alembic downgrade base`，会删除业务表、触发器函数和播放序列，仅用于隔离库验证。
 
 ### 装配与启停
 
@@ -91,7 +91,7 @@ HTTP、调度及清理通过 [user_maintenance.py](runtime/user_maintenance.py) 
 
 [companion/intents.py](features/companion/intents.py) 保存条件和认领，主动回合由 [companion_turns.py](workflows/automation/companion_turns.py) 执行，普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 处理。
 
-[scheduling.py](workflows/scheduling.py) 用扫描描述登记发现内容和执行间隔，以扫描名、账户及工作键共同单飞，夜间流水线跨本地日仍按账户隔离。周期工作首次等待一个间隔，临时维护或缺席不清除有效冷却；动态除生活摘录触发外，每隔 45–90 分钟也有独立构思的机会。运行状态只在内存，业务结果以各领域持久状态为准。判断、执行、呈现分别进入 [生活模块](features/life/README.md) 所列工作流，不通过页面读取触发。
+[scheduling.py](workflows/scheduling.py) 用扫描描述登记发现内容和执行间隔，以扫描名、账户及工作键共同单飞，夜间流水线跨本地日仍按账户隔离。周期工作首次等待一个间隔，临时维护或缺席不清除有效冷却。运行状态只在内存，业务结果以各领域持久状态为准。判断、执行、呈现分别进入 [生活模块](features/life/README.md) 所列工作流，不通过页面读取触发。
 
 ### 远程网页
 
@@ -197,7 +197,7 @@ Backend 镜像在构建时按固定 SHA-256 安装 UltraFace RFB-640（MIT）和
 | [生活](features/life/prompts.py)、[判断](workflows/life_decisions.py)、[阅读](workflows/life_reading.py) | 事实投影、事项选择、结构化行动与阅读笔记 |
 | [外观](features/appearance/prompts.py)、[场景](features/scenes/prompts.py) | 各自 prompt_assembly、角色提取与制作服务 |
 | [媒体](features/media/prompts.py)、[动作](features/action_library/prompts.py)、[影像](features/visuals/prompts.py) | 冻结参考、语义评审、组合策划和质量链 |
-| [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 审阅、召回、创作与评论 |
+| [记忆](features/memory/prompts.py) | 审阅与召回 |
 | [夜间](workflows/nightly/prompts.py)、[资讯检索](workflows/nightly/topic_prompts.py) | 规划、日记/反思、来源筛选与检查点 |
 | [工具](runtime/tools/prompts.py)、[伙伴呈现视图](workflows/companion_action_prompts.py) | 工具说明、网页摘要与呈现视图；参数仍以工具 schema 为准 |
 

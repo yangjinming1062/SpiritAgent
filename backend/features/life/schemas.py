@@ -18,8 +18,8 @@ TrajectoryKind = Literal["virtual", "milestone", "result"]
 
 UNRESOLVED_STEP_STATES = frozenset({"planned", "running", "unknown"})
 TERMINAL_STEP_STATES = frozenset({"completed", "failed", "cancelled", "unknown"})
-PUBLISHED_ENTRY_KINDS = frozenset({"post.published", "diary.published"})
-EVIDENCE_EVENT_KINDS = PUBLISHED_ENTRY_KINDS | {"life.step.completed", "visual.ready"}
+DIARY_PUBLISHED_KIND = "diary.published"
+EVIDENCE_EVENT_KINDS = frozenset({DIARY_PUBLISHED_KIND, "life.step.completed", "visual.ready"})
 EVIDENCE_EVENTS_PER_PURSUIT = 24
 
 
@@ -32,7 +32,6 @@ LIFE_REFERENCE_KEYS = frozenset(
         "pursuit_id",
         "step_id",
         "event_id",
-        "post_id",
         "diary_id",
         "avatar_id",
         "outfit_id",
@@ -121,7 +120,7 @@ class LifeNarrativePatch(BaseModel):
 
 
 GrowthAspect = Literal["interest", "view", "habit", "boundary"]
-LifeShareChannel = Literal["life", "post", "diary", "chat"]
+LifeShareChannel = Literal["life", "diary", "chat"]
 
 
 class PersonalGrowth(BaseModel):
@@ -343,7 +342,7 @@ class LifeContext(BaseModel):
     shared_completion_results: dict[int, dict] = Field(default_factory=dict, exclude=True)
     personal_growth: list[PersonalGrowth] = Field(default_factory=list)
 
-    def prompt_payload(self, *, shared_only: bool = False, for_publication: bool = False) -> dict[str, Any]:
+    def prompt_payload(self, *, shared_only: bool = False) -> dict[str, Any]:
         state = self.state.model_dump(
             mode="json",
             exclude={
@@ -389,7 +388,7 @@ class LifeContext(BaseModel):
                 if shared_only and item.kind == "life.pursuit.completed"
                 else item.trajectory_payload()
                 for item in self.recent_events
-                if (not shared_only or item.shared_with_user) and (not for_publication or item.source != "life_share")
+                if not shared_only or item.shared_with_user
             ],
         }
 
@@ -542,12 +541,12 @@ class LifeContactWindow(ContactWindow):
 
 
 class LifeShare(BaseModel):
-    """伙伴选择公开到生活页的一段表达。"""
+    """伙伴按所选渠道分享的一段表达。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     event_id: ResourceId | None = Field(description="要分享的已有经历。仅分享本轮新生成的独处片段时填 null。")
-    channel: LifeShareChannel = Field(default="life", description="选择生活页、动态、日记或一次直接交流")
+    channel: LifeShareChannel = Field(default="life", description="选择生活近况、日记或一次直接交流")
     title: str = Field(min_length=1, max_length=120, description="愿意公开的标题")
     narrative: str = Field(min_length=1, max_length=600, description="愿意公开的第一人称片段")
     release_work: StrictBool = Field(

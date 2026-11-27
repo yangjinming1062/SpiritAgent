@@ -13,7 +13,6 @@ export const desktop: Pick<Dictionary, 'desktopShell'> = {
     showConversations: 'Show conversations',
     hideConversations: 'Hide conversations',
     openUnread: 'Open unread conversation',
-    posts: 'Posts',
     diary: 'Diary',
     life: 'Life',
     creation: 'Creation',

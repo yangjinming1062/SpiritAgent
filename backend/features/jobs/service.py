@@ -85,20 +85,6 @@ def completion_cte(user_id: int, job_id: int, expected_revision: int, checkpoint
     )
 
 
-async def requested_job_ids(db: AsyncSession, user_id: int, request_ids: Collection[str]) -> dict[str, int]:
-    return dict(
-        (
-            await db.execute(
-                select(JobRequest.request_id, JobRequest.job_id).where(
-                    JobRequest.user_id == user_id, JobRequest.request_id.in_(request_ids)
-                )
-            )
-        )
-        .tuples()
-        .all()
-    )
-
-
 async def requested_job_id(
     db: AsyncSession, user_id: int, request_id: str, fingerprint: str | None = None
 ) -> int | None:

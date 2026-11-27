@@ -1,7 +1,7 @@
-"""聊天与动态共用的视频任务：提交、轮询、下载与身份检查；凭句柄或已落盘候选恢复。"""
+"""日常视频任务：提交、轮询、下载与身份检查；凭句柄或已落盘候选恢复。"""
 
 import asyncio
-from collections.abc import Collection, Sequence
+from collections.abc import Collection
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal
@@ -309,30 +309,6 @@ def _supports_video_output(
     return bool(native and native.upper() in {item.upper() for item in available})
 
 
-async def video_duration_options(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    task: AiTaskKey,
-    preferred: Sequence[str],
-    self_reference_count: int,
-) -> dict[str, list[int]]:
-    """按同一供应商的原生时长、参考模式和可交付分辨率列举计划选项。"""
-    chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
-    providers = [build_provider(config, VideoGenProvider) for config in chain]
-    return {
-        mode: sorted(
-            {
-                seconds
-                for provider in providers
-                for seconds in provider.durations or ()
-                if any(_supports_video_output(provider, seconds, resolution, count) for resolution in preferred)
-            }
-        )
-        for mode, count in (("plain", 0), ("self", self_reference_count))
-    }
-
-
 async def ensure_video_capability(
     user_id: int,
     *,
@@ -385,33 +361,6 @@ async def ensure_video_capability(
         hints.append("可选分辨率：" + "、".join(options))
     detail = "；".join(hints) or "同一供应商不同时支持所选时长与分辨率，请调整其一"
     raise MissingLlmConfigError(f"已配置的视频供应商不支持本次的时长或分辨率（{detail}）")
-
-
-async def select_video_resolution(
-    user_id: int,
-    *,
-    task: AiTaskKey,
-    reference_images: bool,
-    reference_image_count: int | None = None,
-    duration: int,
-    preferred: Sequence[str],
-) -> str | None:
-    """按偏好顺序返回供应商链里有能接单的第一档分辨率，大小写写法沿用首个可接单供应商的声明；没有则返回 None，由调用方在付费前处理。"""
-    async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
-    for resolution in preferred:
-        compatible = _compatible_video_configs(
-            chain,
-            reference_images=reference_images,
-            reference_image_count=reference_image_count,
-            duration=duration,
-            resolution=resolution,
-            include_upscaled=False,
-        )
-        if compatible:
-            declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
-            return next((value for value in declared if value.lower() == resolution.lower()), resolution)
-    return None
 
 
 async def prepare_video_job(

@@ -9,7 +9,6 @@ from features.accounts.queries import nightly_account
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.appearance.observations import load_visual_observation
 from features.companion.planning_queries import PersonaPlanningSnapshot
-from features.entries.queries import post_summaries
 from features.life.actions import (
     CREATION_CAPABILITIES,
     LIFE_ACTION,
@@ -152,14 +151,6 @@ class RecentActionSummary(BaseModel):
     fact: str | None = None
 
 
-class RecentPostSummary(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    date: str
-    content_type: str
-    title: str
-
-
 class BlockedCapability(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -179,7 +170,6 @@ class PlanningContext(BaseModel):
     scene: SceneContext
     materials: dict[str, list[dict[str, str]]]
     recent_autonomous_actions: list[RecentActionSummary] = Field(default_factory=list)
-    recent_posts: list[RecentPostSummary] = Field(default_factory=list)
     available_capabilities: list[NightlyCapability] = Field(default_factory=list)
     blocked_capabilities: list[BlockedCapability] = Field(default_factory=list)
     plan_theme: str = ""
@@ -223,7 +213,6 @@ _CAPABILITY_BY_NAME = {name: _nightly_capability(name) for name in _NIGHTLY_PHAS
 
 async def _collect_context(
     user_id: int,
-    timezone: ZoneInfo,
     *,
     life_context: dict[str, Any],
     persona: PersonaPlanningSnapshot | None,
@@ -242,7 +231,6 @@ async def _collect_context(
                 .limit(40)
             )
         ).all()
-        recent_posts = await post_summaries(db, user_id, limit=20)
         steps = await steps_by_id(
             db, user_id, [row.life_step_id for row in recent_actions if row.life_step_id is not None]
         )
@@ -271,13 +259,6 @@ async def _collect_context(
         ),
         materials=materials,
         recent_autonomous_actions=recent_action_summaries,
-        # 与动作的 target_date 一样按用户本地日标注。
-        recent_posts=[
-            RecentPostSummary(
-                date=occurred_at.astimezone(timezone).date().isoformat(), content_type=content_type, title=title
-            )
-            for occurred_at, content_type, title in recent_posts
-        ],
     )
     for name, capability in _CAPABILITY_BY_NAME.items():
         reason = blocked[name].reason if name in blocked else None
@@ -576,7 +557,6 @@ async def run_nightly_planning(
     date_context: DateContext,
     anomaly_stats: dict[str, Any],
     today_conversations: list[dict[str, str]],
-    post_interactions: list[dict[str, Any]],
     *,
     log_id: int,
     persona: PersonaPlanningSnapshot | None,
@@ -589,9 +569,7 @@ async def run_nightly_planning(
     if plan is None:
         if not in_nightly_window(utc_now(), timezone):
             return PlanningResult(rationale="夜间窗口已结束")
-        context = await _collect_context(
-            user_id, timezone, life_context=life_context, persona=persona, language=language
-        )
+        context = await _collect_context(user_id, life_context=life_context, persona=persona, language=language)
         payload = {
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,
@@ -599,7 +577,6 @@ async def run_nightly_planning(
             "recall_highlights": [item.model_dump() for item in recall_highlights],
             "today_conversations": today_conversations,
             "topic_reserve": [],
-            **({"post_interactions": post_interactions} if post_interactions else {}),
             "autonomous_context": context.model_dump(exclude_none=True),
             "current_time": utc_now().astimezone(timezone).isoformat(),
             **date_context.model_dump(),

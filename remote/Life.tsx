@@ -1,32 +1,28 @@
 import type { ReactElement } from 'react'
 
-import type { RemoteApi, RemoteGateway } from './api'
-import { DiaryView, Posts } from './Feed'
+import type { RemoteApi } from './api'
+import { DiaryView } from './Diary'
 import { LifeSummary } from './LifeSummary'
 import { usePageState } from './page-state'
 import { PageHeader, SectionNav } from './ui'
 
-type Section = 'diary' | 'now' | 'posts'
-
 const ITEMS = [
   { id: 'now', title: '近况' },
-  { id: 'posts', title: '动态', subtitle: '伙伴分享的文字、图片与视频' },
   { id: 'diary', title: '日记', subtitle: '按日期留下的记录与感受' }
 ] as const
 
-/** 生活页签：与桌面同一套三分区目录；分区随会话保存，未读点归各自分区。 */
+type Section = (typeof ITEMS)[number]['id']
+
 export function Life({
   api,
-  gateway,
   onRead,
   refresh,
-  unread
+  diaryUnread
 }: {
   api: RemoteApi
-  gateway: RemoteGateway
   onRead: () => void
   refresh: number
-  unread: { feed: boolean; diary: boolean }
+  diaryUnread: boolean
 }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('life.section', 'now')
   const active = ITEMS.find(item => item.id === savedSection) ?? ITEMS[0]
@@ -39,13 +35,11 @@ export function Life({
         label="生活分类"
         onSelect={setSection}
         selected={section}
-        unread={{ posts: unread.feed, diary: unread.diary }}
+        unread={{ diary: diaryUnread }}
       />
       {active.id !== 'now' && <PageHeader subtitle={active.subtitle} title={active.title} />}
       {section === 'now' ? (
         <LifeSummary api={api} refresh={refresh} />
-      ) : section === 'posts' ? (
-        <Posts api={api} gateway={gateway} onRead={onRead} refresh={refresh} />
       ) : (
         <DiaryView api={api} onRead={onRead} refresh={refresh} />
       )}

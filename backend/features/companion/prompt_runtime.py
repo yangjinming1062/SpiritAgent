@@ -87,7 +87,7 @@ async def get_companion_memory_context(
 
 
 class CompanionPromptContext(BaseModel):
-    """供心情、表达和动态使用的人设、心情与记忆；不注入视觉生成资料。"""
+    """供心情和陪伴表达使用的人设、心情与记忆；不注入视觉生成资料。"""
 
     language: str
     # 带时区偏移的用户本地时间；未设置时区时按 UTC。

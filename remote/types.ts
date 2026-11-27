@@ -7,7 +7,6 @@ export type { ChatAttachment, CompanionBubble, SessionInfo, SessionMessage, Syst
 export type RemoteSession = ApiSchemas['RemoteSessionResponse']
 
 export type ActiveTurn = ActiveTurnSnapshot
-export type Post = ApiSchemas['PostResponse']
 
 export type Diary = ApiSchemas['DiaryEntryResponse']
 

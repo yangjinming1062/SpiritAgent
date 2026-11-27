@@ -24,8 +24,8 @@ export interface ApiSchemas {
   "AdminLoginRequest": { "username": string; "password": string }
   "AdminTokenResponse": { "access_token": string; "expires_in": number }
   "AiTaskDefinition": { "id": ApiSchemas["AiTaskKey"]; "group": string; "label": string; "services": Array<string>; "service_usage": { [key: string]: Array<string> } }
-  "AiTaskKey": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
-  "AiTaskKeyInput": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "posts" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
+  "AiTaskKey": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
+  "AiTaskKeyInput": "companion_chat" | "work_chat" | "scheduled_task" | "proactive" | "memory_review" | "memory_embedding" | "nightly" | "appearance" | "outfit" | "scene" | "visuals" | "speech_input" | "companion_voice" | "speech_preview" | "voice_design" | "voice_clone"
   "AmbientCatalogEntry": { "visual_id": string; "version": number; "media_kind": "image" | "video"; "asset_kind": "actor" | "scene" | "cinematic"; "clip_kind": ("once" | "loop" | null); "media_url": string; "poster_url": (string | null); "width": number; "height": number; "duration_ms": (number | null); "description": string; "body": (ApiSchemas["ActorClipBody"] | null); "day_phase": ("dawn" | "day" | "dusk" | "night" | null); "scene_content_hash": (string | null); "action_id": (string | null); "action_name": string; "preset_key": (string | null); "semantic_tags": Array<"idle" | "attention" | "interaction" | "reading" | "working" | "creating" | "thinking" | "resting" | "sleeping" | "waking" | "organizing" | "socializing" | "stretching" | "grooming" | "drinking" | "dancing">; "performance_role": "idle" | "sustained" | "reaction"; "motion_intensity": "subtle" | "normal" | "expressive"; "interruptible": boolean; "media_semantics": (ApiSchemas["MediaSemantics"] | null); "allowed_triggers": Array<string>; "use_when": Array<string>; "avoid_when": Array<string> }
   "AnalyzingVisualSource": { "original_filename": string; "original_path": string; "original_content_hash": string; "original_width": (number | null); "original_height": (number | null); "original_duration_ms": (number | null); "analysis_job_id": (string | null); "analysis_revision": (number | null); "analysis_pending": boolean; "presentation_approved": boolean; "identity_reason": string; "kind": "analysis"; "asset_kind": "actor" | "scene" | "cinematic"; "identity": (ApiSchemas["VisualIdentitySnapshot"] | null); "identity_path": (string | null); "identity_hash": (string | null); "portrait_path": (string | null); "portrait_hash": (string | null); "identity_reference_role": "portrait" | "fullbody"; "outfit": (ApiSchemas["ComboMaterialRef"] | null); "scene": (ApiSchemas["SceneMediaRef"] | null); "action": (ApiSchemas["ActionMaterialRef"] | null); "media_semantics": (ApiSchemas["MediaSemantics"] | null); "clip_kind": ("once" | "loop" | null) }
   "ApiError": { "code": string; "message": string; "details": ApiSchemas["JsonValue"]; "request_id": string }
@@ -72,11 +72,11 @@ export interface ApiSchemas {
   "DesktopSessionPatchRequest": { "title"?: (string | null); "pinned"?: (boolean | null); "archived"?: (boolean | null); "settings"?: (ApiSchemas["SessionSettingsPatch"] | null) }
   "DeviceListResponse": { "items": Array<ApiSchemas["DeviceResponse"]> }
   "DeviceResponse": { "id": string; "name": string; "expires_at": string; "last_seen_at": string; "created_at": string }
-  "DiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
+  "DiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "created_at": (string | null); "updated_at": (string | null) }
   "DiaryListResponse": { "entries": Array<ApiSchemas["DiaryEntryResponse"]>; "unread_diary_ids": Array<string> }
   "DiaryReadRequest": { "diary_ids": Array<string> }
   "DiarySearchResponse": { "entries": Array<ApiSchemas["DiaryEntryResponse"]>; "search": ApiSchemas["SearchStatus"] }
-  "DiaryUnreadResponse": { "has_unread": boolean }
+  "DiaryUnreadResponse": { "has_unread": boolean; "unread_diary_ids": Array<string> }
   "ExchangeRequest": { "token": string; "device_name"?: string }
   "FramedOpeningReview": { "verdict": "pass" | "review" | "fail"; "reason": string; "requirement": string; "correction_instruction": string; "framing_requirement": string; "required_extent": "whole" | "partial" | "free"; "visible_extent": "whole" | "partial" | "unclear" }
   "FullbodyAdoptRequest": { "image": string; "content_type"?: (string | null) }
@@ -154,15 +154,6 @@ export interface ApiSchemas {
   "PersonaUpdate": { "definition_json": { [key: string]: (string | null) }; "expected_fields"?: ({ [key: string]: (string | null) } | null) }
   "PlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["ClientMediaEntry"]>; "tool_calls": ApiSchemas["JsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text"; "call_duration_ms": (number | null) }
   "PortraitConfirmRequest": { "expected_avatar_id": string }
-  "PostCommentCreateRequest": { "content": string }
-  "PostCommentListResponse": { "comments": Array<ApiSchemas["PostCommentResponse"]>; "next_cursor": (string | null) }
-  "PostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["PostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "deferred" | "completed" | "silent" | "failed"; "reply_error": (string | null) }
-  "PostCommentRole": "user" | "companion"
-  "PostContentType": "text" | "image" | "video" | "audio"
-  "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
-  "PostReadRequest": { "post_ids": Array<string> }
-  "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
-  "PostUnreadResponse": { "has_unread": boolean }
   "PreparationRetryRequest": { "expected_revision": number }
   "PromptBatchMessage": { "text": string; "attachments"?: (Array<ApiSchemas["ChatAttachment"]> | null) }
   "PromptPresetListResponse": { "presets": Array<ApiSchemas["PromptPresetSummary"]> }
@@ -202,7 +193,7 @@ export interface ApiSchemas {
   "RpcCompanionSignalResult": { "queued": boolean }
   "RpcCompressionEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "session_id": (string | null); "subtype": string; "text": string; "message_id": (string | null) }
   "RpcCompressionUsage": { "total_tokens": number; "context_window": number }
-  "RpcDiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "post_ids": Array<string>; "created_at": (string | null); "updated_at": (string | null) }
+  "RpcDiaryEntryResponse": { "id": string; "entry_date": string; "title": string; "body": string; "created_at": (string | null); "updated_at": (string | null) }
   "RpcEmptyResult": { [key: string]: unknown }
   "RpcGatewayAckResult": { "acked": number; "pruned": number }
   "RpcGatewayErrorEvent": { "request_id": (string | null); "replace_reply_message_id": (string | null); "message": string; "retry_message_id": (string | null) }
@@ -233,12 +224,6 @@ export interface ApiSchemas {
   "RpcMoodEvent": { "mood": string }
   "RpcOutfitChangedEvent": { "outfit_id": string }
   "RpcPlainSessionMessageView": { "id": string; "role": "assistant" | "system" | "tool" | "user"; "content": (string | null); "subtype": string; "reasoning": (string | null); "timestamp": number; "can_replace_reply": boolean; "media": Array<ApiSchemas["RpcClientMediaEntry"]>; "tool_calls": ApiSchemas["RpcJsonValue"]; "tool_call_id": (string | null); "tool_name": string; "content_type": "multimodal_v1" | "text"; "call_duration_ms": (number | null) }
-  "RpcPostCommentDeletedEvent": { "post_id": string; "comment_id": string }
-  "RpcPostCommentEvent": { "post_id": string; "comment": ApiSchemas["RpcPostCommentResponse"] }
-  "RpcPostCommentResponse": { "id": string; "post_id": string; "role": ApiSchemas["RpcPostCommentRole"]; "content": string; "created_at": string; "updated_at": string; "reply_to_comment_id": (string | null); "reply_status": "none" | "pending" | "running" | "deferred" | "completed" | "silent" | "failed"; "reply_error": (string | null) }
-  "RpcPostCommentRole": "user" | "companion"
-  "RpcPostContentType": "text" | "image" | "video" | "audio"
-  "RpcPostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["RpcPostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["RpcPostCommentResponse"]>; "comment_count": number; "comments_next_cursor": (string | null); "comments_loaded": boolean }
   "RpcRememberCommandResult": { "memory_id": string; "content": string }
   "RpcReplyAudio": { "url": string; "duration": number }
   "RpcReplyBubbleView": (ApiSchemas["RpcTextBubble"] | ApiSchemas["RpcVoiceBubbleView"] | ApiSchemas["RpcClientMediaBubble"] | ApiSchemas["RpcLinkBubble"])
@@ -508,14 +493,6 @@ export interface ApiOperations {
   "companion_life.get_life": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["LifeStatePublicView"] }
   "companion_life.get_life_pursuits": { path: Record<string, never>; query: { "status"?: (string | null); "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "status"?: (string | null); "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["LifePursuitPublicListResponse"] }
   "companion_life.get_life_pursuit": { path: { "pursuit_id": string }; query: Record<string, never>; body: undefined; input: { path: { "pursuit_id": string }; query?: never; body?: never }; response: ApiSchemas["LifePursuitPublicDetail"] }
-  "companion_posts.get_posts": { path: Record<string, never>; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path?: never; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostListResponse"] }
-  "companion_posts.get_posts_unread": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["PostUnreadResponse"] }
-  "companion_posts.read_posts": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["PostReadRequest"]; input: { path?: never; query?: never; body: ApiSchemas["PostReadRequest"] }; response: ApiSchemas["PostUnreadResponse"] }
-  "companion_posts.get_post_detail": { path: { "post_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string }; query?: never; body?: never }; response: ApiSchemas["PostResponse"] }
-  "companion_posts.post_comment": { path: { "post_id": string }; query: Record<string, never>; body: ApiSchemas["PostCommentCreateRequest"]; input: { path: { "post_id": string }; query?: never; body: ApiSchemas["PostCommentCreateRequest"] }; response: ApiSchemas["PostCommentResponse"] }
-  "companion_posts.get_comments": { path: { "post_id": string }; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "post_id": string }; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostCommentListResponse"] }
-  "companion_posts.remove_comment": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: undefined }
-  "companion_posts.retry_comment_reply": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: ApiSchemas["PostCommentResponse"] }
   "companion_scenes.read_scene_state": { path: Record<string, never>; query: { "tasks_only"?: boolean }; body: undefined; input: { path?: never; query?: { "tasks_only"?: boolean }; body?: never }; response: ApiSchemas["SceneStateResponse"] }
   "companion_scenes.create_scene": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]); input: { path?: never; query?: never; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]) }; response: ApiSchemas["SceneResponse"] }
   "companion_scenes.scene_list_route": { path: Record<string, never>; query: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["SceneListResponse"] }
@@ -624,10 +601,6 @@ export interface GatewayEventPayloads {
   "companion.message": ApiSchemas["RpcCompanionMessageEvent"]
   "companion.mood": ApiSchemas["RpcMoodEvent"]
   "companion.outfit.updated": ApiSchemas["RpcOutfitChangedEvent"]
-  "companion.post.comment": ApiSchemas["RpcPostCommentEvent"]
-  "companion.post.comment.deleted": ApiSchemas["RpcPostCommentDeletedEvent"]
-  "companion.post.created": ApiSchemas["RpcPostResponse"]
-  "companion.posts.read": ApiSchemas["RpcEmptyResult"]
   "companion.reaction": ApiSchemas["RpcCompanionReactionEvent"]
   "companion.rhythm.updated": ApiSchemas["RpcRhythmUpdatedEvent"]
   "companion.scene.updated": ApiSchemas["RpcSceneChangedEvent"]
@@ -1609,102 +1582,6 @@ export const API_OPERATIONS = {
   "companion_life.get_life_pursuit": {
     "path": "/api/companion/life/pursuits/{pursuit_id}",
     "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.get_posts": {
-    "path": "/api/companion/posts",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.get_posts_unread": {
-    "path": "/api/companion/posts/read-state",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.read_posts": {
-    "path": "/api/companion/posts/read-state",
-    "method": "PATCH",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.get_post_detail": {
-    "path": "/api/companion/posts/{post_id}",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.post_comment": {
-    "path": "/api/companion/posts/{post_id}/comments",
-    "method": "POST",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.get_comments": {
-    "path": "/api/companion/posts/{post_id}/comments",
-    "method": "GET",
-    "encoding": "json",
-    "response": "json",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.remove_comment": {
-    "path": "/api/companion/posts/{post_id}/comments/{comment_id}",
-    "method": "DELETE",
-    "encoding": "json",
-    "response": "empty",
-    "identities": [
-      "desktop",
-      "remote"
-    ],
-    "wait_for_model": false,
-    "ipc": true
-  },
-  "companion_posts.retry_comment_reply": {
-    "path": "/api/companion/posts/{post_id}/comments/{comment_id}/reply/retry",
-    "method": "POST",
     "encoding": "json",
     "response": "json",
     "identities": [
@@ -2802,30 +2679,6 @@ export const EVENT_POLICIES = {
     "baseline": false
   },
   "companion.outfit.updated": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "companion.post.comment": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "companion.post.comment.deleted": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "companion.post.created": {
-    "audience": "all",
-    "snapshot": false,
-    "recovery": "resource",
-    "baseline": false
-  },
-  "companion.posts.read": {
     "audience": "all",
     "snapshot": false,
     "recovery": "resource",

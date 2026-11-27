@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""读取指定账户最近七天内需要纠偏、择优或没有成品的聊天和动态制作样本。"""
+"""读取指定账户最近七天内需要纠偏、择优或没有成品的聊天媒体样本。"""
 
 import argparse
 import asyncio
@@ -14,7 +14,6 @@ import bootstrap.models  # noqa: E402,F401 -- 注册全部 ORM 关系
 from features.media.chain import MediaChainState  # noqa: E402
 from features.media.character_images import ImageChainState  # noqa: E402
 from features.media.models import ImageGenJob, VideoGenJob  # noqa: E402
-from features.posts.publication_models import PostPublication  # noqa: E402
 from infrastructure.ai.providers.local.image import composition_noise_seed  # noqa: E402
 from infrastructure.assets.asset_store import resolve_asset_reference  # noqa: E402
 from infrastructure.database import SESSION_LOCAL  # noqa: E402
@@ -27,20 +26,13 @@ async def report(user_id: int, job_id: int | None) -> None:
     async with SESSION_LOCAL() as db:
         await db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
         since = utc_now() - timedelta(days=7)
-        if job_id:
-            video_id = await db.scalar(
-                select(PostPublication.video_job_id).where(
-                    PostPublication.id == job_id, PostPublication.user_id == user_id
-                )
-            )
-            job_id = video_id or job_id
         query = (
             select(
                 JobRecord.id, JobRecord.kind, JobRecord.state, JobRecord.stage, JobRecord.error, JobRecord.checkpoint
             )
             .where(
                 JobRecord.user_id == user_id,
-                JobRecord.kind.in_(("media.image", "media.video", "post.publish")),
+                JobRecord.kind.in_(("media.image", "media.video")),
                 or_(JobRecord.finished_at >= since, (JobRecord.state == "unknown") & (JobRecord.updated_at >= since)),
                 JobRecord.checkpoint.is_not(None),
             )
@@ -56,26 +48,13 @@ async def report(user_id: int, job_id: int | None) -> None:
                 settings = {key: params[key] for key in ("resolution", "aspect_ratio", "duration")}
                 slots = 1
             else:
-                raw = checkpoint.get("chain" if kind == "media.image" else "image_chain")
-                chain = ImageChainState.model_validate(raw or {})
+                chain = ImageChainState.model_validate(checkpoint.get("chain") or {})
                 if chain.inputs:
                     goal, slots = chain.daily_goal, chain.inputs.n
                     settings = chain.inputs.model_dump(include={"size", "aspect_ratio"})
-                elif kind == "media.image":
+                else:
                     params = await db.scalar(select(ImageGenJob.params_json).where(ImageGenJob.id == job))
                     goal, slots, settings = params["goal"], len(params["media_ids"]), {"size": params["size"]}
-                else:
-                    plan, child = (
-                        await db.execute(
-                            select(PostPublication.plan_json, PostPublication.video_job_id).where(
-                                PostPublication.id == job
-                            )
-                        )
-                    ).one()
-                    if child or not plan or plan.get("content_type") not in {"image", "video"}:
-                        continue
-                    goal, slots = plan["prompt"], 1
-                    settings = {key: plan.get(key) for key in ("size", "aspect_ratio", "duration")}
             for slot in range(slots):
                 items = [c for c in chain.candidates if c.slot == slot]
                 choice = chain.selections.get(slot)

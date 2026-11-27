@@ -12,7 +12,6 @@ export const desktop = {
     showConversations: '展开对话列表',
     hideConversations: '收起对话列表',
     openUnread: '查看未读对话',
-    posts: '动态',
     diary: '日记',
     life: '生活',
     creation: '创作',

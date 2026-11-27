@@ -24,13 +24,13 @@ const TABS = [
 ] as const
 type Tab = (typeof TABS)[number]['id']
 type Page = Exclude<Tab, 'creation'> | CreationSection
-const EMPTY_UNREAD = { messages: false, feed: false, diary: false }
+const EMPTY_UNREAD = { messages: false, diary: false }
 
 function savedUnread(key: string): typeof EMPTY_UNREAD {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(key) ?? 'null')
     if (isRecord(raw)) {
-      return { messages: raw.messages === true, feed: raw.feed === true, diary: raw.diary === true }
+      return { messages: raw.messages === true, diary: raw.diary === true }
     }
   } catch {
     // 浏览器存储不可用时从本次会话开始。
@@ -38,7 +38,7 @@ function savedUnread(key: string): typeof EMPTY_UNREAD {
   return EMPTY_UNREAD
 }
 
-// 动态详情与话题反馈由各自订阅就地更新。其余变更只唤醒当前打开的相关页面。
+// 话题反馈就地更新。其余变更只唤醒当前打开的相关页面。
 function contentChanged(page: Page, type: GatewayEvent['type']): boolean {
   switch (type) {
     case 'companion.life.updated':
@@ -128,10 +128,7 @@ export function Workspace({
       if (contentChanged(currentPage.current, event.type)) {
         dirtyPage = currentPage.current
       }
-      unreadDirty ||=
-        event.type.startsWith('companion.post.') ||
-        event.type === 'companion.posts.read' ||
-        event.type.startsWith('companion.diary.')
+      unreadDirty ||= event.type === 'companion.diary.created' || event.type === 'companion.diary.read'
       if ((!dirtyPage && !unreadDirty) || timer !== undefined) {
         return
       }
@@ -171,26 +168,18 @@ export function Workspace({
     }
 
     let current = true
-    void Promise.allSettled([
-      api.invoke('companion_posts.get_posts_unread'),
-      api.invoke('companion_journal.get_diary_unread')
-    ]).then(([posts, diary]) => {
-      if (!current) {
-        return
-      }
-
-      setUnread(previous => ({
-        ...previous,
-        feed: posts.status === 'fulfilled' ? posts.value.has_unread : previous.feed,
-        diary: diary.status === 'fulfilled' ? diary.value.has_unread : previous.diary
-      }))
-
-      for (const result of [posts, diary]) {
-        if (result.status === 'rejected') {
-          console.warn('远程未读状态校准失败', errorText(result.reason))
+    void api
+      .invoke('companion_journal.get_diary_unread')
+      .then(result => {
+        if (current) {
+          setUnread(previous => ({ ...previous, diary: result.has_unread }))
         }
-      }
-    })
+      })
+      .catch((error: unknown) => {
+        if (current) {
+          console.warn('远程日记未读状态校准失败', errorText(error))
+        }
+      })
 
     return () => {
       current = false
@@ -245,10 +234,9 @@ export function Workspace({
         ) : tab === 'life' ? (
           <Life
             api={api}
-            gateway={gateway}
+            diaryUnread={unread.diary}
             onRead={() => setUnreadRefresh(value => value + 1)}
             refresh={refresh}
-            unread={{ feed: unread.feed, diary: unread.diary }}
           />
         ) : tab === 'creation' ? (
           <Creation api={api} onSelect={setSection} refresh={refresh} section={section} />
@@ -269,7 +257,7 @@ export function Workspace({
           >
             <span>
               <item.icon size={23} stroke={1.7} />
-              {(item.id === 'messages' && unread.messages) || (item.id === 'life' && (unread.feed || unread.diary)) ? (
+              {(item.id === 'messages' && unread.messages) || (item.id === 'life' && unread.diary) ? (
                 <i aria-label="有未读内容" className="unread-dot" />
               ) : null}
             </span>

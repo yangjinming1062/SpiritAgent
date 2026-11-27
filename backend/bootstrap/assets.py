@@ -8,7 +8,6 @@ from features.conversation.asset_bindings import message_binding_paths, used_mes
 from features.jobs.service import cleanup_job_assets, job_asset_paths
 from features.media import asset_references as media
 from features.media.voice_usage import set_voice_usage_reader
-from features.posts import asset_references as posts
 from features.scenes import asset_references as scenes
 from features.visuals import asset_references as visuals
 from runtime.events import asset_references as events
@@ -24,7 +23,6 @@ def register_asset_contributions() -> None:
             AssetContribution("action_library", action_library.live_asset_paths),
             AssetContribution("scenes", scenes.live_asset_paths),
             AssetContribution("visuals", visuals.live_asset_paths, cleanup=visuals.cleanup_obsolete_assets),
-            AssetContribution("posts", posts.live_asset_paths),
             AssetContribution(
                 "media",
                 media.live_asset_paths,

@@ -6,7 +6,7 @@ from typing import Any, Literal
 from features.accounts.queries import lock_active_user_ids, user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.companion.intents import enqueue_companion_intent, recent_life_contacts
-from features.companion.narrative_quality import narrative_source_budget, review_narrative
+from features.companion.narrative_quality import review_narrative
 from features.companion.persona_service import onboarded_user_ids
 from features.companion.prompt_runtime import CompanionPromptContext, load_companion_prompt_context
 from features.companion.rhythm import (
@@ -45,9 +45,6 @@ from features.life.use_cases import (
     share_life_event_in_session,
     update_personal_growth_in_session,
 )
-from features.posts.context import fit_post_history
-from features.posts.publication import wake_post_planning
-from features.posts.store import post_choice_history, prepare_publication_in_session
 from features.visuals.repository import notify_visuals_updated
 from infrastructure.ai.decision import (
     DecisionOption,
@@ -61,7 +58,7 @@ from infrastructure.ai.error_classifier import LLMRuntimeError
 from infrastructure.ai.prompt_engineer import LlmAttemptDiagnostic, LlmJsonValidationError, call_llm_json
 from infrastructure.ai.response_validation import IncompleteLlmResponseError
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.token_budget import json_tokens, material_budget
+from infrastructure.ai.token_budget import material_budget
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.api_ids import ResourceId
 from infrastructure.async_io import KeyedLocks
@@ -265,12 +262,11 @@ life_context 是当前状态、事项和近期经历；topic_heads 是每个主�
 choice 决定自己的生活，share 单独决定有没有哪段经历想让对方知道。两项可以独立选择。保留时填写 null，愿意联系时考虑双方此刻的心境和原先说过的话。
 • keep：继续原来的事，episode 和 pursuit 留空。重复的观察、等待或时间流逝无需写成新经历。
 • private_episode：仅在允许独处日常时，写此刻虚拟情境中一次具体观察、选择或变化。继续原主题用其最新 previous_episode_id。用简短标题和一到三句第一人称叙述，标明 activity_type。只有自己参与；有关用户的事实来自真实交流。换环境时保留仍成立的条件，current_scene.title 使用目录中该地点的准确名称，scene_tags 给出完整条件。
-• 真实事项：选对应操作并填写 pursuit。新目标需要动机和可核验的成果，start_pursuit 还需要可执行的 next_action；episode_origin_id 可承接个人主题。next_step 是设想，实际受理依赖 next_action。narrative.pursuit 写现状与下一步，narrative.event 写本次变化，行动的打算和缘由只写在 next_action.narrative。已登记或结果未知的步骤沿原任务核对，可以同时关注其他主题。更新进度时，evidence_event_ids 只从 pursuit_evidence.events 选属于本事项的结果或支持目标的独立发表作品。启发立项的旧经历留作背景。只改打算时 progress 留空。完成整个目标须有充分成果且没有未解决步骤。暂停、恢复或放下由具体缘由决定，用户暂停须由用户要求恢复，遵守 resume_after。旧事项保留迟到成果。真实事项不改写当前环境和活动。
+• 真实事项：选对应操作并填写 pursuit。新目标需要动机和可核验的成果，start_pursuit 还需要可执行的 next_action；episode_origin_id 可承接个人主题。next_step 是设想，实际受理依赖 next_action。narrative.pursuit 写现状与下一步，narrative.event 写本次变化，行动的打算和缘由只写在 next_action.narrative。已登记或结果未知的步骤沿原任务核对，可以同时关注其他主题。更新进度时，evidence_event_ids 只从 pursuit_evidence.events 选属于本事项的结果或能证明目标进展的已发表日记。启发立项的旧经历留作背景。只改打算时 progress 留空。完成整个目标须有充分成果且没有未解决步骤。暂停、恢复或放下由具体缘由决定，用户暂停须由用户要求恢复，遵守 resume_after。旧事项保留迟到成果。真实事项不改写当前环境和活动。
 
 决定以后再看时，根据手头的事给出 review_after_minutes。只在今天有具体理由时用 bedtime_change 调整通常入睡时刻，新的入睡时刻须在相邻两次起床之间并且还未到来。
 growth 只记录自己因有依据的独处经历或成果而产生的变化。引用来源 id；本次新片段的来源填 null。新兴趣或独立认识可以并存，修订或撤回某一条用它的 growth_id。outlook 概括今后选择上的倾向，省去来源细节和用户私事。撤回时 text、outlook 都填 null。核心身份与基本性格是起点。
-私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活页，post、diary 留给对应创作。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
-previous_post_choices 记录先前选给动态的片段，同一成稿由 post_id 关联。post_history_excerpted 为 true 表示仅提供部分历史。暂时放下的片段可以重选；已经发表后，只有新的感受、进展或表达目的才再次选择。used_in_post 为 null 表示使用情况未知。
+私下经历默认留给自己。愿意分享才填 share，选一个来源，用自己的话写允许透露的标题和摘选。life 放入生活近况，diary 留给日记。show_activity 只用于这次在 life 分享的新活动。若这件事使你想到对方，可选 chat，把考虑开口的延时和机会有效时长写入 contact。recent_contact_choices 记录已作过的安排；实际发言才构成交流。
 自己想做的造型、环境、动作或影像可以先留在自己手里，next_action.add_to_user_library=false。愿意马上公开才选 true。private_works 是已完成的私下作品。之后愿意展示原件时选该来源和 life，再设 release_work=true；只谈感受不需要公开原件。content.read 可选择需要的资讯和原文，依据笔记及未解问题决定是否再读。用中文输出符合 schema 的决定。""",
     "en": """Decide how you want to spend this moment as the person described by persona. Carrying on is a complete choice. Consider your current activity, personal outlook and recorded experience. Knowing the other person informs how you relate; it supplies neither your motivation nor a mutual agreement.
 Life_context gives your state, pursuits and recent experiences. Topic_heads gives the latest episode in each thread. A new explicit arrangement in recent_exchange overrides an older user memory only on that point. Execution lists actual capabilities and materials.
@@ -280,12 +276,12 @@ Life_context gives your state, pursuits and recent experiences. Topic_heads give
 Use choice for your own life. Decide separately in share whether you want the other person to know about an experience. Use null to keep it to yourself. If you feel like reaching out, consider both your current inclination and what the other person has told you.
 • keep: carry on; leave episode and pursuit null. A routine wait, repeated observation or change of clock needs no new episode.
 • private_episode: when private episodes are available, describe one concrete observation, choice or change in the established virtual setting, by yourself. Continue a thread using its latest previous_episode_id. Give a short title, one to three first-person sentences and an activity_type. User-related facts come from actual exchanges. When changing setting, use the exact listed place name in current_scene.title and the full remaining conditions in scene_tags.
-• A real pursuit: choose its operation and supply pursuit. For a new goal, give your motivation and a verifiable result; start_pursuit also requires a feasible next_action. An episode_origin_id can connect a personal thread. Next_step is an idea; next_action registers work. Use narrative.pursuit for the present state and next step, narrative.event for today's change, and next_action.narrative for the plan and its reason just once. Wait for existing or uncertain work on its original request; another matter can still proceed. When updating progress, cite only matching results or applicable independent publications from pursuit_evidence.events. Earlier inspiration is background. Leave progress null for a change of plan alone. Completion requires sufficient results for the whole goal and no unresolved steps. Pause, resume or abandon for a reason. A user pause needs their request to resume; honor resume_after. Later results remain with their original pursuit. Pursuit changes do not change current setting or activity.
+• A real pursuit: choose its operation and supply pursuit. For a new goal, give your motivation and a verifiable result; start_pursuit also requires a feasible next_action. An episode_origin_id can connect a personal thread. Next_step is an idea; next_action registers work. Use narrative.pursuit for the present state and next step, narrative.event for today's change, and next_action.narrative for the plan and its reason just once. Wait for existing or uncertain work on its original request; another matter can still proceed. When updating progress, cite only matching results or published diaries that document progress from pursuit_evidence.events. Earlier inspiration is background. Leave progress null for a change of plan alone. Completion requires sufficient results for the whole goal and no unresolved steps. Pause, resume or abandon for a reason. A user pause needs their request to resume; honor resume_after. Later results remain with their original pursuit. Pursuit changes do not change current setting or activity.
 
 Set review_after_minutes to suit what you are doing. Give a bedtime_change only for a concrete reason today, keeping the new bedtime in the future between consecutive rise times.
 Use growth for a change in yourself grounded in a solo episode or confirmed result. Cite the event id, or null for this turn's new solo episode. Distinct interests and understandings coexist. Only revise or withdraw a particular one by growth_id. Outlook describes how you now tend to act without disclosing the source or user details. To withdraw it, give null text and outlook. Keep your core identity and temperament.
-Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page, post or diary for later writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
-When can_recall is true, use choice=recall and fill lookup with a topic or a known event_id, pursuit_id or growth_id if earlier material is needed before deciding. Leave share null and omit all other decision fields during lookup. Last_lookup is the completed query; its results are in the current life material. Decide from those results unless you need different evidence. When post_history_excerpted is true, only part of the post history is shown. Previous_post_choices describes earlier selections and actual posts. You may reconsider a declined passage and revisit a published source for a new purpose or development. A null used_in_post means unknown.
+Solo experiences are yours to keep. When you want to share, select one source and write a title and excerpt limited to what you choose to tell. Use life for the life page or diary to save an excerpt for diary writing. Show_activity applies only to a new episode shared on the life page. If the experience makes you think of the other person, chat can save a contact window with your chosen delay and duration. Recent_contact_choices are previous opportunities; only delivered words establish an exchange.
+When can_recall is true, use choice=recall and fill lookup with a topic or a known event_id, pursuit_id or growth_id if earlier material is needed before deciding. Leave share null and omit all other decision fields during lookup. Last_lookup is the completed query; its results are in the current life material. Decide from those results unless you need different evidence.
 You can make an outfit, setting, gesture or visual privately with next_action.add_to_user_library=false. Set true to release it immediately. Private_works lists completed personal work. To show the original later, choose its source for a life excerpt and set release_work=true; talking about it need not reveal the artifact. Content.read can read selected discoveries and original sources; use the notes and open questions to decide whether to read further. Return your decision in English using the schema.""",
 }
 
@@ -329,10 +325,8 @@ _DISCLOSURE_REVIEW = {
 }
 
 
-async def _save_share(
-    db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView, *, slot: str | None = None
-) -> LifeEventView | None:
-    saved = await share_life_event_in_session(db, user_id, share, source.id, decision_slot=slot)
+async def _save_share(db: AsyncSession, user_id: int, share: LifeShare, source: LifeEventView) -> LifeEventView | None:
+    saved = await share_life_event_in_session(db, user_id, share, source.id)
     if saved and share.release_work and "visual_id" in source.result_ref:
         await notify_visuals_updated(db, user_id)
     return saved
@@ -582,10 +576,6 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         }
     if draft:
         requirements = resolve_prompt_text(_CANDIDATE_REVIEW, context.language)
-        if "previous_post_choices" in review_source:
-            choices = review_source.pop("previous_post_choices")
-            room = narrative_source_budget(config, review_source, draft, context.language, requirements=requirements)
-            review_source.update(fit_post_history(choices, [], room, excerpted=personal["post_history_excerpted"]))
         review = await review_narrative(
             config,
             review_source,
@@ -660,7 +650,6 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 share = None
             if any(issue.field in ("text", "outlook") for issue in review.issues):
                 growth = None
-    post_task = None
     focus = await _successor_focus(life.state, pursuit, life.active_pursuits) if pursuit is not None else None
     async with SESSION_LOCAL() as db:
         if (
@@ -700,9 +689,7 @@ async def _consider_life(user_id: int) -> dict[str, object]:
                 if source is None:
                     raise LifeInputError("分享需要已保存的经历")
                 async with db.begin_nested() as sharing:
-                    saved = await _save_share(db, user_id, share, source, slot=slot)
-                    if saved and share.channel == "post":
-                        post_task = await prepare_publication_in_session(db, user_id, excerpt_id=saved.id)
+                    saved = await _save_share(db, user_id, share, source)
                     if saved and share.contact is not None:
                         due, expires_at = share.contact.bounds(utc_now())
                         accepted = await enqueue_companion_intent(
@@ -722,8 +709,6 @@ async def _consider_life(user_id: int) -> dict[str, object]:
         except LifeStateConflictError:
             return {"status": "state_changed"}
         await db.commit()
-    if post_task is not None:
-        wake_post_planning(user_id)
     if pursuit is not None and pursuit.next_action is not None:
         await run_life_execution(user_id)
     changed = decision.choice != "keep" or any((share, growth, decision.bedtime_change))
@@ -746,13 +731,8 @@ async def _choose_life(
     last_lookup: LifeLookup | None = None,
 ) -> tuple[LifeDecision, dict[str, Any], dict[str, Any], LifePursuitEvidence]:
     async with SESSION_LOCAL() as db:
-        evidence = await pursuit_evidence(
-            db, user_id, [item.id for item in life.active_pursuits], include_publications=True
-        )
+        evidence = await pursuit_evidence(db, user_id, [item.id for item in life.active_pursuits], include_diary=True)
         recent_contacts = await recent_life_contacts(db, user_id)
-        source_ids = {
-            item.id for item in (*life.private_works, *life.recent_events, *life.topic_heads, *evidence.events)
-        }
     instructions = (
         resolve_prompt_text(_INSTRUCTIONS, context.language)
         .replace("{life_facts}", resolve_prompt_text(LIFE_FACT_GUIDANCE, context.language))
@@ -765,8 +745,6 @@ async def _choose_life(
         "memory": context.memory.model_dump(mode="json"),
         "recent_exchange": recent_exchange,
         "recent_contact_choices": recent_contacts,
-        "previous_post_choices": [],
-        "post_history_excerpted": False,
         "can_recall": can_recall,
         "last_lookup": last_lookup.model_dump(mode="json", exclude_none=True) if last_lookup else None,
     }
@@ -788,16 +766,13 @@ async def _choose_life(
         if item.id not in unresolved and (None in evidence_pursuits or item.id in evidence_pursuits)
     }
     fixed["completion_candidates"] = [str(item.id) for item in life.active_pursuits if item.id in completable]
-    # 素材和历史先按全部能力的契约留足空间，发送时再收窄到实际可用能力。
+    # 制作素材按全部能力的契约预留空间，发送时再收窄到实际可用能力。
     budget_schema = _decision_schema(dict.fromkeys(LIFE_CAPABILITIES, True), evidence_ids, has_active, has_paused)
     room = material_budget(config.chain, instructions + design_guidance, {**personal, **fixed}, budget_schema)
-    # 历史选择和可用制作素材共享输入余量，留出可实际执行动作的空间。
-    async with SESSION_LOCAL() as db:
-        choices, more = await post_choice_history(db, user_id, source_ids, token_budget=room // 2)
     execution = await life_capability_context(
         user_id,
         query=" ".join([life.state.current_activity, *(p.title for p in life.active_pursuits), recent_exchange]),
-        token_budget=room - json_tokens(choices),
+        token_budget=room,
     )
     if execution["capabilities"].get("action.design"):
         instructions += design_guidance
@@ -983,10 +958,6 @@ async def _choose_life(
         return decision
 
     fixed["execution"] = execution
-    history = fit_post_history(
-        choices, [], material_budget(config.chain, instructions, {**personal, **fixed}, budget_schema), excerpted=more
-    )
-    personal.update(history)
     decision = await call_llm_json(
         config,
         instructions,

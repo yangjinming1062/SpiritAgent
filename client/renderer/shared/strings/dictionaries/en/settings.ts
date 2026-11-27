@@ -193,10 +193,6 @@ export const settings: Pick<Dictionary, 'settings' | 'skills' | 'toolsets'> = {
         normal: { label: 'Occasional greetings', hint: 'A gentle text greeting while staying in place' },
         autonomous: { label: 'Free to interact', hint: 'May speak and interact naturally' }
       },
-      smartHeading: 'Everyday life',
-      smartHint: 'Let your companion record its life independently of the companionship intensity.',
-      postsEnabled: 'Post creation',
-      postsEnabledDesc: 'Your companion can share text, pictures, videos or audio, even while you’re offline.',
       motionHeading: 'Motion',
       motionHint:
         'Controls how much the visual figure moves, independent of proactive contact; temporary quiet does not stop the muted idle loop.',

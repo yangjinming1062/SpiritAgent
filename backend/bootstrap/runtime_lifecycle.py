@@ -8,12 +8,11 @@ from features.companion.lifecycle import runtime_participants as companion_parti
 from features.configuration.social_accounts import runtime_participants as social_account_participants
 from features.conversation.call_records import recover_call_records
 from features.conversation.submissions import recover_interrupted_submissions
-from features.entries.diary_search import DIARY_SEARCH_WORKER
+from features.journal.diary_search import DIARY_SEARCH_WORKER
 from features.life.search import LIFE_SEARCH_WORKER
 from features.media.lifecycle import runtime_participants as media_participants
 from features.media.video_queue.lifecycle import runtime_participants as video_queue_participants
 from features.memory.lifecycle import runtime_participants as memory_participants
-from features.posts.lifecycle import runtime_participants as post_participants
 from features.scenes.lifecycle import runtime_participants as scene_participants
 from features.visuals.lifecycle import runtime_participants as visuals_participants
 from infrastructure.ai.decision import cancel_decision_request
@@ -55,7 +54,6 @@ def configure_runtime_lifecycle() -> None:
             *appearance_participants(),
             *scene_participants(),
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),
-            *post_participants(),
             *companion_participants(),
             *social_account_participants(),
             *memory_participants(),

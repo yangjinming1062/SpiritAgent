@@ -25,10 +25,10 @@
 | 资料、声音与记忆 | [companion](features/companion/) |
 | 创作页与素材 | [创作页](features/creation/creation-page.tsx)、[造型](features/creation/wardrobe/)、[环境](features/creation/environment/)、[动作](features/creation/actions/)、[影像](features/creation/visuals/) |
 | 素材人工复核 | [media-review](features/media-review/)、公共面板 [media-review-panel.tsx](ui/media-review-panel.tsx) |
-| 动态、日记与设置 | [posts](features/life/posts/)、[diary](features/life/diary/)、[settings](features/settings/) |
+| 日记与设置 | [diary](features/life/diary/)、[settings](features/settings/) |
 | 通用 UI 与文案 | [UI 库](ui/)、[字典](shared/strings/dictionaries/)；跨端中性文案与错误分类归根 [shared](../../shared/) |
 
-生活与日记的历史搜索共用显式提交表单，查询与结果状态由所属模块持有；文本与日期筛选、日记所选日期及滚动位置参与账户快照。搜索预览不确认日记已读，打开正文后才使用阅读回执。
+生活与日记的历史搜索共用显式提交表单，查询与结果状态由所属模块持有；文本与日期筛选、日记所选日期及滚动位置参与账户快照。日历按账户未读状态标记具体日期。搜索预览不确认日记已读，打开正文后才使用阅读回执。
 
 列表页交互走公共件：异步动作用 [use-panel-action.ts](shared/hooks/use-panel-action.ts)（busy + 换号/卸载守卫 + 失败 toast，key 化支持行级 busy）；列表加载/失败重试/内容三态用 `AsyncSection`；分页用 `Pager`（pages/more 两模式）；素材库工具栏用 [asset-library-header.tsx](ui/asset-library-header.tsx)（搜索 live/submit 两语义 + 筛选插槽 + 主创建按钮 + `secondary`/`preference` 插槽）；列表顶部单条状态用 `LibraryStatusBanner`（失败 > 待核对 > 进行中，同屏至多一条），偏好开关用 `StatusToggle` 就地显示状态点与短标签，次级命令收进 `OverflowMenu`；列表→详情流的滚动保存恢复用 [use-detail-flow.ts](app/navigation/use-detail-flow.ts)；创建提交防重入与修订守卫用 [use-creation-submit.ts](shared/hooks/use-creation-submit.ts)。公共件只接数据与回调，查询与分页状态归各模块 store。
 
@@ -67,7 +67,7 @@
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 守卫鉴权会话及清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 守卫挂载和请求代次；描述整理的结果落地另按根 `interpretation-guard.ts` 的请求代次与草稿修订校验。旧回包不得写入新账户、新查询或新草稿。
 - [storage.ts](shared/lib/storage.ts) 登记账户键和恢复回调，换号清内存并重挂载；重置期不回写索引，命名空间就绪后才应用云广播。`runner-status.ts` 的快照不能覆盖较新事件，握手超时须进入可恢复错误态。
 - 用户提交保留稳定请求身份，响应不明先查回执，停止绑定具体回合。挂载先应用快照再按水位合并事件；缺少流基线不应用增量。
-- 未读确认取所属视图的可见性。动态、日记各自消费服务端镜像；[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 仅对合格舞台发气泡或声音，不可见消息仍进入未读，工作会话不跳入轻语。
+- 未读确认取所属视图的可见性。日记按账户同步已读。主动交流只在合格舞台发气泡或声音，不可见消息仍进入未读，工作会话不跳入轻语。实现见 [proactive-delivery.ts](app/workflows/proactive-delivery.ts)。
 - 错误分类经根 `error-classification.ts`，显示经 `ipc-error.ts`；业务正文错误用 `notifyError`。与状态相关的错误行内显示，动作失败用 toast，同一失败不重复呈现。
 
 引导 flow 装配导航，`onboarding-draft.ts` 串行保存并按服务端 `next_field` 恢复，本地编辑优先。读取失败暂停重试，不能当作新引导覆盖。头像和声音各自持有异步制作状态。末页复用记忆页的资料表单，未提交字段及编辑起点版本按账户保存在本机，服务端确认完成后清理草稿。
@@ -94,7 +94,7 @@
 
 [生活模块](features/life/) 在侧栏读取最近经历与聚焦事项。近况页装配共享阅读组件，通过桌面身份读取轨迹、公开事项和显式提交的搜索，提供桌面筛选器、素材定位及指定版本的影像预览。事件、连接恢复及实际可见性触发刷新，可见生活窗不要求置前。读取不推进判断或制作。
 
-模式交接保存近况的返回路径、时间线已展开到的经历、搜索与筛选、各层滚动位置。普通菜单和重新开窗回到近况首页，侧栏的事项入口直接定位详情。动态页只呈现已发布的作品与评论。事项调整经聊天。
+模式交接保存近况的返回路径、时间线已展开到的经历、搜索与筛选、各层滚动位置。普通菜单和重新开窗回到近况首页，侧栏的事项入口直接定位详情。事项调整经聊天。
 
 ## 角色呈现契约
 

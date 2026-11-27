@@ -225,7 +225,7 @@ export interface DesktopAccount {
 
 export const APP_PAGES = ['chat', 'life', 'creation', 'companion', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
-export const LIFE_SECTIONS = ['now', 'posts', 'diary'] as const
+export const LIFE_SECTIONS = ['now', 'diary'] as const
 export type LifeSection = (typeof LIFE_SECTIONS)[number]
 export const CREATION_SECTIONS = ['visuals', 'wardrobe', 'environment', 'actions'] as const
 export type CreationSection = (typeof CREATION_SECTIONS)[number]

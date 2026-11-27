@@ -23,7 +23,6 @@ import {
 import { ConversationPage } from '@/features/conversation/conversation-page'
 import { $creationAttention } from '@/features/creation'
 import { $diaryHasUnread } from '@/features/life/diary'
-import { $postsHasUnread } from '@/features/life/posts'
 import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { desktopPlatform, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -68,7 +67,6 @@ export function DesktopRoot(): React.JSX.Element {
   const portrait = useStore($portraitUrl)
   const companionSessionId = useStore($companionSessionId)
   const { hasUnread: companionUnread, firstUnheard } = useConversationUnread(companionSessionId)
-  const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const creationAttention = useStore($creationAttention)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
@@ -473,7 +471,7 @@ export function DesktopRoot(): React.JSX.Element {
           <DesktopProductNav
             activeWindow={activeWindow}
             creationAttention={creationAttention}
-            lifeUnread={postsUnread || diaryUnread}
+            lifeUnread={diaryUnread}
             onActivate={activatePanel}
             onBeforeOpen={() => setOverlay('product')}
             onClose={close}

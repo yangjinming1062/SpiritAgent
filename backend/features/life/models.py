@@ -171,7 +171,7 @@ class LifeStep(ModelBase, TimestampMixin):
     result_visual_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("visual_versions.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
     )
-    result_entry_id: Mapped[int | None] = mapped_column(ForeignKey("companion_entries.id", ondelete="SET NULL"))
+    result_entry_id: Mapped[int | None] = mapped_column(ForeignKey("diary_entries.id", ondelete="SET NULL"))
     result_outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
     result_scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"))
     result_action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))
@@ -207,7 +207,7 @@ class LifeEvent(ModelBase, TimestampMixin):
     result_visual_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("visual_versions.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
     )
-    result_entry_id: Mapped[int | None] = mapped_column(ForeignKey("companion_entries.id", ondelete="SET NULL"))
+    result_entry_id: Mapped[int | None] = mapped_column(ForeignKey("diary_entries.id", ondelete="SET NULL"))
     result_outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id", ondelete="SET NULL"))
     result_scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"))
     result_action_id: Mapped[int | None] = mapped_column(ForeignKey("action_definitions.id", ondelete="SET NULL"))

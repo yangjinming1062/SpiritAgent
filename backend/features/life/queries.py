@@ -14,9 +14,9 @@ from .actions import CREATION_CAPABILITIES, ReadingResult, VisualAction
 from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
 from .prompts import life_content_payload
 from .schemas import (
+    DIARY_PUBLISHED_KIND,
     EVIDENCE_EVENT_KINDS,
     EVIDENCE_EVENTS_PER_PURSUIT,
-    PUBLISHED_ENTRY_KINDS,
     UNRESOLVED_STEP_STATES,
     LifeEventView,
     LifePursuitEvidence,
@@ -341,7 +341,7 @@ async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: 
 
 
 async def pursuit_evidence(
-    db: AsyncSession, user_id: int, pursuit_ids: Collection[int], *, include_publications: bool = False
+    db: AsyncSession, user_id: int, pursuit_ids: Collection[int], *, include_diary: bool = False
 ) -> LifePursuitEvidence:
     """按事项补充未解决步骤与可引用的结果依据。"""
     if not pursuit_ids:
@@ -356,11 +356,11 @@ async def pursuit_evidence(
         .order_by(LifeStep.pursuit_id, LifeStep.id)
     )
     scope = LifeEvent.pursuit_id.in_(pursuit_ids)
-    if include_publications:
+    if include_diary:
         scope = or_(
             scope,
             LifeEvent.pursuit_id.is_(None)
-            & LifeEvent.kind.in_(PUBLISHED_ENTRY_KINDS)
+            & (LifeEvent.kind == DIARY_PUBLISHED_KIND)
             & LifeEvent.result_entry_id.is_not(None),
         )
     ranked = (
@@ -368,7 +368,7 @@ async def pursuit_evidence(
             LifeEvent.id,
             func.row_number()
             .over(
-                partition_by=(LifeEvent.pursuit_id, case((LifeEvent.pursuit_id.is_(None), LifeEvent.kind))),
+                partition_by=LifeEvent.pursuit_id,
                 order_by=(LifeEvent.occurred_at.desc(), LifeEvent.id.desc()),
             )
             .label("position"),
