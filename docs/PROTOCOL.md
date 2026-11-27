@@ -241,7 +241,7 @@ Slash 元动作走 `POST /api/sessions/{session_id}/commands`，由服务端命�
 | 素材和影像 | [scenes](../backend/entrypoints/http/routes/companion_scenes.py)、[actions](../backend/entrypoints/http/routes/companion_actions.py)、[visuals](../backend/entrypoints/http/routes/companion_visuals.py) |
 | 生活与内容 | [life](../backend/entrypoints/http/routes/companion_life.py)、[posts](../backend/entrypoints/http/routes/companion_posts.py)、[journal](../backend/entrypoints/http/routes/companion_journal.py) |
 
-引导从服务端状态和已确认素材恢复，用户步骤见 [DESIGN](DESIGN.md#认识伙伴)。桌面确认声音或选择暂用文字时携带 `include_profile: true`，进入环境和个人资料步骤。没有请求个人资料步骤时，声音确认即可结算引导。已完成账户可直接进入产品。未完成账户连接缺少 `profile_outcome` 的服务时，桌面提示升级。
+引导从服务端状态和已确认素材恢复，用户步骤见 [DESIGN](DESIGN.md#认识伙伴)。确认声音或选择暂用文字后进入环境步骤，再由用户保存或跳过个人资料完成引导。已完成账户直接进入产品。
 
 沿用或受理环境素材后提交 `environment_complete`，使用默认环境则提交 `environment_skipped`。启动恢复沿已保存的决定继续准备。
 
@@ -601,7 +601,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 | 明确移除账户 | 删除目标账户的凭据和缓存；移除非当前账户不影响当前会话 |
 | 旧会话鉴权失败 | 不得注销当前账户 |
 
-Runner 只持工具所需本机配置。终端、SSH 密码及凭据文件不上云。供应商密钥和账户资讯来源凭证在后端数据库明文保存，REST 不回显；用户级供应商密钥和资讯来源凭证仅存于后端数据库，REST 不回显；数据库属于凭据边界。扫码会话不跨重启保留，凭证修订按需重新生成。
+Runner 只持工具所需本机配置。终端、SSH 密码及凭据文件不上云。用户级供应商密钥和账户资讯来源凭证以明文存于后端数据库。数据库属于凭据边界，REST 只返回配置状态。扫码会话不跨重启保留，凭证修订按需重新生成。
 
 ### AI 配置与密钥
 

@@ -22,7 +22,6 @@ from .repository import (
     emit_playback_receipt,
     notify_visuals_updated,
     presentation_outfit,
-    presentation_row,
     presented_item,
     require_presentation_row,
     stage_composition,
@@ -152,7 +151,7 @@ async def restore_static_presentation(
 async def invalidate_scene_presentation(db: AsyncSession, user_id: int, scene_id: int, scene_path: str) -> bool:
     """作废已删除环境的呈现引用，保留独立主体与影像库历史；返回是否需要恢复舞台。"""
 
-    state = await presentation_row(db, user_id, lock=True)
+    state = await db.get(VisualPresentation, user_id, with_for_update=True, populate_existing=True)
     if state is None:
         return False
 

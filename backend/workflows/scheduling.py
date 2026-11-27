@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from functools import partial
 from typing import Any
 
-from features.accounts.queries import list_user_ids, lock_active_user_ids, user_is_active
+from features.accounts.queries import active_account_ids, lock_active_user_ids, user_is_active
 from features.automation.cron_jobs import STANDARD_CRON_KIND
 from features.automation.scheduling import (
     DueJob,
@@ -194,13 +194,11 @@ async def drain() -> None:
 
 async def _due_job_pages(now: datetime) -> AsyncIterator[list[DueJob]]:
     """固定本轮截止时间，跨过仍需静候或处于维护的账户，逐页推进后面的任务。"""
-    async with SESSION_LOCAL() as db:
-        active_users = await list_user_ids(db, active_only=True)
     online = MANAGER.local_user_ids()
     cursor = None
     while True:
         async with SESSION_LOCAL() as db:
-            jobs = await due_jobs(db, now, online, active_users, limit=_DUE_PAGE_SIZE, cursor=cursor)
+            jobs = await due_jobs(db, now, online, limit=_DUE_PAGE_SIZE, cursor=cursor)
         if not jobs:
             return
         yield jobs
@@ -373,8 +371,7 @@ async def run_tick() -> None:
 async def _discover_life_work() -> list[ScheduledWork]:
     now = utc_now()
     async with SESSION_LOCAL() as db:
-        active_users = await list_user_ids(db, active_only=True)
-        completed = await complete_user_ids(db, active_users)
+        completed = set(await db.scalars(complete_user_ids(active_account_ids())))
         onboarded = await onboarded_user_ids(db, completed)
         users = await due_review_user_ids(db, onboarded, now)
         executors = await execution_user_ids(db, now)
@@ -388,12 +385,12 @@ async def _discover_life_work() -> list[ScheduledWork]:
     # 已提交步骤仍需核对；未受理步骤由执行入口复核引导状态。
     work.extend(
         ScheduledWork("execute", partial(run_life_execution, user_id), user_id)
-        for user_id in sorted(executors & set(completed))
+        for user_id in sorted(executors & completed)
         if not is_user_in_maintenance(user_id)
     )
     work.extend(
         ScheduledWork("present", partial(evaluate_life_presentation, user_id), user_id)
-        for user_id in sorted((presentation_users | set(MANAGER.local_user_ids())) & set(completed))
+        for user_id in sorted((presentation_users | set(MANAGER.local_user_ids())) & completed)
         if not is_user_in_maintenance(user_id)
     )
     work.extend(
@@ -469,15 +466,14 @@ async def _discover_topic_batches() -> list[ScheduledWork]:
 async def _discover_nightly_activity() -> list[ScheduledWork]:
     now = utc_now()
     async with SESSION_LOCAL() as db:
-        active_users = await list_user_ids(db, active_only=True)
-        eligible_users = await companion_conversation_users(db, active_users, COMPANION_PRESET_ID)
-        eligible_users.update(await complete_user_ids(db, active_users))
+        active = active_account_ids()
+        eligible_users = complete_user_ids(active).union_all(companion_conversation_users(active, COMPANION_PRESET_ID))
         rows = await timezone_settings(db, eligible_users)
         zones = {user_id: zone for user_id, name in rows if (zone := parse_timezone(name)) is not None}
         if not zones:
             return []
         latest = {user_id: now.astimezone(zone).date() - timedelta(days=1) for user_id, zone in zones.items()}
-        logs = await nightly_logs(db, list(zones), since=min(latest.values()))
+        logs = await nightly_logs(db, zones.keys(), since=min(latest.values()))
     work = []
     for user_id, zone in zones.items():
         if is_user_in_maintenance(user_id):

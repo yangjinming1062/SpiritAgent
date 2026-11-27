@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import signal
 import socket
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -69,7 +70,7 @@ class UpdaterApp:
         except TaskBusyError as busy:
             return _Response(409, {"message": str(busy)})
         except LookupError as exc:
-            return _Response(404, {"message": str(exc)})
+            return _Response(404, {"code": "task_not_found", "message": str(exc)})
         except ValidationError:
             return _Response(409, {"message": "更新请求的参数无效。"})
         except (gitops.GitError, RuntimeError, ValueError) as exc:
@@ -201,9 +202,18 @@ def serve(settings: UpdaterSettings) -> None:
         await _handle_client(app, reader, writer)
 
     async def main() -> None:
-        tcp = await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT)
-        unix = await asyncio.start_server(handle, sock=_bind_unix(settings.socket_path))
-        async with tcp, unix:
-            await asyncio.gather(tcp.serve_forever(), unix.serve_forever())
+        main_task = asyncio.current_task()
+        assert main_task is not None
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, main_task.cancel)
+        try:
+            async with (
+                await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT) as tcp,
+                await asyncio.start_server(handle, sock=_bind_unix(settings.socket_path)) as unix,
+            ):
+                await asyncio.gather(tcp.serve_forever(), unix.serve_forever())
+        finally:
+            loop.remove_signal_handler(signal.SIGTERM)
 
-    asyncio.run(main())
+    with contextlib.suppress(asyncio.CancelledError, KeyboardInterrupt):
+        asyncio.run(main())

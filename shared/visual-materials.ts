@@ -2,47 +2,76 @@ import type { ApiSchemas } from './api.generated'
 
 type Component = ApiSchemas['ImportComponentView']
 
-export function visualAnalysisControls(job: ApiSchemas['ImportAnalysisView'] | null | undefined) {
-  const active = job?.state === 'queued' || job?.state === 'running'
+export interface MaterialOption {
+  id: string
+  name: string
+  preview?: string
+}
+
+export function visualAnalysisControls(job: ApiSchemas['ImportAnalysisView']) {
+  const active = job.state === 'queued' || job.state === 'running'
   const canContinue =
     !active &&
-    (!job?.result ||
+    (!job.result ||
       ['paused', 'cancelled', 'unknown'].includes(job.state) ||
       job.result.components.some(component => ['paused', 'failed'].includes(component.operation_state)) ||
       job.state === 'failed')
   const status = active
     ? 'working'
-    : job?.state === 'awaiting_input'
+    : job.state === 'awaiting_input'
       ? 'awaiting'
-      : job?.state === 'failed'
+      : job.state === 'failed'
         ? 'attention'
-        : job?.state === 'paused' || job?.state === 'cancelled'
+        : job.state === 'paused' || job.state === 'cancelled'
           ? 'paused'
-          : job?.state === 'succeeded'
+          : job.state === 'succeeded'
             ? 'collection'
             : 'pending'
-  return { active, canContinue, status } as const
+  const review = job.stage === 'review_pending' && job.manual_review_available
+  const applyResult =
+    job.stage === 'confirmation' &&
+    !job.result?.components.some(component => !['created', 'reused', 'skipped', 'undone'].includes(component.status))
+  return {
+    active,
+    status,
+    review,
+    applyResult,
+    retry: canContinue && !review && job.stage !== 'confirmation',
+    error: canContinue && !job.result?.components.some(component => component.status === 'failed') ? job.error : null
+  } as const
 }
 
-export function visualAnalysisHasPendingMaterials(job: ApiSchemas['ImportAnalysisView'] | null | undefined): boolean {
-  return Boolean(
-    job?.result?.components.some(component => !['created', 'reused', 'skipped', 'undone'].includes(component.status))
-  )
+export function materialSelection(
+  component: Component,
+  command: ApiSchemas['ImportSelection']['command'],
+  notes: string,
+  materialId?: string
+): ApiSchemas['ImportAnalysisRequest'] {
+  return {
+    command: 'apply',
+    selections: [
+      {
+        key: component.observation.key,
+        command,
+        material_id: materialId,
+        expected_component_revision: component.revision,
+        notes
+      }
+    ]
+  }
 }
 
-export function visualMaterialGroups(analysis: ApiSchemas['ImportAnalysisView'] | null | undefined) {
-  return (['outfit', 'scene', 'action'] as const).map(kind => ({
-    kind,
-    components: analysis?.result?.components.filter(component => component.observation.kind === kind) ?? []
-  }))
-}
-
-export function visualMaterialControls(component: Component) {
+export function visualMaterialControls(component: Component, options: MaterialOption[]) {
   const busy = ['queued', 'running', 'paused'].includes(component.operation_state)
   const linked = component.material_id !== null && ['created', 'reused'].includes(component.status)
+  const material = linked ? options.find(option => option.id === component.material_id) : undefined
   return {
     busy,
     linked,
+    name: material?.name ?? component.observation.name,
+    previewPath: linked
+      ? material?.preview || (component.created ? component.preview_path : null)
+      : component.preview_path,
     confirmation: component.status === 'ambiguous',
     needsAction: !busy && !linked && ['failed', 'ambiguous', 'recognized'].includes(component.status),
     status: busy ? component.operation_state : component.status,
@@ -73,7 +102,6 @@ export const visualMaterialCopy = {
   zh: {
     title: '素材',
     groups: { outfit: '着装', scene: '环境', action: '动作' },
-    start: '识别影像',
     retry: '继续处理',
     reanalyze: '重新识别',
     cancel: '取消处理',
@@ -155,7 +183,6 @@ export const visualMaterialCopy = {
   en: {
     title: 'Materials',
     groups: { outfit: 'Outfit', scene: 'Environment', action: 'Action' },
-    start: 'Identify visual',
     retry: 'Continue processing',
     reanalyze: 'Identify again',
     cancel: 'Cancel processing',

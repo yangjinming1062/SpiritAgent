@@ -51,8 +51,6 @@ export const boot: Pick<Dictionary, 'boot' | 'onboarding'> = {
     refineAction: 'Refine',
     saveFailed: 'Could not save your answers. Try again.',
     resumeFailed: 'Could not read your saved progress. Try again.',
-    backendUpgradeRequired:
-      'This server version does not support My details during setup. Update the server, then retry.',
     retrying: 'Retrying…',
     stepVoice: 'Choose a voice',
     portraitPreviewHint: 'Preview and confirm your avatar',

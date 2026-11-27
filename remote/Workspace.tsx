@@ -13,7 +13,7 @@ import { Life } from './Life'
 import { usePageState } from './page-state'
 import { Settings } from './Settings'
 import type { RemoteSession } from './types'
-import { pauseMedia } from './ui'
+import { Notice, pauseMedia } from './ui'
 
 const TABS = [
   { id: 'messages', label: '聊天', icon: IconMessageCircle },
@@ -75,12 +75,14 @@ export function Workspace({
   api,
   gateway,
   session,
-  onLogout
+  onLogout,
+  pairingError
 }: {
   api: RemoteApi
   gateway: RemoteGateway
   session: RemoteSession
-  onLogout: () => void
+  onLogout: () => Promise<void>
+  pairingError: string
 }): ReactElement {
   const [savedTab, setTab] = usePageState<Tab>('tab', 'messages')
   const tab = TABS.find(item => item.id === savedTab)?.id ?? 'messages'
@@ -230,6 +232,7 @@ export function Workspace({
         {connected ? '已连接' : connectionError || '实时连接正在恢复，已受理的任务会继续运行'}
       </div>
       <main className="content">
+        {pairingError && <Notice>{pairingError}</Notice>}
         {tab === 'messages' ? (
           <Chat
             api={api}
@@ -252,7 +255,7 @@ export function Workspace({
         ) : tab === 'companion' ? (
           <Companion api={api} refresh={refresh} />
         ) : (
-          <Settings api={api} onLogout={onLogout} session={session} />
+          <Settings onLogout={onLogout} session={session} />
         )}
       </main>
       <nav aria-label="主导航" className="bottom-nav">

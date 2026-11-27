@@ -21,7 +21,7 @@ from infrastructure.web.social_content import SocialContent, validate_source_url
 from runtime.events.emit import emit_ws_event
 from runtime.memory_scope import MemoryScope
 from sqlalchemy import Select, and_, case, delete, exists, func, literal, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.locking import lock_account
@@ -198,17 +198,15 @@ async def save_selections(
     row = await _locked_batch(db, batch_id, scope)
     if row.status != "collecting":
         return
+    selections = {choice.candidate_id: choice.model_dump(mode="json") for choice in choices}
+    if not selections.keys() <= keys:
+        raise ValueError("Selection must belong to reviewed candidates")
+    selected = func.jsonb_extract_path(literal(selections, type_=JSONB), TopicCandidate.candidate_key)
     await db.execute(
         update(TopicCandidate)
         .where(TopicCandidate.batch_id == batch_id, TopicCandidate.candidate_key.in_(keys))
-        .values(reviewed=True)
+        .values(reviewed=True, selection=func.coalesce(selected, TopicCandidate.selection))
     )
-    for choice in choices:
-        await db.execute(
-            update(TopicCandidate)
-            .where(TopicCandidate.batch_id == batch_id, TopicCandidate.candidate_key == choice.candidate_id)
-            .values(selection=choice.model_dump(mode="json"))
-        )
 
 
 async def selected_history(
@@ -238,6 +236,34 @@ async def selected_history(
     return recent, keys
 
 
+def _selected_topic(batch: TopicBatch, item: TopicCandidate, seen: set[str]) -> dict[str, Any]:
+    source = SocialContent.model_validate(item.content)
+    selection = TopicCandidateChoice.model_validate(item.selection)
+    if (
+        source.published_at is None
+        or not source.has_evidence
+        or not ensure_utc(batch.window_start) <= source.published_at < ensure_utc(batch.window_end)
+        or candidate_key(source) != selection.candidate_id
+    ):
+        raise ValueError("Topic lacks dated content evidence in the collection window")
+    event = selection.event_key.casefold()
+    if event in seen:
+        raise ValueError("Duplicate selected event")
+    seen.add(event)
+    return {
+        **source.model_dump(),
+        "user_id": batch.user_id,
+        "system_preset_id": batch.system_preset_id,
+        "batch_id": batch.id,
+        "url": validate_source_url(source.platform, source.source_id, source.url),
+        "summary": selection.fact_summary,
+        "user_relevance": selection.why_user,
+        "companion_interest": selection.why_companion,
+        "conversation_angle": selection.conversation_angle,
+        "event_key": selection.event_key,
+    }
+
+
 async def complete_batch(
     db: AsyncSession, batch_id: int, scope: MemoryScope, summary: dict[str, Any], *, reason: str | None = None
 ) -> TopicBatchSnapshot:
@@ -252,36 +278,10 @@ async def complete_batch(
     )
     seen: set[str] = set()
     try:
-        async for item in items:
-            source = SocialContent.model_validate(item.content)
-            selection = TopicCandidateChoice.model_validate(item.selection)
-            if (
-                source.published_at is None
-                or not source.has_evidence
-                or not ensure_utc(row.window_start) <= source.published_at < ensure_utc(row.window_end)
-                or candidate_key(source) != selection.candidate_id
-            ):
-                raise ValueError("Topic lacks dated content evidence in the collection window")
-            event = selection.event_key.casefold()
-            if event in seen:
-                raise ValueError("Duplicate selected event")
-            seen.add(event)
-            canonical = validate_source_url(source.platform, source.source_id, source.url)
+        async for page in items.partitions():
+            values = [_selected_topic(row, item, seen) for item in page]
             await db.execute(
-                insert(CompanionTopic)
-                .values(
-                    user_id=scope.user_id,
-                    system_preset_id=scope.system_preset_id,
-                    batch_id=row.id,
-                    **source.model_dump(exclude={"url"}),
-                    url=canonical,
-                    summary=selection.fact_summary,
-                    user_relevance=selection.why_user,
-                    companion_interest=selection.why_companion,
-                    conversation_angle=selection.conversation_angle,
-                    event_key=selection.event_key,
-                )
-                .on_conflict_do_nothing(constraint="uq_topic_scope_source")
+                insert(CompanionTopic).values(values).on_conflict_do_nothing(constraint="uq_topic_scope_source")
             )
     finally:
         await items.close()
@@ -559,9 +559,9 @@ async def record_topic_usage(
         raise ValueError("Topic authorization time is required")
     if authorized_at.tzinfo is None or authorized_at > utc_now():
         raise ValueError("Invalid topic authorization time")
-    topics = list(
-        await db.scalars(
-            select(CompanionTopic)
+    topics = (
+        await db.execute(
+            select(CompanionTopic.id, CompanionTopic.platform, CompanionTopic.source_id, CompanionTopic.url)
             .join(TopicBatch)
             .where(
                 *_scope(CompanionTopic, scope),
@@ -571,28 +571,27 @@ async def record_topic_usage(
                 TopicBatch.available_from <= authorized_at,
             )
         )
-    )
+    ).all()
     available = {topic.id for topic in topics}
     if any(type(topic_id) is not int or topic_id not in available for topic_id in topic_ids):
         raise ValueError("Topic was not authorized for this reply")
     for topic in topics:
         validate_source_url(topic.platform, topic.source_id, topic.url)
-    ids = list(dict.fromkeys(topic_ids))
-    existing = set(
-        await db.scalars(
-            select(TopicUsage.topic_id).where(
-                *_scope(TopicUsage, scope), TopicUsage.topic_id.in_(ids), TopicUsage.message_id == message_id
-            )
+    await db.execute(
+        insert(TopicUsage)
+        .values(
+            [
+                {
+                    "user_id": scope.user_id,
+                    "system_preset_id": scope.system_preset_id,
+                    "topic_id": topic_id,
+                    "message_id": message_id,
+                }
+                for topic_id in sorted(available)
+            ]
         )
+        .on_conflict_do_nothing(constraint="uq_topic_usage_message")
     )
-    db.add_all(
-        TopicUsage(
-            user_id=scope.user_id, system_preset_id=scope.system_preset_id, topic_id=topic_id, message_id=message_id
-        )
-        for topic_id in ids
-        if topic_id not in existing
-    )
-    await db.flush()
 
 
 async def recent_topic_feedback(

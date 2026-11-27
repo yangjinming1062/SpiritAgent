@@ -1,4 +1,3 @@
-import hashlib
 import json
 import time
 from collections.abc import Sequence
@@ -15,13 +14,13 @@ from infrastructure.ai.providers.base import BaseProvider, ChatProvider, Embeddi
 from infrastructure.ai.providers.registry import (
     configured_base_url,
     model_supports_task,
-    provider_requires_api_key,
-    providers_supporting,
     resolve,
+    try_resolve,
     try_resolve_chat,
 )
 from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 from infrastructure.config import SETTINGS
+from infrastructure.hashing import sha256_hex
 from infrastructure.logger import get_logger
 
 logger = get_logger(__name__)
@@ -52,9 +51,8 @@ def _chain_entry(
     """凭据仅从供应商实例取得；未配置必需凭据或端点的模型不可调用。"""
     provider_type = provider.provider_type
     base_url = configured_base_url(provider_type, provider.base_url, service_type)
-    if not base_url or provider_type not in providers_supporting(service_type):
-        return None
-    if not provider.api_key and provider_requires_api_key(service_type, provider_type):
+    adapter = try_resolve(service_type, provider_type)
+    if not base_url or adapter is None or (adapter.requires_api_key and not provider.api_key):
         return None
     return ProviderConfig(
         base_url=base_url,
@@ -88,11 +86,21 @@ def _chain_from_ai_config(
     if card_ids is None:
         models = [(card, config) for card in getattr(config.capabilities, service_type)]
     else:
-        for model_id in card_ids:
-            model = config.find_model(model_id, system)
-            if model is None or model[0] != service_type:
-                raise MissingLlmConfigError(f"任务引用的模型卡片无效：{model_id}")
-            models.append((model[1], model[2]))
+        remaining = set(card_ids)
+        by_id: dict[UUID, tuple[CapabilityCard, AIConfig]] = {}
+        for owner in (config, system):
+            if owner is None or not remaining:
+                break
+            for card in getattr(owner.capabilities, service_type):
+                if card.id in remaining:
+                    by_id[card.id] = (card, owner)
+                    remaining.remove(card.id)
+                    if not remaining:
+                        break
+        if remaining:
+            missing = next(model_id for model_id in card_ids if model_id in remaining)
+            raise MissingLlmConfigError(f"任务引用的模型卡片无效：{missing}")
+        models = [by_id[model_id] for model_id in card_ids]
     # 向量先选模型再核对凭据；首张失效不能改用另一向量空间。
     if service_type == ServiceType.embedding:
         models = models[:1]
@@ -187,7 +195,7 @@ async def resolve_embedding_provider(db: AsyncSession, user_id: int) -> Embeddin
 def embedding_model_key(config: ProviderConfig) -> str:
     """端点或模型变化产生新的向量空间；密钥轮换不改变空间。"""
     identity = (config.provider_name, config.base_url.rstrip("/"), config.model)
-    return hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode("utf-8")).hexdigest()
+    return sha256_hex(json.dumps(identity, ensure_ascii=True))
 
 
 async def _embed(

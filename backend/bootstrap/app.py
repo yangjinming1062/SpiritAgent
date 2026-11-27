@@ -4,13 +4,20 @@ from pathlib import Path
 
 from entrypoints.http.auth_rate_limit import AuthenticationRateLimitMiddleware
 from entrypoints.http.body_limit import BodyLimitMiddleware
-from entrypoints.http.errors import http_exception_handler, request_exception_handler, validation_exception_handler
+from entrypoints.http.errors import (
+    http_exception_handler,
+    material_exception_handler,
+    request_exception_handler,
+    validation_exception_handler,
+)
 from entrypoints.http.rate_limit import limiter, rate_limit_exception_handler, stash_user_id_middleware
 from entrypoints.http.remote_static import RemoteStaticFiles
 from entrypoints.http.routes import ROUTERS
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from features.scenes.service import SceneError
+from features.visuals.repository import VisualError
 from infrastructure.config import SETTINGS
 from infrastructure.correlation import correlated_exception_response, correlation_id_middleware
 from infrastructure.request_errors import RequestError
@@ -49,6 +56,8 @@ app.middleware("http")(correlation_id_middleware)
 app.add_exception_handler(Exception, correlated_exception_response)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestError, request_exception_handler)
+app.add_exception_handler(SceneError, material_exception_handler)
+app.add_exception_handler(VisualError, material_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
 

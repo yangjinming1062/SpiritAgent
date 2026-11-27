@@ -12,7 +12,7 @@ from features.accounts.session_operations import is_login_active
 from features.companion.proactive_runtime import observe_companion_presence
 from features.conversation.session_operations import ensure_main_conversation
 from infrastructure.api_ids import ResourceId
-from infrastructure.async_io import cancel_and_wait, cancel_tasks
+from infrastructure.async_io import KeyedLocks, cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
 from infrastructure.constants import JSONRPC_INVALID_PARAMS
 from infrastructure.correlation import REQUEST_ID_HEADER, adopt_inbound
@@ -77,12 +77,12 @@ class UserGatewaySession:
 _USER_SESSIONS: dict[int, UserGatewaySession] = {}
 _REMOTE_SESSIONS: dict[int, dict[str, UserGatewaySession]] = {}
 _GRACE_TIMER_TASKS: set[asyncio.Task] = set()
-_USER_LOCKS: dict[int, asyncio.Lock] = {}
+_USER_LOCKS = KeyedLocks[int]()
 _MAX_IN_FLIGHT_REQUESTS = 32
 
 
 def _user_lock(user_id: ResourceId) -> asyncio.Lock:
-    return _USER_LOCKS.setdefault(user_id, asyncio.Lock())
+    return _USER_LOCKS[user_id]
 
 
 async def drain() -> None:

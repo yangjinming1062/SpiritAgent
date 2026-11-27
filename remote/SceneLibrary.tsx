@@ -1,4 +1,4 @@
-import { IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconPlus } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -30,7 +30,8 @@ import {
   LibraryCard,
   Media,
   Notice,
-  PageHeader
+  PageHeader,
+  RefreshButton
 } from './ui'
 
 function sceneStatusText(status: Scene['status']): string {
@@ -85,7 +86,7 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
           })
           return { rows, next_cursor }
         }),
-        api.invoke('companion_scenes.read_scene_state'),
+        api.invoke('companion_scenes.read_scene_state', { query: { tasks_only: true } }),
         selectedId
           ? api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
               if (failure instanceof ApiError && failure.status === 404) {
@@ -109,9 +110,9 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
   useEffect(() => {
     void runLatest(load)
   }, [load, refresh, runLatest])
-  const pending = Boolean(state?.generation_pending)
+  const pending = state?.materials.find(item => item.status === 'pending' || item.regeneration?.status === 'pending')
 
-  useVisiblePolling(pending, load, runLatest)
+  useVisiblePolling(Boolean(pending), load, runLatest)
 
   return (
     <>
@@ -142,15 +143,7 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
               <IconPlus aria-hidden size={17} />
               创建环境
             </button>
-            <button
-              aria-label="刷新环境"
-              className="icon-button"
-              disabled={busy}
-              onClick={() => run(load)}
-              type="button"
-            >
-              <IconRefresh size={20} />
-            </button>
+            <RefreshButton busy={busy} label="刷新环境" onClick={() => run(load)} />
           </div>
           <AssetPolicyToggle
             checked={state?.policy === 'llm_may_replace'}
@@ -178,7 +171,7 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
           />
         </>
       ) : null}
-      {state?.generation_pending ? (
+      {pending ? (
         <section className="card">
           <strong>环境素材正在制作</strong>
           <p className="muted">AI 正在准备画面，可以先去聊天，稍后回来查看。</p>
@@ -186,12 +179,8 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const id = state.materials.find(item => item.status === 'pending')?.id
-
-                if (id) {
-                  await api.invoke('companion_scenes.post_scene_discard', { path: { scene_id: id } })
-                  await load()
-                }
+                await api.invoke('companion_scenes.post_scene_discard', { path: { scene_id: pending.id } })
+                await load()
               })
             }
             type="button"
@@ -203,7 +192,7 @@ export function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number
       {creating ? (
         <AssetCreator
           api={api}
-          disabled={pending}
+          disabled={Boolean(pending)}
           kind="scene"
           onCheck={load}
           onClose={() => {

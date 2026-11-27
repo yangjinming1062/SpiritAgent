@@ -63,13 +63,9 @@ def resolve_previous_tag(tag: str, repo: Path) -> str | None:
     return tags[idx + 1] if idx + 1 < len(tags) else None
 
 
-def resolve_root_commit(repo: Path) -> str:
-    out = run_git(["rev-list", "--max-parents=0", "HEAD"], repo)
-    return out.splitlines()[0].strip()
-
-
 def collect_commits(from_ref: str, to_ref: str, repo: Path) -> list[Commit]:
-    out = run_git(["log", "--format=%H%x1f%s%x1f%b%x1e", f"{from_ref}..{to_ref}"], repo)
+    revisions = f"{from_ref}..{to_ref}" if from_ref else to_ref
+    out = run_git(["log", "--format=%H%x1f%s%x1f%b%x1e", revisions], repo)
     commits: list[Commit] = []
     for record in out.split("\x1e"):
         record = record.strip("\n")
@@ -202,15 +198,7 @@ def main() -> int:
         print(f"error: tag '{args.tag}' should look like v1.2.3", file=sys.stderr)
         return 2
 
-    from_ref: str
-    if args.from_tag:
-        from_ref = args.from_tag
-    else:
-        previous = resolve_previous_tag(args.tag, repo)
-        from_ref = previous if previous else resolve_root_commit(repo)
-    if not re.match(r"^v\d", from_ref):
-        from_ref = ""  # 根提交：全量历史
-
+    from_ref = args.from_tag or resolve_previous_tag(args.tag, repo) or ""
     commits = collect_commits(from_ref, args.tag, repo)
     range_label = f"{from_ref or 'repo start'}..{args.tag}"
     print(f"==> {len(commits)} commits in {range_label}")

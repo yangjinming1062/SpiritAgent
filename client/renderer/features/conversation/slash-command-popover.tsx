@@ -4,7 +4,7 @@ import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
 export interface SlashCommandPopoverProps {
-  items: SlashCommandMeta[]
+  items: readonly SlashCommandMeta[]
   highlightedIndex: number
   onSelect: (cmd: SlashCommandMeta) => void
   onHighlight: (index: number) => void
@@ -50,7 +50,7 @@ export function SlashCommandPopover({
                 {item.aliases.length > 0 && (
                   <span className="text-[10px] text-faint">/{item.aliases.join(' · /')}</span>
                 )}
-                {item.requiresConfirmation && (
+                {item.requires_confirmation && (
                   <span className="ml-auto text-[9px] text-amber-400/80">{dict.chat.slash.popoverConfirm}</span>
                 )}
               </div>

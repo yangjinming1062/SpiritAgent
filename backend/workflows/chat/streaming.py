@@ -848,7 +848,7 @@ async def generate_provider_response(
                         optional_positions = screened_review_positions or None
                     if mandatory_review or optional_positions:
                         text, reply = await ground_recollection(
-                            UserLlmConfig(provider.config, user_id=media_turn.user_id),
+                            UserLlmConfig((provider.config,), user_id=media_turn.user_id),
                             recollection_evidence(context),
                             text,
                             reply,

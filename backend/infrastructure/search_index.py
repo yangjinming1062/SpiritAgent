@@ -25,8 +25,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from .ai.decision import DecisionOption, decision_enabled, rank_decision_options
 from .database import SESSION_LOCAL
+from .hashing import sha256_hex
 from .models import ModelBase
-from .search import QueryEmbedding, SearchStatus, content_fingerprint, extract_search_terms, fuse_rankings
+from .search import QueryEmbedding, SearchStatus, extract_search_terms, fuse_rankings
 
 
 class SearchIndexRow(ModelBase):
@@ -70,7 +71,7 @@ async def upsert_search_documents(
                 "user_id": user_id,
                 "record_id": item.record_id,
                 "search_text": item.text,
-                "content_hash": content_fingerprint(item.text),
+                "content_hash": sha256_hex(item.text),
             }
             for item in documents[start : start + 100]
         ]

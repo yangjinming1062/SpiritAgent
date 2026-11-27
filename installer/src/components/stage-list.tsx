@@ -1,17 +1,19 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { Check, X, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
-import type { BootstrapStateModel, StageState } from '../store'
+import { $logs, type BootstrapStateModel, type StageState } from '../store'
 
 export function StageList({ bootstrap }: { bootstrap: BootstrapStateModel }): React.JSX.Element {
+  const logs = useStore($logs)
   const logEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [bootstrap.logs])
+  }, [logs])
 
   return (
     <div className="flex h-full overflow-hidden rounded-lg border border-line-strong bg-glass shadow-md backdrop-blur-xs">
@@ -47,10 +49,10 @@ export function StageList({ bootstrap }: { bootstrap: BootstrapStateModel }): Re
       <div className="flex w-1/2 flex-col border-l border-line-standard bg-surface-card/80 backdrop-blur-xs">
         <div className="flex shrink-0 items-center justify-between border-b border-line-standard px-3 py-1.5">
           <div className="text-[11px] font-medium text-text-body">诊断日志</div>
-          <div className="text-[11px] text-text-muted">{bootstrap.logs.length} 行</div>
+          <div className="text-[11px] text-text-muted">{logs.length} 行</div>
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[10px] leading-relaxed">
-          {bootstrap.logs.map((entry, idx) => (
+          {logs.map((entry, idx) => (
             <div
               key={idx}
               className={clsx(

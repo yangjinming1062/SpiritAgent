@@ -63,7 +63,6 @@ class CDPSupervisor:
         cdp_url: str,
         *,
         launch_handle: NativeBrowserProcess | None = None,
-        auto_owned: bool = False,
         dialog_policy: str = DEFAULT_DIALOG_POLICY,
         dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S,
     ) -> None:
@@ -74,7 +73,6 @@ class CDPSupervisor:
         self.connection = CdpConnection(
             cdp_url,
             launch_handle=launch_handle,
-            auto_owned=auto_owned,
             on_connect=self._attach_initial_page,
             handle_event=self._on_event,
             pending_dialog=lambda session_id, **kwargs: self._dialog_manager.pending_for(session_id, **kwargs),
@@ -351,7 +349,10 @@ class CDPSupervisor:
         entries = result.get("entries", [])
         if idx > 0 and len(entries) > idx - 1:
             target_entry_id = entries[idx - 1]["id"]
-            return self.send_cdp("Page.navigateToHistoryEntry", {"entryId": target_entry_id}, session_id=sid)
+            moved = self.send_cdp("Page.navigateToHistoryEntry", {"entryId": target_entry_id}, session_id=sid)
+            if moved.get("ok"):
+                self.wait_for_page_stable()
+            return moved
         return {"ok": False, "error": "No back history entry available"}
 
     def get_images(self) -> dict[str, Any]:

@@ -1,20 +1,17 @@
 import type { ReactElement } from 'react'
 import { useState } from 'react'
 
-import type { RemoteApi } from './api'
 import { useTask } from './tasks'
 import { readTheme, saveTheme, type ThemeChoice } from './theme'
 import type { RemoteSession } from './types'
 import { Notice, PageHeader } from './ui'
 
 export function Settings({
-  api,
   session,
   onLogout
 }: {
-  api: RemoteApi
   session: RemoteSession
-  onLogout: () => void
+  onLogout: () => Promise<void>
 }): ReactElement {
   const task = useTask()
   const [theme, setTheme] = useState<ThemeChoice>(readTheme)
@@ -68,17 +65,7 @@ export function Settings({
         </div>
       </section>
       {task.error ? <Notice>{task.error}</Notice> : null}
-      <button
-        className="danger full"
-        disabled={task.busy}
-        onClick={() =>
-          task.run(async () => {
-            await api.invoke('remote.logout_remote_session')
-            onLogout()
-          })
-        }
-        type="button"
-      >
+      <button className="danger full" disabled={task.busy} onClick={() => task.run(onLogout)} type="button">
         退出手机登录
       </button>
     </div>

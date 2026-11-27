@@ -218,7 +218,7 @@ async def manual_media_action(user_id: int, job_id: int, request: MediaManualReq
     operation_id = None
     result_job_id = job_id
     async with SESSION_LOCAL() as db:
-        job = await owned_job_control(db, user_id, job_id, lock=True)
+        job = await owned_job_control(db, user_id, job_id, lock=True, include_checkpoint=True)
         if job is None or job.kind not in _HANDLERS:
             raise RequestError(status_code=404, message="找不到可人工处理的媒体任务")
         query, handle = _HANDLERS[job.kind]
@@ -266,7 +266,7 @@ async def manual_media_action(user_id: int, job_id: int, request: MediaManualReq
             action = await handle(db, user_id, job_id, request)
             operation.snapshot_json = {**operation.snapshot_json, **deepcopy(action.audit_context)}
             await db.flush()
-            current = await owned_job_control(db, user_id, job_id)
+            current = await owned_job_control(db, user_id, job_id, include_checkpoint=True)
             await protect_manual_assets(db, user_id, job_id, [current.checkpoint, action.result_snapshot])
             result_job_id = action.restart_job_id or job_id
             operation.result_json = {

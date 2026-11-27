@@ -1,3 +1,4 @@
+import argparse
 import ast
 import re
 import sys
@@ -14,24 +15,14 @@ def _parse(path: Path) -> ast.Module | None:
         return None
 
 
-# A. 禁止 future annotations（Python 3.13 原生支持 PEP 585/604）
-
-
-def check_future_annotations(path: Path) -> list[str]:
-    tree = _parse(path)
-    if tree is None:
-        return []
-    errors: list[str] = []
-    for node in tree.body:
-        if (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "__future__"
-            and any(alias.name == "annotations" for alias in node.names)
-        ):
-            errors.append(
-                f"{path}:{node.lineno}: forbidden 'from __future__ import annotations' (Python 3.13+ does not need future annotations; run check_imports.py --fix to clean)",
-            )
-    return errors
+def _future_annotations(tree: ast.Module) -> list[ast.ImportFrom]:
+    return [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+    ]
 
 
 def clean_future_annotations(path: Path) -> bool:
@@ -46,13 +37,7 @@ def clean_future_annotations(path: Path) -> bool:
     except SyntaxError:
         return False
 
-    targets = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom)
-        and node.module == "__future__"
-        and any(alias.name == "annotations" for alias in node.names)
-    ]
+    targets = _future_annotations(tree)
     if not targets:
         return False
 
@@ -115,19 +100,10 @@ def _names_referenced_outside_tc(tree: ast.Module, tc_ranges: list[tuple[int, in
             continue
         if isinstance(node, ast.Name):
             out.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            root = node
-            while isinstance(root, ast.Attribute):
-                root = root.value
-            if isinstance(root, ast.Name):
-                out.add(root.id)
     return out
 
 
-def check_type_checking_leak(path: Path) -> list[str]:
-    tree = _parse(path)
-    if tree is None:
-        return []
+def check_type_checking_leak(path: Path, tree: ast.Module) -> list[str]:
     tc_ranges = _tc_ranges(tree)
     if not tc_ranges:
         return []
@@ -209,13 +185,9 @@ def _resolve_facade_init(importer: Path, level: int, module: str | None) -> Path
     return candidate if candidate.is_file() else None
 
 
-def check_facade_consistency(path: Path) -> list[str]:
+def check_facade_consistency(path: Path, tree: ast.Module) -> list[str]:
     """要求经 facade 引入的名字出现在其 re-export 列表；跳过 facade 自身与普通模块。"""
     if path.name == "__init__.py":
-        return []
-
-    tree = _parse(path)
-    if tree is None:
         return []
 
     errors: list[str] = []
@@ -249,19 +221,13 @@ def check_facade_consistency(path: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    strict = False
-    fix = False
-    args: list[str] = []
-    for a in argv:
-        if a == "--strict-imports":
-            strict = True
-        elif a in ("--fix", "--clean"):
-            fix = True
-        else:
-            args.append(a)
-
-    if args:
-        targets = [Path(a).resolve() for a in args]
+    parser = argparse.ArgumentParser(description="Check Backend and Runner imports.", allow_abbrev=False)
+    parser.add_argument("--strict-imports", action="store_true", help="fail on import-shape issues")
+    parser.add_argument("--fix", action="store_true", help="remove future annotations imports")
+    parser.add_argument("paths", nargs="*", type=Path)
+    args = parser.parse_args(argv)
+    if args.paths:
+        targets = [path.resolve() for path in args.paths]
     else:
         targets = []
         for root in SCAN_ROOTS:
@@ -276,7 +242,7 @@ def main(argv: list[str]) -> int:
                 ]
                 targets.extend(directory / name for name in sorted(filenames) if name.endswith(".py"))
 
-    if fix:
+    if args.fix:
         fixed_count = 0
         for path in targets:
             if not path.is_file():
@@ -291,16 +257,22 @@ def main(argv: list[str]) -> int:
     for path in targets:
         if not path.is_file():
             continue
-        diagnostics.extend(check_future_annotations(path))
-        diagnostics.extend(check_type_checking_leak(path))
-        diagnostics.extend(check_facade_consistency(path))
+        tree = _parse(path)
+        if tree is None:
+            continue
+        diagnostics.extend(
+            f"{path}:{node.lineno}: forbidden 'from __future__ import annotations' (Python 3.13+ does not need future annotations; run check_imports.py --fix to clean)"
+            for node in _future_annotations(tree)
+        )
+        diagnostics.extend(check_type_checking_leak(path, tree))
+        diagnostics.extend(check_facade_consistency(path, tree))
 
     if diagnostics:
         for d in diagnostics:
             print(d, file=sys.stderr)
-        suffix = " (strict)" if strict else " (advisory)"
+        suffix = " (strict)" if args.strict_imports else " (advisory)"
         print(f"\n{len(diagnostics)} import-shape issue(s){suffix}", file=sys.stderr)
-        return 1 if strict else 0
+        return 1 if args.strict_imports else 0
     return 0
 
 

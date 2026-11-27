@@ -4,13 +4,13 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from infrastructure.async_io import cancel_tasks, wait_for_task
+from infrastructure.async_io import KeyedLocks, cancel_tasks, wait_for_task
 
 from .task_supervisor import TASK_SUPERVISOR
 
 _MAINTENANCE_USERS: set[int] = set()
 _ACTIVE_REQUESTS: dict[int, int] = {}
-_MAINTENANCE_LOCKS: dict[int, asyncio.Lock] = {}
+_MAINTENANCE_LOCKS = KeyedLocks[int]()
 _STATE_CHANGED = asyncio.Condition()
 
 
@@ -19,7 +19,7 @@ def is_user_in_maintenance(user_id: int) -> bool:
 
 
 def user_maintenance_lock(user_id: int) -> asyncio.Lock:
-    return _MAINTENANCE_LOCKS.setdefault(user_id, asyncio.Lock())
+    return _MAINTENANCE_LOCKS[user_id]
 
 
 async def mark_user_maintenance(user_id: int) -> None:

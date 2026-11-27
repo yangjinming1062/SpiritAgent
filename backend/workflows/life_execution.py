@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import UTC, datetime
-from weakref import WeakValueDictionary
 
 from features.action_library.queries import action_detail
 from features.appearance.outfit_jobs import create_outfit_job, run_outfit_job
@@ -31,6 +30,7 @@ from features.life.schemas import LifeStepRequest, LifeStepView
 from features.life.use_cases import read_step, require_step_submission, update_business_steps_in_session
 from features.scenes.service import SceneBusyError, SceneLockedError
 from features.scenes.snapshots import schedule_scene_snapshot
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
@@ -45,7 +45,7 @@ from workflows.nightly.window import in_nightly_window
 from workflows.visuals_companion import design_action_reference, generate_visual_reference
 
 logger = get_logger(__name__)
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 _CONCURRENCY = asyncio.Semaphore(4)
 
 
@@ -150,7 +150,7 @@ async def run_life_execution(user_id: int, *, step_id: int | None = None) -> Non
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return
-        async with _LOCKS.setdefault(user_id, asyncio.Lock()), _CONCURRENCY:
+        async with _LOCKS[user_id], _CONCURRENCY:
             step = await pending_step(user_id, step_id)
             if step is None or step.state in {"completed", "failed", "cancelled"}:
                 return

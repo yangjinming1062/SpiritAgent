@@ -1,5 +1,6 @@
 """视觉业务读取伙伴资料及更新政策、确认的事务入口。"""
 
+from infrastructure.database import get_or_create_user_row
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +9,6 @@ from features.life.queries import get_life_mood
 from .definition import parse_persona_definition
 from .models import Persona
 from .query_contracts import PersonaSnapshot
-from .repository import get_or_create_persona_row
 
 
 async def _snapshot(db: AsyncSession, row: Persona) -> PersonaSnapshot:
@@ -28,7 +28,7 @@ async def persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot | 
 
 
 async def ensure_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot:
-    return await _snapshot(db, await get_or_create_persona_row(db, user_id))
+    return await _snapshot(db, await get_or_create_user_row(db, Persona, user_id))
 
 
 async def lock_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapshot:
@@ -40,13 +40,6 @@ async def lock_persona_snapshot(db: AsyncSession, user_id: int) -> PersonaSnapsh
     return await _snapshot(db, row)
 
 
-async def _persona_row(db: AsyncSession, user_id: int) -> Persona:
-    row = await db.scalar(select(Persona).where(Persona.user_id == user_id).with_for_update())
-    if row is None:
-        raise ValueError("Persona is no longer available")
-    return row
-
-
 async def reset_portrait_confirmation(db: AsyncSession, user_id: int) -> None:
     await db.execute(
         update(Persona)
@@ -56,7 +49,7 @@ async def reset_portrait_confirmation(db: AsyncSession, user_id: int) -> None:
 
 
 async def change_outfit_policy(db: AsyncSession, user_id: int, policy: str) -> None:
-    row = await get_or_create_persona_row(db, user_id)
+    row = await get_or_create_user_row(db, Persona, user_id)
     row.outfit_policy = policy
 
 
@@ -65,7 +58,11 @@ async def read_scene_policy(db: AsyncSession, user_id: int) -> str | None:
     return await db.scalar(select(Persona.scene_policy).where(Persona.user_id == user_id))
 
 
-async def change_scene_policy(db: AsyncSession, user_id: int, policy: str) -> PersonaSnapshot:
-    row = await _persona_row(db, user_id)
-    row.scene_policy = policy
-    return await _snapshot(db, row)
+async def change_scene_policy(db: AsyncSession, user_id: int, policy: str) -> bool:
+    updated = await db.scalar(
+        update(Persona)
+        .where(Persona.user_id == user_id, Persona.is_complete.is_(True))
+        .values(scene_policy=policy)
+        .returning(Persona.user_id)
+    )
+    return updated is not None

@@ -2,7 +2,7 @@
 
 import pgvector.sqlalchemy.vector
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0001"
@@ -50,25 +50,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("system_settings_pkey")),
     )
     op.create_index(op.f("ix_system_settings_setting_key"), "system_settings", ["setting_key"], unique=True)
-    op.create_table(
-        "update_versions",
-        sa.Column("version", sa.String(length=64), nullable=False),
-        sa.Column("release_notes", sa.Text(), nullable=False),
-        sa.Column("exe_filename", sa.String(length=256), nullable=False),
-        sa.Column("exe_sha512", sa.String(length=128), nullable=False),
-        sa.Column("exe_size", sa.Integer(), nullable=False),
-        sa.Column("mac_filename", sa.String(length=256), nullable=True),
-        sa.Column("mac_sha512", sa.String(length=128), nullable=True),
-        sa.Column("mac_size", sa.Integer(), nullable=True),
-        sa.Column("runner_filename", sa.String(length=256), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("created_by", sa.String(length=128), nullable=True),
-        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.PrimaryKeyConstraint("id", name=op.f("update_versions_pkey")),
-    )
-    op.create_index(op.f("ix_update_versions_is_active"), "update_versions", ["is_active"], unique=False)
-    op.create_index(op.f("ix_update_versions_version"), "update_versions", ["version"], unique=True)
     op.create_table(
         "users",
         sa.Column("username", sa.String(length=64), nullable=False),
@@ -1409,6 +1390,20 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_visual_versions_user_id"), "visual_versions", ["user_id"], unique=False)
     op.create_index(op.f("ix_visual_versions_visual_id"), "visual_versions", ["visual_id"], unique=False)
+    op.create_index(
+        "ix_visual_versions_stage_character",
+        "visual_versions",
+        [
+            "user_id",
+            sa.text("(snapshot_json #>> '{source,identity_hash}')"),
+            sa.text("(snapshot_json #>> '{source,outfit,content_hash}')"),
+            "id",
+        ],
+        postgresql_where=sa.text(
+            "(snapshot_json #>> '{source,identity_hash}') IS NOT NULL"
+            " AND (snapshot_json #>> '{source,outfit,content_hash}') IS NOT NULL"
+        ),
+    )
     op.create_table(
         "life_steps",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
@@ -2791,6 +2786,30 @@ def upgrade() -> None:
     op.create_index(op.f("ix_visual_playbacks_version_id"), "visual_playbacks", ["version_id"], unique=False)
     op.create_index(op.f("ix_visual_playbacks_visual_id"), "visual_playbacks", ["visual_id"], unique=False)
     op.create_table(
+        "visual_stage_preparations",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("revision", sa.Integer(), nullable=False),
+        sa.Column("input_revision", sa.BigInteger(), nullable=False),
+        sa.Column("basis", sa.String(length=64), nullable=False),
+        sa.Column("decision_json", postgresql.JSONB(), nullable=False),
+        sa.Column("due_at", sa.DateTime(timezone=True)),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("visual_stage_preparations_user_id_fkey"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("user_id", name=op.f("visual_stage_preparations_pkey")),
+    )
+    op.create_index(op.f("ix_visual_stage_preparations_due_at"), "visual_stage_preparations", ["due_at"], unique=False)
+    op.create_table(
+        "visual_stage_preparation_inputs",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("revision", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("visual_stage_preparation_inputs_user_id_fkey"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("user_id", name=op.f("visual_stage_preparation_inputs_pkey")),
+    )
+    op.execute("CREATE SEQUENCE visual_presentation_epoch AS integer")
+    op.create_table(
         "visual_presentations",
         sa.Column("pending_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
         sa.Column("current_static_json", postgresql.JSONB(none_as_null=True, astext_type=sa.Text()), nullable=True),
@@ -2812,6 +2831,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("default_visual_id", sa.BigInteger(), nullable=True),
+        sa.Column("local_snapshot_json", postgresql.JSONB(none_as_null=True), nullable=True),
         sa.ForeignKeyConstraint(
             ["current_visual_id", "current_version_id"],
             ["visual_versions.visual_id", "visual_versions.id"],
@@ -3160,9 +3180,33 @@ AFTER INSERT ON ws_events
 FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 """
     )
+    op.execute(
+        """
+        CREATE FUNCTION revise_visual_stage_preparation_inputs() RETURNS trigger AS $$
+        BEGIN
+            INSERT INTO visual_stage_preparation_inputs (user_id, revision) VALUES (NEW.user_id, 1)
+            ON CONFLICT (user_id) DO UPDATE SET revision = visual_stage_preparation_inputs.revision + 1;
+            RETURN NULL;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
+        CREATE CONSTRAINT TRIGGER visual_stage_preparation_inputs_changed
+        AFTER INSERT ON ws_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (NEW.library_work_id IS NULL AND NEW.event_type IN (
+            'companion.visual.preparation_requested', 'companion.life.presentation_requested',
+            'companion.visual.initial_requested'
+        ))
+        EXECUTE FUNCTION revise_visual_stage_preparation_inputs()
+        """
+    )
 
 
 def downgrade() -> None:
+    if context.get_revision_argument() is not None:
+        raise RuntimeError("Dropping the database baseline requires an explicit 'alembic downgrade base'.")
     # 一次移除互相引用的业务表，保留 public 中的其它对象及共享扩展。
     op.execute("""
         DROP TABLE
@@ -3178,11 +3222,13 @@ def downgrade() -> None:
             message_voice_refs, messages, nightly_activity_actions, nightly_activity_logs, outfit_creation_jobs,
             personas, post_publications, prompt_submissions, provider_attempts, provider_lanes,
             pursuit_evidence, remote_pairings, remote_sessions, scene_jobs, submission_messages,
-            system_settings, update_versions, user_model_configs, user_settings, user_social_accounts, users,
+            system_settings, user_model_configs, user_settings, user_social_accounts, users,
             video_gen_jobs, visual_import_jobs, visual_items, visual_jobs, visual_observation_jobs,
-            visual_playbacks, visual_presentations, visual_version_assets, visual_versions, ws_events
+            visual_playbacks, visual_presentations, visual_stage_preparation_inputs, visual_stage_preparations,
+            visual_version_assets, visual_versions, ws_events
     """)
     op.execute("""
-        DROP FUNCTION notify_ws_event(), conversation_statistics_insert(), conversation_statistics_update(),
+        DROP FUNCTION revise_visual_stage_preparation_inputs(), notify_ws_event(), conversation_statistics_insert(), conversation_statistics_update(),
             conversation_statistics_delete(), conversation_statistics_truncate(), conversation_statistics_context()
     """)
+    op.execute("DROP SEQUENCE visual_presentation_epoch")

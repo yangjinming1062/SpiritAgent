@@ -1,6 +1,7 @@
 """Backend → 更新器容器的 HTTP 客户端；仅经共享 Unix socket 访问，不暴露网络面。"""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,20 +14,12 @@ _TIMEOUT = httpx.Timeout(15, connect=5, read=12)
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
-class ServiceUpdaterError(RuntimeError):
-    """更新器返回非 2xx 或响应不可解析；message 面向管理员。"""
-
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-
-
 def _socket_path() -> Path:
     return Path(SETTINGS.service_updater_socket_dir) / "updater.sock"
 
 
 def updater_enabled() -> bool:
-    """socket 由更新器容器创建：未启用 profile 时目录存在但为空，按未接入处理。"""
+    """共享目录中的 socket 由更新器启动时创建。"""
 
     return bool(SETTINGS.service_updater_socket_dir) and _socket_path().exists()
 
@@ -42,25 +35,28 @@ async def _request(
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://updater.local", timeout=_TIMEOUT
             ) as client:
-                response = await client.request(method, path, params=params, json=payload)
+                async with client.stream(method, path, params=params, json=payload) as response:
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > _MAX_RESPONSE_BYTES:
+                            raise RequestError(502, "更新器响应过大。")
+                        body.extend(chunk)
     except (httpx.HTTPError, TimeoutError, OSError, AttributeError):
         # AttributeError：非 Unix 平台没有 AF_UNIX，仅本地开发会遇到。
-        raise ServiceUpdaterError("无法连接更新器，请检查更新容器状态与共享 socket。") from None
-    if response.status_code == 404:
-        raise ServiceUpdaterError("更新器接口不存在，请确认更新容器与 Backend 版本匹配。", status_code=404)
-    if len(response.content) > _MAX_RESPONSE_BYTES:
-        raise ServiceUpdaterError("更新器响应过大。")
+        raise RequestError(502, "无法连接更新器，请检查更新容器状态与共享 socket。") from None
     try:
-        data = response.json()
+        data = json.loads(body)
     except ValueError:
-        raise ServiceUpdaterError("更新器返回的响应无法解析。") from None
-    if response.status_code >= 400:
-        message = data.get("message") if isinstance(data, dict) else None
-        raise ServiceUpdaterError(
-            str(message or f"更新器请求失败（{response.status_code}）。"), status_code=response.status_code
-        )
+        raise RequestError(502, "更新器返回的响应无法解析。") from None
     if not isinstance(data, dict):
-        raise ServiceUpdaterError("更新器返回的数据结构无效。")
+        raise RequestError(502, "更新器返回的数据结构无效。")
+    if response.status_code == 404:
+        if data.get("code") == "task_not_found":
+            raise RequestError(404, "任务不存在。")
+        raise RequestError(502, "更新器接口不存在，请确认更新容器与 Backend 版本匹配。")
+    if not response.is_success:
+        status = 409 if response.status_code == 409 else 502
+        raise RequestError(status, str(data.get("message") or f"更新器请求失败（{response.status_code}）。"))
     return data
 
 

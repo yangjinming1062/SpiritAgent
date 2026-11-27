@@ -79,18 +79,12 @@ test_python() {
 
 # 阶段 1：welcome
 stage_welcome() {
-  # mkdir 失败不中断，由下方 -d 检查统一发错误帧，避免 set -e 无结果帧退出
-  mkdir -p "$SPIRITAGENT_HOME/bin" "$SPIRITAGENT_HOME/skills" "$SPIRITAGENT_HOME/logs" || true
-
-  if [[ ! -d "$SPIRITAGENT_HOME" ]]; then
-    echo "could not create SPIRITAGENT_HOME: $SPIRITAGENT_HOME" >&2
-    return 1
-  fi
+  rm -f "$SPIRITAGENT_HOME/.spiritagent-bootstrap-complete"
+  mkdir -p "$SPIRITAGENT_HOME/bin" "$SPIRITAGENT_HOME/skills" "$SPIRITAGENT_HOME/logs"
   if [[ ! -w "$SPIRITAGENT_HOME" ]]; then
     echo "SPIRITAGENT_HOME not writable: $SPIRITAGENT_HOME" >&2
     return 1
   fi
-  rm -f "$SPIRITAGENT_HOME/.spiritagent-bootstrap-complete"
 }
 
 # 阶段 2：安装 Python
@@ -235,33 +229,21 @@ stage_finalize() {
   : > "$SPIRITAGENT_HOME/.spiritagent-bootstrap-complete"
 }
 
-MODE="stage"
-STAGE=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -Manifest|--manifest) MODE="manifest"; shift ;;
-    -Stage|--stage)       STAGE="$2"; shift 2 ;;
-    *)                    echo "unknown arg: $1" >&2; exit 2 ;;
-  esac
-done
+if [[ $# -eq 1 && "$1" == "-Manifest" ]]; then
+  emit_manifest
+  exit 0
+fi
+if [[ $# -ne 2 || "$1" != "-Stage" ]]; then
+  echo "usage: install.sh -Manifest | -Stage NAME" >&2
+  exit 2
+fi
 
-case "$MODE" in
-  manifest)
-    emit_manifest
-    ;;
-  stage)
-    if [[ -z "$STAGE" ]]; then
-      echo "error: -Stage NAME is required (or pass -Manifest)" >&2
-      exit 2
-    fi
-    case "$STAGE" in
-      welcome)         stage_welcome ;;
-      install-python)  stage_install_python ;;
-      unpack-runner)   stage_unpack_runner ;;
-      unpack-desktop)  stage_unpack_desktop ;;
-      install-skills)  stage_install_skills ;;
-      finalize)        stage_finalize ;;
-      *)               echo "unknown stage: $STAGE" >&2; exit 1 ;;
-    esac
-    ;;
+case "$2" in
+  welcome)         stage_welcome ;;
+  install-python)  stage_install_python ;;
+  unpack-runner)   stage_unpack_runner ;;
+  unpack-desktop)  stage_unpack_desktop ;;
+  install-skills)  stage_install_skills ;;
+  finalize)        stage_finalize ;;
+  *)               echo "unknown stage: $2" >&2; exit 1 ;;
 esac

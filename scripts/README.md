@@ -151,7 +151,7 @@ macOS `afterPack` 检查架构，并由 [macos-app-identity.cjs](../client/scrip
 uv run --no-project --python 3.13 python scripts/build.py --version 1.2.3
 ```
 
-示例版本会修改版本清单。`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner`／`--skip-desktop` 仍要求同版本产物，`--output` 更改输出目录。
+示例版本会修改版本清单。`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner`／`--skip-desktop` 仍要求同版本产物，桌面包还须匹配当前 Node 架构，`--output` 更改输出目录。
 
 Runner 在临时源码副本构建；暂存只接受目标版本的唯一 wheel，核对源码字节并在仓库外 venv 安装检查入口、版本、依赖和工具定义。诊断命令如下，默认选择最新 wheel，正式检查应使用 `--wheel <路径>` 指定产物：
 

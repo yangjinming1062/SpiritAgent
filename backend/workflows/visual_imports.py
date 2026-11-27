@@ -9,7 +9,6 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import NAMESPACE_URL, uuid5
-from weakref import WeakValueDictionary
 
 from features.action_library.import_materials import action_is_imported, undo_imported_action
 from features.action_library.queries import action_detail, list_actions
@@ -79,7 +78,7 @@ from infrastructure.ai.decision import DecisionOption, choose_decision, decision
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference, save_companion_asset_async
 from infrastructure.assets.write_protection import asset_write_context
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import KeyedLocks, run_blocking
 from infrastructure.database import ENGINE, SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
@@ -97,7 +96,7 @@ from .visuals_companion import freeze_action_reference, load_action_review_sourc
 
 logger = get_logger(__name__)
 _TASKS = TaskScope("visuals.import")
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 _IMPORT_CANDIDATE_LIMIT = 24
 
 
@@ -1096,7 +1095,7 @@ async def _publish_organized_result(work: ImportWork) -> bool:
 async def run_import_analysis(user_id: int, job_id: int) -> None:
     work: ImportWork | None = None
     try:
-        async with _LOCKS.setdefault(user_id, asyncio.Lock()):
+        async with _LOCKS[user_id]:
             work = await claim_import_job(user_id, job_id)
             if work is None:
                 return

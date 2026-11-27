@@ -55,11 +55,11 @@ ORM 留在数据所有者内部。跨域读取返回 DTO/冻结快照，写入�
 
 [system_settings.py](features/configuration/system_settings.py) 串行合并并校验整批运营参数，数据库提交成功后才更新运行时及相关资源；启动水合覆盖文件中的动态值，非法持久值中止启动，启动专用键不能在管理页修改。用户点键配置统一经 [settings/values.py](features/configuration/settings/values.py) 读写。
 
-启动执行 `alembic upgrade head`。部署时沿 [数据库修订](alembic/versions/)应用结构与数据操作。`alembic downgrade base` 删除业务表及触发器函数，仅用于隔离库验证。
+启动执行 `alembic upgrade head`。空库从 [`0001` 基线](alembic/versions/baseline.py)一次建立当前结构，位于该修订的数据库直接使用已有数据。清空基线须显式执行 `alembic downgrade base`，会删除业务表、触发器函数和播放序列，仅用于隔离库验证。
 
 ### 装配与启停
 
-[registrations.py](bootstrap/registrations.py) 统一登记供应商、工具、内部事件及业务端口，导入模块不隐式注册。启动由 [lifecycle.py](bootstrap/lifecycle.py) 完成安全检查、迁移、配置水合、模块准备、调度/事件启动和任务恢复；参与者顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护。
+[registrations.py](bootstrap/registrations.py) 统一登记供应商、工具、内部事件及业务端口。启动时 [lifecycle.py](bootstrap/lifecycle.py) 先独占数据目录，再迁移并加载配置。取得数据库单实例锁后清理中断遗留的转码目录，再按 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 的顺序启动和恢复任务。数据目录锁独立于数据库连接，保持到后台工作收尾或进程退出。
 
 停机先关闭生产入口，再收敛所属任务，最后释放数据库和供应商连接池。[task_supervisor.py](runtime/task_supervisor.py) 记录所有者、账户与错误，业务负责持久状态；常驻单 loop 与按 key 去重的任务集合见 [background.py](runtime/background.py)，内部事件、媒体制作和资讯登录轮询共用任务作用域。同键补跑只保留最后一次请求，显式继续等待旧任务取消收尾，暂停和放弃清除待补跑请求；停机收尾不再接收补跑。取消与写盘收尾共用 [async_io.py](infrastructure/async_io.py)，重复取消也须等待目标释放资源。媒体、影像与导入的互斥锁按账户、任务或候选在持有期间创建，调用方以局部引用保证同一业务共用一把锁，随引用释放而不建立长期锁表；任务结束、取消与账户删除都不遗留锁对象。
 

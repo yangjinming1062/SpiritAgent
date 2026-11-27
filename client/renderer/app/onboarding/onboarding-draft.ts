@@ -89,11 +89,7 @@ export class OnboardingDraft {
 
       try {
         const state = await requestResource('onboarding.patch_onboarding', {
-          body: {
-            field,
-            value,
-            ...((field === 'voice' || field === 'voice_setup_skipped') && { include_profile: true })
-          }
+          body: { field, value }
         })
 
         return isCurrent() ? state : null

@@ -1,4 +1,4 @@
-import { IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconPlus } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -22,7 +22,8 @@ import {
   LibraryCard,
   Media,
   Notice,
-  PageHeader
+  PageHeader,
+  RefreshButton
 } from './ui'
 
 export function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
@@ -87,15 +88,7 @@ export function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }):
               <IconPlus aria-hidden size={17} />
               设计新衣服
             </button>
-            <button
-              aria-label="刷新衣柜"
-              className="icon-button"
-              disabled={busy}
-              onClick={() => run(load)}
-              type="button"
-            >
-              <IconRefresh size={20} />
-            </button>
+            <RefreshButton busy={busy} label="刷新衣柜" onClick={() => run(load)} />
           </div>
           {reviewJobs.map(job => (
             <section className="card" key={job.id}>

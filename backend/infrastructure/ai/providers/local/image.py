@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import hashlib
 import time
 from functools import partial
 from io import BytesIO
@@ -13,7 +12,6 @@ import httpx
 from PIL import Image
 
 from infrastructure.ai.media_guidance import CHARACTER_ACTIVITY_POSE
-from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers.base import (
     ImageAsset,
     ImageGenProvider,
@@ -23,9 +21,8 @@ from infrastructure.ai.providers.base import (
     ProviderError,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
-from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes
+from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes, upload_references
 from infrastructure.async_io import cancel_and_wait, settle_task
-from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 
 logger = get_logger(__name__)
@@ -464,25 +461,6 @@ class LocalImageGenProvider(ImageGenProvider):
         logger.info("local image_gen resolved model files", extra={"unet": files[0], "clip": files[1], "vae": files[2]})
         return files
 
-    async def _upload_image(self, reference: str) -> str:
-        data, mime = await resolve_reference_bytes(reference)
-        if len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
-            raise ProviderError("local image_gen reference exceeds the configured image size limit", status_code=413)
-        ext = "png" if mime == "image/png" else "jpg" if "jpeg" in mime else "webp" if "webp" in mime else "png"
-        filename = f"ref_{hashlib.sha256(data).hexdigest()}.{ext}"
-        files = {"image": (filename, data, mime)}
-        resp = await self._client.post("/upload/image", files=files, data={"overwrite": "true", "type": "input"})
-        if resp.status_code >= 400:
-            raise ProviderError(
-                f"local image_gen upload failed: {resp.status_code} {resp.text[:300]}",
-                status_code=resp.status_code,
-                body={"text": resp.text[:500]},
-            )
-        body = resp.json()
-        name = body.get("name") or filename
-        sub = body.get("subfolder") or ""
-        return f"{sub}/{name}" if sub else name
-
     async def _wait_and_fetch(self, prompt_id: str) -> list[ImageAsset]:
         history: dict[str, Any] | None = None
         while history is None:
@@ -630,11 +608,11 @@ class LocalImageGenProvider(ImageGenProvider):
         unet_name, clip_name, vae_name = await self._resolve_model_files()
         prompt = _wrap_rgba(req.prompt) if req.background == "transparent" else req.prompt
 
-        image_names = [
-            await self._upload_image(ref)
-            for ref in (req.reference_image, req.secondary_reference_image, req.environment_reference_image)
-            if ref
+        references = [
+            ref for ref in (req.reference_image, req.secondary_reference_image, req.environment_reference_image) if ref
         ]
+        uploaded = await upload_references(self._client, references)
+        image_names = [uploaded[ref] for ref in references]
         width, height = _resolve_wh(req)
 
         composition_goal = (

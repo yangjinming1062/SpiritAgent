@@ -7,8 +7,7 @@ fn main() {
     let zip_path = PathBuf::from(&out_dir).join("payload.zip");
 
     // 载荷不完整会产出装不上的安装器（缺桌面产物时运行期才报错），构建期直接失败
-    require_payload(&payload_src);
-    build_payload_zip(&payload_src, &zip_path);
+    build_payload_zip(&payload_src, &zip_path).expect("build complete installer payload");
     println!("cargo:rerun-if-changed={}", payload_src.display());
 
     // asInvoker，避免启发式要求 UAC 提权
@@ -25,72 +24,91 @@ fn main() {
     tauri_build::try_build(attrs).expect("failed to run tauri-build");
 }
 
-/// 单 exe 与 bundle 共用同一份载荷，缺任一项都会在安装阶段失败。
-fn require_payload(payload: &Path) {
-    let non_empty_dir = |dir: &Path| {
-        dir.symlink_metadata().is_ok_and(|metadata| metadata.is_dir())
-            && std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
-    };
+/// 与 Tauri resources 使用相同的载荷入口。忽略暂存根中不属于安装包的文件。
+fn build_payload_zip(src: &Path, dst: &Path) -> std::io::Result<()> {
+    use std::fs::{self, File};
+    use std::io::{Error, ErrorKind};
 
-    let mut missing: Vec<&str> = ["install.sh", "install.ps1"]
-        .into_iter()
-        .filter(|name| {
-            !payload
-                .join(name)
-                .symlink_metadata()
-                .is_ok_and(|metadata| metadata.is_file())
-        })
-        .collect();
-    for dir in ["runner", "client", "skills"] {
-        if !non_empty_dir(&payload.join(dir)) {
-            missing.push(dir);
-        }
-    }
-
-    if !missing.is_empty() {
-        panic!(
-            "installer payload incomplete at {}: missing, empty or non-regular {:?}\n\
-             run `python scripts/build.py --version <version> --target <win|mac>` to stage a complete payload",
-            payload.display(),
-            missing
-        );
-    }
-}
-
-/// 递归打包 src 为 zip；arcname 用相对 POSIX 路径。
-fn build_payload_zip(src: &Path, dst: &Path) {
-    use std::fs::File;
-
-    fn visit(
-        dir: &Path,
-        base: &Path,
-        options: zip::write::FileOptions,
-        zip: &mut zip::ZipWriter<File>,
-    ) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let file_type = entry.file_type()?;
-            if file_type.is_dir() {
-                visit(&path, base, options, zip)?;
-            } else if file_type.is_file() {
-                let rel = path
-                    .strip_prefix(base)
-                    .expect("entry under base")
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                zip.start_file(&rel, options)?;
-                std::io::copy(&mut File::open(&path)?, zip)?;
+    fn collect(path: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+        let kind = path.symlink_metadata()?.file_type();
+        if kind.is_dir() {
+            for entry in fs::read_dir(path)? {
+                collect(&entry?.path(), files)?;
             }
-            // 跳过符号链接/特殊文件，避免 Windows 解压歧义
+        } else if kind.is_file() {
+            files.push(path.to_path_buf());
         }
         Ok(())
     }
 
-    let file = File::create(dst).expect("create embedded payload zip");
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::FileOptions::default();
+    let mut files = Vec::new();
+    for script in ["install.sh", "install.ps1"] {
+        let path = src.join(script);
+        if !path.symlink_metadata()?.is_file() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("expected regular script: {script}"),
+            ));
+        }
+        files.push(path);
+    }
+    let desktop_ext = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        "exe"
+    } else {
+        "dmg"
+    };
+    for dir in ["runner", "client", "skills"] {
+        let root = src.join(dir);
+        let start = files.len();
+        collect(&root, &mut files)?;
+        let mut entries = files[start..].iter();
+        let valid = match dir {
+            "runner" => {
+                entries
+                    .filter(|p| {
+                        p.parent() == Some(root.as_path())
+                            && p.extension().is_some_and(|e| e == "whl")
+                            && p.file_name()
+                                .and_then(|n| n.to_str())
+                                .is_some_and(|n| n.starts_with("spirit_agent-"))
+                    })
+                    .count()
+                    == 1
+            }
+            "client" => {
+                entries
+                    .filter(|p| {
+                        p.parent() == Some(root.as_path())
+                            && p.extension().is_some_and(|e| e == desktop_ext)
+                    })
+                    .count()
+                    == 1
+            }
+            _ => entries.any(|p| p.file_name().is_some_and(|n| n == "SKILL.md")),
+        };
+        if !valid {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "incomplete or ambiguous installer payload: {}",
+                    root.display()
+                ),
+            ));
+        }
+    }
 
-    visit(src, src, options, &mut zip).expect("walk payload dir");
-    zip.finish().expect("finish embedded payload zip");
+    files.sort_unstable();
+    let mut zip = zip::ZipWriter::new(File::create(dst)?);
+    let options = zip::write::FileOptions::default();
+    for path in files {
+        let name = path
+            .strip_prefix(src)
+            .expect("file under payload")
+            .to_string_lossy()
+            .replace('\\', "/");
+        zip.start_file(name, options)?;
+        std::io::copy(&mut File::open(path)?, &mut zip)?;
+    }
+    zip.finish()?;
+    Ok(())
 }

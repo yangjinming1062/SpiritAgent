@@ -13,17 +13,16 @@ from infrastructure.database import SESSION_LOCAL
 class UserLlmConfig:
     """已解析的用户文本能力链；首项为空时未配置。"""
 
-    config: ProviderConfig | None
-    fallback_configs: tuple[ProviderConfig, ...] = ()
+    chain: tuple[ProviderConfig, ...]
     user_id: int | None = None
 
     @property
-    def chain(self) -> tuple[ProviderConfig, ...]:
-        return (self.config, *self.fallback_configs) if self.config is not None else ()
+    def config(self) -> ProviderConfig | None:
+        return self.chain[0] if self.chain else None
 
     @property
     def is_configured(self) -> bool:
-        return self.config is not None
+        return bool(self.chain)
 
     @property
     def provider_name(self) -> str:
@@ -44,7 +43,7 @@ async def resolve_user_llm_config(
     chain = await resolve_provider_chain(
         db, user_id, ServiceType.llm, task=task, required_modalities=required_modalities
     )
-    return UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
+    return UserLlmConfig(tuple(chain), user_id)
 
 
 async def load_user_llm_config(

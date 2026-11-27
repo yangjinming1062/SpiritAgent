@@ -37,4 +37,5 @@ dependencies = [
     "beautifulsoup4>=4.15.0",
     # 扫码登录的二维码本地渲染；纯 Python，图像输出复用依赖中的 Pillow
     "qrcode>=8.2",
+    "filelock>=4.2.10",
 ]

@@ -23,7 +23,7 @@ async def list_memory_view(
         next_cursor = (
             encode_timestamp_cursor(datetime.fromisoformat(rows[-1].updated_at), rows[-1].id) if more else None
         )
-        counts = await memory_counts(db, scope, kind=kind, status=status, q=query)
+        counts = await memory_counts(db, scope)
         return MemoryListResponse(
             memories=rows,
             counts=counts,

@@ -17,7 +17,7 @@ from infrastructure.assets.asset_store import (
     signed_companion_asset_url,
     unlink_companion_asset,
 )
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import KeyedLocks, run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -88,7 +88,7 @@ _UPLOAD_EXTS: dict[str, str] = {"image/png": "png", "image/jpeg": "jpg", "image/
 ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
 
 # 按用户加锁，避免 REST 头像路由与 WS RPC 并发再生成/选择时抢同一行
-_AVATAR_JOB_LOCKS: dict[int, asyncio.Lock] = {}
+_AVATAR_JOB_LOCKS = KeyedLocks[int]()
 
 
 class AvatarGenerationError(RuntimeError):
@@ -432,8 +432,8 @@ async def raise_if_image_sealed(db: AsyncSession, user_id: int, persona: Persona
 
 
 def get_avatar_job_lock(user_id: int) -> asyncio.Lock:
-    """惰性创建并返回用户级锁；条目不回收（锁很小且 user_id 空间有限）。"""
-    return _AVATAR_JOB_LOCKS.setdefault(user_id, asyncio.Lock())
+    """取得当前账户的形象制作锁。"""
+    return _AVATAR_JOB_LOCKS[user_id]
 
 
 async def persist_portrait_bytes(user_id: int, data: bytes, content_type: str, *, directory: str = "") -> str:

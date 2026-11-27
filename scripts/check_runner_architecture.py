@@ -7,6 +7,8 @@ from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 
+from lib.architecture import dependency_cycles
+
 PACKAGE = "spirit_agent_runner"
 RUNNER = Path(__file__).resolve().parent.parent / "runner" / PACKAGE
 FORBIDDEN_ROOTS = {"tools", "envs", "utils", "server", "runner_version"}
@@ -142,40 +144,6 @@ def mutated_collections(tree: ast.Module, candidates: set[str]) -> set[str]:
                 mutated.add(target.id)
         mutated.update(visible.intersection(declared))
     return mutated
-
-
-def dependency_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
-    indexes: dict[str, int] = {}
-    lows: dict[str, int] = {}
-    stack: list[str] = []
-    active: set[str] = set()
-    found: list[list[str]] = []
-
-    def visit(module: str) -> None:
-        indexes[module] = lows[module] = len(indexes)
-        stack.append(module)
-        active.add(module)
-        for target in sorted(graph.get(module, ())):
-            if target not in indexes:
-                visit(target)
-                lows[module] = min(lows[module], lows[target])
-            elif target in active:
-                lows[module] = min(lows[module], indexes[target])
-        if lows[module] == indexes[module]:
-            component: list[str] = []
-            while True:
-                target = stack.pop()
-                active.remove(target)
-                component.append(target)
-                if target == module:
-                    break
-            if len(component) > 1:
-                found.append(sorted(component))
-
-    for module in sorted(graph):
-        if module not in indexes:
-            visit(module)
-    return found
 
 
 def check(runner: Path) -> list[str]:

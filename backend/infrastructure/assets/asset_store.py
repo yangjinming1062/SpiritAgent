@@ -183,15 +183,21 @@ def verify_signed_asset_request(user_id: int, filename: str, expires: int | None
     return hmac.compare_digest(expected.encode(), sig.encode("utf-8", "surrogatepass"))
 
 
-def _write_atomic(target: Path, data: bytes) -> None:
+def _write_atomic(target: Path, data: bytes | Path) -> int:
     """先写同目录临时文件再原子替换，写入失败或中断都不会在目标路径留下半截文件。"""
     temporary = target.with_name(f".{target.name}.{secrets.token_urlsafe(8)}.tmp")
     try:
         with open(temporary, "wb") as stream:
-            stream.write(data)
+            if isinstance(data, Path):
+                with data.open("rb") as source:
+                    shutil.copyfileobj(source, stream, length=256 * 1024)
+            else:
+                stream.write(data)
+            size = stream.tell()
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, target)
+        return size
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -242,7 +248,7 @@ def _asset_target(user_id: int, relative: str) -> Path:
     return target
 
 
-def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str, directory: str) -> str:
+def save_companion_asset(data: bytes | Path, *, user_id: int, label: str, ext: str, directory: str) -> str:
     """按显式归属保存资产；label 仅作文件名前缀，不可当查找键使用。"""
     safe_label = "".join(c if c.isascii() and (c.isalnum() or c in "-_") else "_" for c in label)[:48] or "asset"
     if not ext or not ext.isascii() or not ext.isalnum():
@@ -253,15 +259,15 @@ def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str, dir
     target.parent.mkdir(parents=True, exist_ok=True)
     protect_asset_write(bare)
     try:
-        _write_atomic(target, data)
+        size = _write_atomic(target, data)
     except BaseException:
         forget_asset_write(bare)
         raise
-    logger.info("Saved companion asset", extra={"user_id": user_id, "label": label, "size": len(data)})
+    logger.info("Saved companion asset", extra={"user_id": user_id, "label": label, "size": size})
     return bare
 
 
-async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, ext: str, directory: str) -> str:
+async def save_companion_asset_async(data: bytes | Path, *, user_id: int, label: str, ext: str, directory: str) -> str:
     """在线程写盘；取消时等写盘退出并删除未交接的资产。"""
     async with user_asset_lock(user_id):
         with asset_write_context():
@@ -467,8 +473,5 @@ def sniff_media_ext(data: bytes) -> str | None:
 
 
 def compute_file_sha256(path: Path | str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(256 * 1024):
-            h.update(chunk)
-    return h.hexdigest()
+    with open(path, "rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()

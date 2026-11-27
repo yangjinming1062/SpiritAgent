@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.references import scanned_asset_paths
-from features.assets.service import asset_paths_for_ids
+from features.assets.service import asset_paths_in_session
 from features.configuration.settings.values import get_user_setting
 
 from .models import ImageGenJob, MediaManualOperation, VideoGenJob
@@ -62,7 +62,8 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         for asset_id in (row.reference_asset_id, row.preview_asset_id)
         if asset_id is not None
     }
-    return referenced | await asset_paths_for_ids(db, user_id, ids)
+    referenced.update((await asset_paths_in_session(db, user_id, ids)).values())
+    return referenced
 
 
 async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:

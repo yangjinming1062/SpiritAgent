@@ -33,7 +33,7 @@ class RunnerApplication:
         self.files = FileManager()
         self.desktop = DesktopManager(cu_tool.create_backend)
         self.skills = SkillManager()
-        self.browser = BrowserManager(config_provider=self.config.snapshot)
+        self.browser = BrowserManager(self.config.context)
         self.execution.set_environment_cleanup(self.files.clear)
         definitions = [
             *execution.get_tool_definitions(),

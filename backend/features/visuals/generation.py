@@ -33,8 +33,8 @@ from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import library_work
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, centered_crop_box, crop_fraction
+from infrastructure.temp_files import media_work_directory
 from infrastructure.text import resolve_language, utc_now
-from infrastructure.video_processing.actor_clip import prepare_actor_clip
 from infrastructure.video_processing.desktop import (
     face_motion_comparison,
     prepare_desktop_video,
@@ -125,6 +125,7 @@ from features.media.video_queue.service import (
 )
 from features.media.video_results import receive_video_attempt
 
+from .actor_asset import prepare_actor_asset
 from .creation import (
     VisualCreationError,
     begin_opening_repair,
@@ -183,7 +184,6 @@ from .repository import (
     visual_snapshot,
 )
 from .schemas import (
-    ActorClipBody,
     ActorClipSource,
     CinematicSource,
     MediaSemantics,
@@ -638,7 +638,7 @@ async def _aligned_outfit_reference(
     progress.aligned_outfit_path = path
     resolved = resolve_asset_reference(path)
     progress.aligned_outfit_hash = (
-        hashlib.sha256(resolved[0].read_bytes()).hexdigest() if resolved is not None else None
+        await run_blocking(compute_file_sha256, resolved[0]) if resolved is not None else None
     )
     await _save_progress(user_id, job_id, progress, stage="image")
     reference = await asyncio.to_thread(read_valid_image_data_uri, path)
@@ -1165,13 +1165,30 @@ async def _process_candidate(user_id: int, job: VisualJob, progress: VisualJobPr
     if resolved is None:
         raise VisualStateError("已下载的视频无法读取")
     source = resolved[0]
-    temporary = source.with_name(f"visual-normalized-{progress.generation_id}.mp4")
-    try:
-        if job.asset_kind == "actor":
-            return await _process_actor_candidate(user_id, job, progress, source, temporary, directory)
+    if job.asset_kind == "actor":
+        media = await prepare_actor_asset(source, user_id, directory, preserve_alpha=False)
+    else:
+        media = await _prepare_desktop_asset(user_id, job, progress, source, directory)
+    progress.frame_width, progress.frame_height = media.width, media.height
+    return VisualAsset(
+        **media.model_dump(exclude_unset=True),
+        input_image_path=progress.pose_path,
+        visual_description=progress.visual_description,
+        outfit_description=progress.outfit_description or "",
+        creation_plan=progress.creation_plan,
+        feedback=job.feedback,
+        video_feedback=job.video_feedback,
+    )
+
+
+async def _prepare_desktop_asset(
+    user_id: int, job: VisualJob, progress: VisualJobProgress, source: Path, directory: str
+) -> VisualAsset:
+    async with media_work_directory(user_id) as root:
+        temporary = root / "desktop.mp4"
         result = await run_blocking(prepare_desktop_video, source, temporary, aspect_ratio=_delivery_aspect(progress))
         video = await save_companion_asset_async(
-            await asyncio.to_thread(temporary.read_bytes),
+            temporary,
             user_id=user_id,
             label="visual_video",
             ext="mp4",
@@ -1186,92 +1203,15 @@ async def _process_candidate(user_id: int, job: VisualJob, progress: VisualJobPr
                 result.first_frame, user_id=user_id, label="visual_first_frame", ext="png", directory=directory
             )
             first_frame = VisualFrameRef(path=path, content_hash=hashlib.sha256(result.first_frame).hexdigest())
-        progress.frame_width, progress.frame_height = result.width, result.height
         return VisualAsset(
             media_kind="video",
-            media_path=video or "",
+            media_path=video,
             poster_path=poster,
-            input_image_path=progress.pose_path,
             delivery_first_frame=first_frame,
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
-            visual_description=progress.visual_description,
-            outfit_description=progress.outfit_description or "",
-            creation_plan=progress.creation_plan,
-            feedback=job.feedback,
-            video_feedback=job.video_feedback,
         )
-    finally:
-        await asyncio.to_thread(temporary.unlink, missing_ok=True)
-
-
-async def _process_actor_candidate(
-    user_id: int, job: VisualJob, progress: VisualJobProgress, source: Path, temporary: Path, directory: str
-) -> VisualAsset:
-    """透明主体候选：逐帧抠像成 WebM，产出真实时变遮罩与锚点元数据。"""
-
-    stem = f"actor-{progress.generation_id}"
-    temporary_files = (
-        temporary.with_suffix(".webm"),
-        temporary.with_name(f"{stem}-poster.webp"),
-        temporary.with_name(f"{stem}-mask.json"),
-        temporary.with_name(f"{stem}-first.png"),
-        temporary.with_name(f"{stem}-last.png"),
-    )
-    try:
-        media = await run_blocking(
-            prepare_actor_clip,
-            source,
-            dst=temporary_files[0],
-            poster_dst=temporary_files[1],
-            mask_dst=temporary_files[2],
-            first_frame_dst=temporary_files[3],
-            last_frame_dst=temporary_files[4],
-        )
-        saved: dict[str, str] = {}
-        for role, path, label, extension in (
-            ("video", media.video_path, "visual_video", "webm"),
-            ("poster", media.poster_path, "visual_cover", "webp"),
-            ("mask", media.mask_path, "visual_mask", "json"),
-            ("first", media.first_frame_path, "visual_pose", "png"),
-            ("last", media.last_frame_path, "visual_pose", "png"),
-        ):
-            saved[role] = await save_companion_asset_async(
-                await asyncio.to_thread(path.read_bytes),
-                user_id=user_id,
-                label=label,
-                ext=extension,
-                directory=directory,
-            )
-        body = ActorClipBody(
-            mask_path=saved["mask"],
-            first_frame_path=saved["first"],
-            last_frame_path=saved["last"],
-            foot_anchor=media.foot_anchor,
-            body_bounds=media.body_bounds,
-            hit_bounds=media.hit_bounds,
-            continuity_key=hashlib.sha256(await asyncio.to_thread(media.first_frame_path.read_bytes)).hexdigest(),
-        )
-    finally:
-        for path in temporary_files:
-            await asyncio.to_thread(Path(path).unlink, missing_ok=True)
-    progress.frame_width, progress.frame_height = media.width, media.height
-    return VisualAsset(
-        media_kind="video",
-        media_path=saved["video"],
-        poster_path=saved["poster"],
-        input_image_path=progress.pose_path,
-        width=media.width,
-        height=media.height,
-        duration_ms=media.duration_ms,
-        visual_description=progress.visual_description,
-        outfit_description=progress.outfit_description or "",
-        creation_plan=progress.creation_plan,
-        feedback=job.feedback,
-        video_feedback=job.video_feedback,
-        body=body,
-    )
 
 
 async def _review_visual_video_quality(

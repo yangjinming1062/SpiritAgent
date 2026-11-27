@@ -28,8 +28,8 @@ router = get_router(prefix="/api/companion", tag="companion", remote=True)
 
 
 @router.get("/scenes/state", response_model=SceneStateResponse)
-async def read_scene_state(user: CurrentUser, db: DbSession) -> SceneStateResponse:
-    return await _scenes.read_scene_state(user_id=user.id, db=db)
+async def read_scene_state(user: CurrentUser, db: DbSession, tasks_only: bool = False) -> SceneStateResponse:
+    return await _scenes.read_scene_state(user_id=user.id, db=db, tasks_only=tasks_only)
 
 
 @router.post("/scenes", response_model=SceneResponse, status_code=202, openapi_extra=operation_policy(upload="image"))

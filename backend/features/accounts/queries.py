@@ -15,8 +15,8 @@ def active_account_ids() -> Select[tuple[int]]:
     return select(User.id).where(User.is_active.is_(True))
 
 
-async def list_user_ids(db: AsyncSession, *, active_only: bool = False) -> list[int]:
-    return list(await db.scalars(active_account_ids() if active_only else select(User.id)))
+async def list_user_ids(db: AsyncSession) -> list[int]:
+    return list(await db.scalars(select(User.id)))
 
 
 async def user_is_active(db: AsyncSession, user_id: int) -> bool:

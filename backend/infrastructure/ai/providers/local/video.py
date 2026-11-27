@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import hashlib
 import math
 from dataclasses import replace
 from io import BytesIO
@@ -26,20 +25,18 @@ from infrastructure.ai.providers.base import (
     VideoJobStatus,
 )
 from infrastructure.ai.providers.http import ProviderResultUnknownError, get_http
-from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes
+from infrastructure.ai.providers.local.comfyui import loader_options, supports_nodes, upload_references
 from infrastructure.ai.providers.local.image import (
     POSE_PLANNING_NODES,
     qwen_face_anchor,
     qwen_image_weights,
     qwen_opening_nodes,
 )
-from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
 
 logger = get_logger(__name__)
 
 _MAX_PROMPT_CHARS = 7000
-_MAX_REFERENCE_VIDEO_BYTES = 50 * 1024 * 1024
 _ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 _ASPECT_RATIO_RANGE = (1 / 8, 8.0)
 _H3_WIDESCREEN_SIZES = {"512P": (896, 512), "768P": (1344, 768)}
@@ -311,52 +308,6 @@ class LocalVideoGenProvider(VideoGenProvider):
         if req.aspect_ratio is not None:
             _aspect_value(req.aspect_ratio)
 
-    async def _upload_image(self, reference: str) -> str:
-        data, mime = await resolve_reference_bytes(reference)
-        if len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
-            raise ProviderError("local video_gen reference exceeds the configured image size limit", status_code=413)
-        ext = "png" if mime == "image/png" else "jpg" if "jpeg" in mime else "webp" if "webp" in mime else "png"
-        filename = f"ref_{hashlib.sha256(data).hexdigest()}.{ext}"
-        response = await self._client.post(
-            "/upload/image",
-            files={"image": (filename, data, mime)},
-            data={"overwrite": "true", "type": "input"},
-        )
-        if response.status_code >= 400:
-            raise ProviderError(
-                f"local video_gen image upload failed: {response.status_code} {response.text[:300]}",
-                status_code=response.status_code,
-                body={"text": response.text[:500]},
-            )
-        body = response.json()
-        name = body.get("name") or filename
-        subfolder = body.get("subfolder") or ""
-        return f"{subfolder}/{name}" if subfolder else name
-
-    async def _upload_video(self, reference: str) -> str:
-        data, mime = await resolve_reference_bytes(reference)
-        if len(data) > _MAX_REFERENCE_VIDEO_BYTES:
-            raise ProviderError("local video_gen reference video exceeds the configured size limit", status_code=413)
-        if data[4:8] == b"ftyp":
-            mime = "video/mp4"
-        ext = "mp4" if mime == "video/mp4" else "mov" if mime == "video/quicktime" else "webm"
-        filename = f"ref_{hashlib.sha256(data).hexdigest()}.{ext}"
-        response = await self._client.post(
-            "/upload/image",
-            files={"image": (filename, data, mime)},
-            data={"overwrite": "true", "type": "input"},
-        )
-        if response.status_code >= 400:
-            raise ProviderError(
-                f"local video_gen reference video upload failed: {response.status_code} {response.text[:300]}",
-                status_code=response.status_code,
-                body={"text": response.text[:500]},
-            )
-        body = response.json()
-        name = body.get("name") or filename
-        subfolder = body.get("subfolder") or ""
-        return f"{subfolder}/{name}" if subfolder else name
-
     def _graph(
         self,
         req: VideoGenRequest,
@@ -624,16 +575,14 @@ class LocalVideoGenProvider(VideoGenProvider):
             and not hold_sources
             and (req.pose_goal or req.opening_composition_goal or req.face_guide_frames)
         ) and await supports_nodes(self._client, *POSE_PLANNING_NODES)
-        uploaded: dict[str, str] = {}
-        for reference in (req.first_frame_image, req.last_frame_image, *req.reference_images, *(hold_sources or ())):
-            if reference and reference not in uploaded:
-                uploaded[reference] = await self._upload_image(reference)
+        uploaded = await upload_references(
+            self._client,
+            filter(None, (req.first_frame_image, req.last_frame_image, *req.reference_images, *(hold_sources or ()))),
+        )
         first_frame_name = uploaded.get(req.first_frame_image or "")
         last_frame_name = uploaded.get(req.last_frame_image or "")
         reference_image_names = tuple(uploaded[reference] for reference in req.reference_images)
-        reference_video_names: list[str] = []
-        for reference in req.reference_videos:
-            reference_video_names.append(await self._upload_video(reference))
+        videos = await upload_references(self._client, req.reference_videos, video=True)
         prompt_id = str(uuid4())
         try:
             response = await self._client.post(
@@ -645,7 +594,7 @@ class LocalVideoGenProvider(VideoGenProvider):
                         first_frame_name=first_frame_name,
                         last_frame_name=last_frame_name,
                         reference_image_names=reference_image_names,
-                        reference_video_names=tuple(reference_video_names),
+                        reference_video_names=tuple(videos[reference] for reference in req.reference_videos),
                         opening_files=opening,
                         hold_names=(uploaded[hold_sources[0]], uploaded[hold_sources[1]]) if hold_sources else None,
                         upscale=upscale,

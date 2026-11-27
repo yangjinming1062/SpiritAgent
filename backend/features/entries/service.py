@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any, Literal
 
+from infrastructure.models import id_in
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import delete, select, text, update
@@ -132,30 +133,24 @@ async def create_diary(
 
 
 async def mark_entries_read(db: AsyncSession, user_id: int, kind: Literal["post", "diary"], ids: Sequence[int]) -> bool:
-    changed = (
-        list(
-            await db.scalars(
-                update(CompanionEntry)
-                .where(
-                    CompanionEntry.user_id == user_id,
-                    CompanionEntry.kind == kind,
-                    CompanionEntry.id.in_(ids),
-                    CompanionEntry.is_read.is_(False),
-                )
-                .values(is_read=True)
-                .returning(CompanionEntry.id)
+    if ids:
+        changed = await db.execute(
+            update(CompanionEntry)
+            .where(
+                CompanionEntry.user_id == user_id,
+                CompanionEntry.kind == kind,
+                id_in(CompanionEntry.id, ids),
+                CompanionEntry.is_read.is_(False),
             )
+            .values(is_read=True)
         )
-        if ids
-        else []
-    )
-    if changed:
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.posts.read" if kind == "post" else "companion.diary.read",
-            payload={},
-        )
+        if changed.rowcount:
+            emit_ws_event(
+                db,
+                user_id=user_id,
+                event_type="companion.posts.read" if kind == "post" else "companion.diary.read",
+                payload={},
+            )
     return await has_unread_entries(db, user_id, kind)
 
 

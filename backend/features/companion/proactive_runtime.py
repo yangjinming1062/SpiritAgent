@@ -1,12 +1,11 @@
-import asyncio
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
-from weakref import WeakValueDictionary
 
+from infrastructure.async_io import KeyedLocks
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from pydantic import BaseModel, ConfigDict
@@ -18,7 +17,7 @@ from features.companion.intent_models import CompanionIntent
 
 PRESENCE_TTL_SECONDS: int = 90
 _USER_PROACTIVE_STATE: dict[int, "UserProactiveRecord"] = {}
-_PRESENCE_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_PRESENCE_LOCKS = KeyedLocks[int]()
 _PRESENTATION_EPOCH = Sequence("visual_presentation_epoch")
 
 
@@ -105,7 +104,7 @@ async def observe_companion_presence(
     surface: VisualSurface = visual_surface or (
         ("desktop" if presentation_mode == "desktop" else "sprite") if available and presentation_mode else "none"
     )
-    async with _PRESENCE_LOCKS.setdefault(user_id, asyncio.Lock()):
+    async with _PRESENCE_LOCKS[user_id]:
         rec = get_user_proactive_record(user_id)
         now = time.monotonic()
         expired = now - rec.observed_at > PRESENCE_TTL_SECONDS

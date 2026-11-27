@@ -95,7 +95,7 @@ class ServiceUpdateCheckRequest(BaseModel):
 class ServiceUpdateApplyRequest(ServiceUpdateCheckRequest):
     """提交更新：目标提交取检查时确认的远端提交，远端变化后需重新检查。"""
 
-    target_commit: str = Field(min_length=7, max_length=40, pattern=r"^[0-9a-fA-F]+$")
+    target_commit: str = Field(pattern=r"^[0-9a-fA-F]{40}$")
 
 
 class ServiceUpdateTaskAccepted(BaseModel):

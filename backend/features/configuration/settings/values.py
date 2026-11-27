@@ -52,5 +52,6 @@ async def put_user_settings(db: AsyncSession, user_id: int, values: Mapping[str,
         stmt.on_conflict_do_update(
             index_elements=["user_id", "setting_key"],
             set_={"setting_value": stmt.excluded.setting_value, "updated_at": func.now()},
+            where=UserSetting.setting_value.is_distinct_from(stmt.excluded.setting_value),
         )
     )

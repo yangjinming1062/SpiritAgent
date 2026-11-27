@@ -3,6 +3,7 @@
 from collections.abc import Collection
 from typing import Any
 
+from infrastructure.models import id_in
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ async def active_identity_reference(db: AsyncSession, user_id: int) -> str | Non
 async def appearance_readiness(db: AsyncSession, user_ids: Collection[int]) -> dict[int, AppearanceReadiness]:
     rows = await db.execute(
         select(AvatarAsset.user_id, AvatarAsset.seed_fullbody_url, AvatarAsset.identity_revision).where(
-            AvatarAsset.user_id.in_(user_ids), AvatarAsset.active.is_(True)
+            id_in(AvatarAsset.user_id, user_ids), AvatarAsset.active.is_(True)
         )
     )
     return {user_id: AppearanceReadiness(path, revision >= 1) for user_id, path, revision in rows}

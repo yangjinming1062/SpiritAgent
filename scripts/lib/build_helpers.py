@@ -118,16 +118,7 @@ def stage_payload(repo_root: Path | None = None) -> None:
 def find_desktop_artifact(target: str, version: str, repo_root: Path | None = None) -> Path | None:
     """在 client/release/ 中定位桌面产物。"""
     root = repo_root or get_repo_root()
-    release_dir = root / "client" / "release"
-    if not release_dir.is_dir():
-        return None
-
-    if target == "mac":
-        pattern = f"SpiritAgent-{version}-mac-*.dmg"
-    elif target == "win":
-        pattern = f"SpiritAgent-{version}-win-*.exe"
-    else:
-        pattern = f"SpiritAgent-{version}-*"
-
-    matches = sorted(release_dir.glob(pattern))
-    return matches[0] if matches else None
+    arch = subprocess.check_output(["node", "-p", "process.arch"], text=True).strip()
+    extension = {"mac": "dmg", "win": "exe"}[target]
+    path = root / "client" / "release" / f"SpiritAgent-{version}-{target}-{arch}.{extension}"
+    return path if path.is_file() else None

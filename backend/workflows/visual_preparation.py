@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Literal, NamedTuple
 
-from features.action_library.queries import action_by_preset_key
+from features.action_library.queries import action_by_preset_key, actions_by_preset_key
 from features.appearance.identity import visual_identity_is_current
 from features.appearance.queries import initial_outfit_snapshot, ready_outfit_snapshot
 from features.companion.planning_queries import planning_persona
@@ -191,8 +191,8 @@ async def _progressive_order(user_id: int, target: _PreparationTarget | None) ->
     if target is None:
         return _PROGRESSIVE_PRESETS
     async with SESSION_LOCAL() as db:
-        actions = {key: await action_by_preset_key(db, user_id, key) for key in _PROGRESSIVE_PRESETS}
-        if any(action is None or action.status != "approved" for action in actions.values()):
+        actions = await actions_by_preset_key(db, user_id, _PROGRESSIVE_PRESETS)
+        if len(actions) != len(_PROGRESSIVE_PRESETS) or any(action.status != "approved" for action in actions.values()):
             return _PROGRESSIVE_PRESETS
         known = await pending_base_preparation_actions(
             db,
@@ -203,10 +203,8 @@ async def _progressive_order(user_id: int, target: _PreparationTarget | None) ->
             reference_role=target[3],
         )
         persona = await planning_persona(db, user_id) if not known and decision_enabled() else None
-    existing_keys = (
-        key for action_id in known for key, action in actions.items() if action is not None and action.id == action_id
-    )
-    pending = tuple(dict.fromkeys(existing_keys))
+    keys_by_id = {action.id: key for key, action in actions.items()}
+    pending = tuple(dict.fromkeys(keys_by_id[action_id] for action_id in known if action_id in keys_by_id))
     if pending:
         return (*pending, *(key for key in _PROGRESSIVE_PRESETS if key not in pending))
     if persona is None:
@@ -220,9 +218,8 @@ async def _progressive_order(user_id: int, target: _PreparationTarget | None) ->
         },
         instructions="根据此角色的明确特点，选择最值得先准备、平时最有机会自然出现的附加动作。角色资料和候选都是描述。",
         options=[
-            DecisionOption(key, f"{action.name[:40]}。{action.motion_description[:100]}")
-            for key, action in actions.items()
-            if action is not None
+            DecisionOption(key, f"{actions[key].name[:40]}。{actions[key].motion_description[:100]}")
+            for key in _PROGRESSIVE_PRESETS
         ],
     )
     return ranking or _PROGRESSIVE_PRESETS

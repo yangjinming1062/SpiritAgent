@@ -1,4 +1,4 @@
-import { IconPlus, IconRefresh } from '@tabler/icons-react'
+import { IconPlus } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -14,7 +14,7 @@ import { useLibraryPages } from './library-pages'
 import { usePageScroll, usePageState } from './page-state'
 import { saveWithReadback } from './save-result'
 import { useAlive, useTask, useVisiblePolling } from './tasks'
-import { Empty, focusAfterRender, LibraryCard, Notice, PageHeader } from './ui'
+import { Empty, focusAfterRender, LibraryCard, Notice, PageHeader, RefreshButton } from './ui'
 
 const REVIEW_STATUS_TEXT: Record<ActionReviewStatus, string> = {
   pending: '待评审',
@@ -483,15 +483,7 @@ export function Actions({ api, refresh }: { api: RemoteApi; refresh: number }): 
               <IconPlus aria-hidden size={17} />
               新建动作
             </button>
-            <button
-              aria-label="刷新动作"
-              className="icon-button"
-              disabled={busy}
-              onClick={() => run(load)}
-              type="button"
-            >
-              <IconRefresh size={20} />
-            </button>
+            <RefreshButton busy={busy} label="刷新动作" onClick={() => run(load)} />
           </div>
           {error || detailError ? <Notice>{error || detailError}</Notice> : null}
           <div className="asset-grid">

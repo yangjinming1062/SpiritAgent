@@ -1,8 +1,6 @@
 """Docker / Compose 探测与后端运行状态读取；compose 在仓库 backend/ 目录执行，部署身份继承该目录的 .env。"""
 
-import json
 from collections.abc import Sequence
-from typing import Any
 
 from infrastructure.updater_contracts import ServicePreflightIssue, ServiceRuntimeView
 from updater.config import UpdaterSettings
@@ -13,7 +11,7 @@ SERVICE_NAMES = ("backend",)
 
 # 构建时写入（backend/Dockerfile），用于核对运行镜像是否来自目标提交。
 IMAGE_COMMIT_LABEL = "org.opencontainers.image.revision"
-# 手工构建或未带标签的历史镜像按未知处理，不参与版本核对。
+# 未带提交标签的镜像在状态页显示为版本未知。
 _UNKNOWN_LABELS = frozenset({"", "<no value>", "unknown"})
 
 
@@ -40,6 +38,8 @@ async def toolchain_issues(settings: UpdaterSettings) -> list[ServicePreflightIs
         try:
             output = await run_command(*command, timeout=15.0, cwd=compose_cwd(settings))
             detail = "" if output.code == 0 else (_last_line(output.stderr) or f"{check} 不可用")
+        except TimeoutError:
+            detail = f"{check} 探测超时"
         except OSError as exc:
             detail = str(exc)
         if detail:
@@ -50,36 +50,22 @@ async def toolchain_issues(settings: UpdaterSettings) -> list[ServicePreflightIs
 async def read_backend(settings: UpdaterSettings) -> ServiceRuntimeView:
     """按部署项目身份读取后端服务；容器以 compose ps 为准，不猜测。"""
 
-    entries = _parse_ps_json(await _docker(settings, "compose", "ps", "--all", "--format", "json"))
-    service = ServiceRuntimeView(name="backend")
-    info = next((entry for entry in entries if entry.get("Service") == "backend"), None)
-    if info is None:
-        return service
-    service.state = str(info.get("State") or "unknown")
-    service.health = str(info.get("Health") or "").lower() or ("none" if service.state == "running" else "unknown")
-    container = str(info.get("ID") or info.get("Name") or "")
-    if container:
-        service.image_id = await _image_id(settings, container, info)
-        service.running_commit = await _image_label(settings, service.image_id)
-    return service
-
-
-def _parse_ps_json(raw: str) -> list[dict[str, Any]]:
-    # docker compose ps --format json 在 v2 输出 JSON Lines，部分版本输出数组。
-    text = raw.strip()
-    if not text:
-        return []
-    if text.startswith("["):
-        return [item for item in json.loads(text) if isinstance(item, dict)]
-    return [json.loads(line) for line in text.splitlines() if line.strip().startswith("{")]
-
-
-async def _image_id(settings: UpdaterSettings, container: str, info: dict[str, Any]) -> str:
-    try:
-        raw = await _docker(settings, "container", "inspect", "--format", "{{.Image}}", container, timeout=30.0)
-    except RuntimeError:
-        return str(info.get("Image") or "")[:64]
-    return raw.strip()[:64]
+    template = '{{if ne (.Label "com.docker.compose.oneoff") "True"}}{{.ID}}{{end}}'
+    ids = (await _docker(settings, "compose", "ps", "--all", "--no-trunc", "--format", template, "backend")).split()
+    if not ids:
+        return ServiceRuntimeView(name="backend")
+    if len(ids) != 1:
+        raise ValueError("部署项目存在多个 backend 容器，无法确认运行实例。")
+    fields = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{.Image}}"
+    raw = await _docker(settings, "container", "inspect", "--format", fields, ids[0], timeout=30.0)
+    state, health, image_id = raw.strip().split("|")
+    return ServiceRuntimeView(
+        name="backend",
+        state=state,
+        health=health or ("none" if state == "running" else "unknown"),
+        image_id=image_id,
+        running_commit=await _image_label(settings, image_id),
+    )
 
 
 async def _image_label(settings: UpdaterSettings, image_id: str) -> str:

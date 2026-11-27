@@ -5,16 +5,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from threading import RLock
-from weakref import WeakValueDictionary
+
+from infrastructure.async_io import KeyedLocks
 
 _owners: ContextVar[tuple[asyncio.Task, ...]] = ContextVar("asset_write_owners", default=())
 _writes: dict[str, set[asyncio.Task] | None] = {}
 _guard = RLock()
-_user_locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_user_locks = KeyedLocks[int]()
 
 
 def user_asset_lock(user_id: int) -> asyncio.Lock:
-    return _user_locks.setdefault(user_id, asyncio.Lock())
+    return _user_locks[user_id]
 
 
 @contextmanager

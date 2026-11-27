@@ -341,25 +341,6 @@ class VideoGenProvider(BaseProvider):
         """当前输入组合可生成的档位，默认只含原生分辨率；显式输出可包含放大档。"""
         return ()
 
-    def max_resolution(
-        self,
-        *,
-        duration: int,
-        first_frame: bool = False,
-        last_frame: bool = False,
-        reference_images: bool = False,
-        reference_videos: bool = False,
-    ) -> str | None:
-        """配置模型在本次输入组合下的最高原生档；未声明或组合不可用时返回 None。"""
-        resolutions = self.available_resolutions(
-            duration=duration,
-            first_frame=first_frame,
-            last_frame=last_frame,
-            reference_images=reference_images,
-            reference_videos=reference_videos,
-        )
-        return resolutions[-1] if resolutions else None
-
     def resolution_size(self, resolution: str, aspect_ratio: str) -> tuple[int, int]:
         """按原生 P 档短边计算规划尺寸；供应商对齐后的实际尺寸须探测成品。"""
         native = self.native_resolution(resolution)

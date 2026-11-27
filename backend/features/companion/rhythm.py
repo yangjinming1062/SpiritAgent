@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
+from infrastructure.models import id_in
 from infrastructure.text import utc_now
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from runtime.events.emit import emit_ws_event
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.queries import active_account_ids
 from features.companion.definition import parse_persona_definition
 from features.companion.models import CompanionRhythm, Persona
+from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.evidence import call_last_seen_at, submission_last_active_at
 from features.media.visual_semantics import ActivityType
@@ -376,14 +378,14 @@ async def advance_rhythm(db: AsyncSession, user_id: int) -> Contact | None:
 
 
 async def due_rhythm_users(db: AsyncSession, now: datetime, online: Collection[int]) -> set[int]:
-    eligible = select(Persona.user_id).where(Persona.is_complete.is_(True), Persona.user_id.in_(active_account_ids()))
+    eligible = complete_user_ids(active_account_ids())
     due = select(CompanionRhythm.user_id).where(
         CompanionRhythm.next_check_at <= now, CompanionRhythm.user_id.in_(eligible)
     )
     if not online:
         return set(await db.scalars(due))
     new = eligible.where(
-        Persona.user_id.in_(online),
+        id_in(Persona.user_id, online),
         ~select(CompanionRhythm.user_id).where(CompanionRhythm.user_id == Persona.user_id).exists(),
     )
     return set(await db.scalars(due.union_all(new)))

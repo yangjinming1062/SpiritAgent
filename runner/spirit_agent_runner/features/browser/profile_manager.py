@@ -43,13 +43,6 @@ def profile_root(config: dict[str, Any] | None = None) -> Path:
     return Path(str(cfg_root)) if cfg_root else get_spiritagent_home() / "browser_profiles"
 
 
-def resolve_profile_dir(profile_name: str = "default") -> Path:
-    """返回 profile_name 对应的磁盘目录路径（按需创建），是否真正使用由调用方决定。"""
-    target = profile_root() / profile_name
-    target.mkdir(parents=True, exist_ok=True)
-    return target
-
-
 def _singleton_owner(profile_dir: Path) -> tuple[str, int] | None:
     """POSIX 的 ``SingletonLock`` 是指向 ``<hostname>-<pid>`` 的悬空符号链接，不能用 ``exists()`` 判断。"""
     try:

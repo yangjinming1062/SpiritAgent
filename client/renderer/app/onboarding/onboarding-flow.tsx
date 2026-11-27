@@ -61,7 +61,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [voiceSaving, setVoiceSaving] = useState(false)
   const [characterSaving, setCharacterSaving] = useState(false)
-  const [resumeState, setResumeState] = useState<'reading' | 'failed' | 'upgrade' | 'ok' | 'retrying'>('reading')
+  const [resumeState, setResumeState] = useState<'reading' | 'failed' | 'ok' | 'retrying'>('reading')
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const resumedRef = useRef(false)
   const savingCharacterRef = useRef(false)
@@ -146,19 +146,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           return
         }
 
-        if (state.profile_outcome === undefined) {
-          resumedRef.current = false
-          setResumeState('upgrade')
-
-          return
-        }
-
         setResumeState('ok')
-
-        if (state.answers) {
-          const savedAnswers = state.answers
-          setAnswers(local => mergeResumeAnswers(local, savedAnswers))
-        }
+        setAnswers(local => mergeResumeAnswers(local, state.answers))
 
         const target = resolveResumeTarget(state.next_field)
 
@@ -365,9 +354,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             {strings.common.loading}
           </p>
         )}
-        {(resumeState === 'failed' || resumeState === 'upgrade' || resumeState === 'retrying') && (
+        {(resumeState === 'failed' || resumeState === 'retrying') && (
           <div className="py-2 text-center">
-            <p className="text-sm text-body">{resumeState === 'upgrade' ? t.backendUpgradeRequired : t.resumeFailed}</p>
+            <p className="text-sm text-body">{t.resumeFailed}</p>
             <button
               className={`mt-3 ${ONBOARDING_PRIMARY_BUTTON}`}
               disabled={resumeState === 'retrying'}

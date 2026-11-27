@@ -61,11 +61,6 @@ def configured_base_url(provider: str, base_url: str, service: ServiceType) -> s
     return value
 
 
-def provider_requires_api_key(service_type: ServiceType, provider_name: str) -> bool:
-    cls = try_resolve(service_type, provider_name)
-    return cls is None or cls.requires_api_key
-
-
 def providers_supporting(service_type: ServiceType | str) -> list[str]:
     """按注册顺序排列、已注册该能力类的供应商名列表，供回退链筛选可尝试的供应商。"""
     svc = ServiceType(service_type)
@@ -177,7 +172,7 @@ def model_supports_task(
         output_modalities=output_modalities,
     ):
         return False
-    if task in (AiTaskKey.voice_design, AiTaskKey.voice_clone):
+    if svc == ServiceType.tts and task in (AiTaskKey.voice_design, AiTaskKey.voice_clone):
         provider = try_resolve(svc, provider_name)
         if provider is None or not issubclass(provider, TTSProvider):
             return False

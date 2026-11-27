@@ -18,7 +18,7 @@ from infrastructure.network import read_capped_response
 _CATALOG_URL = "https://openrouter.ai/api/v1"
 _CATALOG_TTL = 3600.0
 _CATALOG_LOCK = asyncio.Lock()
-_catalog: tuple[float, list[ModelMetadata], str] | None = None
+_catalog: tuple[float, dict[str, list[ModelMetadata]], str] | None = None
 _FIELDS = ("context_window", "max_output_tokens", "input_modalities", "output_modalities")
 
 
@@ -138,7 +138,24 @@ async def _json(
     return body
 
 
-async def _openrouter(refresh: bool) -> tuple[list[ModelMetadata], str]:
+def _index_catalog(models: list[ModelMetadata]) -> dict[str, list[ModelMetadata]]:
+    exact: dict[str, list[ModelMetadata]] = {}
+    canonical: dict[str, list[ModelMetadata]] = {}
+    aliases: dict[str, list[ModelMetadata]] = {}
+    for item in models:
+        exact.setdefault(item.model_name.casefold(), []).append(item)
+        if item.canonical_slug:
+            canonical.setdefault(item.canonical_slug.casefold(), []).append(item)
+        for alias in {
+            item.model_name.rsplit("/", 1)[-1].casefold(),
+            item.display_name.rsplit(":", 1)[-1].strip().casefold(),
+        }:
+            aliases.setdefault(alias, []).append(item)
+    # 全名优先于规范名和短名；同优先级的重名保留供用户选择。
+    return aliases | canonical | exact
+
+
+async def _openrouter(refresh: bool) -> tuple[dict[str, list[ModelMetadata]], str]:
     global _catalog
     async with _CATALOG_LOCK:
         if not refresh and _catalog is not None and time.monotonic() - _catalog[0] < _CATALOG_TTL:
@@ -165,24 +182,9 @@ async def _openrouter(refresh: bool) -> tuple[list[ModelMetadata], str]:
                 raise ValueError("OpenRouter 分页没有取得新模型")
             offset += len(items)
         stamp = datetime.now(UTC).isoformat()
-        _catalog = (time.monotonic(), values, stamp)
-        return values, stamp
-
-
-def catalog_matches(name: str, catalog: list[ModelMetadata]) -> list[ModelMetadata]:
-    key = name.strip().casefold()
-    exact = [item for item in catalog if item.model_name.casefold() == key]
-    if exact:
-        return exact
-    canonical = [item for item in catalog if (item.canonical_slug or "").casefold() == key]
-    if canonical:
-        return canonical
-    return [
-        item
-        for item in catalog
-        if item.model_name.rsplit("/", 1)[-1].casefold() == key
-        or item.display_name.rsplit(":", 1)[-1].strip().casefold() == key
-    ]
+        index = _index_catalog(values)
+        _catalog = (time.monotonic(), index, stamp)
+        return index, stamp
 
 
 def _enrich(model: ModelMetadata, suggestion: ModelMetadata) -> ModelMetadata:
@@ -231,6 +233,7 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
         endpoint, params = "models", {}
     result = []
     pages = set()
+    received = 0
     while True:
         page = tuple(sorted(params.items()))
         if page in pages:
@@ -241,6 +244,7 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
         items = body.get("data", body.get("models", output.get("models")))
         if not isinstance(items, list):
             raise ValueError("供应商没有返回模型列表")
+        received += len(items)
         for raw in items:
             if isinstance(raw, dict):
                 name = raw.get("name") if provider.provider_type == "gemini" else None
@@ -251,16 +255,22 @@ async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[M
                     result.append(value)
         token = body.get("nextPageToken")
         if token:
+            if not isinstance(token, str):
+                raise ValueError("供应商分页游标格式无效")
             params = {**params, "pageToken": token}
         elif body.get("has_more"):
             cursor = body.get("last_id")
             if not isinstance(cursor, str) or not cursor or not items:
                 raise ValueError("供应商分页缺少后续游标")
             params = {**params, "after": cursor}
-        elif output.get("total", 0) > len(result):
+        elif (total := output.get("total")) is not None:
+            if type(total) is not int or total < 0:
+                raise ValueError("供应商分页总数格式无效")
+            if received >= total:
+                break
             if not items:
                 raise ValueError("供应商分页没有取得新模型")
-            params = {**params, "page_no": params["page_no"] + 1}
+            params = {**params, "page_no": params.get("page_no", 1) + 1}
         else:
             break
     if provider.provider_type == "grok" and service == ServiceType.llm:
@@ -339,9 +349,9 @@ async def discover_models(
                 catalog, response.catalog_updated_at = await _openrouter(refresh)
             except (httpx.HTTPError, ValueError):
                 response.warnings.append("OpenRouter 模型信息暂不可用，缺失字段可手动补全")
-                catalog = []
+                catalog = {}
             for index, model in enumerate(response.models):
-                matches = catalog_matches(catalog_id or model.model_name, catalog)
+                matches = catalog.get((catalog_id or model.model_name).strip().casefold(), [])
                 if len(matches) == 1:
                     response.models[index] = _enrich(model, matches[0])
                 elif matches:

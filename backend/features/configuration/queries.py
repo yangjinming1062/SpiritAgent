@@ -3,6 +3,7 @@
 from collections.abc import Collection
 
 from infrastructure.ai.config import AIConfig
+from infrastructure.models import id_in
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,11 +16,10 @@ async def user_ai_config(db: AsyncSession, user_id: int) -> AIConfig:
 
 
 async def user_ai_configs(db: AsyncSession, user_ids: Collection[int]) -> dict[int, AIConfig]:
-    """批量读取独立配置快照；未保存配置的账户返回空配置。"""
-    result = {user_id: AIConfig() for user_id in user_ids}
-    if result:
-        rows = await db.execute(
-            select(UserModelConfig.user_id, UserModelConfig.ai_config).where(UserModelConfig.user_id.in_(result))
-        )
-        result.update({user_id: AIConfig.model_validate(raw) for user_id, raw in rows})
-    return result
+    """按账户读取已保存的模型配置。"""
+    if not user_ids:
+        return {}
+    rows = await db.execute(
+        select(UserModelConfig.user_id, UserModelConfig.ai_config).where(id_in(UserModelConfig.user_id, user_ids))
+    )
+    return {user_id: AIConfig.model_validate(raw) for user_id, raw in rows}

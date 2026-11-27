@@ -4,6 +4,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date
 
+from infrastructure.models import id_in
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,17 +30,19 @@ async def nightly_logs(db: AsyncSession, user_ids: Collection[int], *, since: da
     """读取恢复窗口内的账本，以及任何仍未收口的旧账本。"""
     if not user_ids:
         return {}
-    rows = await db.scalars(
-        select(NightlyActivityLog)
+    rows = await db.execute(
+        select(
+            NightlyActivityLog.id, NightlyActivityLog.user_id, NightlyActivityLog.target_date, NightlyActivityLog.status
+        )
         .where(
-            NightlyActivityLog.user_id.in_(user_ids),
+            id_in(NightlyActivityLog.user_id, user_ids),
             or_(NightlyActivityLog.target_date >= since, NightlyActivityLog.status.in_(NIGHTLY_UNFINISHED_STATUSES)),
         )
         .order_by(NightlyActivityLog.target_date.desc())
     )
     result: dict[int, list[NightlyLog]] = {}
     for row in rows:
-        result.setdefault(row.user_id, []).append(NightlyLog(row.id, row.user_id, row.target_date, row.status))
+        result.setdefault(row.user_id, []).append(NightlyLog(*row))
     return result
 
 
@@ -48,7 +51,7 @@ async def close_expired_logs(db: AsyncSession, log_ids: Collection[int]) -> None
         await db.execute(
             update(NightlyActivityLog)
             .where(
-                NightlyActivityLog.id.in_(log_ids),
+                id_in(NightlyActivityLog.id, log_ids),
                 NightlyActivityLog.status.in_(NIGHTLY_UNFINISHED_STATUSES),
             )
             .values(status="completed_with_errors", summary="已超过恢复窗口，未确认动作不再重放")

@@ -2,9 +2,9 @@ import asyncio
 import base64
 import json
 from typing import Any
-from weakref import WeakValueDictionary
 
 from infrastructure.ai.stt_service import transcribe_audio
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import safe_json_loads
@@ -16,7 +16,7 @@ from features.conversation.asset_bindings import commit_conversation
 from features.conversation.attachments import audio_file_id_from_url, resolve_audio_file
 from features.conversation.models import Conversation, Message
 
-_TRANSCRIPTION_LOCKS: WeakValueDictionary[tuple[str, str], asyncio.Lock] = WeakValueDictionary()
+_TRANSCRIPTION_LOCKS = KeyedLocks[tuple[str, str]]()
 logger = get_logger(__name__)
 
 
@@ -90,7 +90,7 @@ async def _transcript(
     user_id: int, session_id: str, url: str, *, transcripts: dict[str, str | Exception] | None = None
 ) -> str:
     key = (session_id, url)
-    lock = _TRANSCRIPTION_LOCKS.setdefault(key, asyncio.Lock())
+    lock = _TRANSCRIPTION_LOCKS[key]
     async with lock:
         cached = transcripts.get(url) if transcripts is not None else None
         if isinstance(cached, Exception):

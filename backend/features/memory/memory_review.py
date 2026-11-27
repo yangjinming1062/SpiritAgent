@@ -1,4 +1,3 @@
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import call_llm_once
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import UserLlmConfig, resolve_user_llm_config
+from infrastructure.async_io import KeyedLocks
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -24,8 +24,7 @@ from features.memory.prompts import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 
 logger = get_logger(__name__)
 
-# 每个记忆作用域一把审阅锁；账户维护后丢弃锁与运行记录。
-_REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
+_REVIEW_LOCKS = KeyedLocks[MemoryScope]()
 
 
 @dataclass(frozen=True)
@@ -35,7 +34,7 @@ class _ReviewBackoff:
 
 
 # 审阅失败后的重试退避：从 10 分钟起逐次翻倍，上限为 SETTINGS.memory_review_interval_seconds，成功后清除。
-# 键为（作用域, 会话 ID），会话 ID 为 None 表示整域审阅；进程内状态，与审阅锁同样随用户维护边界丢弃。
+# 键为（作用域, 会话 ID），会话 ID 为 None 表示整域审阅，账户维护后清除。
 _REVIEW_BACKOFF_START_SECONDS = 600.0
 _REVIEW_BACKOFF: dict[tuple[MemoryScope, int | None], _ReviewBackoff] = {}
 
@@ -54,7 +53,7 @@ async def review_memories(
     reasoning_effort: str | None = None,
 ) -> bool:
     """锁内复核退避；整域审阅按成功间隔节流，会话审阅按消息水位推进。"""
-    async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
+    async with _REVIEW_LOCKS[scope]:
         previous = _LAST_MEMORY_REVIEW.get(scope)
         if (
             session_id is None
@@ -86,10 +85,8 @@ async def review_memories(
         return True
 
 
-def invalidate_memory_review_locks(user_id: int) -> None:
-    """丢弃指定用户的全部审阅锁条目与失败退避；仅在用户维护边界内调用（无在途审核）。"""
-    for scope in [s for s in _REVIEW_LOCKS if s.user_id == user_id]:
-        _REVIEW_LOCKS.pop(scope, None)
+def invalidate_memory_review_state(user_id: int) -> None:
+    """在账户维护边界清除成功节流与失败退避。"""
     for key in [k for k in _REVIEW_BACKOFF if k[0].user_id == user_id]:
         _REVIEW_BACKOFF.pop(key, None)
     for scope in [s for s in _LAST_MEMORY_REVIEW if s.user_id == user_id]:

@@ -2,8 +2,8 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Awaitable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -18,16 +18,18 @@ from features.media.continuations import reconcile_media_waits
 from features.media.image_jobs import cleanup_user_image_jobs, recover_image_jobs
 from features.media.manual_reviews import recover_manual_operations
 from features.media.video_jobs import cleanup_user_video_jobs, resume_pending_video_jobs
+from features.media.video_queue.lifecycle import video_queue_lifespan
 from features.media.video_queue.service import cleanup_video_queue
 from features.posts.publication import gc_autonomous_publications
 from features.realtime_voice.session import CALL_MANAGER
+from filelock import FileLock, Timeout
 from infrastructure.ai.providers.http import aclose_all
-from infrastructure.async_io import run_blocking
+from infrastructure.async_io import run_blocking, wait_for_task
 from infrastructure.attachments import attachment_root
-from infrastructure.config import insecure_secret_settings
+from infrastructure.config import SETTINGS, insecure_secret_settings
 from infrastructure.database import ENGINE, SESSION_LOCAL, database_url
 from infrastructure.logger import get_logger, setup_logging
-from infrastructure.temp_files import cleanup_expired
+from infrastructure.temp_files import cleanup_expired, purge_media_work
 from infrastructure.web.extract_provider import aclose_web_providers
 from runtime.background import BackgroundTask
 from runtime.events.loop import start_event_loop
@@ -56,6 +58,19 @@ def _run_migrations() -> None:
     """升级到最新 Alembic 版本。"""
     cfg = Config(Path(__file__).parents[1] / "alembic.ini", attributes={"configure_logger": False})
     command.upgrade(cfg, "head")
+
+
+@contextmanager
+def _own_data_directory() -> Iterator[None]:
+    """数据库重连会释放会话锁，数据卷的占用必须随进程独立收尾。"""
+    directory = Path(SETTINGS.data_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        lease = FileLock(directory / ".backend.lock").acquire(blocking=False)
+    except Timeout as exc:
+        raise RuntimeError("数据目录已由另一后端进程使用，请保持单实例部署") from exc
+    with lease:
+        yield
 
 
 async def _cleanup_formal_assets(*, discover: bool) -> None:
@@ -108,14 +123,15 @@ async def _running_services() -> AsyncGenerator[None]:
         cleanup_task.start(_cleanup_loop())
         yield
     finally:
-        await cleanup_task.stop()
+        await wait_for_task(asyncio.create_task(_stop_services(cleanup_task)))
 
-        # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
-        await RUNTIME_LIFECYCLE.stop_producers()
 
-        await _best_effort("realtime voice calls", CALL_MANAGER.end_all())
-
-        await _best_effort("runtime tasks", RUNTIME_LIFECYCLE.drain())
+async def _stop_services(cleanup_task: BackgroundTask) -> None:
+    await cleanup_task.stop()
+    # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
+    await RUNTIME_LIFECYCLE.stop_producers()
+    await _best_effort("realtime voice calls", CALL_MANAGER.end_all())
+    await _best_effort("runtime tasks", RUNTIME_LIFECYCLE.drain())
 
 
 @asynccontextmanager
@@ -124,13 +140,16 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     try:
         if insecure := insecure_secret_settings():
             raise RuntimeError(f"Set non-empty, non-example values for: {', '.join(insecure)}.")
-        await asyncio.to_thread(_run_migrations)
-        async with SESSION_LOCAL() as session:
-            await load_and_apply_system_settings(session)
-        attachment_root().mkdir(parents=True, exist_ok=True)
-        configure_runtime_lifecycle()
-        async with _running_services():
-            yield
+        with _own_data_directory():
+            await run_blocking(_run_migrations)
+            async with SESSION_LOCAL() as session:
+                await load_and_apply_system_settings(session)
+            attachment_root().mkdir(parents=True, exist_ok=True)
+            configure_runtime_lifecycle()
+            async with video_queue_lifespan():
+                await run_blocking(purge_media_work)
+                async with _running_services():
+                    yield
     finally:
         await _best_effort("database engine", ENGINE.dispose())
         await _best_effort("web providers", aclose_web_providers())

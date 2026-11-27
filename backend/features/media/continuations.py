@@ -9,7 +9,7 @@ from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from pydantic import BaseModel, ConfigDict
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import select, update
+from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.jobs.service import owned_job_control
@@ -99,7 +99,18 @@ async def wait_for_media(
     emit_ws_event(db, user_id=user_id, event_type="media.review.updated", payload={"job_id": str(dependency_job_id)})
 
 
-async def continue_media_wait(user_id: int, operation_id: str, *, explicit: bool = False) -> dict | None:
+async def _apply_wait(db: AsyncSession, row: MediaContinuation) -> dict | None:
+    handler = _HANDLERS.get(row.owner_kind)
+    if handler is None:
+        return None
+    result = await handler(db, MediaWait.model_validate(row))
+    row.updated_at = utc_now()
+    if result is not None:
+        row.state, row.result_json = "complete", result
+    return result
+
+
+async def continue_media_wait(user_id: int, operation_id: str) -> dict | None:
     async with SESSION_LOCAL() as db:
         owner_id = await db.scalar(
             select(MediaContinuation.owner_job_id).where(
@@ -117,15 +128,9 @@ async def continue_media_wait(user_id: int, operation_id: str, *, explicit: bool
             return None
         if row.state == "complete":
             return row.result_json
-        if not explicit and not row.automatic:
+        if not row.automatic:
             return None
-        handler = _HANDLERS.get(row.owner_kind)
-        if handler is None:
-            return None
-        result = await handler(db, MediaWait.model_validate(row))
-        row.updated_at = utc_now()
-        if result is not None:
-            row.state, row.result_json = "complete", result
+        result = await _apply_wait(db, row)
         await db.commit()
         return result
 
@@ -158,36 +163,25 @@ async def media_review_updated(user_id: int, payload: dict) -> None:
     await reconcile_media_waits(user_id, int(payload["job_id"]))
 
 
+def _manual_outfit_waits(user_id: int, job_id: int) -> Select[tuple[MediaContinuation]]:
+    return select(MediaContinuation).where(
+        MediaContinuation.user_id == user_id,
+        MediaContinuation.owner_job_id == job_id,
+        MediaContinuation.owner_kind == "outfit.create",
+        MediaContinuation.context_json["source"].as_string() == "manual",
+        MediaContinuation.state == "waiting",
+        MediaContinuation.automatic.is_(False),
+    )
+
+
 async def available_media_actions(user_id: int, job_id: int) -> list[Literal["save_outfit"]]:
     async with SESSION_LOCAL() as db:
-        kinds = list(
-            await db.scalars(
-                select(MediaContinuation.owner_kind).where(
-                    MediaContinuation.user_id == user_id,
-                    MediaContinuation.owner_job_id == job_id,
-                    MediaContinuation.state == "waiting",
-                    MediaContinuation.automatic.is_(False),
-                )
-            )
-        )
-    return ["save_outfit"] if "outfit.create" in kinds else []
+        available = await db.scalar(select(_manual_outfit_waits(user_id, job_id).exists()))
+    return ["save_outfit"] if available else []
 
 
-async def continue_owned_media_operation(user_id: int, job_id: int, action: str) -> None:
-    if action != "save_outfit":
-        raise ValueError("原任务没有授权这项业务操作")
-    async with SESSION_LOCAL() as db:
-        operations = list(
-            await db.scalars(
-                select(MediaContinuation.operation_id).where(
-                    MediaContinuation.user_id == user_id,
-                    MediaContinuation.owner_job_id == job_id,
-                    MediaContinuation.owner_kind == "outfit.create",
-                    MediaContinuation.context_json["source"].as_string() == "manual",
-                )
-            )
-        )
-    if not operations:
-        raise ValueError("原任务没有授权这项业务操作")
-    for operation in operations:
-        await continue_media_wait(user_id, operation, explicit=True)
+async def continue_manual_outfit_waits(db: AsyncSession, user_id: int, job_id: int) -> bool:
+    waits = (await db.scalars(_manual_outfit_waits(user_id, job_id).with_for_update())).all()
+    for row in waits:
+        await _apply_wait(db, row)
+    return bool(waits)

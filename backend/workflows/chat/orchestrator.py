@@ -1,6 +1,6 @@
 import asyncio
 import json
-from contextlib import ExitStack
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Literal
@@ -159,58 +159,6 @@ def _history_unlocked_tool_names(input_items: list[dict]) -> set[str]:
     return unlocked
 
 
-async def run_chat_turn(
-    req: ChatRequest,
-    user_id: int,
-    emitter: Emitter,
-    session_client_context: ChatRequestClientContext | None = None,
-    track_task: TrackTask | None = None,
-    *,
-    task_override: AiTaskKey | None = None,
-    session_settings: dict | None = None,
-    persisted_message_id: int | None = None,
-    final_reply_only: bool = False,
-    replace_reply_message_id: int | None = None,
-    submission_request_id: str | None = None,
-    rhythm_contact_id: str | None = None,
-    ephemeral: bool = False,
-    contact_evidence: LifeContactEvidence | None = None,
-    headless: bool = False,
-    has_viewer: bool = True,
-    excluded_tool_names: frozenset[str] = frozenset(),
-    reply_delivery: TerminalReplyDelivery | None = None,
-    call_record_id: int | None = None,
-    call_owner: object | None = None,
-) -> None:
-    """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。``task_override`` 供委派子回合继承父回合任务。"""
-    async with conversation_lock(req.session_id):
-        if conversation_call_conflict(req.session_id, call_owner):
-            await emitter.send_json({"type": "error", "message": "当前会话正在通话，请挂断后再试"})
-            return
-        with asset_write_context():
-            await _run_chat_turn(
-                req,
-                user_id,
-                emitter,
-                session_client_context,
-                track_task,
-                task_override=task_override,
-                session_settings=session_settings,
-                persisted_message_id=persisted_message_id,
-                final_reply_only=final_reply_only,
-                replace_reply_message_id=replace_reply_message_id,
-                submission_request_id=submission_request_id,
-                rhythm_contact_id=rhythm_contact_id,
-                ephemeral=ephemeral,
-                contact_evidence=contact_evidence,
-                headless=headless,
-                has_viewer=has_viewer,
-                excluded_tool_names=excluded_tool_names,
-                reply_delivery=reply_delivery,
-                call_record_id=call_record_id,
-            )
-
-
 @dataclass(frozen=True)
 class _TurnSetup:
     """回合起点：会话与任务身份、本轮设置与本轮用户消息。"""
@@ -245,7 +193,7 @@ async def _load_turn_setup(
     req: ChatRequest,
     user_id: int,
     emitter: Emitter,
-    turn_scope: ExitStack,
+    turn_scope: AsyncExitStack,
     *,
     task_override: AiTaskKey | None,
     session_settings: dict | None,
@@ -619,7 +567,7 @@ async def _refresh_turn_material(
     return action_tools_not_ready
 
 
-async def _run_chat_turn(
+async def run_chat_turn(
     req: ChatRequest,
     user_id: int,
     emitter: Emitter,
@@ -640,9 +588,15 @@ async def _run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     reply_delivery: TerminalReplyDelivery | None = None,
     call_record_id: int | None = None,
+    call_owner: object | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
-    with ExitStack() as turn_scope:
+    async with AsyncExitStack() as turn_scope:
+        await turn_scope.enter_async_context(conversation_lock(req.session_id))
+        if conversation_call_conflict(req.session_id, call_owner):
+            await emitter.send_json({"type": "error", "message": "当前会话正在通话，请挂断后再试"})
+            return
+        turn_scope.enter_context(asset_write_context())
         setup = await _load_turn_setup(
             req,
             user_id,

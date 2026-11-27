@@ -2,7 +2,6 @@
 
 import asyncio
 from uuid import uuid4
-from weakref import WeakValueDictionary
 
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.database import SESSION_LOCAL
@@ -43,8 +42,6 @@ from .generation import (
 from .life import RECOVERY_WAITING, RESUME_WAITING, settle_visual_steps
 from .repository import notify_visuals_updated, visual_job_row, visual_progress, visual_snapshot
 from .schemas import OpeningReview, VisualAsset
-
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 async def visual_review_view(user_id: int, job_id: int) -> MediaJobView:

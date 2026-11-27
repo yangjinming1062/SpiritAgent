@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-# 独立更新容器（compose profile updater）：检查更新、构建与重启 backend。
+# 独立更新容器：检查更新、构建与重启 backend。
 # 仓库按宿主机绝对路径挂载、Docker socket 接入，compose 身份在仓库内继承。
 FROM docker:28-cli AS docker-cli
 
@@ -20,7 +20,7 @@ WORKDIR /srv/updater
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-install-project
 
-COPY backend/infrastructure/__init__.py backend/infrastructure/updater_contracts.py ./infrastructure/
+COPY backend/infrastructure/__init__.py backend/infrastructure/updater_contracts.py backend/infrastructure/async_io.py ./infrastructure/
 COPY backend/updater ./updater
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1

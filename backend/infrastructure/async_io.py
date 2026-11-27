@@ -1,10 +1,27 @@
 import asyncio
+import logging
 from collections.abc import Callable, Iterable
 from typing import Any
+from weakref import WeakValueDictionary
 
-from infrastructure.logger import get_logger
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
+
+class KeyedLocks[K]:
+    """同一事件循环内按键互斥，持有者与等待者释放引用后自动回收。"""
+
+    def __init__(self) -> None:
+        self._locks: WeakValueDictionary[K, asyncio.Lock] = WeakValueDictionary()
+
+    def __getitem__(self, key: K) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            self._locks[key] = lock = asyncio.Lock()
+        return lock
+
+    def locked(self, key: K) -> bool:
+        lock = self._locks.get(key)
+        return lock is not None and lock.locked()
 
 
 async def settle_task[T](task: asyncio.Future[T]) -> T:

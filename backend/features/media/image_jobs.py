@@ -3,12 +3,12 @@
 import asyncio
 import hashlib
 from dataclasses import asdict
-from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.image_references import freeze_image_references
 from infrastructure.assets.references import asset_paths
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
@@ -38,7 +38,7 @@ from .review_evidence import review_media_intact
 from .review_views import ImageJobParams, MediaJobView, MediaSlotView
 from .turn_state import ImagePlan
 
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 logger = get_logger(__name__)
 
 
@@ -232,7 +232,7 @@ async def _block_stale_identity(db: AsyncSession, user_id: int, row: ImageGenJob
 
 
 async def _run_image_job(user_id: int, job_id: int) -> None:
-    async with _LOCKS.setdefault(job_id, asyncio.Lock()):
+    async with _LOCKS[job_id]:
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
                 select(ImageGenJob).where(ImageGenJob.id == job_id, ImageGenJob.user_id == user_id).with_for_update()

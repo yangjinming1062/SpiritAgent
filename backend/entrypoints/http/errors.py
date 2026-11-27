@@ -2,6 +2,8 @@
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
+from features.scenes.service import SceneError, SceneNotFoundError, SceneStateError
+from features.visuals.repository import VisualError, VisualNotFoundError, VisualStateError
 from infrastructure.api_errors import ApiErrorResponse, api_error
 from infrastructure.request_errors import RequestError
 from pydantic import JsonValue
@@ -30,6 +32,15 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 async def request_exception_handler(request: Request, exc: RequestError) -> JSONResponse:
     return error_response(exc.status_code, exc.message, code=exc.code, details=exc.details)
+
+
+async def material_exception_handler(request: Request, exc: SceneError | VisualError) -> JSONResponse:
+    if isinstance(exc, SceneNotFoundError):
+        return error_response(404, "找不到对应的场景", details={"reason": str(exc)})
+    if isinstance(exc, VisualNotFoundError):
+        return error_response(404, str(exc))
+    status = 409 if isinstance(exc, (SceneStateError, VisualStateError)) else 400
+    return error_response(status, str(exc))
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

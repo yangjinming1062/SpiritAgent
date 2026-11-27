@@ -66,7 +66,7 @@ async function executeSlashCommand(
   const { onStart, onFinish, runtime } = opts
   const { $chatSessionId, hydrateChatMessages, markAssistantTerminal, pushStatusPill } = runtime
 
-  if (cmd.requiresConfirmation) {
+  if (cmd.requires_confirmation) {
     const confirmStrings = getStrings().chat.slash
 
     if (

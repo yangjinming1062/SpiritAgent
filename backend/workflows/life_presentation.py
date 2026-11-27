@@ -8,7 +8,6 @@
 import asyncio
 from datetime import datetime, timedelta
 from uuid import uuid4
-from weakref import WeakValueDictionary
 
 from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import avatar_snapshot, initial_outfit_snapshot
@@ -31,13 +30,14 @@ from features.visuals.static_presentation import present_static
 from features.visuals.static_presentation import record_stage_intent as persist_intent
 from infrastructure.ai.decision import decision_enabled
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
 from runtime.user_maintenance import user_request_scope
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 _RETRY_AT: dict[int, datetime] = {}
 logger = get_logger(__name__)
 
@@ -165,7 +165,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return
-        async with _LOCKS.setdefault(user_id, asyncio.Lock()):
+        async with _LOCKS[user_id]:
             presence = get_presentation_snapshot(user_id)
             if presence is None or presence.surface == "none":
                 return

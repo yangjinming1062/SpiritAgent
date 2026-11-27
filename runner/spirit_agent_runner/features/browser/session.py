@@ -4,12 +4,15 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
 from spirit_agent_runner.contracts.config import cfg_get, is_truthy_value, load_config
+from spirit_agent_runner.contracts.context import current_context
+from spirit_agent_runner.contracts.tooling import ToolContext
 from spirit_agent_runner.features.browser.camofox_state import CamofoxState
 from spirit_agent_runner.features.browser.dialog_manager import (
     DEFAULT_DIALOG_POLICY,
@@ -17,9 +20,8 @@ from spirit_agent_runner.features.browser.dialog_manager import (
     VALID_POLICIES,
 )
 from spirit_agent_runner.features.browser.engine.launcher import NativeBrowserProcess, launch_chromium
-from spirit_agent_runner.features.browser.profile_manager import cleanup_old_profiles, profile_root, resolve_profile_dir
+from spirit_agent_runner.features.browser.profile_manager import cleanup_old_profiles, profile_root
 from spirit_agent_runner.features.browser.supervisor import CDPSupervisor
-from spirit_agent_runner.features.browser.supervisor_registry import SESSION_KEY, SupervisorRegistry
 
 logger = logging.getLogger(__name__)
 _DEFAULT_INACTIVITY_TIMEOUT_S = 300
@@ -27,6 +29,7 @@ _DEFAULT_INACTIVITY_TIMEOUT_S = 300
 
 @dataclass
 class SessionInfo:
+    target: str | Path
     launch_handle: NativeBrowserProcess | None = None
     supervisor: CDPSupervisor | None = None
     active_users: int = 0
@@ -73,11 +76,6 @@ def _resolve_cdp_override(cdp_url: str) -> str:
     return raw
 
 
-def get_cdp_override() -> str:
-    """返回 ``config["browser"]["cdp_url"]`` 规整后的 CDP URL；无配置返回空串。会对端点发起发现请求。"""
-    return _resolve_cdp_override(str(cfg_get(load_config(), "browser", "cdp_url", default="")))
-
-
 def get_dialog_policy_config() -> tuple[str, float]:
     """读取 ``browser.dialog_policy`` + ``browser.dialog_timeout_s``，非法值回落默认。"""
     policy = str(cfg_get(load_config(), "browser", "dialog_policy", default=DEFAULT_DIALOG_POLICY))
@@ -105,14 +103,11 @@ def allow_private_urls() -> bool:
 
 
 class BrowserManager:
-    """Own task sessions, supervisor lifecycle locks and idle cleanup for one Runner.
+    """管理唯一浏览器会话、CDP 主管和自有进程，串行启停与空闲回收。"""
 
-    工具上下文无 task 维度（ToolExecuteRequest 不携带 task_id），全部会话共用固定键。
-    """
-
-    def __init__(self, config_provider: Callable[[], dict[str, Any]] = load_config) -> None:
-        self._config_provider = config_provider
-        self._registry = SupervisorRegistry()
+    def __init__(self, current_config: Callable[[], ToolContext]) -> None:
+        self._current_config = current_config
+        self._lifecycle = threading.Lock()
         self._session: SessionInfo | None = None
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -132,12 +127,32 @@ class BrowserManager:
 
     @contextmanager
     def session(self, *, create: bool = False) -> Iterator[SessionInfo | None]:
-        with self._registry.lifecycle(), self._lock:
+        call = current_context()
+        target = (
+            str(cfg_get(call.config, "browser", "cdp_url", default="")).strip() or profile_root(call.config) / "default"
+        )
+        with self._lifecycle, self._lock:
             if self._closed:
                 raise RuntimeError("Browser manager is closed")
             info = self._session
+            if create:
+                current = self._current_config()
+                replacing = info is not None and info.target != target
+                if call.config_generation != current.config_generation and (
+                    replacing or call.config.get("browser") != current.config.get("browser")
+                ):
+                    raise RuntimeError("Browser configuration changed; retry navigation with the current configuration")
+            if info is not None and info.target != target:
+                if create:
+                    if info.active_users:
+                        raise RuntimeError(
+                            "The previous browser target is still in use; retry after the current call ends"
+                        )
+                    self._shutdown_session(info)
+                    self._session = None
+                info = None
             if info is None and create:
-                info = SessionInfo()
+                info = SessionInfo(target=target)
                 self._session = info
             if info is not None:
                 info.active_users += 1
@@ -146,19 +161,19 @@ class BrowserManager:
             yield info
         finally:
             if info is not None:
-                with self._registry.lifecycle(), self._lock:
+                with self._lifecycle, self._lock:
                     info.active_users -= 1
                     info.last_active_at = time.time()
 
     def ensure_supervisor(self) -> CDPSupervisor:
-        with self._registry.lifecycle():
+        with self._lifecycle:
             with self._lock:
                 if self._closed:
                     raise RuntimeError("Browser manager is closed")
                 info = self._session
                 if info is None:
                     raise RuntimeError("Browser session is not open")
-            supervisor = self._registry.get()
+            supervisor = info.supervisor
             if supervisor is not None and supervisor.active:
                 try:
                     supervisor.pages.ensure_active_page()
@@ -167,41 +182,38 @@ class BrowserManager:
                     if supervisor.active and (info.launch_handle is None or info.launch_handle.poll() is None):
                         raise
                 else:
-                    info.supervisor = supervisor
                     return supervisor
             if supervisor is not None and info.active_users > 1:
                 raise RuntimeError(
                     "Browser connection is recovering while other tool calls are still using this session"
                 )
-            self._registry.stop()
-            info.supervisor = None
-            if info.launch_handle is not None:
-                info.launch_handle.terminate()
-                info.launch_handle = None
+            self._shutdown_session(info)
             try:
-                if not (cdp_url := get_cdp_override()):
-                    info.launch_handle = launch_chromium(profile_dir=resolve_profile_dir(SESSION_KEY))
+                if isinstance(info.target, Path):
+                    info.launch_handle = launch_chromium(profile_dir=info.target)
                     cdp_url = info.launch_handle.cdp_url
+                else:
+                    cdp_url = _resolve_cdp_override(info.target)
                 policy, timeout_s = get_dialog_policy_config()
-                supervisor = self._registry.get_or_start(
-                    cdp_url,
+                info.supervisor = CDPSupervisor(
+                    cdp_url=cdp_url,
                     launch_handle=info.launch_handle,
-                    auto_owned=info.launch_handle is not None,
                     dialog_policy=policy,
                     dialog_timeout_s=timeout_s,
                 )
+                info.supervisor.start()
+                return info.supervisor
             except BaseException:
-                if info.launch_handle is not None:
-                    info.launch_handle.terminate()
-                    info.launch_handle = None
+                try:
+                    self._shutdown_session(info)
+                except Exception:
+                    logger.exception("Browser startup cleanup failed")
                 raise
-            info.supervisor = supervisor
-            return supervisor
 
     def _shutdown_session(self, info: SessionInfo) -> None:
         try:
             if info.supervisor is not None:
-                self._registry.stop(expected=info.supervisor)
+                info.supervisor.stop()
         finally:
             info.supervisor = None
             if info.launch_handle is not None:
@@ -209,13 +221,13 @@ class BrowserManager:
                 info.launch_handle = None
 
     def cleanup_idle(self) -> None:
-        cutoff = time.time() - inactivity_timeout_s(self._config_provider())
+        cutoff = time.time() - inactivity_timeout_s(self._current_config().config)
         with self._lock:
             info = self._session
             if info is not None and (info.active_users or info.last_active_at >= cutoff):
                 info = None
         if info is not None:
-            with self._registry.lifecycle():
+            with self._lifecycle:
                 with self._lock:
                     if self._session is not info or info.active_users or info.last_active_at >= cutoff:
                         return
@@ -236,21 +248,18 @@ class BrowserManager:
                 return
             self._closed = True
             self._stop.set()
-            info = self._session
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=5.0)
-        if info is not None:
-            with self._registry.lifecycle():
-                with self._lock:
-                    if self._session is not info:
-                        return
-                    self._session = None
+        with self._lifecycle:
+            with self._lock:
+                info, self._session = self._session, None
+            if info is not None:
                 try:
                     self._shutdown_session(info)
                 except Exception:
                     logger.exception("Browser session shutdown failed")
         self.camofox.close()
         try:
-            cleanup_old_profiles(root=profile_root(self._config_provider()))
+            cleanup_old_profiles(root=profile_root(self._current_config().config))
         except Exception:
             logger.exception("Browser profile cleanup failed")

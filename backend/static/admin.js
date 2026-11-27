@@ -2219,6 +2219,8 @@ const svcUpdate = {
     pollTimer: null,
     pollRevision: 0,
     statusRequest: null,
+    logRequest: null,
+    taskRequest: null,
     checking: false,
     historyOpen: false,
 };
@@ -2254,6 +2256,10 @@ function randomRequestId() {
 
 function stopServiceUpdatePolling() {
     svcUpdate.pollRevision++;
+    svcUpdate.taskRequest?.abort();
+    svcUpdate.taskRequest = null;
+    svcUpdate.logRequest?.abort();
+    svcUpdate.logRequest = null;
     svcUpdate.statusRequest?.abort();
     svcUpdate.statusRequest = null;
     clearTimeout(svcUpdate.pollTimer);
@@ -2264,6 +2270,8 @@ async function loadServiceUpdate(explicit = false) {
     if (!$('#panel-serviceUpdate').classList.contains('active')) return;
     clearTimeout(svcUpdate.pollTimer);
     svcUpdate.pollTimer = null;
+    svcUpdate.taskRequest?.abort();
+    svcUpdate.taskRequest = null;
     svcUpdate.statusRequest?.abort();
     const request = new AbortController();
     svcUpdate.statusRequest = request;
@@ -2287,13 +2295,15 @@ async function loadServiceUpdate(explicit = false) {
 }
 
 function armServiceUpdatePolling() {
-    if (svcUpdate.statusRequest || !$('#panel-serviceUpdate').classList.contains('active')) return;
+    if (svcUpdate.statusRequest || svcUpdate.taskRequest || !$('#panel-serviceUpdate').classList.contains('active')) return;
     const revision = svcUpdate.pollRevision;
+    const active = svcUpdate.status?.enabled !== false && svcUpdate.task && !svcTaskTerminal(svcUpdate.task) ? svcUpdate.task : null;
     clearTimeout(svcUpdate.pollTimer);
-    const delay = svcUpdate.task && !svcTaskTerminal(svcUpdate.task) ? 1500 : 6000;
     svcUpdate.pollTimer = setTimeout(() => {
-        if (revision === svcUpdate.pollRevision) void loadServiceUpdate();
-    }, delay);
+        if (revision !== svcUpdate.pollRevision) return;
+        if (active) void trackServiceUpdateTask(active.task_id, true);
+        else void loadServiceUpdate();
+    }, active ? 1500 : 6000);
 }
 
 function currentServiceUpdateCheck(status) {
@@ -2391,6 +2401,8 @@ function renderServiceUpdateIncoming(repo, check) {
 function syncServiceUpdateTask(task) {
     const switched = !svcUpdate.task || svcUpdate.task.task_id !== task.task_id;
     if (switched) {
+        svcUpdate.logRequest?.abort();
+        svcUpdate.logRequest = null;
         svcUpdate.logOffset = 0;
         svcUpdate.logLines = [];
         svcUpdate.logTruncated = false;
@@ -2399,7 +2411,7 @@ function syncServiceUpdateTask(task) {
     const running = !svcTaskTerminal(task);
     $('#serviceUpdateCheckBtn').disabled = running || svcUpdate.checking;
     if (running) $('#serviceUpdateApplyBtn').hidden = true;
-    renderServiceUpdateTask();
+    renderServiceUpdateTask(switched);
     if (svcUpdate.logOffset < (task.log_offset || 0)) void pollServiceUpdateLog();
 }
 
@@ -2412,7 +2424,7 @@ function serviceUpdateLogNote(task) {
     return '';
 }
 
-function renderServiceUpdateTask() {
+function renderServiceUpdateTask(refreshLog = false) {
     const task = svcUpdate.task;
     const noteEl = $('#svcLogNote');
     if (!task) {
@@ -2435,6 +2447,7 @@ function renderServiceUpdateTask() {
     const note = serviceUpdateLogNote(task);
     noteEl.hidden = !note;
     noteEl.textContent = note;
+    if (!refreshLog && svcUpdate.logLines.length) return;
     const logEl = $('#svcLog');
     logEl.textContent = svcUpdate.logLines.join('\n') || (svcTaskTerminal(task) ? '（无日志）' : '正在读取日志…');
     logEl.scrollTop = logEl.scrollHeight;
@@ -2442,16 +2455,27 @@ function renderServiceUpdateTask() {
 
 async function pollServiceUpdateLog() {
     const task = svcUpdate.task;
-    if (!task) return;
-    const revision = svcUpdate.pollRevision;
+    if (!task || svcUpdate.logRequest) return;
+    const request = new AbortController();
+    svcUpdate.logRequest = request;
     try {
-        const chunk = await invoke('update.get_service_update_task_log', { path: { task_id: task.task_id }, query: { offset: svcUpdate.logOffset } });
-        if (revision !== svcUpdate.pollRevision || svcUpdate.task?.task_id !== task.task_id) return;
-        if (chunk.lines?.length) svcUpdate.logLines.push(...chunk.lines);
-        svcUpdate.logOffset = chunk.offset;
-        svcUpdate.logTruncated = Boolean(chunk.truncated);
-    } catch { /* 保留现有内容，下一轮重试 */ }
-    renderServiceUpdateTask();
+        let chunk;
+        do {
+            const offset = svcUpdate.logOffset;
+            chunk = await invoke('update.get_service_update_task_log', { path: { task_id: task.task_id }, query: { offset } }, { signal: request.signal });
+            if (svcUpdate.logRequest !== request) return;
+            svcUpdate.logTruncated = Boolean(chunk.truncated);
+            if (chunk.offset <= offset) break;
+            svcUpdate.logLines = svcUpdate.logLines.concat(chunk.lines);
+            svcUpdate.logOffset = chunk.offset;
+        } while (svcUpdate.logOffset < chunk.total_bytes);
+    } catch { /* 保留已读页，下轮从成功的偏移继续 */ }
+    finally {
+        if (svcUpdate.logRequest === request) {
+            svcUpdate.logRequest = null;
+            renderServiceUpdateTask(true);
+        }
+    }
 }
 
 async function startServiceUpdateCheck() {
@@ -2472,12 +2496,31 @@ async function startServiceUpdateCheck() {
     }
 }
 
-async function trackServiceUpdateTask(taskId) {
+async function trackServiceUpdateTask(taskId, polling = false) {
+    if (!$('#panel-serviceUpdate').classList.contains('active')) return;
+    clearTimeout(svcUpdate.pollTimer);
+    svcUpdate.statusRequest?.abort();
+    svcUpdate.statusRequest = null;
+    svcUpdate.taskRequest?.abort();
+    const request = new AbortController();
+    let refresh = false;
+    svcUpdate.taskRequest = request;
     try {
-        syncServiceUpdateTask(await invoke('update.get_service_update_task', { path: { task_id: taskId } }));
-        armServiceUpdatePolling();
+        const task = await invoke('update.get_service_update_task', { path: { task_id: taskId } }, { signal: request.signal });
+        if (svcUpdate.taskRequest !== request) return;
+        syncServiceUpdateTask(task);
+        refresh = polling && svcTaskTerminal(task);
     } catch (error) {
+        if (svcUpdate.taskRequest !== request) return;
+        if (error.status === 404 && svcUpdate.task?.task_id === taskId) svcUpdate.task = null;
         $('#serviceUpdateStatus').textContent = '读取任务失败：' + error.message;
+        refresh = polling;
+    } finally {
+        if (svcUpdate.taskRequest === request) {
+            svcUpdate.taskRequest = null;
+            if (refresh) void loadServiceUpdate();
+            else armServiceUpdatePolling();
+        }
     }
 }
 

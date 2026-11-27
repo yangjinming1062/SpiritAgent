@@ -4,6 +4,7 @@ from collections.abc import Collection, Sequence
 from datetime import datetime
 
 from infrastructure.library_visibility import visible_library_work
+from infrastructure.models import id_in
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import utc_now
 from sqlalchemy import CompoundSelect, case, func, or_, select, tuple_, union_all
@@ -333,7 +334,7 @@ async def due_review_user_ids(db: AsyncSession, user_ids: Collection[int], now: 
         return set()
     waiting = set(
         await db.scalars(
-            select(LifeState.user_id).where(LifeState.user_id.in_(user_ids), LifeState.next_review_at > now)
+            select(LifeState.user_id).where(id_in(LifeState.user_id, user_ids), LifeState.next_review_at > now)
         )
     )
     return set(user_ids) - waiting

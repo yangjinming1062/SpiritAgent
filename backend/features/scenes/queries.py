@@ -5,8 +5,8 @@ from typing import Any
 
 from infrastructure.assets import asset_store
 from infrastructure.domain_locks import lock_domain
-from sqlalchemy import BigInteger, ColumnElement, Select, and_, any_, case, func, literal, or_, select
-from sqlalchemy.dialects.postgresql import ARRAY
+from infrastructure.models import id_in
+from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -38,10 +38,23 @@ async def existing_scene_ids(db: AsyncSession, user_id: int, scene_ids: set[int]
     rows = await db.scalars(
         select(CompanionScene.id).where(
             CompanionScene.user_id == user_id,
-            CompanionScene.id == any_(literal(sorted(scene_ids), type_=ARRAY(BigInteger))),
+            id_in(CompanionScene.id, scene_ids),
         )
     )
     return set(rows)
+
+
+async def ready_scene_paths(db: AsyncSession, user_id: int, scene_ids: set[int]) -> set[tuple[int, str]]:
+    if not scene_ids:
+        return set()
+    rows = await db.execute(
+        select(CompanionScene.id, CompanionScene.media_path).where(
+            CompanionScene.user_id == user_id,
+            id_in(CompanionScene.id, scene_ids),
+            CompanionScene.status == SceneStatus.READY,
+        )
+    )
+    return {(identifier, path) for identifier, path in rows}
 
 
 async def account_has_pending_scene_task(db: AsyncSession, user_id: int) -> bool:
@@ -69,7 +82,7 @@ async def scene_policy(db: AsyncSession, user_id: int) -> ScenePolicy:
     return ScenePolicy(policy) if policy else ScenePolicy.LLM_MAY_REPLACE
 
 
-def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bool = False) -> Select:
+def _snapshot_statement(conditions: list[ColumnElement[bool]], *, statuses: tuple[str, ...] = ()) -> Select:
     initial = aliased(SceneJob, flat=True)
     replacement = aliased(SceneJob, flat=True)
     direct = [
@@ -107,9 +120,9 @@ def _snapshot_statement(conditions: list[ColumnElement[bool]], *, state_only: bo
         .outerjoin(replacement, replacement.id == CompanionScene.replacement_job_id)
         .where(*conditions)
     )
-    if state_only:
+    if statuses:
         statement = statement.where(
-            or_(CompanionScene.status.in_(("ready", "pending")), replacement.state.in_(("queued", "running")))
+            or_(CompanionScene.status.in_(statuses), replacement.state.in_(("queued", "running")))
         )
     return statement
 
@@ -136,11 +149,14 @@ async def stage_scene_by_title(db: AsyncSession, user_id: int, title: str) -> Sc
     return SceneSnapshot.model_validate(dict(rows[0])) if len(rows) == 1 else None
 
 
-async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
+async def get_scene_state(db: AsyncSession, user_id: int, *, tasks_only: bool = False) -> SceneState:
     policy = await scene_policy(db, user_id)
+    statuses = ("pending",) if tasks_only else ("ready", "pending")
     rows = (
         await db.execute(
-            _snapshot_statement([CompanionScene.user_id == user_id], state_only=True).order_by(CompanionScene.id.desc())
+            _snapshot_statement([CompanionScene.user_id == user_id], statuses=statuses).order_by(
+                CompanionScene.id.desc()
+            )
         )
     ).mappings()
     items = [SceneSnapshot.model_validate(dict(row)) for row in rows]

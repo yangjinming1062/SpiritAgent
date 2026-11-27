@@ -1,6 +1,5 @@
 """领域检索共用的分词、向量空间与排名，不持有业务数据。"""
 
-import hashlib
 import math
 import re
 from dataclasses import dataclass
@@ -30,10 +29,6 @@ class QueryEmbedding:
 class SearchStatus(BaseModel):
     mode: Literal["hybrid", "keyword", "timeline"]
     indexing: bool = False
-
-
-def content_fingerprint(content: str) -> str:
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def extract_search_terms(query: str, *, limit: int = SEARCH_TERM_MAX) -> list[str]:

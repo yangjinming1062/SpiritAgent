@@ -1,10 +1,12 @@
 """检查与更新任务的执行引擎；同时只允许一个任务。"""
 
 import asyncio
+import logging
 import secrets
 from collections.abc import Coroutine
 from typing import Any
 
+from infrastructure.async_io import settle_task
 from infrastructure.updater_contracts import (
     ServiceCheckResultView,
     ServicePreflightIssue,
@@ -121,32 +123,33 @@ class TaskEngine:
                 await self._run_update(record)
             record.task.state = "done"
             record.task.stage = "done"
-        except (StageError, gitops.GitError) as exc:
-            await record.log.append(f"失败：{exc}")
-            record.task.error = ServiceUpdateTaskError(
-                stage=exc.stage or record.task.stage, reason=exc.reason, message=str(exc)[:400]
-            )
+        except asyncio.CancelledError:
+            record.task.state = "interrupted"
+            raise
+        except Exception as exc:
+            if isinstance(exc, (StageError, gitops.GitError)):
+                reason, stage, message = exc.reason, exc.stage or record.task.stage, str(exc)
+            elif isinstance(exc, TimeoutError):
+                reason, stage, message = "timeout", record.task.stage, "阶段超时。"
+            else:
+                reason, stage, message = "internal_error", record.task.stage, str(exc)
             record.task.state = "failed"
-        except TimeoutError:
-            await record.log.append("阶段超时，已终止子进程并按失败收尾。")
-            record.task.error = ServiceUpdateTaskError(stage=record.task.stage, reason="timeout", message="阶段超时。")
-            record.task.state = "failed"
-        except Exception as exc:  # noqa: BLE001 - 任务边界必须收敛所有异常并保留诊断
-            await record.log.append(f"任务异常终止：{exc!r}")
-            record.task.error = ServiceUpdateTaskError(
-                stage=record.task.stage, reason="internal_error", message=str(exc)[:400]
-            )
-            record.task.state = "failed"
+            record.task.error = ServiceUpdateTaskError(stage=stage, reason=reason, message=redact_text(message)[:400])
+            try:
+                await record.log.append(f"失败：{record.task.error.message}")
+            except OSError:
+                logging.getLogger(__name__).warning("更新器无法写入失败日志")
         finally:
             record.task.updated_at = utc_now()
-            await self._store.finish()
+            await settle_task(asyncio.create_task(self._store.finish()))
 
-    def _stage(self, record: TaskRecord, stage: ServiceUpdateStage) -> None:
+    async def _stage(self, record: TaskRecord, stage: ServiceUpdateStage) -> None:
         record.task.stage = stage
         record.task.updated_at = utc_now()
+        await self._store.checkpoint()
 
     async def _preflight(self, record: TaskRecord) -> tuple[ServiceRepoView, list[ServicePreflightIssue]]:
-        self._stage(record, "preflight")
+        await self._stage(record, "preflight")
         await record.log.append("== 预检：仓库 / SSH / Docker / Compose ==")
         return await collect_preflight(self._settings, record.log.append)
 
@@ -156,7 +159,7 @@ class TaskEngine:
         if any(issue.check == "repository" for issue in issues):
             # 只有仓库不可读会中断检查；工具链与 SSH 问题仍可读取远端提交。
             raise _preflight_failure(issues)
-        self._stage(record, "fetch")
+        await self._stage(record, "fetch")
         await record.log.append("== 获取 upstream 最新提交 ==")
         status = await gitops.fetch(self._settings, record.log.append)
         await record.log.append(f"分支 {status.branch}：落后 {status.behind} 个提交。")
@@ -171,16 +174,16 @@ class TaskEngine:
         _, issues = await self._preflight(record)
         if issues:
             raise _preflight_failure(issues)
-        self._stage(record, "fetch")
+        await self._stage(record, "fetch")
         await record.log.append("== 获取 upstream 最新提交 ==")
         await gitops.fetch(self._settings, record.log.append)
-        self._stage(record, "fast_forward")
+        await self._stage(record, "fast_forward")
         await record.log.append("== fast-forward 推进服务器分支 ==")
         commit = (
             await gitops.fast_forward(self._settings, record.task.target_commit, record.log.append)
         ).current_commit
         await record.log.append(f"仓库版本：{commit[:12]}")
-        self._stage(record, "build")
+        await self._stage(record, "build")
         await record.log.append(f"== 构建目标服务：{' '.join(compose.SERVICE_NAMES)} ==")
         await self._compose(
             record,
@@ -190,7 +193,7 @@ class TaskEngine:
             *compose.SERVICE_NAMES,
             timeout=self._settings.build_timeout_seconds,
         )
-        self._stage(record, "restart")
+        await self._stage(record, "restart")
         await record.log.append("== 重启目标服务并等待健康 ==")
         await self._compose(
             record,
@@ -204,7 +207,7 @@ class TaskEngine:
             *compose.SERVICE_NAMES,
             timeout=self._settings.start_timeout_seconds + 60.0,
         )
-        self._stage(record, "verify")
+        await self._stage(record, "verify")
         await record.log.append("== 核对服务健康与运行镜像 ==")
         try:
             runtime = await compose.read_backend(self._settings)
@@ -213,7 +216,9 @@ class TaskEngine:
         await record.log.append(
             f"backend: state={runtime.state} health={runtime.health} image_commit={runtime.running_commit or '未知'}"
         )
-        if runtime.running_commit and runtime.running_commit != commit:
+        if runtime.state != "running" or runtime.health != "healthy" or not runtime.running_commit:
+            raise StageError("无法确认 backend 正在健康运行并取得运行镜像的提交标识。", reason="verify_failed")
+        if runtime.running_commit != commit:
             raise StageError(
                 f"backend 运行镜像({runtime.running_commit[:12]})与仓库版本({commit[:12]})不一致。",
                 reason="runtime_mismatch",

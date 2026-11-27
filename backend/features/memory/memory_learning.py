@@ -14,7 +14,7 @@ from runtime.memory_scope import MemoryScope, MemorySource
 from sqlalchemy import ColumnElement, and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.queries import list_user_ids
+from features.accounts.queries import active_account_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import (
@@ -80,18 +80,12 @@ def learning_filter() -> ColumnElement[bool]:
 
 async def list_memory_review_scopes(db: AsyncSession) -> list[MemoryScope]:
     """按实际审阅规则发现活跃账户的待维护作用域。"""
-    active_users = await list_user_ids(db, active_only=True)
-    rows = list(
-        (
-            await db.execute(
-                select(Memory.user_id, Memory.system_preset_id)
-                .where(Memory.user_id.in_(active_users), learning_filter(), Memory.status != "forgotten")
-                .distinct()
-            )
-        ).tuples()
+    active = active_account_ids()
+    records = select(Memory.user_id, Memory.system_preset_id).where(
+        Memory.user_id.in_(active), learning_filter(), Memory.status != "forgotten"
     )
-    rows.extend(await review_scopes(db, active_users))
-    return [MemoryScope(user_id, preset) for user_id, preset in dict.fromkeys(rows)]
+    rows = await db.execute(records.union(review_scopes(active)))
+    return [MemoryScope(user_id, preset) for user_id, preset in rows]
 
 
 async def forgotten_source_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:

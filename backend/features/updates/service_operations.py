@@ -20,8 +20,6 @@ from pydantic import BaseModel, ValidationError
 async def _updater_response[T: BaseModel](request: Awaitable[dict], model: type[T]) -> T:
     try:
         return model.model_validate(await request)
-    except service_updater.ServiceUpdaterError as exc:
-        raise RequestError(status_code=409 if exc.status_code == 409 else 502, message=str(exc)) from exc
     except ValidationError as exc:
         raise RequestError(status_code=502, message="更新器返回的数据不符合当前协议，请检查更新器版本与状态。") from exc
 

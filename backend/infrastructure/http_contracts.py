@@ -28,7 +28,7 @@ _operation_ids: dict[str, tuple[str, str]] = {}
 
 
 def register_http_operation(operation: HttpOperation) -> None:
-    route = operation.method, operation.path
+    route = operation.method, operation.path.rstrip("/") or "/"
     previous = _operation_ids.get(operation.operation_id)
     if previous is not None and previous != route:
         raise ValueError(f"Duplicate HTTP operationId: {operation.operation_id}")
@@ -40,7 +40,7 @@ def register_http_operation(operation: HttpOperation) -> None:
 @lru_cache
 def _route_patterns(method: str) -> tuple[tuple[Pattern[str], HttpOperation], ...]:
     candidates = sorted(
-        (operation for operation in _operations.values() if operation.method == method),
+        (operation for operation in _operations.values() if operation.method == method and "{" in operation.path),
         key=lambda operation: (operation.path.count("{"), -len(operation.path)),
     )
     return tuple((compile_path(operation.path.rstrip("/") or "/")[0], operation) for operation in candidates)
@@ -48,7 +48,10 @@ def _route_patterns(method: str) -> tuple[tuple[Pattern[str], HttpOperation], ..
 
 def find_http_operation(path: str, method: str) -> HttpOperation | None:
     path = path.rstrip("/") or "/"
-    for pattern, operation in _route_patterns(method.upper()):
+    method = method.upper()
+    if operation := _operations.get((method, path)):
+        return operation
+    for pattern, operation in _route_patterns(method):
         if pattern.fullmatch(path):
             return operation
     return None

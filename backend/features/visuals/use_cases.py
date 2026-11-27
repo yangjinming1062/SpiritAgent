@@ -3,7 +3,6 @@
 from typing import Literal
 
 from infrastructure.assets.asset_store import client_asset_url
-from infrastructure.request_errors import RequestError
 
 from . import queries, service
 from .client_assets import (
@@ -13,13 +12,11 @@ from .client_assets import (
     client_play_command,
     client_stage_plan,
 )
-from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
     LocalVisualReceipt,
     PlaybackSource,
     VisualClaimRequest,
     VisualClaimResponse,
-    VisualDetailView,
     VisualJobCommandRequest,
     VisualJobView,
     VisualPlayCommand,
@@ -30,11 +27,6 @@ from .schemas import (
     VisualReceiptResponse,
     VisualRegenerateRequest,
 )
-
-
-def _http_error(exc: VisualError) -> RequestError:
-    status = 404 if isinstance(exc, VisualNotFoundError) else 409 if isinstance(exc, VisualStateError) else 400
-    return RequestError(status_code=status, message=str(exc))
 
 
 async def _presentation_response(user_id: int, presentation: VisualPresentationView) -> VisualPresentationResponse:
@@ -74,69 +66,47 @@ async def _presentation_response(user_id: int, presentation: VisualPresentationV
     )
 
 
-async def visual_detail(user_id: int, visual_id: int) -> VisualDetailView:
-    try:
-        return await queries.visual_detail(user_id, visual_id)
-    except VisualError as exc:
-        raise _http_error(exc) from exc
-
-
 async def job_command(user_id: int, job_id: int, body: VisualJobCommandRequest) -> VisualJobView:
-    try:
-        if body.command == "pause":
-            return await service.pause_job(user_id, job_id)
-        if body.command == "resume":
-            return await service.resume_job(user_id, job_id, user_requested=True)
-        if body.command == "cancel":
-            return await service.cancel_job(user_id, job_id)
-        return await service.retry_job(user_id, job_id, user_requested=True)
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    if body.command == "pause":
+        return await service.pause_job(user_id, job_id)
+    if body.command == "resume":
+        return await service.resume_job(user_id, job_id, user_requested=True)
+    if body.command == "cancel":
+        return await service.cancel_job(user_id, job_id)
+    return await service.retry_job(user_id, job_id, user_requested=True)
 
 
 async def regenerate(user_id: int, visual_id: int, body: VisualRegenerateRequest) -> VisualJobView:
-    try:
-        return await service.regenerate_visual(
-            user_id,
-            visual_id,
-            expected_version=body.expected_version,
-            feedback=body.feedback,
-            video_feedback=body.video_feedback,
-        )
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    return await service.regenerate_visual(
+        user_id,
+        visual_id,
+        expected_version=body.expected_version,
+        feedback=body.feedback,
+        video_feedback=body.video_feedback,
+    )
 
 
 async def claim_play(user_id: int, play_id: str, body: VisualClaimRequest) -> VisualClaimResponse:
-    try:
-        claimed = await service.claim_playback(
-            user_id, play_id, client_id=body.client_id, target_surface=body.target_surface
-        )
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    claimed = await service.claim_playback(
+        user_id, play_id, client_id=body.client_id, target_surface=body.target_surface
+    )
     return VisualClaimResponse(claimed=claimed)
 
 
 async def receipt_play(user_id: int, play_id: str, body: VisualReceiptRequest) -> VisualReceiptResponse:
-    try:
-        await service.record_playback(
-            user_id,
-            play_id,
-            status=body.status,
-            receipt_kind=body.receipt_kind,
-            client_id=body.client_id,
-            error=body.error,
-        )
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    await service.record_playback(
+        user_id,
+        play_id,
+        status=body.status,
+        receipt_kind=body.receipt_kind,
+        client_id=body.client_id,
+        error=body.error,
+    )
     return VisualReceiptResponse(ok=True)
 
 
 async def local_receipt(user_id: int, body: LocalVisualReceipt) -> VisualReceiptResponse:
-    try:
-        await service.record_local_playback(user_id, body)
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    await service.record_local_playback(user_id, body)
     return VisualReceiptResponse(ok=True)
 
 
@@ -145,11 +115,8 @@ async def presentation_state(user_id: int) -> VisualPresentationResponse:
 
 
 async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
-    try:
-        command = await service.restore_presentation(user_id)
-        return client_play_command(command) if command is not None else None
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    command = await service.restore_presentation(user_id)
+    return client_play_command(command) if command is not None else None
 
 
 async def play_visual(
@@ -160,30 +127,24 @@ async def play_visual(
     life_revision: int | None = None,
 ) -> VisualPlayCommand:
     source: PlaybackSource = "life" if origin == "life" else "manual"
-    try:
-        command = await service.play_visual(
-            user_id,
-            visual_id,
-            source=source,
-            origin=origin,
-            version=version,
-            expected_life_revision=life_revision if origin == "life" else None,
-        )
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    command = await service.play_visual(
+        user_id,
+        visual_id,
+        source=source,
+        origin=origin,
+        version=version,
+        expected_life_revision=life_revision if origin == "life" else None,
+    )
     return client_play_command(command)
 
 
 async def update_preferences(user_id: int, body: VisualPreferencesRequest) -> VisualPresentationResponse:
-    try:
-        presentation = await service.update_presentation_preferences(
-            user_id,
-            autonomous_enabled=body.autonomous_enabled,
-            default_visual_id=body.default_visual_id,
-            set_default_visual="default_visual_id" in body.model_fields_set,
-            target_width=body.target_width,
-            target_height=body.target_height,
-        )
-    except VisualError as exc:
-        raise _http_error(exc) from exc
+    presentation = await service.update_presentation_preferences(
+        user_id,
+        autonomous_enabled=body.autonomous_enabled,
+        default_visual_id=body.default_visual_id,
+        set_default_visual="default_visual_id" in body.model_fields_set,
+        target_width=body.target_width,
+        target_height=body.target_height,
+    )
     return await _presentation_response(user_id, presentation)

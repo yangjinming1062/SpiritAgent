@@ -33,6 +33,7 @@ from features.visuals.schemas import (
     VisualRegenerateRequest,
 )
 from features.visuals.service import VisualRequestConflictError
+from features.visuals.service import delete_visual as delete_visual_item
 from features.visuals.static_presentation import record_static_receipt
 from infrastructure.api_ids import ResourceId
 from infrastructure.constants import POSTGRES_INT8_MAX
@@ -211,7 +212,7 @@ async def analyze_visual(visual_id: ResourceId, user: CurrentUser, body: ImportA
 async def get_visual(
     visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser
 ) -> VisualDetailView:
-    return await _visuals.visual_detail(user_id=user.id, visual_id=visual_id)
+    return await _visual_queries.visual_detail(user_id=user.id, visual_id=visual_id)
 
 
 @router.get("/{visual_id}/versions/{version_id}", response_model=VisualItemView)
@@ -229,7 +230,7 @@ async def get_visual_version(
 @router.delete("/{visual_id}", status_code=204)
 async def delete_visual(visual_id: Annotated[ResourceId, Path(gt=0, le=POSTGRES_INT8_MAX)], user: CurrentUser) -> None:
     try:
-        await _visuals.delete_visual(user_id=user.id, visual_id=visual_id)
+        await delete_visual_item(user_id=user.id, visual_id=visual_id)
     except VisualError as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
 

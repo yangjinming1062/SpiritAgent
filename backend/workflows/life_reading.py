@@ -233,14 +233,15 @@ async def read_content(user_id: int, step: LifeStepView) -> ReadingResult:
     config = await load_user_llm_config(user_id, AiTaskKey.proactive)
     instructions = resolve_prompt_text(_INSTRUCTIONS, context.language)
     schema = ReadingNotes.model_json_schema()
+    life = context.life_context.prompt_payload()
     base = {
         "persona": context.persona_extras,
         "current_time": context.current_time,
         "memories": context.memory.model_dump(mode="json"),
         "life_context": life_content_payload(
             {
-                "state": context.life_context.prompt_payload()["state"],
-                "personal_growth": context.life_context.prompt_payload()["personal_growth"],
+                "state": life["state"],
+                "personal_growth": life["personal_growth"],
                 "pursuit": pursuit.prompt_payload() if pursuit is not None else None,
                 "events": [item.prompt_payload() for item in events],
             }

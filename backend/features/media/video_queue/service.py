@@ -88,10 +88,16 @@ async def _lane_id(config: ProviderConfig) -> int:
 
 async def _read(request_id: str) -> tuple[ProviderAttempt, ProviderLane]:
     async with SESSION_LOCAL() as db:
-        row = await db.scalar(select(ProviderAttempt).where(ProviderAttempt.token == request_id))
-        if row is None:
+        pair = (
+            await db.execute(
+                select(ProviderAttempt, ProviderLane)
+                .outerjoin(ProviderLane, ProviderLane.id == ProviderAttempt.lane_id)
+                .where(ProviderAttempt.token == request_id)
+            )
+        ).one_or_none()
+        if pair is None:
             raise VideoQueueStoppedError("视频制作任务已结束")
-        lane = await db.get(ProviderLane, row.lane_id)
+        row, lane = pair
         if lane is None:
             raise RuntimeError("Video queue lane is missing")
         return row, lane

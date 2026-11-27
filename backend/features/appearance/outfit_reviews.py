@@ -45,38 +45,40 @@ async def outfit_review_view(user_id: int, job_id: int) -> MediaJobView:
         row = await db.scalar(
             select(OutfitCreationJob).where(OutfitCreationJob.id == job_id, OutfitCreationJob.user_id == user_id)
         )
-        if row is None:
-            raise RequestError(status_code=404, message="找不到造型制作任务")
-        chain = ImageChainState.model_validate((row.checkpoint or {}).get("image_chain", {}))
-        eligible = (
-            chain.optional_candidates() if row.request_source == "manual" and row.stage == "review_pending" else []
-        )
-        candidate = next(iter(eligible), None)
-        report = candidate.review if candidate else None
-        evidence = candidate.evidence if candidate else None
-        candidate_key = candidate_review_key(chain.generation_id) if candidate else None
-        basis = review_basis(report, evidence, candidate_key)
-        return single_slot_review_view(
-            row,
-            media_id=str(row.id),
-            review=report,
-            basis_id=basis,
-            candidate_key=candidate_key,
-            preview_url=client_asset_url(candidate.path) if candidate else None,
-            can_review=row.stage == "review_pending"
-            and (evidence is not None or candidate is not None)
-            and needs_review(report),
-            candidates=await manual_candidate_views(eligible),
-            error=row.error,
-            can_regenerate=bool(eligible),
-        )
+    if row is None:
+        raise RequestError(status_code=404, message="找不到造型制作任务")
+    return await _review_view(row)
+
+
+async def _review_view(row: OutfitCreationJob) -> MediaJobView:
+    chain = ImageChainState.model_validate((row.checkpoint or {}).get("image_chain", {}))
+    eligible = chain.optional_candidates() if row.request_source == "manual" and row.stage == "review_pending" else []
+    candidate = next(iter(eligible), None)
+    report = candidate.review if candidate else None
+    evidence = candidate.evidence if candidate else None
+    candidate_key = candidate_review_key(chain.generation_id) if candidate else None
+    basis = review_basis(report, evidence, candidate_key)
+    return single_slot_review_view(
+        row,
+        media_id=str(row.id),
+        review=report,
+        basis_id=basis,
+        candidate_key=candidate_key,
+        preview_url=client_asset_url(candidate.path) if candidate else None,
+        can_review=row.stage == "review_pending"
+        and (evidence is not None or candidate is not None)
+        and needs_review(report),
+        candidates=await manual_candidate_views(eligible),
+        error=row.error,
+        can_regenerate=bool(eligible),
+    )
 
 
 async def list_outfit_review_jobs(user_id: int) -> list[MediaJobView]:
     async with SESSION_LOCAL() as db:
-        ids = list(
+        rows = list(
             await db.scalars(
-                select(OutfitCreationJob.id)
+                select(OutfitCreationJob)
                 .where(
                     OutfitCreationJob.user_id == user_id,
                     OutfitCreationJob.state == "paused",
@@ -87,7 +89,7 @@ async def list_outfit_review_jobs(user_id: int) -> list[MediaJobView]:
                 .limit(50)
             )
         )
-    return [await outfit_review_view(user_id, job_id) for job_id in ids]
+    return [await _review_view(row) for row in rows]
 
 
 async def _queue_outfit_continuation(db: AsyncSession, row: OutfitCreationJob) -> None:

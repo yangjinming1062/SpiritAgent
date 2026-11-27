@@ -22,8 +22,6 @@ class RunnerTransport:
     def __init__(self, runtime: RunnerRuntime) -> None:
         self.runtime = runtime
         self._tasks: set[asyncio.Task[None]] = set()
-        self._active_ws: Any | None = None
-        self._baseline: tuple[dict[str, Any], bool] | None = None
 
     async def notification(self, ws: Any, method: str, params: dict[str, Any]) -> None:
         params = RUNNER_EVENTS[method].model_validate(params).model_dump(mode="json")
@@ -64,14 +62,13 @@ class RunnerTransport:
         if not task.cancelled() and (error := task.exception()) is not None:
             logger.error("RPC handler failed: %s", redact_sensitive_text(str(error), config=load_config()))
 
-    async def _watch_capabilities(self) -> None:
+    async def _watch_capabilities(self, ws: Any, ready: dict[str, Any]) -> None:
+        baseline = ready["capabilities"], ready["probe_failed"]
         while True:
             await asyncio.sleep(120.0)
-            if (ws := self._active_ws) is None:
-                continue
             payload = await self.runtime.ready()
-            baseline = payload["capabilities"], payload["probe_failed"]
-            if baseline == self._baseline:
+            current = payload["capabilities"], payload["probe_failed"]
+            if current == baseline:
                 continue
             try:
                 await self.notification(
@@ -79,16 +76,15 @@ class RunnerTransport:
                     "runner.capabilities_changed",
                     {
                         "run_generation": self.runtime.run_generation,
-                        "capabilities": baseline[0],
-                        "probe_failed": baseline[1],
+                        "capabilities": current[0],
+                        "probe_failed": current[1],
                     },
                 )
-                self._baseline = baseline
+                baseline = current
             except Exception:
                 logger.debug("Capability notification could not be delivered")
 
     async def run(self, endpoint: DesktopEndpoint) -> None:
-        watcher = asyncio.create_task(self._watch_capabilities())
         current: DesktopEndpoint | None = endpoint
         attempt = 0
         try:
@@ -98,14 +94,13 @@ class RunnerTransport:
                     try:
                         connection = await connect_desktop(current)
                         async with connection as ws:
-                            self._active_ws = ws
                             connection_id = uuid.uuid4().hex
+                            ready = await self.runtime.ready()
+                            await self.notification(ws, "runner.ready", ready)
+                            attempt = 0
+                            self.runtime.reconnect_streak = 0
+                            watcher = asyncio.create_task(self._watch_capabilities(ws, ready))
                             try:
-                                ready = await self.runtime.ready()
-                                await self.notification(ws, "runner.ready", ready)
-                                self._baseline = ready["capabilities"], ready["probe_failed"]
-                                attempt = 0
-                                self.runtime.reconnect_streak = 0
                                 async for message in ws:
                                     try:
                                         data = json.loads(message)
@@ -118,7 +113,9 @@ class RunnerTransport:
                                     self._tasks.add(task)
                                     task.add_done_callback(self._finished)
                             finally:
-                                self._active_ws = None
+                                watcher.cancel()
+                                with contextlib.suppress(asyncio.CancelledError):
+                                    await watcher
                     except websockets.exceptions.InvalidStatus:
                         current = None
                     except Exception as error:
@@ -134,9 +131,6 @@ class RunnerTransport:
                 attempt += 1
                 await asyncio.sleep(min(2.0 * 2 ** min(attempt - 1, 4), 30.0))
         finally:
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
             await self.runtime.close()
             if self._tasks:
                 await asyncio.gather(*self._tasks, return_exceptions=True)

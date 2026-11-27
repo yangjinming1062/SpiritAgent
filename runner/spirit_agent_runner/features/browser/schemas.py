@@ -569,9 +569,9 @@ BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_CLEAR_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_clear",
     "description": (
-        "Clear browser cookies and/or site storage. WARNING: this is global, not limited to the current "
-        "site — it affects every site the browser has visited and logs the browser out everywhere. By "
-        "default clears both."
+        "Clear cookies for all sites and/or persistent site storage. By default both are requested globally. "
+        "Some browsers require an explicit storage_origin. On partial failure, check cleared before retrying. "
+        "To keep cookies, set cookies=false."
     ),
     "parameters": {
         "type": "object",
@@ -585,8 +585,12 @@ BROWSER_COOKIES_CLEAR_SCHEMA: dict[str, Any] = {
                 "type": "boolean",
                 "default": True,
                 "description": (
-                    "If true (default), clear localStorage, IndexedDB, cache storage and other site data for all sites."
+                    "If true (default), clear localStorage, IndexedDB, cache storage and other persistent site data."
                 ),
+            },
+            "storage_origin": {
+                "type": "string",
+                "description": "Limit storage clearing to this HTTP(S) origin; cookie clearing still affects all sites.",
             },
         },
         "required": [],

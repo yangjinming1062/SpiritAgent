@@ -136,7 +136,7 @@ export interface ApiSchemas {
   "ModelModalityInput": "text" | "image" | "audio" | "video" | "embeddings"
   "NightlyActivityLogItem": { "id": string; "user_id": string; "target_date": string; "status": string; "summary": (string | null); "payload": ({ [key: string]: unknown } | null); "created_at": (string | null); "updated_at": (string | null) }
   "NightlyActivityLogListResponse": { "items": Array<ApiSchemas["NightlyActivityLogItem"]> }
-  "OnboardingPatchRequest": { "field": string; "value"?: (string | null); "include_profile"?: boolean }
+  "OnboardingPatchRequest": { "field": string; "value"?: (string | null) }
   "OnboardingProfileRequest": { "decision": "save" | "skip"; "changes"?: Array<ApiSchemas["MemoryProfileChange"]> }
   "OnboardingStateResponse": { "answers": { [key: string]: string }; "next_field": (string | null); "complete": boolean; "persona_complete": boolean; "profile_outcome": ("saved" | "skipped" | null) }
   "OpeningStateReview": { "verdict": "pass" | "review" | "fail"; "reason": string; "requirement": string; "correction_instruction": string }
@@ -516,7 +516,7 @@ export interface ApiOperations {
   "companion_posts.get_comments": { path: { "post_id": string }; query: { "cursor"?: (string | null); "limit"?: number }; body: undefined; input: { path: { "post_id": string }; query?: { "cursor"?: (string | null); "limit"?: number }; body?: never }; response: ApiSchemas["PostCommentListResponse"] }
   "companion_posts.remove_comment": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: undefined }
   "companion_posts.retry_comment_reply": { path: { "post_id": string; "comment_id": string }; query: Record<string, never>; body: undefined; input: { path: { "post_id": string; "comment_id": string }; query?: never; body?: never }; response: ApiSchemas["PostCommentResponse"] }
-  "companion_scenes.read_scene_state": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["SceneStateResponse"] }
+  "companion_scenes.read_scene_state": { path: Record<string, never>; query: { "tasks_only"?: boolean }; body: undefined; input: { path?: never; query?: { "tasks_only"?: boolean }; body?: never }; response: ApiSchemas["SceneStateResponse"] }
   "companion_scenes.create_scene": { path: Record<string, never>; query: Record<string, never>; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]); input: { path?: never; query?: never; body: (ApiSchemas["SceneGenerateRequest"] | ApiSchemas["SceneImportRequest"]) }; response: ApiSchemas["SceneResponse"] }
   "companion_scenes.scene_list_route": { path: Record<string, never>; query: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body: undefined; input: { path?: never; query?: { "q"?: string; "cursor"?: (string | null); "include_total"?: boolean; "limit"?: number }; body?: never }; response: ApiSchemas["SceneListResponse"] }
   "companion_scenes.post_scene_prompt": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ScenePromptRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ScenePromptRequest"] }; response: ApiSchemas["SceneResponse"] }

@@ -41,7 +41,6 @@ export const boot = {
     refineAction: '微调',
     saveFailed: '选择未能保存，请重试',
     resumeFailed: '没能读取之前保存的进度，请重试',
-    backendUpgradeRequired: '当前服务端版本尚不支持引导中的「我的资料」。请先更新服务端，然后重试。',
     retrying: '重试中…',
     stepVoice: '选择声音',
     portraitPreviewHint: '预览并确认您的头像',

@@ -195,7 +195,7 @@ function forkSessionInfo(sourceSessionId: string, res: SessionSnapshot): Session
   return {
     archived: false,
     id: res.session_id,
-    kind: res.info?.kind ?? 'standard',
+    kind: res.info.kind,
     last_active: now,
     message_count: res.message_count,
     pinned: false,
@@ -274,31 +274,20 @@ export async function undoToMessage(sessionId: string, sourceMessageId: string):
       return null
     }
 
-    if (res.anchor) {
-      const attachments = res.anchor.attachments ?? []
+    const { anchor, messages } = res
+    $chatDraftFromUndo.set({ session_id: res.session_id, ...anchor })
 
-      $chatDraftFromUndo.set({
-        session_id: res.session_id,
-        text: res.anchor.text ?? '',
-        attachments
-      })
-
-      // 输入框一次只附加一张图片（见 use-chat-input 的草稿回填）；事件路径同样回填，提示只在发起窗口给一次。
-      if (attachments.length > 1) {
-        notify({ kind: 'info', message: getStrings().chat.undo.extraImagesNotRestored(attachments.length - 1) })
-      }
+    // 输入框一次只附加一张图片，提示只在发起窗口给一次。
+    if (anchor.attachments.length > 1) {
+      notify({ kind: 'info', message: getStrings().chat.undo.extraImagesNotRestored(anchor.attachments.length - 1) })
     }
 
-    if (Array.isArray(res.messages)) {
-      rememberFullHistory(res.session_id, res.messages)
+    rememberFullHistory(res.session_id, messages)
+    const runtime = findConversationRuntime(sessionId)
 
-      // 已切到其他会话时只更新缓存，不改写当前视图。
-      const runtime = findConversationRuntime(sessionId)
-
-      if (runtime) {
-        runtime.forgetDeletedVoiceMessages(res.messages)
-        runtime.hydrateChatMessages(res.messages)
-      }
+    if (runtime) {
+      runtime.forgetDeletedVoiceMessages(messages)
+      runtime.hydrateChatMessages(messages)
     }
 
     return res

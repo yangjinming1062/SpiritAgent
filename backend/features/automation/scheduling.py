@@ -4,8 +4,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from infrastructure.models import id_in
 from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from features.accounts.queries import active_account_ids
 
 from .cron_jobs import compute_next_run_at
 from .models import CronJob
@@ -29,7 +32,6 @@ async def due_jobs(
     db: AsyncSession,
     now: datetime,
     online_user_ids: list[int],
-    active_user_ids: list[int],
     *,
     limit: int,
     cursor: tuple[datetime, int] | None = None,
@@ -37,7 +39,7 @@ async def due_jobs(
     """读取到期 job；未过期的窗口型问候只在用户在线时入选，避免离线等待项堵住全局批次。"""
     expiring_scope = or_(CronJob.expires_at.is_(None), CronJob.expires_at <= now)
     if online_user_ids:
-        expiring_scope = or_(expiring_scope, CronJob.user_id.in_(online_user_ids))
+        expiring_scope = or_(expiring_scope, id_in(CronJob.user_id, online_user_ids))
     query = select(
         CronJob.id,
         CronJob.user_id,
@@ -50,7 +52,7 @@ async def due_jobs(
         CronJob.conversation_id,
         CronJob.expires_at,
     ).where(
-        CronJob.user_id.in_(active_user_ids),
+        CronJob.user_id.in_(active_account_ids()),
         CronJob.is_paused.is_(False),
         CronJob.next_run_at.is_not(None),
         CronJob.next_run_at <= now,

@@ -3,7 +3,7 @@
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 
-from features.accounts.queries import list_user_ids
+from features.accounts.queries import active_account_ids
 from features.companion.queries import complete_user_ids
 from features.posts.publication import request_publication, resume_publications
 from features.posts.replies import resume_replies
@@ -19,9 +19,7 @@ async def resume_autonomous_submissions() -> None:
 
 async def autonomous_post_users() -> list[int]:
     async with SESSION_LOCAL() as db:
-        active_users = await list_user_ids(db, active_only=True)
-        completed = await complete_user_ids(db, active_users)
-    return [user_id for user_id in active_users if user_id in completed]
+        return list(await db.scalars(complete_user_ids(active_account_ids())))
 
 
 async def request_autonomous_post(user_id: int) -> None:

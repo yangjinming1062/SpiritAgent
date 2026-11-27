@@ -6,9 +6,10 @@ from dataclasses import dataclass
 
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_companion_asset_path
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.models import id_in
 from PIL import Image
-from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import CompoundSelect, Select, Text, any_, literal, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Asset
@@ -75,7 +76,7 @@ async def ensure_asset_references_in_session(
             Asset.height,
             Asset.duration_ms,
         )
-        .where(Asset.user_id == user_id, Asset.path.in_(unique))
+        .where(Asset.user_id == user_id, Asset.path == any_(literal(unique, type_=ARRAY(Text))))
         .order_by(Asset.id)
         .with_for_update()
     )
@@ -95,9 +96,9 @@ async def ensure_asset_references_in_session(
     reactivated = [row.id for row in records if row.state == "cleanup" and row.path in inspected]
     values = await asyncio.to_thread(_inspect_paths, user_id, unique, inspected)
     if reactivated:
-        await db.execute(update(Asset).where(Asset.id.in_(reactivated)).values(state="ready", last_error=None))
+        await db.execute(update(Asset).where(id_in(Asset.id, reactivated)).values(state="ready", last_error=None))
     if values:
-        stmt = insert(Asset).values(values)
+        stmt = insert(Asset)
         rows = await db.execute(
             stmt.on_conflict_do_update(
                 constraint="uq_assets_user_path",
@@ -119,7 +120,8 @@ async def ensure_asset_references_in_session(
                 Asset.width,
                 Asset.height,
                 Asset.duration_ms,
-            )
+            ),
+            values,
         )
         existing.update(
             {
@@ -144,9 +146,12 @@ async def ensure_assets_in_session(db: AsyncSession, user_id: int, paths: Collec
     return {path: reference.id for path, reference in references.items()}
 
 
-async def asset_paths_for_ids(db: AsyncSession, user_id: int, asset_ids: Collection[int]) -> set[str]:
-    """业务按已登记的资产 ID 读取路径；空集合不查库。"""
-    return set((await asset_paths_in_session(db, user_id, asset_ids)).values())
+async def referenced_asset_paths(db: AsyncSession, user_id: int, asset_ids: Select | CompoundSelect) -> set[str]:
+    return set(
+        await db.scalars(
+            select(Asset.path).where(Asset.user_id == user_id, Asset.state != "deleted", Asset.id.in_(asset_ids))
+        )
+    )
 
 
 async def asset_paths_in_session(db: AsyncSession, user_id: int, asset_ids: Collection[int]) -> dict[int, str]:
@@ -156,7 +161,7 @@ async def asset_paths_in_session(db: AsyncSession, user_id: int, asset_ids: Coll
         (
             await db.execute(
                 select(Asset.id, Asset.path).where(
-                    Asset.user_id == user_id, Asset.id.in_(asset_ids), Asset.state != "deleted"
+                    Asset.user_id == user_id, id_in(Asset.id, asset_ids), Asset.state != "deleted"
                 )
             )
         )

@@ -420,7 +420,7 @@ async def build_turn_inputs(
         )
 
     return TurnInputs(
-        llm_config=UserLlmConfig(llm_chain[0], tuple(llm_chain[1:]), user_id),
+        llm_config=UserLlmConfig(tuple(llm_chain), user_id),
         context=context,
         native_memory=native_memory,
         ctx_length=resolve_context_tokens(llm_chain[0]),

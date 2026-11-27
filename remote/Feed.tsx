@@ -1,4 +1,4 @@
-import { IconMessageCircle, IconRefresh } from '@tabler/icons-react'
+import { IconMessageCircle } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -17,7 +17,7 @@ import { mergePagedRows } from './library-pages'
 import { usePageScroll, usePageState } from './page-state'
 import { useAlive, useTask } from './tasks'
 import type { Diary, Post } from './types'
-import { Empty, Media, Notice, timestamp } from './ui'
+import { Empty, Media, Notice, RefreshButton, timestamp } from './ui'
 
 // 没有游标与 has_more：整页返回表示可能还有更早的日记。
 const DIARY_PAGE_SIZE = 100
@@ -176,15 +176,7 @@ export function Posts({
   return (
     <>
       <div className="feed-tools">
-        <button
-          aria-label="刷新动态"
-          className="icon-button"
-          disabled={busy}
-          onClick={() => run(() => load())}
-          type="button"
-        >
-          <IconRefresh size={21} />
-        </button>
+        <RefreshButton busy={busy} label="刷新动态" onClick={() => run(() => load())} />
       </div>
       {error ? <Notice>{error}</Notice> : null}
       {posts.map(post => (

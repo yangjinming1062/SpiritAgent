@@ -3,7 +3,6 @@
 import asyncio
 import json
 from uuid import uuid4
-from weakref import WeakValueDictionary
 
 from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import vision_chat
@@ -13,7 +12,7 @@ from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri, validate_image_bytes
 from infrastructure.assets.image_references import freeze_image_references
 from infrastructure.assets.paths import parse_companion_asset_path
-from infrastructure.async_io import cancel_and_wait, cancel_tasks
+from infrastructure.async_io import KeyedLocks, cancel_and_wait, cancel_tasks
 from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
@@ -32,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.accounts.queries import nightly_account
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
+from features.companion.queries import complete_user_ids
 from features.companion.query_contracts import PersonaSnapshot
 from features.companion.visual_state import change_scene_policy, persona_snapshot
 from features.configuration.settings.values import get_user_setting
@@ -54,7 +54,7 @@ from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_
 from features.visuals.static_presentation import invalidate_scene_presentation
 
 logger = get_logger(__name__)
-_SCENE_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_SCENE_LOCKS = KeyedLocks[int]()
 _INFLIGHT_TASKS = TaskScope("companion.scene")
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
 
@@ -80,7 +80,7 @@ class SceneLockedError(SceneError):
 
 
 def _scene_lock(user_id: int) -> asyncio.Lock:
-    return _SCENE_LOCKS.setdefault(user_id, asyncio.Lock())
+    return _SCENE_LOCKS[user_id]
 
 
 def _require_complete(persona: PersonaSnapshot | None) -> PersonaSnapshot:
@@ -102,35 +102,33 @@ async def _require_scene(db: AsyncSession, user_id: int, scene_id: int) -> Compa
     return row
 
 
-async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int | None = None) -> None:
-    _require_complete(await persona_snapshot(db, user_id))
-    emit_ws_event(db, user_id=user_id, event_type=event_type, payload={"scene_id": scene_id})
-    if scene_id is not None:
-        scene = await get_scene(db, user_id, scene_id)
-        if scene is None or scene.status == "ready":
-            emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
-        if scene is not None:
-            await sync_scene_assets(db, scene)
-            if scene.status == "ready":
-                await record_work_outputs(db, user_id, scene.library_work_id, {scene.media_path})
-            job = scene.initial_job
-            if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
-                receiving = (
-                    scene_generation_state(job).image_chain if job.state == "unknown" and job.checkpoint else None
-                )
-                await update_business_steps_in_session(
-                    db,
-                    user_id,
-                    kind="scene.create",
-                    business_ref={"job_id": job.id},
-                    state="completed" if job.state == "succeeded" else job.state,
-                    result_ref={"job_id": job.id, "scene_id": scene.id} if job.state == "succeeded" else {},
-                    error=job.error,
-                    failure_code="result_download_failed" if receiving is not None and receiving.pending_urls else None,
-                )
-        # 只有首次引导场景需要通知视觉初始化；普通环境入库不应重新启动基础动态准备。
-        if scene is not None and scene.status == "ready" and scene.origin == SceneOrigin.ONBOARDING.value:
-            emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
+async def _scene_updated(db: AsyncSession, user_id: int, scene_id: int) -> None:
+    if await db.scalar(complete_user_ids((user_id,))) is None:
+        raise SceneStateError("请先完成角色设定")
+    emit_ws_event(db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": scene_id})
+    scene = await get_scene(db, user_id, scene_id)
+    if scene is None or scene.status == "ready":
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
+    if scene is not None:
+        await sync_scene_assets(db, scene)
+        if scene.status == "ready":
+            await record_work_outputs(db, user_id, scene.library_work_id, {scene.media_path})
+        job = scene.initial_job
+        if job is not None and job.state in {"succeeded", "failed", "cancelled", "unknown"}:
+            receiving = scene_generation_state(job).image_chain if job.state == "unknown" and job.checkpoint else None
+            await update_business_steps_in_session(
+                db,
+                user_id,
+                kind="scene.create",
+                business_ref={"job_id": job.id},
+                state="completed" if job.state == "succeeded" else job.state,
+                result_ref={"job_id": job.id, "scene_id": scene.id} if job.state == "succeeded" else {},
+                error=job.error,
+                failure_code="result_download_failed" if receiving is not None and receiving.pending_urls else None,
+            )
+    # 只有首次引导场景需要通知视觉初始化；普通环境入库不应重新启动基础动态准备。
+    if scene is not None and scene.status == "ready" and scene.origin == SceneOrigin.ONBOARDING.value:
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
 
 
 async def _check_policy(db: AsyncSession, persona: PersonaSnapshot, origin: str) -> None:
@@ -147,11 +145,12 @@ async def _check_policy(db: AsyncSession, persona: PersonaSnapshot, origin: str)
 
 async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> ScenePolicy:
     async with _scene_lock(user_id):
-        persona = await _persona(db, user_id)
-        persona = await change_scene_policy(db, user_id, ScenePolicy(policy).value)
-        await _event(db, persona.user_id, "companion.scene.updated")
+        policy_value = ScenePolicy(policy)
+        if not await change_scene_policy(db, user_id, policy_value.value):
+            raise SceneStateError("请先完成角色设定")
+        emit_ws_event(db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": None})
         await db.commit()
-    return ScenePolicy(policy)
+    return policy_value
 
 
 async def _new_scene(
@@ -216,7 +215,7 @@ async def _new_scene(
             await bind_job_request(db, user_id, row.initial_job.id, request_id, fingerprint)
         if life_step is not None:
             await bind_step_in_session(db, user_id, life_step, business_ref={"job_id": row.initial_job.id})
-        await _event(db, persona.user_id, "companion.scene.updated", row.id)
+        await _scene_updated(db, persona.user_id, row.id)
         await db.commit()
         if source == SceneSource.GENERATED.value:
             _launch_task(row.id, user_id)
@@ -313,7 +312,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             row.replacement_job.checkpoint = regeneration.model_dump(mode="json")
         else:
             raise SceneStateError("只有失败的生成任务或已保存图片的场景才能重新生成")
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -335,7 +334,7 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
             raise SceneStateError("该场景不在等待上传状态")
         target = SceneImageSize.model_validate(row.target_size_json) if row.target_size_json else SCENE_IMAGE_SIZE
         row.initial_job.stage = "store"
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await db.commit()
     try:
         saved = await _save_image(user_id, scene_id, data, target=target)
@@ -366,7 +365,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
             row.initial_job.checkpoint = None
         else:
             raise SceneStateError("该场景没有待取消的任务")
-        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, persona.user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         task = _INFLIGHT_TASKS.running((user_id, scene_id))
@@ -394,7 +393,7 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
         paths |= scene_chain_paths(row.initial_job) | scene_chain_paths(row.replacement_job)
         await db.delete(row)
         await db.flush()
-        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, persona.user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -419,7 +418,7 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
         row.initial_job.stage = "complete"
         row.ready_at = row.ready_at or utc_now()
         row.initial_job.error = None
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -466,7 +465,7 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
             row.initial_job.error = None
         else:
             raise SceneStateError("该场景无需重试分析")
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await db.commit()
     _launch_task(scene_id, user_id, regeneration_task_id=regeneration_task_id)
     return row
@@ -502,7 +501,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
             row.source_size_json = wallpaper.source_size.model_dump(mode="json")
             row.image_size_json = wallpaper.image_size.model_dump(mode="json")
             row.initial_job.stage = "analyze"
-            await _event(db, user_id, "companion.scene.updated", scene_id)
+            await _scene_updated(db, user_id, scene_id)
             await db.commit()
             committed = True
             return row
@@ -562,7 +561,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             row.initial_job.checkpoint = None
         row.reference_image = ""
         persona = await _persona(db, user_id)
-        await _event(db, persona.user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, persona.user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -710,7 +709,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             frozen.image_chain = progress
             fresh.replacement_job.checkpoint = frozen.model_dump(mode="json")
             fresh.replacement_job.stage = "analyze" if frozen.wallpaper_path else progress.phase
-            await _event(db, user_id, "companion.scene.updated", scene_id)
+            await _scene_updated(db, user_id, scene_id)
             await db.commit()
 
     old_path = ""
@@ -748,7 +747,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             await enqueue_asset_cleanup(
                 db, user_id, frozen.image_chain.stored_paths() | ({old_path} if old_path else set())
             )
-            await _event(db, user_id, "companion.scene.updated", scene_id)
+            await _scene_updated(db, user_id, scene_id)
             await db.commit()
     finally:
         async with SESSION_LOCAL() as db:
@@ -791,7 +790,7 @@ async def _mark_regeneration_failed(
             row.replacement_job.state, row.replacement_job.stage = "paused", "review_pending"
         if unknown:
             row.replacement_job.state = "unknown"
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
@@ -826,7 +825,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             frozen.image_chain = progress
             fresh.initial_job.checkpoint = frozen.model_dump(mode="json")
             fresh.initial_job.stage = "analyze" if progress.phase == "complete" else progress.phase
-            await _event(db, user_id, "companion.scene.updated", scene_id)
+            await _scene_updated(db, user_id, scene_id)
             await db.commit()
 
     if needs_image:
@@ -851,7 +850,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             await _apply_generated_environment(fresh, frozen, None)
             fresh.initial_job.checkpoint = frozen.model_dump(mode="json")
             fresh.initial_job.stage = "analyze"
-            await _event(db, user_id, "companion.scene.updated", scene_id)
+            await _scene_updated(db, user_id, scene_id)
             await db.commit()
     await _analyze(user_id, scene_id)
 
@@ -878,7 +877,7 @@ async def _mark_failed(
             row.initial_job.state, row.initial_job.stage = "paused", "review_pending"
         if reviewing and row.initial_job.state == "failed":
             row.initial_job.stage, row.initial_job.error = "review_failed", "本次环境图未通过检查"
-        await _event(db, user_id, "companion.scene.updated", scene_id)
+        await _scene_updated(db, user_id, scene_id)
         await db.commit()
 
 

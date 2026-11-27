@@ -475,7 +475,7 @@ async def _save(
 
 async def _voice(task_id: int, user_id: int, text: str, *, phase: str, directory: str) -> tuple[str, str]:
     async with SESSION_LOCAL() as db:
-        if user_id not in await complete_user_ids(db, (user_id,)):
+        if await db.scalar(complete_user_ids((user_id,))) is None:
             raise PostError("伙伴资料尚未就绪")
         settings = await load_user_settings(db, user_id, ("companion.voice_id", "language"))
     await _save(task_id, phase=phase)

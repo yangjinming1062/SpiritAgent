@@ -130,27 +130,11 @@ class CallSession:
             self._fire_played_callbacks()
             self._played.notify_all()
 
-    async def wait_played(
-        self, sequence: int, version: TurnVersion, on_played: Callable[[], None] | None = None
-    ) -> None:
+    async def wait_played(self, sequence: int, version: TurnVersion) -> None:
         async with asyncio.timeout(15), self._played:
+            await self._played.wait_for(lambda: not self.current(version) or self._played_sequence >= sequence)
             if not self.current(version):
                 raise asyncio.CancelledError
-            if self._played_sequence >= sequence:
-                if on_played is not None:
-                    on_played()
-                return
-            # 在消费回执时登记交付，避免紧随其后的输入或停止帧取消等待者后丢掉已交付事实。
-            confirmation = (sequence, on_played) if on_played is not None else None
-            if confirmation is not None:
-                self._playback_callbacks.append(confirmation)
-            try:
-                await self._played.wait_for(lambda: not self.current(version) or self._played_sequence >= sequence)
-                if not self.current(version):
-                    raise asyncio.CancelledError
-            finally:
-                if confirmation is not None and confirmation in self._playback_callbacks:
-                    self._playback_callbacks.remove(confirmation)
 
     async def confirm_when_played(self, sequence: int, version: TurnVersion, on_played: Callable[[], None]) -> None:
         """登记播放确认后立即返回，投递不必等上一句播完才开始下一句合成。"""

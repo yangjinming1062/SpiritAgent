@@ -25,11 +25,14 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     return data if isinstance(data, dict) else {}, content[match.end() :]
 
 
-def iter_skill_files(root: Path) -> Iterator[Path]:
+def iter_skill_files(root: Path, name: str | None = None) -> Iterator[Path]:
     """按路径序产出可见 SKILL.md；跳过隐藏/依赖目录与越出 root 或跨学习域的路径。"""
+    wanted = Path(name) if name is not None else None
     candidates = []
     for directory, subdirs, files in root.walk():
         subdirs[:] = [name for name in subdirs if not name.startswith(".") and name not in _EXCLUDED_DIR_NAMES]
+        if wanted is not None and directory.name != name and directory.relative_to(root) != wanted:
+            continue
         if IS_WINDOWS:
             candidates.extend(directory / name for name in files if name.lower() == "skill.md")
         elif "SKILL.md" in files:
@@ -54,13 +57,8 @@ def find_skill_candidates(name: str) -> tuple[Path | None, list[Path]]:
     """按目录名或相对路径匹配；首个有匹配的根胜出，同根歧义交给调用方拒绝。"""
     if error := skill_lookup_path_error(name):
         raise ValueError(error)
-    wanted = Path(name)
     for root in visible_skill_roots():
-        matches = [
-            skill_md
-            for skill_md in iter_skill_files(root)
-            if skill_md.parent.name == name or skill_md.parent.relative_to(root) == wanted
-        ]
+        matches = list(iter_skill_files(root, name))
         if matches:
             return root, matches
     return None, []

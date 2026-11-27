@@ -66,7 +66,7 @@ class PostPlan(BaseModel):
     aspect_ratio: Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"] = "16:9"
 
     def published_excerpt_ids(self, *, has_narration: bool) -> list[int] | None:
-        """按实际交付部分归集来源，历史计划缺少归属证据时保留未知。"""
+        """按实际交付部分归集来源，缺少归属证据时返回未知。"""
         if self.excerpt_uses is None:
             return None
         return [

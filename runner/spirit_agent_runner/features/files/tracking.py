@@ -1,7 +1,9 @@
 import os
 import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from weakref import WeakValueDictionary
 
 from spirit_agent_runner.contracts.config import cfg_get, load_config
 
@@ -23,8 +25,8 @@ class FileStateRegistry:
     """记录读/写版本，写入前提示外部修改；同路径读改写经 lock_path 串行。"""
 
     def __init__(self) -> None:
-        self._reads: dict[str, tuple[float, bool]] = {}  # path → (mtime, 是否局部读取)
-        self._path_locks: dict[str, threading.Lock] = {}
+        self._reads: OrderedDict[str, tuple[float, bool]] = OrderedDict()  # path → (mtime, 是否局部读取)
+        self._path_locks: WeakValueDictionary[str, threading.Lock] = WeakValueDictionary()
         self._meta_lock = threading.Lock()
         self._state_lock = threading.Lock()
 
@@ -43,11 +45,10 @@ class FileStateRegistry:
         if _disabled() or (mtime := _safe_mtime(resolved)) is None:
             return
         with self._state_lock:
-            # 重建插入序保证最新读写排在末尾，超限时淘汰最旧。
-            self._reads.pop(resolved, None)
             self._reads[resolved] = (mtime, partial)
-            for key in list(self._reads)[: max(0, len(self._reads) - _MAX_PATHS)]:
-                del self._reads[key]
+            self._reads.move_to_end(resolved)
+            if len(self._reads) > _MAX_PATHS:
+                self._reads.popitem(last=False)
 
     def record_read(self, resolved: str, *, partial: bool) -> None:
         self._record(resolved, partial=partial)

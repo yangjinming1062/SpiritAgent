@@ -20,7 +20,7 @@ from features.configuration.settings.values import get_user_setting
 from features.life.queries import empty_state_view, get_life_state_view, upcoming_shared_visual_context
 from features.media.identity_contracts import VisualIdentitySnapshot
 from features.media.image_generation import resolve_image_gen_chain
-from features.scenes.queries import ScenePlanningMaterial, ready_scene_planning_materials, scene_snapshot
+from features.scenes.queries import ScenePlanningMaterial, ready_scene_paths, ready_scene_planning_materials
 from features.visuals.eligibility import existing_asset
 from features.visuals.queries import (
     creation_preferences,
@@ -220,18 +220,14 @@ async def _stock(
         visual_id=opening.visual_id if opening else None,
         version_number=opening.version if opening else None,
     )
-    current_paths: dict[int, str | None] = {}
-    stock: list[PreparationStock] = []
-    for row in rows:
-        scene_id = row.source.scene.scene_id
-        if scene_id is None:
-            continue
-        if scene_id not in current_paths:
-            scene = await scene_snapshot(db, user_id, scene_id)
-            current_paths[scene_id] = scene.media_path if scene and scene.status == "ready" else None
-        if row.source.scene.path == current_paths[scene_id] and existing_asset(row.source.scene.path):
-            stock.append(row)
-    return stock
+    current_paths = await ready_scene_paths(
+        db, user_id, {scene_id for row in rows if (scene_id := row.source.scene.scene_id) is not None}
+    )
+    return [
+        row
+        for row in rows
+        if (row.source.scene.scene_id, row.source.scene.path) in current_paths and existing_asset(row.source.scene.path)
+    ]
 
 
 def _stock_payload(row: PreparationStock) -> dict[str, JsonValue]:

@@ -443,6 +443,7 @@ export function Chat({
     const replacement = commandHistory(event)
 
     if (replacement !== null) {
+      navigation.current++
       setMessages(replacement)
       setHasMore(false)
       scheduleListRefresh()
@@ -457,6 +458,7 @@ export function Chat({
         setFailure('')
       }
     } else if (event.type === 'message.replaced') {
+      navigation.current++
       const message = event.payload.message
       setMessages(previous =>
         mergeMessages(
@@ -494,6 +496,7 @@ export function Chat({
         )
 
         if (reply) {
+          navigation.current++
           if (messages.some(message => message.id === event.payload.replace_reply_message_id)) {
             pauseMedia()
           }
@@ -860,6 +863,8 @@ export function Chat({
             disabled={busy}
             onClick={() =>
               run(async () => {
+                const revision = navigation.current
+                const current = () => alive() && selectedRef.current === selected && navigation.current === revision
                 const before = messages.find(message => isResourceId(message.id))?.id
                 const height = listRef.current?.scrollHeight ?? 0
 
@@ -868,11 +873,11 @@ export function Chat({
                   query: { limit: 60, before_id: before }
                 })
 
-                if (alive() && selectedRef.current === selected) {
+                if (current()) {
                   setMessages(previous => mergeMessages(result.messages, previous))
                   setHasMore(result.has_more)
                   requestAnimationFrame(() => {
-                    if (listRef.current) {
+                    if (current() && listRef.current) {
                       listRef.current.scrollTop += listRef.current.scrollHeight - height
                     }
                   })

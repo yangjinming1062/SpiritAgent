@@ -24,6 +24,7 @@ class CamofoxState:
     """In-memory REST identity and VNC discovery cache, owned by BrowserManager."""
 
     def __init__(self) -> None:
+        self.generation = -1
         self.session: dict[str, Any] | None = None
         self.lock = threading.Lock()
         self.vnc_urls: dict[str, str | None] = {}

@@ -375,7 +375,7 @@ function VisualDetailContent({
       </FactSection>
 
       <AutoPlayGuidance detail={detail} />
-      {detail.analysis ? <VisualImportAnalysis visual={detail} /> : null}
+      {detail.analysis ? <VisualImportAnalysis job={detail.analysis} visualId={detail.id} /> : null}
 
       {detail.jobs.length > 0 ? (
         <Disclosure title={t.jobsHistoryTitle} variant="panel">

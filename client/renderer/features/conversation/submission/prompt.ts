@@ -246,11 +246,11 @@ export function createPromptSubmission(base: SubmissionBase, peers: SubmissionPe
       return
     }
 
-    if (result.message_ids?.length || result.messages?.length) {
+    if (result.message_ids.length || result.messages.length) {
       mergePersistedUserMessages(
-        result.messages ?? [],
+        result.messages,
         result.request_id,
-        result.message_ids ?? [],
+        result.message_ids,
         (result.status === 'accepted' || result.status === 'running') && !base.settledRequests.has(result.request_id)
       )
     }

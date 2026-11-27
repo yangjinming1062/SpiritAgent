@@ -1,9 +1,10 @@
 """动作素材的公开只读查询。"""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -13,13 +14,12 @@ from .views import definition_view, normalize_action_name
 
 
 def _filters(
-    user_id: int,
     query: str | None,
     clip_kind: str | None,
     status: str | None,
     keywords: list[str] | None = None,
 ) -> list[ColumnElement[bool]]:
-    conditions: list[ColumnElement[bool]] = [ActionDefinition.user_id == user_id]
+    conditions: list[ColumnElement[bool]] = []
     if keywords:
         # 多关键词任一命中即召回；供候选预筛使用。
         conditions.append(
@@ -49,24 +49,28 @@ def _filters(
     return conditions
 
 
-async def action_detail(db: AsyncSession, user_id: int, action_id: int) -> ActionAssetView | None:
-    row = await db.scalar(
+def _definitions(user_id: int) -> Select:
+    return (
         select(ActionDefinition)
         .options(defer(ActionDefinition.review_source_json, raiseload=True))
-        .where(ActionDefinition.user_id == user_id, ActionDefinition.id == action_id)
+        .where(ActionDefinition.user_id == user_id)
     )
+
+
+async def action_detail(db: AsyncSession, user_id: int, action_id: int) -> ActionAssetView | None:
+    row = await db.scalar(_definitions(user_id).where(ActionDefinition.id == action_id))
     return definition_view(row) if row else None
+
+
+async def actions_by_preset_key(
+    db: AsyncSession, user_id: int, preset_keys: Sequence[str]
+) -> dict[str, ActionAssetView]:
+    rows = await db.scalars(_definitions(user_id).where(ActionDefinition.preset_key.in_(preset_keys)))
+    return {row.preset_key: definition_view(row) for row in rows if row.preset_key is not None}
 
 
 async def action_by_preset_key(db: AsyncSession, user_id: int, preset_key: str) -> ActionAssetView | None:
-    """按内置动作稳定键取定义；供基础动态准备等固定流程使用。"""
-
-    row = await db.scalar(
-        select(ActionDefinition)
-        .options(defer(ActionDefinition.review_source_json, raiseload=True))
-        .where(ActionDefinition.user_id == user_id, ActionDefinition.preset_key == preset_key)
-    )
-    return definition_view(row) if row else None
+    return (await actions_by_preset_key(db, user_id, (preset_key,))).get(preset_key)
 
 
 async def action_preset_keys(db: AsyncSession, user_id: int, action_ids: list[int] | None = None) -> dict[int, str]:
@@ -106,7 +110,7 @@ async def list_actions(
 ) -> ActionListResponse:
     """按名称或动作内容分页检索；名称只用于检索，不作身份判别。"""
 
-    conditions = _filters(user_id, query, clip_kind, status, keywords)
+    conditions = _filters(query, clip_kind, status, keywords)
     conditions.append(
         ActionDefinition.status == "approved" if group == "in_library" else ActionDefinition.status != "approved"
     )
@@ -114,13 +118,7 @@ async def list_actions(
         conditions.append(ActionDefinition.id < cursor)
     limit = max(1, min(100, limit))
     rows = list(
-        await db.scalars(
-            select(ActionDefinition)
-            .options(defer(ActionDefinition.review_source_json, raiseload=True))
-            .where(*conditions)
-            .order_by(ActionDefinition.id.desc())
-            .limit(limit + 1)
-        )
+        await db.scalars(_definitions(user_id).where(*conditions).order_by(ActionDefinition.id.desc()).limit(limit + 1))
     )
     return ActionListResponse(
         actions=[definition_view(row) for row in rows[:limit]],

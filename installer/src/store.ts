@@ -19,7 +19,6 @@ export interface BootstrapStateModel {
   stageOrder: StageInfo[]
   currentStage: string | null
   error: string | null
-  logs: Array<{ line: string; stream: 'stdout' | 'stderr' }>
 }
 
 const INITIAL: BootstrapStateModel = {
@@ -27,14 +26,14 @@ const INITIAL: BootstrapStateModel = {
   stages: {},
   stageOrder: [],
   currentStage: null,
-  error: null,
-  logs: []
+  error: null
 }
 
 export type Route = 'welcome' | 'progress' | 'success' | 'failure'
 
 export const $route = atom<Route>('welcome')
 export const $bootstrap = atom<BootstrapStateModel>(INITIAL)
+export const $logs = atom<Array<{ line: string; stream: 'stdout' | 'stderr' }>>([])
 export const $logPath = atom<string | null>(null)
 
 export function stageTitle(stages: StageInfo[], name: string | null): string {
@@ -70,14 +69,14 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
   switch (payload.type) {
     case 'manifest':
       clearRouteTimer()
+      $logs.set([])
       $bootstrap.set({
         ...cur,
         status: 'running',
         stages: Object.fromEntries(payload.stages.map((s) => [s.name, { state: null }])),
         stageOrder: payload.stages,
         currentStage: null,
-        error: null,
-        logs: []
+        error: null
       })
       $route.set('progress')
       break
@@ -94,9 +93,9 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
       break
     }
     case 'log': {
-      // 限制滚动缓冲，避免长流程日志导致前端 OOM。
-      const logs = [...cur.logs, { line: payload.line, stream: payload.stream }]
-      $bootstrap.set({ ...cur, logs: logs.length > 2000 ? logs.slice(-2000) : logs })
+      const logs = $logs.get().slice(-1999)
+      logs.push({ line: payload.line, stream: payload.stream })
+      $logs.set(logs)
       break
     }
     case 'complete':
@@ -130,6 +129,7 @@ export async function startInstall(): Promise<void> {
   if ($bootstrap.get().status === 'running') return
   const revision = ++installRevision
   clearRouteTimer()
+  $logs.set([])
   $bootstrap.set({ ...INITIAL, status: 'running' })
   $route.set('progress')
 

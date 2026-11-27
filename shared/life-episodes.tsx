@@ -1,9 +1,15 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useMemo } from 'react'
 
 import type { ApiSchemas } from './api.generated'
 import type { lifeCopy } from './life-copy'
 import type { LifeDestination } from './life-reader-state'
-import { formatLifeDay, groupLifeEpisodes, type LifeEpisode, lifeEpisodeLabel, lifeStepStatus } from './life-trajectory'
+import {
+  groupLifeEpisodes,
+  lifeDayFormatter,
+  type LifeEpisode,
+  lifeEpisodeLabel,
+  lifeStepStatus
+} from './life-trajectory'
 
 type Copy = typeof lifeCopy.zh
 export type LifeResultsView = (reference: LifeEpisode['result_ref']) => ReactNode
@@ -84,17 +90,18 @@ export function LifeEpisodes({
   t: Copy
   results: LifeResultsView
 }) {
+  const days = useMemo(() => groupLifeEpisodes(entries), [entries])
+  const formatter = useMemo(() => lifeDayFormatter(locale), [locale])
   return (
     <div className="life-days">
-      {groupLifeEpisodes(entries).map(({ date, entries: day }) => (
+      {days.map(({ date, entries: day }) => (
         <section className="life-day" key={date}>
           <h2>
-            <time dateTime={date}>{formatLifeDay(date, locale)}</time>
+            <time dateTime={date}>{formatter.format(new Date(date))}</time>
           </h2>
           <ol>
             {day.map(entry => {
               const { topic_id: topicId, pursuit_id: pursuitId } = entry
-              const related = entry.has_related_episodes ?? Boolean(topicId)
               return (
                 <li key={entry.id}>
                   <article>
@@ -106,7 +113,7 @@ export function LifeEpisodes({
                     {entry.reading_result && <ReadingNotes reading={entry.reading_result} t={t} />}
                     <div className="life-actions">
                       {results(entry.result_ref)}
-                      {related && (context.kind !== 'topic' || context.id !== topicId) && (
+                      {entry.has_related_episodes && (context.kind !== 'topic' || context.id !== topicId) && (
                         <button
                           className="life-link"
                           data-life-open={'topic-' + entry.id}

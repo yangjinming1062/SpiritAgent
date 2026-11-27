@@ -29,14 +29,12 @@ class CdpConnection:
         cdp_url: str,
         *,
         launch_handle: NativeBrowserProcess | None,
-        auto_owned: bool,
         on_connect: Callable[[], Awaitable[None]],
         handle_event: Callable[[str, dict[str, Any], str | None], None],
         pending_dialog: Callable[..., PendingDialog | None],
     ) -> None:
         self.cdp_url = cdp_url
         self.launch_handle = launch_handle
-        self.auto_owned = auto_owned
         self._tag = f"cdp-{next(CdpConnection._seq)}"
         self._on_connect = on_connect
         self._handle_event = handle_event
@@ -86,7 +84,7 @@ class CdpConnection:
             raise err
 
     def stop(self) -> None:
-        """取消 CDP 主任务并等待线程退出；自有浏览器随后终止。可重复调用。"""
+        """取消 CDP 主任务并等待线程退出。可重复调用。"""
         self._stop_requested = True
         loop, task = self._loop, self._main_task
         if loop is not None and task is not None:
@@ -100,9 +98,6 @@ class CdpConnection:
 
         with self._state_lock:
             self._active = False
-
-        if self.auto_owned and self.launch_handle is not None:
-            self.launch_handle.terminate()
 
     @property
     def active(self) -> bool:
@@ -189,7 +184,7 @@ class CdpConnection:
 
     def _launched_browser_exited(self) -> bool:
         """自行启动的浏览器进程已退出（崩溃或用户关闭窗口）时不再重连，由下次导航重新启动。"""
-        if not self.auto_owned or self.launch_handle is None or (code := self.launch_handle.poll()) is None:
+        if self.launch_handle is None or (code := self.launch_handle.poll()) is None:
             return False
         logger.warning("CDP supervisor %s: browser process exited with code %s; not reconnecting", self._tag, code)
         return True

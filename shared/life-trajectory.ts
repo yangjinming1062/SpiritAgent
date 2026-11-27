@@ -39,8 +39,8 @@ export function groupLifeEpisodes(episodes: readonly LifeEpisode[]): Array<{ dat
   return [...days].map(([date, entries]) => ({ date, entries }))
 }
 
-export function formatLifeDay(day: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(day))
+export function lifeDayFormatter(locale: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' })
 }
 
 export function lifeEpisodeLabel(episode: LifeEpisode): 'exchange' | 'milestone' | 'reading' | 'result' | 'virtual' {

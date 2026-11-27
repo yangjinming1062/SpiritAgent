@@ -7,6 +7,8 @@ from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 
+from lib.architecture import dependency_cycles
+
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 ROOTS = {"bootstrap", "entrypoints", "workflows", "features", "runtime", "infrastructure", "main"}
 FORBIDDEN_ROOTS = {"api", "services", "modules", "components", "common", "prompts"}
@@ -75,40 +77,6 @@ def annotation_names(annotation: ast.AST | None) -> set[str]:
     return set().union(*(annotation_names(child) for child in ast.iter_child_nodes(annotation)))
 
 
-def cycles(graph: dict[str, set[str]]) -> list[list[str]]:
-    indexes: dict[str, int] = {}
-    lows: dict[str, int] = {}
-    stack: list[str] = []
-    active: set[str] = set()
-    found: list[list[str]] = []
-
-    def visit(module: str) -> None:
-        indexes[module] = lows[module] = len(indexes)
-        stack.append(module)
-        active.add(module)
-        for target in sorted(graph.get(module, ())):
-            if target not in indexes:
-                visit(target)
-                lows[module] = min(lows[module], lows[target])
-            elif target in active:
-                lows[module] = min(lows[module], indexes[target])
-        if lows[module] == indexes[module]:
-            component: list[str] = []
-            while True:
-                target = stack.pop()
-                active.remove(target)
-                component.append(target)
-                if target == module:
-                    break
-            if len(component) > 1:
-                found.append(sorted(component))
-
-    for module in sorted(graph):
-        if module not in indexes:
-            visit(module)
-    return found
-
-
 def check(backend: Path) -> list[str]:
     modules: dict[str, tuple[Path, ast.Module]] = {}
     errors: list[str] = []
@@ -116,7 +84,7 @@ def check(backend: Path) -> list[str]:
     for directory, names, files in os.walk(backend):
         skipped = {".venv", "__pycache__", ".ruff_cache"}
         if Path(directory) == backend:
-            skipped |= {"data", "updates", "alembic"}
+            skipped |= {"data", "alembic"}
         names[:] = [name for name in names if name not in skipped]
         paths.extend(Path(directory, name) for name in files if name.endswith(".py"))
     for path in sorted(paths):
@@ -500,9 +468,9 @@ def check(backend: Path) -> list[str]:
                 and any(alias.name in {"select", "update", "delete", "insert", "text"} for alias in node.names)
             ):
                 errors.append(f"[entrypoint-sql] {path}:{node.lineno}: SQL constructor import")
-    for component in cycles(graph):
+    for component in dependency_cycles(graph):
         errors.append("[cycle] " + " -> ".join(component))
-    for component in cycles(feature_graph):
+    for component in dependency_cycles(feature_graph):
         members = set(component)
         for (source, target), origins in feature_origins.items():
             if source in members and target in members:

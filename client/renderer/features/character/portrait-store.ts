@@ -68,6 +68,17 @@ const MAX_HISTORY = 5
 export const $portraitHistory = atom<PortraitEntry[]>([])
 export const $portraitSelectedIdx = atom<number>(0)
 
+let portraitRead = 0
+let historyRead = 0
+
+/** 并发远端查询只交付当前账户最近一次读取。 */
+function beginPortraitRead(): () => boolean {
+  const read = ++portraitRead
+  const epoch = currentClearEpoch()
+
+  return () => read === portraitRead && epoch === currentClearEpoch()
+}
+
 registerStorageClearHandler(() => {
   $portraitUrl.set(null)
   $activeAvatarId.set(null)
@@ -78,6 +89,7 @@ registerStorageClearHandler(() => {
 
 // 设置当前形象；id 变化时作废上一形象的种子缓存，避免自备图参考图串号。
 function setActiveAvatar(id: string | null): void {
+  portraitRead++
   const previousId = $activeAvatarId.get()
 
   $activeAvatarId.set(id)
@@ -100,10 +112,10 @@ function commitPortrait(url: string, assetUrl: string | null | undefined, avatar
   void patchAvatarSeeds({ avatarId, assetUrl: assetUrl ?? undefined, avatarDisplayUrl: url })
 }
 
-async function restorePortraitFromDisk(assetUrl: string, epoch: number): Promise<void> {
+async function restorePortraitFromDisk(assetUrl: string, current: () => boolean): Promise<void> {
   const restored = await resolvePortraitUrl(assetUrl, { cacheOnly: true })
 
-  if (!restored || currentClearEpoch() !== epoch || $portraitUrl.get()) {
+  if (!restored || !current() || $portraitUrl.get()) {
     return
   }
 
@@ -115,7 +127,11 @@ function restoreCachedPortrait(): void {
   $activeAvatarId.set(saved.avatarId)
 
   if (saved.assetUrl) {
-    void restorePortraitFromDisk(saved.assetUrl, currentClearEpoch())
+    const epoch = currentClearEpoch()
+    void restorePortraitFromDisk(
+      saved.assetUrl,
+      () => epoch === currentClearEpoch() && $activeAvatarId.get() === saved.avatarId
+    )
   }
 }
 
@@ -154,16 +170,16 @@ export async function applyPortrait(
 }
 
 export async function hydratePortrait(): Promise<void> {
-  const epoch = currentClearEpoch()
+  const current = beginPortraitRead()
 
   try {
     const res = await requestResource('companion.get_avatar')
 
-    if (currentClearEpoch() !== epoch) {
+    if (!current()) {
       return
     }
 
-    if (!res || !res.asset_url) {
+    if (!res.asset_url) {
       return
     }
 
@@ -175,11 +191,11 @@ export async function hydratePortrait(): Promise<void> {
 
     if (sameIdentity) {
       if (!$portraitUrl.get() && currentCached.assetUrl) {
-        await restorePortraitFromDisk(currentCached.assetUrl, epoch)
+        await restorePortraitFromDisk(currentCached.assetUrl, current)
       }
 
       // 缓存身份与服务端一致但本地 active id 漂移：纠正 id 时同步作废旧形象种子。
-      if (res.id != null) {
+      if (current()) {
         setActiveAvatar(res.id)
       }
 
@@ -188,12 +204,12 @@ export async function hydratePortrait(): Promise<void> {
 
     const newAvatar = await resolvePortraitUrl(res.asset_url)
 
-    if (currentClearEpoch() !== epoch) {
+    if (!current()) {
       return
     }
 
     if (newAvatar) {
-      commitPortrait(newAvatar, res.asset_url, res.id ?? null)
+      commitPortrait(newAvatar, res.asset_url, res.id)
     } else {
       log.warn('portrait', 'hydratePortrait failed to resolve new avatar; keeping existing portrait')
     }
@@ -206,15 +222,17 @@ export async function hydratePortrait(): Promise<void> {
 
 export async function hydratePortraitHistory(): Promise<void> {
   const epoch = currentClearEpoch()
+  const read = ++historyRead
+  const current = () => read === historyRead && epoch === currentClearEpoch()
 
   try {
     const res = await requestResource('companion.get_avatar_history')
 
-    if (currentClearEpoch() !== epoch) {
+    if (!current()) {
       return
     }
 
-    const items = [...(res?.history ?? [])].reverse()
+    const items = res.history.toReversed()
     const previousById = new Map($portraitHistory.get().map(entry => [entry.avatarId, entry]))
 
     const entries = await Promise.all(
@@ -230,7 +248,7 @@ export async function hydratePortraitHistory(): Promise<void> {
       })
     )
 
-    if (currentClearEpoch() !== epoch) {
+    if (!current()) {
       return
     }
 
@@ -264,6 +282,7 @@ export async function selectAvatar(avatarId: string): Promise<boolean> {
       return false
     }
 
+    portraitRead++
     $activeAvatarId.set(avatarId)
     clearAvatarSeeds(avatarId)
 
@@ -286,6 +305,7 @@ export async function selectAvatar(avatarId: string): Promise<boolean> {
 }
 
 export function pushPortraitEntry(entry: PortraitEntry): void {
+  historyRead++
   const current = $portraitHistory.get()
   const next = [...current, entry]
 
@@ -306,6 +326,7 @@ export function selectPortraitEntry(idx: number): void {
 }
 
 export function clearPortraitHistory(): void {
+  historyRead++
   $portraitHistory.set([])
   $portraitSelectedIdx.set(0)
 }

@@ -3,8 +3,11 @@
 import asyncio
 import contextlib
 import os
-from collections.abc import Awaitable, Callable, Mapping
+import signal
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
+
+from infrastructure.async_io import settle_task
 
 LineSink = Callable[[str], Awaitable[None]]
 
@@ -16,32 +19,36 @@ class RunOutput:
     stderr: str
 
 
+@contextlib.asynccontextmanager
+async def _command(
+    program: str, args: tuple[str, ...], timeout: float, env: Mapping[str, str] | None, cwd: str | None, *, stream: bool
+) -> AsyncIterator[asyncio.subprocess.Process]:
+    process = await asyncio.create_subprocess_exec(
+        program,
+        *args,
+        cwd=cwd,
+        env={**os.environ, **env} if env else None,
+        start_new_session=True,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT if stream else asyncio.subprocess.PIPE,
+    )
+    try:
+        async with asyncio.timeout(timeout):
+            yield process
+    except BaseException:
+        # Git/Compose 可能已派生持有输出管道的子进程，整组停止后抽干输出并回收。
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        await settle_task(asyncio.create_task(process.communicate()))
+        raise
+
+
 async def run_command(
     program: str, *args: str, timeout: float, env: Mapping[str, str] | None = None, cwd: str | None = None
 ) -> RunOutput:
-    """执行单条命令；超时按 TimeoutError 上抛，调用方转换失败语义。"""
-
-    merged_env = {**os.environ, **dict(env)} if env else None
-    process = await asyncio.create_subprocess_exec(
-        program, *args, cwd=cwd, env=merged_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except TimeoutError:
-        await _terminate(process)
-        raise
-    return RunOutput(
-        code=process.returncode if process.returncode is not None else -1,
-        stdout=stdout.decode("utf-8", "replace"),
-        stderr=stderr.decode("utf-8", "replace"),
-    )
-
-
-async def _terminate(process: asyncio.subprocess.Process) -> None:
-    with contextlib.suppress(ProcessLookupError):
-        process.kill()
-    with contextlib.suppress(ProcessLookupError):
-        await process.wait()
+    async with _command(program, args, timeout, env, cwd, stream=False) as process:
+        stdout, stderr = await process.communicate()
+        return RunOutput(await process.wait(), stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace"))
 
 
 async def stream_command(
@@ -52,22 +59,8 @@ async def stream_command(
     env: Mapping[str, str] | None = None,
     cwd: str | None = None,
 ) -> int:
-    """逐行采集合并输出（stdout+stderr）并转发；返回退出码。"""
-
-    merged_env = {**os.environ, **dict(env)} if env else None
-    process = await asyncio.create_subprocess_exec(
-        program, *args, cwd=cwd, env=merged_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-    )
-    assert process.stdout is not None
-    try:
-        async with asyncio.timeout(timeout):
-
-            async def pump() -> None:
-                while raw := await process.stdout.readline():
-                    await on_line(raw.decode("utf-8", "replace").rstrip("\n"))
-
-            await asyncio.gather(pump(), process.wait())
-    except TimeoutError:
-        await _terminate(process)
-        raise
-    return process.returncode if process.returncode is not None else -1
+    async with _command(program, args, timeout, env, cwd, stream=True) as process:
+        assert process.stdout is not None
+        while raw := await process.stdout.readline():
+            await on_line(raw.decode("utf-8", "replace").rstrip("\n"))
+        return await process.wait()

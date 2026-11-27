@@ -10,6 +10,7 @@ from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import ensure_utc, resolve_language
@@ -26,7 +27,7 @@ from .schemas import ActionAssetView, ActionReviewSource
 from .service import begin_review, record_review
 
 logger = get_logger(__name__)
-_REVIEW_LOCKS: dict[int, asyncio.Lock] = {}
+_REVIEW_LOCKS = KeyedLocks[int]()
 _REVIEW_TASKS = TaskScope[tuple[int, int, datetime]]("action_library.review")
 
 
@@ -56,7 +57,7 @@ async def cancel_action_reviews(user_id: int, action_id: int) -> None:
 async def review_action(user_id: int, action_id: int, expected_updated_at: datetime) -> None:
     revision = expected_updated_at
     try:
-        async with _REVIEW_LOCKS.setdefault(user_id, asyncio.Lock()):
+        async with _REVIEW_LOCKS[user_id]:
             async with SESSION_LOCAL() as db:
                 claimed = await begin_review(db, user_id, action_id, expected_updated_at=revision)
                 if claimed is None:

@@ -1,6 +1,8 @@
+from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Identity, MetaData, func
+from sqlalchemy import BigInteger, ColumnElement, DateTime, Identity, MetaData, SQLColumnExpression, any_, func, literal
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # 约束使用稳定名称，供 Alembic autogenerate 比对。
@@ -26,3 +28,8 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+def id_in(column: SQLColumnExpression[int], ids: Collection[int]) -> ColumnElement[bool]:
+    """一个 BIGINT 数组绑定整个集合，避免超出 asyncpg 参数数量上限。"""
+    return column == any_(literal(list(ids), type_=ARRAY(BigInteger)))

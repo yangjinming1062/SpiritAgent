@@ -1,12 +1,13 @@
 """任务身份和生命周期的事务内公共操作。"""
 
 from collections.abc import Collection
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import batched
 
-from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
+from features.assets.service import ensure_assets_in_session, referenced_asset_paths
 from infrastructure.job_models import JobRecord
+from infrastructure.models import id_in
 from infrastructure.text import utc_now
 from sqlalchemy import Select, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -34,10 +35,12 @@ class JobControl:
     revision: int
     cancel_requested: bool
     cleanup_pending: bool
-    checkpoint: dict | None
+    checkpoint: dict | None = None
 
 
-async def owned_job_control(db: AsyncSession, user_id: int, job_id: int, *, lock: bool = False) -> JobControl | None:
+async def owned_job_control(
+    db: AsyncSession, user_id: int, job_id: int, *, lock: bool = False, include_checkpoint: bool = False
+) -> JobControl | None:
     statement = select(
         JobRecord.id,
         JobRecord.kind,
@@ -46,12 +49,13 @@ async def owned_job_control(db: AsyncSession, user_id: int, job_id: int, *, lock
         JobRecord.revision,
         JobRecord.cancel_requested,
         JobRecord.cleanup_pending,
-        JobRecord.checkpoint,
     ).where(JobRecord.user_id == user_id, JobRecord.id == job_id)
+    if include_checkpoint:
+        statement = statement.add_columns(JobRecord.checkpoint)
     if lock:
         statement = statement.with_for_update()
     row = (await db.execute(statement)).mappings().first()
-    return JobControl(**{**row, "checkpoint": deepcopy(row["checkpoint"])}) if row else None
+    return JobControl(**row) if row else None
 
 
 def completion_cte(user_id: int, job_id: int, expected_revision: int, checkpoint: dict) -> CTE:
@@ -149,15 +153,10 @@ async def bind_job_assets(db: AsyncSession, user_id: int, job_id: int, paths: Co
 async def bind_job_asset_ids(
     db: AsyncSession, user_id: int, job_id: int, asset_ids: Collection[int], role: str
 ) -> None:
-    if asset_ids:
+    for batch in batched(sorted(set(asset_ids)), 1000):
         await db.execute(
             insert(JobAsset)
-            .values(
-                [
-                    {"user_id": user_id, "job_id": job_id, "asset_id": asset_id, "role": role}
-                    for asset_id in set(asset_ids)
-                ]
-            )
+            .values([{"user_id": user_id, "job_id": job_id, "asset_id": asset_id, "role": role} for asset_id in batch])
             .on_conflict_do_nothing(constraint="uq_job_assets_role")
         )
 
@@ -170,28 +169,26 @@ async def replace_job_assets(
     await bind_job_asset_ids(db, user_id, job_id, list(assets.values()), role)
     removed = delete(JobAsset).where(JobAsset.user_id == user_id, JobAsset.job_id == job_id, JobAsset.role == role)
     if assets:
-        removed = removed.where(JobAsset.asset_id.not_in(assets.values()))
-    released = list(await db.scalars(removed.returning(JobAsset.asset_id)))
-    return await asset_paths_for_ids(db, user_id, released)
+        removed = removed.where(~id_in(JobAsset.asset_id, assets.values()))
+    released = removed.returning(JobAsset.asset_id).cte("released")
+    return await referenced_asset_paths(db, user_id, select(released.c.asset_id))
 
 
 async def job_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    ids = list(
-        await db.scalars(
-            select(JobAsset.asset_id)
-            .join(JobRecord, JobRecord.id == JobAsset.job_id)
-            .where(
-                JobAsset.user_id == user_id,
-                or_(
-                    JobAsset.role == RETAINED_JOB_ASSET_ROLE,
-                    JobRecord.cleanup_pending.is_(True),
-                    JobRecord.finished_at.is_(None),
-                    JobRecord.finished_at >= utc_now() - timedelta(days=7),
-                ),
-            )
+    ids = (
+        select(JobAsset.asset_id)
+        .join(JobRecord, JobRecord.id == JobAsset.job_id)
+        .where(
+            JobAsset.user_id == user_id,
+            or_(
+                JobAsset.role == RETAINED_JOB_ASSET_ROLE,
+                JobRecord.cleanup_pending.is_(True),
+                JobRecord.finished_at.is_(None),
+                JobRecord.finished_at >= utc_now() - timedelta(days=7),
+            ),
         )
     )
-    return await asset_paths_for_ids(db, user_id, ids)
+    return await referenced_asset_paths(db, user_id, ids)
 
 
 async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
@@ -202,9 +199,8 @@ async def cleanup_job_assets(db: AsyncSession, user_id: int) -> set[str]:
         JobRecord.finished_at < utc_now() - timedelta(days=7),
     )
     expired = (JobAsset.job_id.in_(completed), JobAsset.role != RETAINED_JOB_ASSET_ROLE)
-    asset_ids = list(await db.scalars(select(JobAsset.asset_id).where(*expired)))
-    paths = await asset_paths_for_ids(db, user_id, asset_ids)
-    await db.execute(delete(JobAsset).where(*expired))
+    released = delete(JobAsset).where(*expired).returning(JobAsset.asset_id).cte("released")
+    paths = await referenced_asset_paths(db, user_id, select(released.c.asset_id))
     await clear_expired_job_checkpoints(db, user_id)
     await db.execute(
         update(JobRecord)

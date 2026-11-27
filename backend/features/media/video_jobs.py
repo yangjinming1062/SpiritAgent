@@ -5,7 +5,6 @@ from collections.abc import Collection, Sequence
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal
-from weakref import WeakValueDictionary
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError, LLMRuntimeError
 from infrastructure.ai.llm_client import MissingLlmConfigError, build_provider, resolve_provider_chain
@@ -23,6 +22,7 @@ from infrastructure.assets.image_references import freeze_image_references, mate
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import asset_write_context
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.domain_locks import lock_domain
 from infrastructure.logger import get_logger
@@ -99,7 +99,7 @@ from features.media.video_results import receive_video_attempt
 logger = get_logger(__name__)
 
 _POLL_TASKS = TaskScope("media.video_jobs")
-_RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_RESULT_LOCKS = KeyedLocks[int]()
 _TERMINAL_STATES = ("succeeded", "failed", "unknown", "cancelled")
 
 
@@ -1386,7 +1386,7 @@ async def resume_pending_video_jobs(user_id: int | None = None) -> None:
 
 
 def _result_lock(job_id: int) -> asyncio.Lock:
-    return _RESULT_LOCKS.setdefault(job_id, asyncio.Lock())
+    return _RESULT_LOCKS[job_id]
 
 
 async def cleanup_user_video_jobs(user_id: int) -> None:

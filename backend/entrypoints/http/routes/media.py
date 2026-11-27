@@ -6,10 +6,9 @@ from features.appearance.outfit_reviews import list_outfit_review_jobs
 from features.conversation import media_uploads as _uploads
 from features.conversation.speech_contracts import ChatAudioUploadResponse, ChatVideoUploadResponse
 from features.media import use_cases as _media
-from features.media.continuations import continue_owned_media_operation
 from features.media.http_contracts import ProviderOperationError, TtsRequest
 from features.media.manual_reviews import manual_media_action
-from features.media.review_operations import query_media_job
+from features.media.review_operations import continue_media_job, query_media_job
 from features.media.review_views import MediaContinueRequest, MediaJobView, MediaManualRequest
 from features.media.voice_contracts import VoiceSampleResponse
 from features.media.voices import upload_voice_sample
@@ -129,16 +128,7 @@ async def manually_handle_media(job_id: ResourceId, body: MediaManualRequest, us
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
 async def continue_media_business(job_id: ResourceId, body: MediaContinueRequest, user: CurrentUser) -> MediaJobView:
-    view = await query_media_job(user.id, job_id)
-    if view.revision != body.expected_revision:
-        raise RequestError(status_code=409, message="任务状态已变化，请刷新")
-    if body.action not in view.continuation_actions:
-        raise RequestError(status_code=409, message="当前任务没有这项可用操作")
     try:
-        await continue_owned_media_operation(user.id, job_id, body.action)
+        return await continue_media_job(user.id, job_id, body)
     except ValueError as exc:
         raise RequestError(status_code=409, message=str(exc)) from exc
-    updated = await query_media_job(user.id, job_id)
-    if updated.revision == view.revision and updated.state == "paused":
-        raise RequestError(status_code=409, message="原授权或检查条件尚不满足，结果已保留")
-    return updated

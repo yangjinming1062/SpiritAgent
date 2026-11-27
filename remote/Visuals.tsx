@@ -1,4 +1,3 @@
-import { IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -19,7 +18,17 @@ import { useLibraryPages } from './library-pages'
 import { MediaReviewButton } from './MediaReviewButton'
 import { usePageScroll, usePageState } from './page-state'
 import { requireCurrentRead, useAlive, useTask, useVisiblePolling } from './tasks'
-import { Empty, focusAfterRender, LibraryCard, Media, Notice, PageHeader, timestamp, videoQueueText } from './ui'
+import {
+  Empty,
+  focusAfterRender,
+  LibraryCard,
+  Media,
+  Notice,
+  PageHeader,
+  RefreshButton,
+  timestamp,
+  videoQueueText
+} from './ui'
 import { VisualAnalysis } from './VisualAnalysis'
 import { VisualCreate } from './VisualCreate'
 
@@ -290,7 +299,7 @@ function VisualDetailPanel({
               ? visualMaterialCopy.zh.approved
               : visualMaterialCopy.zh[visualAnalysisControls(visual.analysis).status]}
           </p>
-          <VisualAnalysis api={api} onChanged={onChanged} visual={visual} />
+          <VisualAnalysis api={api} job={visual.analysis} onChanged={onChanged} visualId={visual.id} />
         </>
       ) : (
         <>
@@ -529,15 +538,7 @@ export function Visuals({
               type="search"
               value={query}
             />
-            <button
-              aria-label="刷新影像"
-              className="icon-button"
-              disabled={busy}
-              onClick={() => run(load)}
-              type="button"
-            >
-              <IconRefresh size={20} />
-            </button>
+            <RefreshButton busy={busy} label="刷新影像" onClick={() => run(load)} />
           </div>
           <details className="filter-details">
             <summary>更多筛选</summary>

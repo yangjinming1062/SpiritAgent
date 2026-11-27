@@ -2,11 +2,11 @@
 
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.references import asset_paths
-from sqlalchemy import select
+from sqlalchemy import select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.references import scanned_asset_paths
-from features.assets.service import asset_paths_for_ids, ensure_assets_in_session
+from features.assets.service import ensure_assets_in_session, referenced_asset_paths
 from features.jobs.service import bind_job_asset_ids
 
 from .models import CompanionScene
@@ -45,10 +45,10 @@ async def sync_scene_assets(db: AsyncSession, row: CompanionScene) -> None:
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    rows = await db.execute(
-        select(CompanionScene.media_asset_id, CompanionScene.upload_asset_id).where(CompanionScene.user_id == user_id)
+    asset_ids = union_all(
+        select(CompanionScene.media_asset_id).where(CompanionScene.user_id == user_id),
+        select(CompanionScene.upload_asset_id).where(CompanionScene.user_id == user_id),
     )
-    asset_ids = {asset_id for row in rows for asset_id in row if asset_id is not None}
-    return await asset_paths_for_ids(db, user_id, asset_ids) | await scanned_asset_paths(
+    return await referenced_asset_paths(db, user_id, asset_ids) | await scanned_asset_paths(
         db, user_id, select(CompanionScene.review_result_json).where(CompanionScene.user_id == user_id)
     )

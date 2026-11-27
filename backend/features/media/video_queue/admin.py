@@ -8,6 +8,7 @@ from infrastructure.text import utc_now
 from runtime.responses import MessageResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from features.configuration.queries import user_ai_configs
 from features.media.chain import FrozenMediaProvider
@@ -37,37 +38,30 @@ def _request_view(row: ProviderAttempt) -> VideoQueueRequestView:
 
 
 async def list_video_queue(db: AsyncSession) -> VideoQueueList:
-    rows = list(
-        await db.scalars(
-            select(ProviderAttempt)
+    rows = (
+        await db.execute(
+            select(ProviderAttempt, ProviderLane)
+            .join(ProviderLane, ProviderLane.id == ProviderAttempt.lane_id)
+            .options(defer(ProviderAttempt.request_json), defer(ProviderAttempt.result_json))
             .where(
                 ProviderAttempt.state.not_in(("succeeded", "failed", "cancelled", "stopped")),
                 ProviderAttempt.capability == "video",
             )
             .order_by(ProviderAttempt.enqueued_at, ProviderAttempt.id)
         )
-    )
-    if not rows:
-        return VideoQueueList(queues=[])
-    lanes = {
-        row.id: row
-        for row in await db.scalars(select(ProviderLane).where(ProviderLane.id.in_({row.lane_id for row in rows})))
-    }
-    names = {provider.id: provider.name for provider in SETTINGS.ai_config.providers}
-    configs = await user_ai_configs(db, {row.user_id for row in rows if row.user_id is not None})
-    for config in configs.values():
-        names.update({provider.id: provider.name for provider in config.providers})
+    ).all()
+    configs = await user_ai_configs(db, {row.user_id for row, _ in rows if row.user_id is not None})
+    names = {(uid, p.id): p.name for uid, config in configs.items() for p in config.providers}
+    system_names = {p.id: p.name for p in SETTINGS.ai_config.providers}
     views: dict[int, VideoQueueLaneView] = {}
-    for row in rows:
-        lane = lanes[row.lane_id]
-        view = views.setdefault(
-            lane.id,
-            VideoQueueLaneView(
+    for row, lane in rows:
+        if lane.id not in views:
+            views[lane.id] = VideoQueueLaneView(
                 id=lane.token, provider=lane.provider, provider_names=[], next_retry_at=lane.not_before, requests=[]
-            ),
-        )
+            )
+        view = views[lane.id]
         frozen = FrozenMediaProvider.model_validate(row.frozen_json)
-        name = names.get(frozen.provider_id)
+        name = names.get((row.user_id, frozen.provider_id)) or system_names.get(frozen.provider_id)
         if name and name not in view.provider_names:
             view.provider_names.append(name)
         view.requests.append(_request_view(row))

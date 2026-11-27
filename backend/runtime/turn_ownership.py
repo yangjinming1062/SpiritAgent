@@ -1,9 +1,10 @@
 """单进程会话互斥：桌面历史操作、无头回合和删除共享同一把锁。"""
 
 import asyncio
-from weakref import WeakValueDictionary
 
-_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+from infrastructure.async_io import KeyedLocks
+
+_LOCKS = KeyedLocks[str]()
 _CALLS: dict[str, object] = {}
 
 
@@ -24,11 +25,10 @@ def conversation_call_conflict(session_id: str, owner: object | None = None) -> 
 
 def conversation_lock(session_id: str) -> asyncio.Lock:
     key = str(int(session_id))
-    return _LOCKS.setdefault(key, asyncio.Lock())
+    return _LOCKS[key]
 
 
 def conversation_is_running(session_id: str) -> bool:
     if conversation_call_conflict(session_id):
         return True
-    lock = _LOCKS.get(str(int(session_id)))
-    return lock is not None and lock.locked()
+    return _LOCKS.locked(str(int(session_id)))

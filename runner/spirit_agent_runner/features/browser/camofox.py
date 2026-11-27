@@ -1,6 +1,7 @@
 import ipaddress
 import logging
 import re
+import threading
 import uuid
 from typing import Any
 from urllib.parse import SplitResult, urlparse, urlsplit, urlunsplit
@@ -8,6 +9,7 @@ from urllib.parse import SplitResult, urlparse, urlsplit, urlunsplit
 import httpx
 
 from spirit_agent_runner.contracts.config import cfg_get, is_truthy_value, load_config
+from spirit_agent_runner.contracts.context import current_context
 from spirit_agent_runner.contracts.tooling import tool_error
 from spirit_agent_runner.features.browser.camofox_state import get_camofox_identity
 from spirit_agent_runner.features.browser.helpers import _truncate_snapshot, screenshot_multimodal_result
@@ -122,32 +124,27 @@ def _adopt_existing_tab(session: dict[str, Any]) -> dict[str, Any]:
 
 def _get_session() -> dict[str, Any]:
     state = current_manager().camofox
+    cfg = _get_camofox_config()
+    identity = _camofox_identity_override(cfg)
+    if identity is None and is_truthy_value(cfg.get("managed_persistence")):
+        identity = get_camofox_identity()
+    adopt = identity is not None and is_truthy_value(cfg.get("adopt_existing_tab"))
+    key = get_camofox_url(), identity, adopt
+    generation = current_context().config_generation
     with state.lock:
-        if state.session is None:
-            camofox_cfg = _get_camofox_config()
-            identity = _camofox_identity_override(camofox_cfg)
-            if identity is None and is_truthy_value(camofox_cfg.get("managed_persistence")):
-                identity = get_camofox_identity()
-            managed = identity is not None
-            if identity is None:
-                identity = {"user_id": f"spiritagent_{uuid.uuid4().hex[:10]}", "session_key": "task_default"}
-            state.session = {
-                **identity,
-                "tab_id": None,
-                "managed": managed,
-                "adopt_existing_tab": managed and is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
-            }
         session = state.session
-    return _adopt_existing_tab(session)
-
-
-def _ensure_tab(url: str = "about:blank") -> dict[str, Any]:
-    session = _get_session()
-    if session["tab_id"]:
-        return session
-    data = _post("/tabs", {"userId": session["user_id"], "sessionKey": session["session_key"], "url": url})
-    session["tab_id"] = data.get("tabId")
-    return session
+        if session is None or session["config_key"] != key:
+            session = {
+                **(identity or {"user_id": f"spiritagent_{uuid.uuid4().hex[:10]}", "session_key": "task_default"}),
+                "config_key": key,
+                "tab_id": None,
+                "adopt_existing_tab": adopt,
+                "lock": threading.Lock(),
+            }
+        if generation >= state.generation:
+            state.generation, state.session = generation, session
+    with session["lock"]:
+        return _adopt_existing_tab(session)
 
 
 def _post(path: str, body: dict[str, Any], timeout: int = _DEFAULT_TIMEOUT) -> dict[str, Any]:
@@ -167,13 +164,21 @@ def camofox_navigate(url: str) -> dict[str, Any]:
     try:
         browser_url, rewrite_info = _rewrite_loopback_url_for_camofox(url)
         session = _get_session()
-        if not session["tab_id"]:
-            session = _ensure_tab(browser_url)
-            data = {"ok": True, "url": browser_url}
-        else:
-            data = _post(
-                f"/tabs/{session['tab_id']}/navigate", {"userId": session["user_id"], "url": browser_url}, timeout=60
-            )
+        with session["lock"]:
+            if session["tab_id"]:
+                data = _post(
+                    f"/tabs/{session['tab_id']}/navigate",
+                    {"userId": session["user_id"], "url": browser_url},
+                    timeout=60,
+                )
+            else:
+                data = _post(
+                    "/tabs", {"userId": session["user_id"], "sessionKey": session["session_key"], "url": browser_url}
+                )
+                tab_id = data.get("tabId")
+                if not isinstance(tab_id, str) or not tab_id:
+                    return tool_error("Camofox did not return a tab ID", success=False)
+                session["tab_id"] = tab_id
         result = {"success": True, "url": data.get("url", browser_url), "title": data.get("title", "")}
         if rewrite_info:
             result.update(

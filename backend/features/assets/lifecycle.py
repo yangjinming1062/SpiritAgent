@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
+from itertools import batched
 from pathlib import Path
 
 from infrastructure.assets.asset_store import unlink_companion_asset
@@ -59,25 +60,26 @@ async def enqueue_asset_cleanup_entries(
     if not owned:
         return
     now = utc_now()
-    statement = insert(Asset).values(
-        [
-            {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now, "state": "cleanup"}
-            for path, not_before in sorted(owned.items())
-        ]
-    )
-    keys = [Asset.user_id, Asset.path]
-    await db.execute(
-        statement.on_conflict_do_update(
-            index_elements=keys,
-            set_={
-                "not_before": func.least(Asset.not_before, statement.excluded.not_before),
-                "state": "cleanup",
-                "requested_at": now,
-            },
+    statement = insert(Asset)
+    updates = {"state": "cleanup", "requested_at": now}
+    if expedite:
+        updates["not_before"] = func.least(Asset.not_before, statement.excluded.not_before)
+    statement = statement.on_conflict_do_update(index_elements=[Asset.user_id, Asset.path], set_=updates)
+    for batch in batched(sorted(owned.items()), 1000):
+        await db.execute(
+            statement.values(
+                [
+                    {
+                        "user_id": user_id,
+                        "path": path,
+                        "requested_at": now,
+                        "not_before": not_before or now,
+                        "state": "cleanup",
+                    }
+                    for path, not_before in batch
+                ]
+            )
         )
-        if expedite
-        else statement.on_conflict_do_update(index_elements=keys, set_={"state": "cleanup", "requested_at": now})
-    )
 
 
 async def enqueue_asset_cleanup(
@@ -180,7 +182,6 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
         await enqueue_asset_cleanup_entries(db, user_id, entries)
         await db.commit()
 
-    deleted_ids: list[int] = []
     deleted_paths: list[str] = []
     async with user_asset_lock(user_id), SESSION_LOCAL() as db:
         # 先锁资产行再读业务引用，与引用登记共用顺序；跳过正在被业务采纳的文件。
@@ -188,7 +189,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
             await db.scalars(
                 select(Asset)
                 .where(Asset.user_id == user_id, Asset.not_before <= utc_now(), Asset.state == "cleanup")
-                .order_by(Asset.id)
+                .order_by(Asset.not_before, Asset.id)
                 .limit(200)
                 .with_for_update(skip_locked=True)
             )
@@ -200,14 +201,18 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
         except AssetReferencesUnavailable:
             logger.warning("Asset cleanup deferred: references unavailable", extra={"user_id": user_id}, exc_info=True)
             return 0
+        # 本轮仍受保护或删除失败的文件排到已到期队列末尾，给后续待办留出处理机会。
+        retry_at = utc_now()
         for entry in pending:
             if entry.path in referenced or asset_write_in_progress(entry.path):
+                entry.not_before = retry_at
                 continue
             try:
                 await run_blocking(unlink_companion_asset, entry.path)
                 if (Path(SETTINGS.data_dir) / entry.path).exists():
                     raise OSError("Asset remains on disk after cleanup")
             except OSError as exc:
+                entry.not_before = retry_at
                 entry.attempts += 1
                 entry.last_error = str(exc)[:1000]
                 logger.warning(
@@ -216,7 +221,6 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
             else:
                 entry.state = "deleted"
                 entry.last_error = None
-                deleted_ids.append(entry.id)
                 deleted_paths.append(entry.path)
         await db.commit()
         await run_blocking(_remove_empty_directories, user_id)
@@ -226,7 +230,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
         async with SESSION_LOCAL() as db:
             await forget_deleted_references(db, user_id, deleted_paths)
             await db.commit()
-    return len(deleted_ids)
+    return len(deleted_paths)
 
 
 async def cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:

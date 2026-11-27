@@ -21,7 +21,6 @@ class OnboardingPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     field: str = Field(min_length=1)
     value: str | None = None
-    include_profile: bool = False
 
 
 @router.get("", response_model=OnboardingStateResponse)
@@ -32,7 +31,7 @@ async def get_onboarding(user: CurrentUser, db: DbSession) -> OnboardingStateRes
 @router.patch("", response_model=OnboardingStateResponse)
 async def patch_onboarding(user: CurrentUser, db: DbSession, body: OnboardingPatchRequest) -> OnboardingStateResponse:
     try:
-        return await submit_onboarding_field(db, user.id, body.field, body.value, include_profile=body.include_profile)
+        return await submit_onboarding_field(db, user.id, body.field, body.value)
     except PersonaValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

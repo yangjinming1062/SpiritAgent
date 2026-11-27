@@ -3,15 +3,19 @@ import json
 import math
 import re
 import secrets
+import shutil
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 
 logger = get_logger(__name__)
 
+_WORK_DIR_PREFIX = "media-work-"
 _FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -19,6 +23,25 @@ def _storage_dir() -> Path:
     d = Path(SETTINGS.data_dir) / "temp-media"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+@contextlib.asynccontextmanager
+async def media_work_directory(user_id: int) -> AsyncIterator[Path]:
+    """转码中间文件与正式资产分开，取消时等工作线程退出再移除。"""
+    workspace = TemporaryDirectory(prefix=f"{_WORK_DIR_PREFIX}{user_id}-", dir=_storage_dir())
+    try:
+        yield Path(workspace.name)
+    finally:
+        await run_blocking(workspace.cleanup)
+
+
+def purge_media_work(user_id: int | None = None) -> None:
+    """在进程启动或账户任务收敛后清理中断留下的工作目录。"""
+    owner = "*" if user_id is None else str(user_id)
+    pattern = f"{_WORK_DIR_PREFIX}{owner}-*"
+    for path in _storage_dir().glob(pattern):
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
 
 
 def _meta_path(file_id: str) -> Path:
@@ -158,6 +181,7 @@ def cleanup_expired() -> None:
 
 def purge_user(user_id: int) -> None:
     """删除该用户名下的全部临时文件（被遗忘权）。"""
+    purge_media_work(user_id)
     count = 0
     for mp, meta in _iter_meta_files():
         if meta.get("user_id") == user_id:

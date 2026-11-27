@@ -26,7 +26,6 @@ from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import resolve_language, resolve_prompt_text, utc_now
 from runtime.desktop.connection import MANAGER
-from runtime.tools.tool_result_classification import tool_may_have_effects
 from runtime.user_maintenance import user_request_scope
 
 from workflows.chat.chat_emitter import HeadlessEmitter
@@ -95,20 +94,12 @@ def _failure_reason(exc: Exception, language: str) -> str:
 
 
 def _turn_error(emitter: HeadlessEmitter, language: str) -> str | None:
-    for frame in reversed(emitter.messages):
-        if frame.get("type") == "error":
-            message = frame.get("message")
-            if isinstance(message, str) and message.strip():
-                return redact_sensitive_text(message.strip())[:_FAILURE_REASON_MAX_CHARS]
-            return _failure_reason(RuntimeError(), language)
-    return None
-
-
-def _tools_may_have_effects(emitter: HeadlessEmitter) -> bool:
-    return any(
-        message.get("type") == "tool_start" and tool_may_have_effects(message.get("name"))
-        for message in emitter.messages
-    )
+    if emitter.error_frame is None:
+        return None
+    message = emitter.error_frame.get("message")
+    if isinstance(message, str) and message.strip():
+        return redact_sensitive_text(message.strip())[:_FAILURE_REASON_MAX_CHARS]
+    return _failure_reason(RuntimeError(), language)
 
 
 async def execute_companion_turn(user_id: int, payload: dict[str, object]) -> None:
@@ -211,7 +202,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 user_message_id=message_id,
                 original_source=source,
                 error=_turn_error(emitter, language),
-                tools_started=_tools_may_have_effects(emitter),
+                tools_started=emitter.tools_may_have_effects,
             )
         )
         try:
@@ -227,7 +218,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             user_message_id=message_id,
             original_source=source,
             interrupted=True,
-            tools_started=_tools_may_have_effects(emitter),
+            tools_started=emitter.tools_may_have_effects,
         )
         raise
     except Exception as exc:
@@ -239,7 +230,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             user_message_id=message_id,
             original_source=source,
             error=_failure_reason(exc, language),
-            tools_started=_tools_may_have_effects(emitter),
+            tools_started=emitter.tools_may_have_effects,
         )
     finally:
         if reply and not delivered:

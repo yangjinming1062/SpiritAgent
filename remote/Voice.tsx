@@ -1,4 +1,4 @@
-import { IconRefresh, IconVolume2 } from '@tabler/icons-react'
+import { IconVolume2 } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -10,7 +10,7 @@ import { newRequestId } from '../shared/request-id'
 import type { RemoteApi } from './api'
 import { usePageState } from './page-state'
 import { useAlive, useTask } from './tasks'
-import { AssetSteps, Empty, FileInput, Media, Notice, PageHeader } from './ui'
+import { AssetSteps, Empty, FileInput, Media, Notice, PageHeader, RefreshButton } from './ui'
 
 type VoiceCatalog = ApiSchemas['VoicesListResponse']
 type VoicePreview = ApiSchemas['VoicePreviewResponse']
@@ -154,15 +154,7 @@ export function Voice({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               type="search"
               value={query}
             />
-            <button
-              aria-label="刷新音色"
-              className="icon-button"
-              disabled={busy}
-              onClick={() => run(load)}
-              type="button"
-            >
-              <IconRefresh size={20} />
-            </button>
+            <RefreshButton busy={busy} label="刷新音色" onClick={() => run(load)} />
           </div>
           <div className="memory-list">
             {catalog?.voices

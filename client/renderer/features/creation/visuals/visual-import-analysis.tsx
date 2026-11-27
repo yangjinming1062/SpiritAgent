@@ -1,93 +1,61 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useState } from 'react'
 
 import { MediaPreview } from '@/features/media'
 import { MediaReviewButton } from '@/features/media-review'
-import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { usePanelAction } from '@/shared/hooks/use-panel-action'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { failureText } from '@/shared/lib/ipc-error'
 import { requestResource } from '@/shared/lib/resource-request'
 import { useStrings } from '@/shared/strings'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Pill } from '@/ui'
-import type { VisualDetail } from '@protocol'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
+import { useVisualMaterialGroups } from '../../../../../shared/use-visual-material-groups'
 import {
+  type MaterialOption,
+  materialSelection,
   visualAnalysisControls,
-  visualAnalysisHasPendingMaterials,
-  visualMaterialControls,
-  visualMaterialGroups
+  visualMaterialControls
 } from '../../../../../shared/visual-materials'
-import { loadVisualMaterials, type VisualMaterialOptions } from '../../../../../shared/visuals'
 
 import { visualsApi } from './api'
 import { loadVisualDetail, refreshVisuals } from './library'
 import { VISUAL_BODY, VISUAL_FIELD, VISUAL_META } from './visual-text'
 import { $visualsUi, updateVisualsUi } from './visuals-state'
 
-export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): React.JSX.Element {
+export function VisualImportAnalysis({
+  job,
+  visualId
+}: {
+  job: ApiSchemas['ImportAnalysisView']
+  visualId: string
+}): React.JSX.Element {
   const a = useStrings().visuals.analysis
-  const job = visual.analysis
-  const { active, canContinue } = visualAnalysisControls(job)
+  const { active, review, applyResult, retry, error: jobError } = visualAnalysisControls(job)
   const { run, busy } = usePanelAction()
-  const [materials, setMaterials] = useState<VisualMaterialOptions>({ outfits: [], scenes: [], actions: [] })
-  const [error, setError] = useState('')
-  const begin = useAsyncGuard()
+  const groups = useVisualMaterialGroups(requestResource, job, captureAuthScope)
+  const error = groups.find(group => group.error)?.error
   const ui = useStore($visualsUi)
-  const notesKey = `${visual.id}:analysis`
+  const notesKey = `${visualId}:analysis`
   const notes = ui.analysisNotes?.[notesKey] ?? ''
-  const blockers = job?.result?.blocking_reasons ?? []
-  const hasPendingMaterials = visualAnalysisHasPendingMaterials(job)
-  const showCandidateReview = job?.stage === 'review_pending' && job.manual_review_available
-  const showApplyResult = job?.stage === 'confirmation' && !hasPendingMaterials
+  const blockers = job.result?.blocking_reasons ?? []
 
-  const flowHint = job
-    ? job.state === 'awaiting_input'
+  const flowHint =
+    job.state === 'awaiting_input'
       ? a.awaitingHint
-      : job.stage === 'review_pending' && job.manual_review_available
+      : review
         ? a.reviewHint
-        : job.stage === 'confirmation' && !hasPendingMaterials
+        : applyResult
           ? a.confirmationHint
           : active
             ? a.processingHint
             : null
-    : null
-
-  const materialRevision = job?.result?.components
-    .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
-    .join(',')
-
-  useEffect(() => {
-    const live = begin()
-    let current = true
-    void loadVisualMaterials({
-      outfits: () => requestResource('companion.get_outfits'),
-      scenes: cursor => requestResource('companion_scenes.scene_list_route', { query: { cursor, limit: 100 } }),
-      actions: cursor =>
-        requestResource('companion_actions.list_actions', { query: { cursor, limit: 100, group: 'in_library' } })
-    })
-      .then(value => {
-        if (current && live()) {
-          setMaterials(value)
-          setError('')
-        }
-      })
-      .catch(failure => {
-        if (current && live()) {
-          setError(failureText(failure, a.failed))
-        }
-      })
-
-    return () => {
-      current = false
-    }
-  }, [visual.id, materialRevision, begin, a.failed])
 
   const command = (body: ApiSchemas['ImportAnalysisRequest']): void => {
     void run(
       async () => {
-        await visualsApi.analyze(visual.id, { ...body, expected_revision: job?.revision })
-        await Promise.all([loadVisualDetail(visual.id, { fresh: true }), refreshVisuals()])
+        await visualsApi.analyze(visualId, { ...body, expected_revision: job.revision })
+        await Promise.all([loadVisualDetail(visualId, { fresh: true }), refreshVisuals()])
       },
       { failure: a.failed }
     )
@@ -95,14 +63,14 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
 
   return (
     <div className="space-y-4">
-      {showCandidateReview ? <MediaReviewButton jobId={job.id} /> : null}
-      {showApplyResult ? (
+      {review ? <MediaReviewButton jobId={job.id} /> : null}
+      {applyResult ? (
         <button disabled={busy} onClick={() => command({ command: 'apply_result' })} type="button">
           {a.applyResult}
         </button>
       ) : null}
 
-      {active && job ? (
+      {active ? (
         <p className={VISUAL_BODY} role="status">
           {a.stages[job.stage] ?? a.working}
         </p>
@@ -115,7 +83,7 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           ))}
         </ul>
       ) : null}
-      {visualMaterialGroups(job).map(group => (
+      {groups.map(group => (
         <section
           aria-label={a.groups[group.kind]}
           className="space-y-3 rounded-xl border border-line-hairline bg-fill-faint/40 p-4"
@@ -123,20 +91,14 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
         >
           <h3 className={VISUAL_FIELD}>{a.groups[group.kind]}</h3>
           {group.components.length === 0 ? (
-            <p className={VISUAL_META}>{!job?.result ? (active ? a.working : a.pending) : a.empty}</p>
+            <p className={VISUAL_META}>{!job.result ? (active ? a.working : a.pending) : a.empty}</p>
           ) : (
             group.components.map(component => (
               <MaterialRow
                 component={component}
-                key={`${visual.id}:${component.observation.key}`}
-                options={
-                  group.kind === 'outfit'
-                    ? materials.outfits
-                    : group.kind === 'scene'
-                      ? materials.scenes
-                      : materials.actions
-                }
-                visualId={visual.id}
+                key={`${visualId}:${component.observation.key}`}
+                options={group.options}
+                visualId={visualId}
               />
             ))
           )}
@@ -144,12 +106,12 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
       ))}
       {error ? (
         <p className="text-sm text-danger-fg" role="alert">
-          {error}
+          {failureText(error, a.failed)}
         </p>
       ) : null}
-      {job?.error && canContinue && !job.result?.components.some(component => component.status === 'failed') ? (
+      {jobError ? (
         <p className={VISUAL_BODY} role="status">
-          {job.error}
+          {jobError}
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
@@ -157,24 +119,13 @@ export function VisualImportAnalysis({ visual }: { visual: VisualDetail }): Reac
           <button className={BTN_SUBTLE} disabled={busy} onClick={() => command({ command: 'cancel' })} type="button">
             {a.cancel}
           </button>
-        ) : (
-          <>
-            {canContinue &&
-            (job?.stage !== 'review_pending' || !job.manual_review_available) &&
-            job?.stage !== 'confirmation' ? (
-              <button
-                className={BTN_SUBTLE}
-                disabled={busy}
-                onClick={() => command({ command: 'retry' })}
-                type="button"
-              >
-                {job ? a.retry : a.start}
-              </button>
-            ) : null}
-          </>
-        )}
+        ) : retry ? (
+          <button className={BTN_SUBTLE} disabled={busy} onClick={() => command({ command: 'retry' })} type="button">
+            {a.retry}
+          </button>
+        ) : null}
       </div>
-      {job?.result ? (
+      {job.result ? (
         <details className="space-y-3">
           <summary className={`cursor-pointer ${VISUAL_META}`}>{a.manage}</summary>
           <label className={`block space-y-2 ${VISUAL_BODY}`}>
@@ -210,7 +161,7 @@ function MaterialRow({
   visualId
 }: {
   component: ApiSchemas['ImportComponentView']
-  options: VisualMaterialOptions['outfits']
+  options: MaterialOption[]
   visualId: string
 }): React.JSX.Element {
   const a = useStrings().visuals.analysis
@@ -219,31 +170,14 @@ function MaterialRow({
   const chosen = ui.analysisSelections?.[key] ?? ''
   const notes = ui.analysisNotes?.[key] ?? component.notes
   const { run, busy } = usePanelAction()
-  const controls = visualMaterialControls(component)
+  const controls = visualMaterialControls(component, options)
   const disabled = busy || controls.busy
-  const linked = options.find(option => option.id === component.material_id)
-  const linkedName = linked?.name ?? component.observation.name
-
-  const previewPath = controls.linked
-    ? linked?.preview || (component.created ? component.preview_path : null)
-    : component.preview_path
 
   const choose = (command: ApiSchemas['ImportSelection']['command'], materialId?: string): void => {
     void run(
       async () => {
         try {
-          await visualsApi.analyze(visualId, {
-            command: 'apply',
-            selections: [
-              {
-                key: component.observation.key,
-                command,
-                material_id: materialId,
-                expected_component_revision: component.revision,
-                notes
-              }
-            ]
-          })
+          await visualsApi.analyze(visualId, materialSelection(component, command, notes, materialId))
         } finally {
           await Promise.all([loadVisualDetail(visualId, { fresh: true }), refreshVisuals()])
         }
@@ -255,9 +189,7 @@ function MaterialRow({
   return (
     <article aria-busy={disabled} className="space-y-3 border-t border-line-hairline pt-3">
       <div className="flex items-center gap-2">
-        <h4 className={`min-w-0 flex-1 ${VISUAL_FIELD}`}>
-          {controls.linked ? linkedName : component.observation.name}
-        </h4>
+        <h4 className={`min-w-0 flex-1 ${VISUAL_FIELD}`}>{controls.name}</h4>
         <Pill tone={component.operation_state === 'failed' ? 'warning' : controls.linked ? 'accent' : 'muted'}>
           {component.operation_state === 'running'
             ? (a.stages[component.operation_stage] ?? a.states.running)
@@ -269,8 +201,8 @@ function MaterialRow({
       ) : component.creation_method === 'generated' ? (
         <p className={VISUAL_META}>{a.generated}</p>
       ) : null}
-      {previewPath ? (
-        <MediaPreview type="image" url={previewPath}>
+      {controls.previewPath ? (
+        <MediaPreview type="image" url={controls.previewPath}>
           {({ src, status, onError }) =>
             status === 'ready' ? (
               <img

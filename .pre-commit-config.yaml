@@ -42,7 +42,7 @@ repos:
         name: check Runner dependencies and resource ownership
         entry: python scripts/check_runner_architecture.py
         language: system
-        files: ^(runner/|scripts/check_runner_architecture\.py$)
+        files: ^(runner/|scripts/(check_runner_architecture|lib/architecture)\.py$)
         pass_filenames: false
       - id: check-llm-contracts
         name: check model decision schemas and finite choices
@@ -52,9 +52,9 @@ repos:
         pass_filenames: false
       - id: check-forbidden-comments
         name: check forbidden issue tags in code comments
-        entry: '(?i)#\s*.*(P[0-9]+-[0-9]+|M-[0-9]+)'
+        entry: '(?i)(?:^|\s)(?:#|//|/\*)[^\n]*\b(?:P[0-9]+-[0-9]+|M-[0-9]+)\b'
         language: pygrep
-        types: [python, ts, tsx, javascript]
+        types_or: [python, ts, tsx, javascript]
         exclude: ^(RULES\.md|AGENTS\.md|CHANGELOG.*|\.git.*)
       - id: client-eslint-fix
         name: client eslint fix

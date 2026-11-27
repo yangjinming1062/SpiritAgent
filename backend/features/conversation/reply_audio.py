@@ -1,13 +1,12 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
-from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import client_asset_url, dated_asset_directory, save_companion_asset_async
 from infrastructure.assets.write_protection import user_asset_lock
-from infrastructure.async_io import cancel_and_wait, run_blocking, settle_task
+from infrastructure.async_io import KeyedLocks, cancel_and_wait, run_blocking, settle_task
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -22,7 +21,7 @@ from features.conversation.replies import CompanionReply, LinkBubble, MediaBubbl
 from features.media.speech import synthesize_speech
 
 logger = get_logger(__name__)
-_locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary()
+_locks = KeyedLocks[tuple[int, int]]()
 _tasks: dict[tuple[int, int], set[asyncio.Task[CompanionReply]]] = {}
 
 
@@ -138,7 +137,7 @@ async def _synthesize_reply_audio(
     （语音泡为其音频提交后，其余为轮到其顺序时）按气泡顺序回调，供调用方逐泡交付。
     """
     key = (user_id, message_id)
-    lock = _locks.setdefault(key, asyncio.Lock())
+    lock = _locks[key]
     await lock.acquire()
     try:
         async with user_asset_lock(user_id), SESSION_LOCAL() as db:

@@ -1,9 +1,7 @@
 """决定一段独处日常，或依据已有经历推进真实事项。"""
 
-import asyncio
 import json
 from typing import Any, Literal
-from weakref import WeakValueDictionary
 
 from features.accounts.queries import lock_active_user_ids, user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
@@ -66,6 +64,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.token_budget import json_tokens, material_budget
 from infrastructure.ai.user_config import UserLlmConfig, load_user_llm_config
 from infrastructure.api_ids import ResourceId
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_prompt_text, utc_now
@@ -298,7 +297,7 @@ source.mode 为 pursuit 时，draft.publication_intent 是拟议行动，JSON �
 When source.mode is pursuit, draft.publication_intent encodes the proposed action; its field names and resource ids are parameters. available_materials lists selectable assets, not the entire historical inventory. A present creative choice, personal name for an attempt, or motive need not have been worded the same way in the past. Actual results, real experiences and user agreements do need evidence. Ground user-related arrangements in real exchanges, not simulations or preferences. Record genuine turning points, results or purposes rather than technical status or repeated waiting.""",
 }
 
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 logger = get_logger(__name__)
 _LIFE_OPERATIONS = {
     "keep": "照常继续、等待或休息；无需改变生活事项。分享或个人认识仍可另行考虑",
@@ -481,7 +480,7 @@ async def consider_life(user_id: int) -> dict[str, object]:
     async with user_request_scope(user_id) as acquired:
         if not acquired:
             return {"status": "maintenance"}
-        async with _LOCKS.setdefault(user_id, asyncio.Lock()):
+        async with _LOCKS[user_id]:
             try:
                 return await _consider_life(user_id)
             except Exception:

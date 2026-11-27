@@ -78,7 +78,7 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
   const request = ++sceneIO.stateRequest
   const epoch = currentClearEpoch()
   const isCurrent = (): boolean => scope() && request === sceneIO.stateRequest && epoch === currentClearEpoch()
-  const result = await authedResource('companion_scenes.read_scene_state')
+  const result = await authedResource('companion_scenes.read_scene_state', { query: { tasks_only: true } })
 
   if (!apiSucceeded(result, 'scene', 'Scene state could not be loaded:') || !result.value) {
     return false

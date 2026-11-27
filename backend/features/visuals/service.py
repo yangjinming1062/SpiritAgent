@@ -4,9 +4,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Literal
 from uuid import uuid4
-from weakref import WeakValueDictionary
 
 from infrastructure.assets.references import asset_paths
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import current_library_work
 from infrastructure.text import ensure_utc, utc_now
@@ -54,7 +54,6 @@ from .repository import (
     notify_visuals_updated,
     playback_row,
     presentation_outfit,
-    presentation_row,
     presented_frame,
     presented_item,
     presented_version,
@@ -98,7 +97,7 @@ from .schemas import (
 )
 from .static_presentation import cancel_pending_command, restore_static_presentation
 
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 
 
 class VisualPresentationConflictError(VisualStateError):
@@ -110,7 +109,7 @@ class VisualRequestConflictError(ValueError):
 
 
 def _lock(user_id: int) -> asyncio.Lock:
-    return _LOCKS.setdefault(user_id, asyncio.Lock())
+    return _LOCKS[user_id]
 
 
 def _action_description(snapshot: VisualSnapshot) -> str:
@@ -671,7 +670,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
         presence = get_presentation_snapshot(user_id)
         if presence is None or presence.surface == "none":
             raise VisualStateError("桌面呈现上下文尚未就绪")
-        state = await presentation_row(db, user_id, lock=True)
+        state = await db.get(VisualPresentation, user_id, with_for_update=True, populate_existing=True)
         if state is None:
             return None
         if state.pending_command_json:

@@ -4,9 +4,9 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
-from weakref import WeakValueDictionary
 
 from infrastructure.assets.asset_store import compute_file_sha256, resolve_asset_reference
+from infrastructure.async_io import KeyedLocks
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
@@ -33,7 +33,7 @@ from .identity import require_visual_identity, visual_identity_is_current
 from .models import AvatarAsset, CompanionOutfit, OutfitCreationJob
 from .outfit_service import OutfitContinuationBlocked, confirm_outfit, create_outfit_draft, get_outfit_policy
 
-_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+_LOCKS = KeyedLocks[int]()
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class OutfitCreation:
 
 
 async def create_outfit_job(user_id: int, description: str, request: LifeStepRequest) -> OutfitCreation:
-    async with _LOCKS.setdefault(user_id, asyncio.Lock()), SESSION_LOCAL() as db:
+    async with _LOCKS[user_id], SESSION_LOCAL() as db:
         fingerprint = hashlib.sha256(description.encode()).hexdigest()
         job_id = await requested_job_id(db, user_id, request.idempotency_key, fingerprint)
         row = await db.get(OutfitCreationJob, job_id) if job_id is not None else None
@@ -78,7 +78,7 @@ async def create_outfit_job(user_id: int, description: str, request: LifeStepReq
 
 
 async def run_outfit_job(user_id: int, job_id: int) -> OutfitCreation:
-    async with _LOCKS.setdefault(user_id, asyncio.Lock()):
+    async with _LOCKS[user_id]:
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
                 select(OutfitCreationJob).where(OutfitCreationJob.user_id == user_id, OutfitCreationJob.id == job_id)

@@ -121,7 +121,7 @@ class TavilyWebSearchProvider(WebSearchProvider):
         try:
             logger.info("Tavily extract", extra={"url_count": len(urls)})
             raw = await self._request("extract", {"urls": urls, "include_images": False})
-            return _normalize_tavily_documents(raw, fallback_url=urls[0] if urls else "")
+            return _normalize_tavily_documents(raw, fallback_url=urls[0] if len(urls) == 1 else "")
         except Exception as exc:
             logger.warning("Tavily extract error", extra={"error_type": type(exc).__name__})
             return [_failed_document(u, "Tavily extract failed") for u in urls]

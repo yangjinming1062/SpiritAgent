@@ -38,6 +38,7 @@ class SSHEnvironment(BaseEnvironment):
         self.key_path = key_path
         self._password = password
         self._closed = False
+        self._owns_temp_dir = False
         control_dir = Path(tempfile.gettempdir()) / "spiritagent-ssh"
         control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         # 控制套接字按实例区分，防误切新连接。
@@ -48,6 +49,10 @@ class SSHEnvironment(BaseEnvironment):
                 raise RuntimeError("SSH is not installed or not in PATH. Install OpenSSH client.")
             self._askpass = self._create_askpass(control_dir)
             self._establish_connection()
+            created = self._run_ssh(f"umask 077 && mkdir {shlex.quote(self.get_temp_dir())}", timeout=10)
+            if created.returncode:
+                raise RuntimeError(f"SSH temporary directory creation failed: {created.stderr.strip()}")
+            self._owns_temp_dir = True
             self._remote_home = self._detect_remote_home()
             self._ensure_remote_dirs()
             self._sync_manager = FileSyncManager(
@@ -62,6 +67,9 @@ class SSHEnvironment(BaseEnvironment):
             self._closed = True
             self._close_connection()
             raise
+
+    def get_temp_dir(self) -> str:
+        return f"/tmp/spiritagent-{self._session_id}"
 
     def _create_askpass(self, control_dir: Path) -> Path | None:
         """密码模式生成 askpass 脚本（不含密码）；密钥认证（优先）或无密码时返回 None。"""
@@ -245,6 +253,14 @@ class SSHEnvironment(BaseEnvironment):
 
     def _close_connection(self) -> None:
         """关闭主连接并删除控制套接字与 askpass 脚本。"""
+        if self._owns_temp_dir:
+            try:
+                removed = self._run_ssh(f"rm -rf {shlex.quote(self.get_temp_dir())}", timeout=10)
+                if removed.returncode:
+                    logger.warning("SSH temporary directory cleanup failed")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                logger.warning("SSH temporary directory cleanup failed: %s", exc)
+            self._owns_temp_dir = False
         if self.control_socket.exists():
             try:
                 subprocess.run(

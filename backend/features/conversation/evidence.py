@@ -4,7 +4,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, and_, case, func, select
+from sqlalchemy import ColumnElement, Select, and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .context_window import context_visible_subtype
@@ -56,18 +56,18 @@ def _reviewable_message() -> ColumnElement[bool]:
     )
 
 
-async def review_scopes(db: AsyncSession, active_user_ids: Collection[int]) -> list[tuple[int, str]]:
-    rows = await db.execute(
-        select(Conversation.user_id, Conversation.system_preset_id)
-        .join(Message)
+def review_scopes(active_user_ids: Select[tuple[int]]) -> Select[tuple[int, str]]:
+    return select(Conversation.user_id, Conversation.system_preset_id).where(
+        Conversation.user_id.in_(active_user_ids),
+        select(Message.id)
         .where(
-            Conversation.user_id.in_(active_user_ids),
+            Message.conversation_id == Conversation.id,
             _reviewable_message(),
             Message.id > Conversation.memory_reviewed_message_id,
         )
-        .distinct()
+        .correlate(Conversation)
+        .exists(),
     )
-    return list(rows.tuples().all())
 
 
 async def review_messages(
@@ -159,17 +159,9 @@ async def latest_user_message_id(db: AsyncSession, user_id: int) -> int:
     )
 
 
-async def companion_conversation_users(db: AsyncSession, user_ids: Collection[int], preset_id: str) -> set[int]:
-    return set(
-        await db.scalars(
-            select(Conversation.user_id)
-            .where(
-                Conversation.user_id.in_(user_ids),
-                Conversation.system_preset_id == preset_id,
-                user_authored_conversation(),
-            )
-            .distinct()
-        )
+def companion_conversation_users(user_ids: Select[tuple[int]], preset_id: str) -> Select[tuple[int]]:
+    return select(Conversation.user_id).where(
+        Conversation.user_id.in_(user_ids), Conversation.system_preset_id == preset_id, user_authored_conversation()
     )
 
 

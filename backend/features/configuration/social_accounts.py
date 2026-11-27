@@ -296,7 +296,7 @@ async def _refresh_login(db: AsyncSession, row: UserSocialAccount, *, code: str 
     if row.login_revision != revision or row.login_session_id != session_id:
         await db.commit()
         raise RequestError(409, "登录会话已被替换，请重新扫码。")
-    if row.login_state == "logged_in":
+    if row.login_state in _TERMINAL_LOGIN_STATES:
         completed = _login_status(row)
         await db.commit()
         if completed is None:

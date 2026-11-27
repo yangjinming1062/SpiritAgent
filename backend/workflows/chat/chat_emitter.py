@@ -4,6 +4,7 @@ from typing import Protocol
 
 from features.conversation.replies import CompanionReply
 from infrastructure.text import safe_json_loads
+from runtime.tools.tool_result_classification import tool_may_have_effects
 
 
 class Emitter(Protocol):
@@ -72,15 +73,23 @@ def _tool_receipt(name: str, content: object) -> tuple[ToolReceiptState, str]:
 
 
 class HeadlessEmitter:
-    """无头发射器：捕获全部 ``send_json`` 帧，供子 Agent 委派、定时任务与主动陪伴回合从中取得最终结果。"""
+    """保存委派、定时与主动回合结算需要的最后答复、错误和工具证据。"""
 
     def __init__(self) -> None:
-        self.messages: list[dict] = []
+        self._final: dict = {}
+        self.error_frame: dict | None = None
+        self.tools_may_have_effects = False
         self.tool_evidence: deque[dict[str, str]] = deque(maxlen=4)
         self.tool_result_count = 0
 
     async def send_json(self, data: dict) -> None:
-        self.messages.append(data)
+        match data.get("type"):
+            case "message.complete":
+                self._final = data
+            case "error":
+                self.error_frame = data
+            case "tool_start":
+                self.tools_may_have_effects |= tool_may_have_effects(data.get("name"))
 
     def record_tool_results(self, results: list[dict]) -> None:
         for result in results:
@@ -93,33 +102,22 @@ class HeadlessEmitter:
 
     @property
     def final_text(self) -> str:
-        for message in reversed(self.messages):
-            if message.get("type") == "message.complete":
-                if "reply" in message:
-                    return message["content"]
-                return str(message.get("text") or "")
-        return ""
+        if "reply" in self._final:
+            return self._final["content"]
+        return str(self._final.get("text") or "")
 
     @property
     def final_reply(self) -> CompanionReply | None:
-        for message in reversed(self.messages):
-            if message.get("type") == "message.complete":
-                data = message.get("reply")
-                return CompanionReply.model_validate(data) if data else None
-        return None
+        reply = self._final.get("reply")
+        return CompanionReply.model_validate(reply) if reply else None
 
     @property
     def final_reply_content(self) -> str | None:
-        for message in reversed(self.messages):
-            if message.get("type") == "message.complete":
-                content = message.get("content")
-                return content if isinstance(content, str) else None
-        return None
+        content = self._final.get("content")
+        return content if isinstance(content, str) else None
 
     @property
     def error(self) -> str | None:
-        """最近一帧 error 的诊断串：``detail`` 优先，其次是面向用户的 ``message``。"""
-        for message in reversed(self.messages):
-            if message.get("type") == "error":
-                return str(message.get("detail") or message.get("message") or "LLM turn failed")
-        return None
+        if self.error_frame is None:
+            return None
+        return str(self.error_frame.get("detail") or self.error_frame.get("message") or "LLM turn failed")

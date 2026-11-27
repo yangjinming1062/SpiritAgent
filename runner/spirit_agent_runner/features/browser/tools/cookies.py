@@ -99,14 +99,27 @@ def browser_cookies_set(
         return payload
 
 
-def browser_cookies_clear(cookies: bool = True, storage: bool = True) -> dict[str, Any]:
-    """清空浏览器全部 cookie 和/或全部源的站点存储；两者都是全局操作，不限当前源。"""
+def browser_cookies_clear(
+    cookies: bool = True, storage: bool = True, storage_origin: str | None = None
+) -> dict[str, Any]:
+    """Cookie 请求作用于全部站点；存储按调用者指定的来源或全站范围清理。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_cookies_clear")
 
     with browser_session() as supervisor:
         if supervisor is None:
             return no_supervisor()
+
+        origin = "*"
+        if storage and storage_origin is not None:
+            try:
+                parts = urlsplit(storage_origin)
+                if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None:
+                    raise ValueError
+                origin = f"{parts.scheme}://{parts.netloc}"
+                parts.port  # URL 端口非法时先拒绝，避免先行清除 Cookie。
+            except (TypeError, ValueError, AttributeError):
+                return {"success": False, "error": "storage_origin must be an HTTP(S) origin.", "cleared": []}
 
         cleared: list[str] = []
         if cookies:
@@ -115,11 +128,21 @@ def browser_cookies_clear(cookies: bool = True, storage: bool = True) -> dict[st
                 return {"success": False, "error": res.get("error"), "cleared": cleared}
             cleared.append("cookies")
         if storage:
-            res = supervisor.send_cdp("Storage.clearDataForOrigin", {"origin": "*", "storageTypes": "all"})
+            types = (
+                "all"
+                if cookies
+                else "file_systems,indexeddb,local_storage,shader_cache,websql,service_workers,cache_storage,storage_buckets,other"
+            )
+            res = supervisor.send_cdp("Storage.clearDataForOrigin", {"origin": origin, "storageTypes": types})
             if not res.get("ok"):
-                return {"success": False, "error": res.get("error"), "cleared": cleared}
+                error = res.get("error", "Site storage clear failed")
+                if origin == "*":
+                    error = f"All-origin storage clear failed: {error}. To clear one site, specify storage_origin."
+                return {"success": False, "error": error, "cleared": cleared}
             cleared.append("storage")
-        return {"success": True, "cleared": cleared, "scope": "all_origins"}
+        if origin == "*":
+            return {"success": True, "cleared": cleared, "scope": "all_origins"}
+        return {"success": True, "cleared": cleared, "storage_origin": origin, "cookies_all_origins": cookies}
 
 
 def _storage_id(origin: str, kind: str) -> dict[str, Any]:
@@ -195,7 +218,9 @@ def get_tool_definitions() -> list[ToolDefinition]:
             toolset_id="browser_automation",
             schema=BROWSER_COOKIES_CLEAR_SCHEMA,
             handler=lambda _context, args: browser_cookies_clear(
-                cookies=args.get("cookies", True), storage=args.get("storage", True)
+                cookies=args.get("cookies", True),
+                storage=args.get("storage", True),
+                storage_origin=args.get("storage_origin"),
             ),
             check_fn=check_browser_cdp_requirements,
             is_async=False,

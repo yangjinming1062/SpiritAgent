@@ -13,12 +13,12 @@
 | 生活近况、事项与阅读成果 | [LifeSummary.tsx](LifeSummary.tsx)，由 [Life.tsx](Life.tsx) 装配 |
 | 资料、记忆与声音 | [Profile.tsx](Profile.tsx)、[Memory.tsx](Memory.tsx)、[memory-state.ts](memory-state.ts)、[Voice.tsx](Voice.tsx) |
 | 生活与创作入口 | [Life.tsx](Life.tsx)、[Creation.tsx](Creation.tsx) |
-| 素材、动作与影像 | [SceneLibrary.tsx](SceneLibrary.tsx)、[Wardrobe.tsx](Wardrobe.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx)、[material-options.ts](material-options.ts) |
+| 素材、动作与影像 | [SceneLibrary.tsx](SceneLibrary.tsx)、[Wardrobe.tsx](Wardrobe.tsx)、[Actions.tsx](Actions.tsx)、[Visuals.tsx](Visuals.tsx)、[VisualAnalysis.tsx](VisualAnalysis.tsx) |
 | 草稿、轮询、保存核对与媒体 | [page-state.tsx](page-state.tsx)、[tasks.ts](tasks.ts)、[asset-submission.tsx](asset-submission.tsx)、[save-result.ts](save-result.ts)、[ui.tsx](ui.tsx) |
 
 ## 请求与状态边界
 
-与 Client 共用根 `shared/` 的生成契约、HTTP、WS 核心及中性文案／错误归类，不导入 Electron 桥、桌面 store 或窗口组件。业务操作经 `RemoteApi.invoke`，适配层管理同源 Cookie、CSRF、撤销与登录失效；切换身份先废弃旧请求，迟到结果不得更新新账户。HTTP 操作不依赖 WS 当前是否在线。实时通话复用 `/api/realtime_voice/{session_id}` 协议和一次性票据，浏览器使用 AudioWorklet 将麦克风重采样为 24 kHz PCM 并播放服务端 PCM 帧；与桌面共享根 shared 的通话页与 AudioWorklet。页面切换、退到后台、身份失效和连接关闭会停止采集、清空播放队列并释放音频设备。
+与 Client 共用根 `shared/` 的生成契约、HTTP、WS 核心及中性文案／错误归类，不导入 Electron 桥、桌面 store 或窗口组件。业务操作经 `RemoteApi.invoke`，适配层管理同源 Cookie、CSRF、撤销与登录失效；同页扫码保留当前连接直到兑换成功，兑换和退出串行更新 Cookie。换号后关闭原连接、清理旧设备的待提交和取消记录，迟到结果不得更新新账户。HTTP 操作不依赖 WS 当前是否在线。实时通话复用 `/api/realtime_voice/{session_id}` 协议和一次性票据，浏览器使用 AudioWorklet 将麦克风重采样为 24 kHz PCM 并播放服务端 PCM 帧；与桌面共享根 shared 的通话页与 AudioWorklet。页面切换、退到后台、身份失效和连接关闭会停止采集、清空播放队列并释放音频设备。
 
 `RemoteGateway` 只协调事件、连接状态和会话快照。聊天先缓冲事件再应用基线，按水位合并；重放成功保留已有基线，失效才回源。未确认提交保留请求身份并先查询回执，不能借重连重复提交。话题反馈按会话去重和分批读取，同一话题共用反馈与保存状态。创作事件按当前分区刷新。环境、动作和影像库通过 [library-pages.ts](library-pages.ts) 重读同一筛选下已展开的页数，读取成功后一起替换列表和游标。
 

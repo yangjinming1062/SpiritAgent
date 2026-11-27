@@ -5,10 +5,10 @@ from collections.abc import Awaitable, Callable
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 
-from features.jobs.service import owned_job_kind
+from features.jobs.service import owned_job_control, owned_job_kind
 
-from .continuations import available_media_actions
-from .review_views import MediaJobView
+from .continuations import available_media_actions, continue_manual_outfit_waits
+from .review_views import MediaContinueRequest, MediaJobView
 
 type ReviewQuery = Callable[[int, int], Awaitable[MediaJobView]]
 _HANDLERS: dict[str, ReviewQuery] = {}
@@ -38,3 +38,20 @@ async def query_media_job(user_id: int, job_id: int) -> MediaJobView:
     if view.kind == "outfit.create" and view.state == "paused" and view.stage == "confirmation":
         view.continuation_actions = await available_media_actions(user_id, job_id)
     return view
+
+
+async def continue_media_job(user_id: int, job_id: int, request: MediaContinueRequest) -> MediaJobView:
+    async with SESSION_LOCAL() as db:
+        job = await owned_job_control(db, user_id, job_id, lock=True)
+        if job is None or job.kind not in _HANDLERS:
+            raise RequestError(status_code=404, message="找不到可检查的媒体任务")
+        if job.revision != request.expected_revision:
+            raise RequestError(status_code=409, message="任务状态已变化，请刷新")
+        awaiting_save = (job.kind, job.state, job.stage) == ("outfit.create", "paused", "confirmation")
+        if not awaiting_save or not await continue_manual_outfit_waits(db, user_id, job_id):
+            raise RequestError(status_code=409, message="当前任务没有这项可用操作")
+        await db.commit()
+    updated = await query_media_job(user_id, job_id)
+    if updated.revision == request.expected_revision and updated.state == "paused":
+        raise RequestError(status_code=409, message="原授权或检查条件尚不满足，结果已保留")
+    return updated

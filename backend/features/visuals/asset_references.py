@@ -3,13 +3,14 @@
 import json
 from datetime import timedelta
 
+from infrastructure.models import id_in
 from infrastructure.text import utc_now
 from sqlalchemy import delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from features.assets.references import scanned_asset_paths
-from features.assets.service import asset_paths_for_ids
+from features.assets.service import referenced_asset_paths
 from features.life.queries import referenced_visual_versions
 
 from .eligibility import automatic_media_ready
@@ -25,8 +26,8 @@ from .schemas import PresentedVisual, StageComposition, VisualSnapshot
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    ids = list(await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)))
-    paths = await asset_paths_for_ids(db, user_id, ids)
+    ids = select(VisualVersionAsset.asset_id).where(VisualVersionAsset.user_id == user_id)
+    paths = await referenced_asset_paths(db, user_id, ids)
     paths |= await scanned_asset_paths(
         db,
         user_id,
@@ -180,17 +181,15 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
         unused = unused.where(tuple_(VisualVersion.visual_id, VisualVersion.number).not_in(protected))
     automatic = await _automatic_version_ids(db, user_id)
     if automatic:
-        unused = unused.where(VisualVersion.id.not_in(automatic))
+        unused = unused.where(~id_in(VisualVersion.id, automatic))
     versions = list(await db.scalars(unused.with_for_update()))
     if not versions:
         return set()
-    asset_ids = list(
-        await db.scalars(select(VisualVersionAsset.asset_id).where(VisualVersionAsset.version_id.in_(versions)))
-    )
-    paths = await asset_paths_for_ids(db, user_id, asset_ids)
+    asset_ids = select(VisualVersionAsset.asset_id).where(id_in(VisualVersionAsset.version_id, versions))
+    paths = await referenced_asset_paths(db, user_id, asset_ids)
     await db.execute(
         delete(VisualVersion).where(
-            VisualVersion.id.in_(versions), VisualVersion.id.not_in(referenced_visual_versions(user_id))
+            id_in(VisualVersion.id, versions), VisualVersion.id.not_in(referenced_visual_versions(user_id))
         )
     )
     return paths

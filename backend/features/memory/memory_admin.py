@@ -233,9 +233,7 @@ async def update_memory(
     return result
 
 
-async def memory_counts(
-    db: AsyncSession, scope: MemoryScope, *, kind: str | None = None, status: str = "active", q: str | None = None
-) -> dict[str, int]:
+async def memory_counts(db: AsyncSession, scope: MemoryScope) -> dict[str, int]:
     recall = Memory.kind == "recall"
     filters = {
         "active": and_(recall, _status_condition("active")),

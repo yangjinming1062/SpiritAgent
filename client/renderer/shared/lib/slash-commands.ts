@@ -9,18 +9,7 @@ import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import { requestResource } from './resource-request'
 
-export interface SlashCommandMeta {
-  /** 主名（小写，无前导 /）。 */
-  name: string
-  /** 别名数组（命中同一命令）。 */
-  aliases: readonly string[]
-  /** 给自动补全弹层与 /帮助 展示的描述。 */
-  description: string
-  /** 是否需要前端二次确认弹窗（固定预设对话尤其重要）。 */
-  requiresConfirmation: boolean
-}
-
-type ServerCommandEntry = ApiSchemas['CommandSummary']
+export type SlashCommandMeta = ApiSchemas['CommandSummary']
 
 // 启动前与账户清理后为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
 export const $slashCommandMeta = atom<readonly SlashCommandMeta[]>([])
@@ -32,23 +21,9 @@ registerStorageClearHandler(() => {
   $slashCommandMeta.set([])
 })
 
-function normalizeServerEntry(entry: ServerCommandEntry): SlashCommandMeta {
-  return {
-    name: entry.name,
-    aliases: entry.aliases ?? [],
-    description: entry.description ?? '',
-    requiresConfirmation: Boolean(entry.requires_confirmation)
-  }
-}
-
 /** 按名（已剥离前导 /，小写）查 SlashCommandMeta；atom 未加载时返回 undefined。 */
 function getLocalSlashMeta(name: string): SlashCommandMeta | undefined {
   return $slashCommandMeta.get().find(cmd => cmd.name === name || cmd.aliases.includes(name))
-}
-
-/** 列出所有命令（无别名重复），按 name 排序。 */
-function listLocalSlashCommands(): SlashCommandMeta[] {
-  return $slashCommandMeta.get().toSorted((a, b) => a.name.localeCompare(b.name))
 }
 
 interface ParsedSlashInput {
@@ -116,8 +91,8 @@ function fuzzyScore(query: string, target: string): number {
 }
 
 /** 按 query 模糊过滤命令列表，按得分降序；主名+别名+description 取最高分。 */
-export function fuzzyFilterCommands(query: string, limit = 8): SlashCommandMeta[] {
-  const cmds = listLocalSlashCommands()
+export function fuzzyFilterCommands(query: string, limit = 8): readonly SlashCommandMeta[] {
+  const cmds = $slashCommandMeta.get()
 
   if (!query) {
     return cmds
@@ -157,7 +132,7 @@ export async function fetchSlashCommandMeta(): Promise<void> {
   const load = requestResource('resource_catalog.get_commands')
     .then(res => {
       if (authCurrent()) {
-        $slashCommandMeta.set((res.commands ?? []).map(normalizeServerEntry))
+        $slashCommandMeta.set(res.commands.toSorted((a, b) => a.name.localeCompare(b.name)))
       }
     })
     .catch(error => {

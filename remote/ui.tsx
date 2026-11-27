@@ -1,3 +1,4 @@
+import { IconRefresh } from '@tabler/icons-react'
 import type { ReactElement, ReactNode, Ref } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -38,6 +39,22 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
       <h3>{title}</h3>
       {children ? <p>{children}</p> : null}
     </div>
+  )
+}
+
+export function RefreshButton({
+  label,
+  busy,
+  onClick
+}: {
+  label: string
+  busy: boolean
+  onClick: () => void
+}): ReactElement {
+  return (
+    <button aria-label={label} className="icon-button" disabled={busy} onClick={onClick} type="button">
+      <IconRefresh size={20} />
+    </button>
   )
 }
 

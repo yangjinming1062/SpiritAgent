@@ -6,11 +6,11 @@ from typing import Any, Literal
 
 from infrastructure.pagination import decode_timestamp_cursor, encode_timestamp_cursor
 from infrastructure.text import ensure_utc
-from sqlalchemy import ColumnElement, Row, Select, func, or_, select, tuple_
+from sqlalchemy import ColumnElement, Row, Select, case, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.assets.service import asset_paths_for_ids, asset_paths_in_session
+from features.assets.service import asset_paths_in_session, referenced_asset_paths
 
 from .contracts import CommentView, EntryError, EntryView
 from .models import CompanionEntry, EntryAsset, EntryComment, EntryLink
@@ -51,7 +51,9 @@ def entry_view(
 def entry_query() -> Select[Any]:
     assets = (
         select(func.jsonb_agg(func.jsonb_build_array(EntryAsset.role, EntryAsset.asset_id)))
-        .where(EntryAsset.entry_id == CompanionEntry.id, EntryAsset.position == 0)
+        .where(
+            EntryAsset.entry_id == CompanionEntry.id, EntryAsset.role.in_(("main", "audio")), EntryAsset.position == 0
+        )
         .correlate(CompanionEntry)
         .scalar_subquery()
     )
@@ -73,7 +75,7 @@ def entry_query() -> Select[Any]:
 
 async def _entry_views(db: AsyncSession, user_id: int, rows: Sequence[Row[Any]]) -> list[EntryView]:
     asset_ids = {int(asset_id) for row in rows for _, asset_id in (row.assets or [])}
-    paths = await asset_paths_in_session(db, user_id, asset_ids) if asset_ids else {}
+    paths = await asset_paths_in_session(db, user_id, asset_ids)
     result = []
     for row in rows:
         roles = {role: paths.get(int(asset_id)) for role, asset_id in (row.assets or [])}
@@ -106,14 +108,16 @@ async def list_posts(
     db: AsyncSession, user_id: int, *, cursor: str | None = None, limit: int = 20
 ) -> tuple[list[EntryView], str | None, list[int]]:
     unread = (
-        select(func.array_agg(CompanionEntry.id))
-        .where(CompanionEntry.user_id == user_id, CompanionEntry.kind == "post", CompanionEntry.is_read.is_(False))
+        _unread_entries(user_id, "post")
+        .with_only_columns(func.array_agg(CompanionEntry.id))
         .correlate(None)
         .scalar_subquery()
     )
+    order = (CompanionEntry.published_at.desc(), CompanionEntry.id.desc())
+    # 本页与未读 ID 共用快照，未读集合只随首行传输。
     statement = (
         entry_query()
-        .add_columns(unread.label("unread_ids"))
+        .add_columns(case((func.row_number().over(order_by=order) == 1, unread)).label("unread_ids"))
         .where(CompanionEntry.user_id == user_id, CompanionEntry.kind == "post")
     )
     if cursor is not None:
@@ -124,17 +128,10 @@ async def list_posts(
         statement = statement.where(
             tuple_(CompanionEntry.published_at, CompanionEntry.id) < (ensure_utc(stamp), row_id)
         )
-    raw_rows = list(
-        (
-            await db.execute(
-                statement.order_by(CompanionEntry.published_at.desc(), CompanionEntry.id.desc()).limit(limit + 1)
-            )
-        ).all()
-    )
+    raw_rows = (await db.execute(statement.order_by(*order).limit(limit + 1))).all()
     unread_ids = list(raw_rows[0].unread_ids or ()) if raw_rows else []
-    rows = await _entry_views(db, user_id, raw_rows)
-    more = len(rows) > limit
-    rows = rows[:limit]
+    more = len(raw_rows) > limit
+    rows = await _entry_views(db, user_id, raw_rows[:limit])
     next_cursor = encode_timestamp_cursor(rows[-1].published_at, rows[-1].id) if more else None
     return rows, next_cursor, unread_ids
 
@@ -159,25 +156,18 @@ async def diary_for_date(db: AsyncSession, user_id: int, entry_date: date) -> En
     return rows[0] if rows else None
 
 
-async def unread_entry_ids(db: AsyncSession, user_id: int, kind: Literal["post", "diary"]) -> list[int]:
-    return list(
-        await db.scalars(
-            select(CompanionEntry.id).where(
-                CompanionEntry.user_id == user_id, CompanionEntry.kind == kind, CompanionEntry.is_read.is_(False)
-            )
-        )
+def _unread_entries(user_id: int, kind: Literal["post", "diary"]) -> Select[tuple[int]]:
+    return select(CompanionEntry.id).where(
+        CompanionEntry.user_id == user_id, CompanionEntry.kind == kind, CompanionEntry.is_read.is_(False)
     )
+
+
+async def unread_entry_ids(db: AsyncSession, user_id: int, kind: Literal["post", "diary"]) -> list[int]:
+    return list(await db.scalars(_unread_entries(user_id, kind)))
 
 
 async def has_unread_entries(db: AsyncSession, user_id: int, kind: Literal["post", "diary"]) -> bool:
-    return (
-        await db.scalar(
-            select(CompanionEntry.id)
-            .where(CompanionEntry.user_id == user_id, CompanionEntry.kind == kind, CompanionEntry.is_read.is_(False))
-            .limit(1)
-        )
-        is not None
-    )
+    return await db.scalar(_unread_entries(user_id, kind).limit(1)) is not None
 
 
 async def selected_posts(db: AsyncSession, user_id: int, ids: Sequence[int]) -> dict[int, EntryView]:
@@ -302,5 +292,5 @@ def eligible_reply() -> ColumnElement[bool]:
 
 
 async def entry_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
-    ids = list(await db.scalars(select(EntryAsset.asset_id).where(EntryAsset.user_id == user_id).distinct()))
-    return await asset_paths_for_ids(db, user_id, ids)
+    ids = select(EntryAsset.asset_id).where(EntryAsset.user_id == user_id)
+    return await referenced_asset_paths(db, user_id, ids)

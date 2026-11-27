@@ -1,20 +1,16 @@
 """原件采样、实际像素提取和轻量视觉检索；不生成或补画内容。"""
 
-import hashlib
 import io
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import numpy as np
-from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference, save_companion_asset_async
-from infrastructure.async_io import run_blocking
-from infrastructure.video_processing.actor_clip import prepare_actor_clip
+from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference
 from infrastructure.video_processing.desktop import sample_desktop_video_frames
 from PIL import Image, ImageOps
 
-from .schemas import ActorClipBody, VisualAsset
+from .actor_asset import prepare_actor_asset
+from .schemas import VisualAsset
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,46 +144,4 @@ async def prepare_imported_actor(reference: str, user_id: int, job_id: int) -> V
     resolved = resolve_asset_reference(reference)
     if resolved is None:
         raise ValueError("原始主体视频缺失")
-    directory = f"visuals/analysis/{job_id}"
-    with TemporaryDirectory(prefix="import-actor-", dir=resolved[0].parent) as temporary:
-        root = Path(temporary)
-        media = await run_blocking(
-            prepare_actor_clip,
-            resolved[0],
-            dst=root / "clip.webm",
-            poster_dst=root / "poster.webp",
-            mask_dst=root / "mask.json",
-            first_frame_dst=root / "first.png",
-            last_frame_dst=root / "last.png",
-            preserve_alpha=True,
-        )
-        paths = {}
-        for role, path in (
-            ("video", media.video_path),
-            ("poster", media.poster_path),
-            ("mask", media.mask_path),
-            ("first", media.first_frame_path),
-            ("last", media.last_frame_path),
-        ):
-            data = await run_blocking(path.read_bytes)
-            paths[role] = await save_companion_asset_async(
-                data, user_id=user_id, label=f"actor_{role}", ext=path.suffix[1:], directory=directory
-            )
-        first = await run_blocking(media.first_frame_path.read_bytes)
-    return VisualAsset(
-        media_kind="video",
-        media_path=paths["video"],
-        poster_path=paths["poster"],
-        width=media.width,
-        height=media.height,
-        duration_ms=media.duration_ms,
-        body=ActorClipBody(
-            mask_path=paths["mask"],
-            first_frame_path=paths["first"],
-            last_frame_path=paths["last"],
-            foot_anchor=media.foot_anchor,
-            body_bounds=media.body_bounds,
-            hit_bounds=media.hit_bounds,
-            continuity_key=hashlib.sha256(first).hexdigest(),
-        ),
-    )
+    return await prepare_actor_asset(resolved[0], user_id, f"visuals/analysis/{job_id}", preserve_alpha=True)

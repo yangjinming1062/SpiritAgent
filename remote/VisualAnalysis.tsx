@@ -1,16 +1,16 @@
-import type { ReactElement } from 'react'
+import { type ReactElement, useMemo } from 'react'
 
 import type { ApiSchemas } from '../shared/api.generated'
+import { useVisualMaterialGroups } from '../shared/use-visual-material-groups'
 import {
+  type MaterialOption,
+  materialSelection,
   visualAnalysisControls,
   visualMaterialControls,
-  visualMaterialCopy,
-  visualMaterialGroups
+  visualMaterialCopy
 } from '../shared/visual-materials'
-import type { VisualMaterialOptions } from '../shared/visuals'
 
-import type { RemoteApi } from './api'
-import { useMaterialOptions } from './material-options'
+import { errorText, type RemoteApi } from './api'
 import { MediaReviewButton } from './MediaReviewButton'
 import { usePageState } from './page-state'
 import { useTask } from './tasks'
@@ -20,43 +20,43 @@ const a = visualMaterialCopy.zh
 
 export function VisualAnalysis({
   api,
-  visual,
+  visualId,
+  job,
   onChanged
 }: {
   api: RemoteApi
-  visual: ApiSchemas['VisualDetailView']
+  visualId: string
+  job: ApiSchemas['ImportAnalysisView']
   onChanged: () => Promise<void>
 }): ReactElement {
   const { run, busy, error } = useTask()
-  const job = visual.analysis
-  const { active, canContinue } = visualAnalysisControls(job)
-  const [notes, setNotes] = usePageState(`visuals.analysisNotes.${visual.id}`, '')
-  const blockers = job?.result?.blocking_reasons ?? []
+  const { active, review, applyResult, retry, error: jobError } = visualAnalysisControls(job)
+  const [notes, setNotes] = usePageState(`visuals.analysisNotes.${visualId}`, '')
+  const blockers = job.result?.blocking_reasons ?? []
   const showBlockers = !blockers.some(block => block.code === 'materials_incomplete')
-  const materialRevision = job?.result?.components
-    .map(row => `${row.material_id}:${row.status}:${row.operation_state}`)
-    .join(',')
-  const { materials, error: materialError } = useMaterialOptions(api, true, materialRevision)
+  const read = useMemo(() => api.invoke.bind(api), [api])
+  const groups = useVisualMaterialGroups(read, job)
+  const materialError = groups.find(group => group.error)?.error
 
   const command = (body: ApiSchemas['ImportAnalysisRequest']): void => {
     void run(async () => {
       await api.invoke('companion_visuals.analyze_visual', {
-        path: { visual_id: visual.id },
-        body: { ...body, expected_revision: job?.revision }
+        path: { visual_id: visualId },
+        body: { ...body, expected_revision: job.revision }
       })
       await onChanged()
     })
   }
   return (
     <div className="visual-materials">
-      {job?.stage === 'review_pending' ? <MediaReviewButton api={api} jobId={job.id} /> : null}
-      {job?.stage === 'confirmation' ? (
+      {review ? <MediaReviewButton api={api} jobId={job.id} /> : null}
+      {applyResult ? (
         <button disabled={busy} onClick={() => command({ command: 'apply_result' })} type="button">
           应用分析结果
         </button>
       ) : null}
 
-      {active && job && (
+      {active && (
         <p className="muted" role="status">
           {a.stages[job.stage] ?? a.working}
         </p>
@@ -68,36 +68,30 @@ export function VisualAnalysis({
           ))}
         </ul>
       )}
-      {visualMaterialGroups(job).map(group => (
+      {groups.map(group => (
         <section aria-label={a.groups[group.kind]} className="card" key={group.kind}>
           <h3>{a.groups[group.kind]}</h3>
           {group.components.length === 0 ? (
-            <p className="muted">{!job?.result ? (active ? a.working : a.pending) : a.empty}</p>
+            <p className="muted">{!job.result ? (active ? a.working : a.pending) : a.empty}</p>
           ) : (
             group.components.map(component => (
               <MaterialRow
                 api={api}
                 component={component}
-                key={`${visual.id}:${component.observation.key}`}
+                key={`${visualId}:${component.observation.key}`}
                 onChanged={onChanged}
-                options={
-                  group.kind === 'outfit'
-                    ? materials.outfits
-                    : group.kind === 'scene'
-                      ? materials.scenes
-                      : materials.actions
-                }
-                visualId={visual.id}
+                options={group.options}
+                visualId={visualId}
               />
             ))
           )}
         </section>
       ))}
-      {materialError && <Notice error={materialError} />}
+      {materialError ? <Notice error={errorText(materialError)} /> : null}
       {error && <Notice error={error} />}
-      {job?.error && canContinue && !job.result?.components.some(component => component.status === 'failed') && (
+      {jobError && (
         <p className="muted" role="status">
-          {job.error}
+          {jobError}
         </p>
       )}
       <div className="button-row">
@@ -105,17 +99,13 @@ export function VisualAnalysis({
           <button disabled={busy} onClick={() => command({ command: 'cancel' })} type="button">
             {a.cancel}
           </button>
-        ) : (
-          <>
-            {canContinue && job?.stage !== 'review_pending' && job?.stage !== 'confirmation' && (
-              <button disabled={busy} onClick={() => command({ command: 'retry' })} type="button">
-                {job ? a.retry : a.start}
-              </button>
-            )}
-          </>
-        )}
+        ) : retry ? (
+          <button disabled={busy} onClick={() => command({ command: 'retry' })} type="button">
+            {a.retry}
+          </button>
+        ) : null}
       </div>
-      {job?.result && (
+      {job.result && (
         <details>
           <summary>{a.manage}</summary>
           <label>
@@ -140,7 +130,7 @@ function MaterialRow({
 }: {
   api: RemoteApi
   component: ApiSchemas['ImportComponentView']
-  options: VisualMaterialOptions['outfits']
+  options: MaterialOption[]
   visualId: string
   onChanged: () => Promise<void>
 }): ReactElement {
@@ -148,30 +138,14 @@ function MaterialRow({
   const [chosen, setChosen] = usePageState(`visuals.materialSelection.${key}`, '')
   const [notes, setNotes] = usePageState(`visuals.materialNotes.${key}`, component.notes)
   const { run, busy, error } = useTask()
-  const controls = visualMaterialControls(component)
+  const controls = visualMaterialControls(component, options)
   const disabled = busy || controls.busy
-  const linked = options.find(option => option.id === component.material_id)
-  const linkedName = linked?.name ?? component.observation.name
-  const previewPath = controls.linked
-    ? linked?.preview || (component.created ? component.preview_path : null)
-    : component.preview_path
   const choose = (command: ApiSchemas['ImportSelection']['command'], materialId?: string): void => {
     void run(async () => {
       try {
         await api.invoke('companion_visuals.analyze_visual', {
           path: { visual_id: visualId },
-          body: {
-            command: 'apply',
-            selections: [
-              {
-                key: component.observation.key,
-                command,
-                material_id: materialId,
-                expected_component_revision: component.revision,
-                notes
-              }
-            ]
-          }
+          body: materialSelection(component, command, notes, materialId)
         })
       } finally {
         await onChanged()
@@ -181,7 +155,7 @@ function MaterialRow({
   return (
     <article aria-busy={disabled} className="card-divider">
       <div className="card-title">
-        <h4>{controls.linked ? linkedName : component.observation.name}</h4>
+        <h4>{controls.name}</h4>
         <span className="pill">
           {component.operation_state === 'running'
             ? (a.stages[component.operation_stage] ?? a.states.running)
@@ -193,7 +167,7 @@ function MaterialRow({
       ) : component.creation_method === 'generated' ? (
         <p className="muted">{a.generated}</p>
       ) : null}
-      {previewPath && <Media type="image" url={previewPath} />}
+      {controls.previewPath && <Media type="image" url={controls.previewPath} />}
       {controls.notice && (
         <p className="muted" role="status">
           {component.failure_summary || (controls.confirmation ? component.reason : a.notices[controls.notice])}

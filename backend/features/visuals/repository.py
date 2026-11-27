@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.references import asset_paths
+from infrastructure.database import get_or_create_user_row
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
 from runtime.presentation import visual_surface_accepts
@@ -239,30 +240,8 @@ async def publication_rows(db: AsyncSession, user_id: int, job_id: int) -> tuple
     return row[0], row[1]
 
 
-async def presentation_row(
-    db: AsyncSession, user_id: int, *, create: bool = False, lock: bool = False
-) -> VisualPresentation | None:
-    if not lock:
-        existing = await db.get(VisualPresentation, user_id)
-        if existing is not None or not create:
-            return existing
-    if create:
-        await db.execute(
-            insert(VisualPresentation).values(user_id=user_id).on_conflict_do_nothing(index_elements=["user_id"])
-        )
-    query = select(VisualPresentation).where(VisualPresentation.user_id == user_id)
-    if lock:
-        query = query.with_for_update()
-    return await db.scalar(query.execution_options(populate_existing=True))
-
-
 async def require_presentation_row(db: AsyncSession, user_id: int, *, lock: bool = False) -> VisualPresentation:
-    """写入路径取账户呈现行，不存在时创建；返回的行必定可用。"""
-
-    row = await presentation_row(db, user_id, create=True, lock=lock)
-    if row is None:
-        raise VisualStateError("呈现状态不可用，请稍后重试")
-    return row
+    return await get_or_create_user_row(db, VisualPresentation, user_id, lock=lock)
 
 
 async def playback_row(db: AsyncSession, user_id: int, play_id: str) -> VisualPlayback:
@@ -296,9 +275,7 @@ async def touch_presentation(db: AsyncSession, user_id: int) -> VisualPresentati
 async def notify_visuals_updated(db: AsyncSession, user_id: int) -> None:
     """库与工作项变化只通知刷新，不推进呈现修订，避免打断在途播放校验。"""
 
-    state = await db.get(VisualPresentation, user_id)
-    if state is None:
-        state = await require_presentation_row(db, user_id)
+    state = await require_presentation_row(db, user_id)
     emit_ws_event(db, user_id=user_id, event_type="companion.visual.updated", payload={"version": state.state_revision})
 
 
@@ -320,9 +297,7 @@ async def dispatch_play_command(
     presentation = get_presentation_snapshot(user_id)
     if presentation is None or not visual_surface_accepts(presentation.surface, item.asset_kind):
         raise VisualStateError("请在对应的呈现界面播放此影像")
-    state = await db.get(VisualPresentation, user_id)
-    if state is None:
-        state = await require_presentation_row(db, user_id)
+    state = await require_presentation_row(db, user_id)
     revision = state.state_revision + 1
     now = utc_now()
     media_kind: VisualMediaKind = "image" if item.media_kind == "image" else "video"

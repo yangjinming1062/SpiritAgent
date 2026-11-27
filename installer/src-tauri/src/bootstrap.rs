@@ -389,7 +389,6 @@ fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
     }
 }
 
-// manifest 可能多行 JSON，给更大截断窗口
 const MANIFEST_PREVIEW_CHARS: usize = 4000;
 
 fn truncate(s: &str, max: usize) -> String {

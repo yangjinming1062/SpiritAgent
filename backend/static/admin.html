@@ -95,7 +95,7 @@
                             <ol class="step-list">
                                 <li>准备部署密钥与 known_hosts，放入仓库旁的 <code>deploy/</code> 目录（只读挂载）。</li>
                                 <li>在 <code>backend/.env</code> 填写 <code>UPDATER_REPO_DIR</code>（仓库绝对路径）等变量。</li>
-                                <li>执行 <code>docker compose --profile updater up -d --build updater</code>。</li>
+                                <li>执行 <code>docker compose up -d --build updater</code>。</li>
                             </ol>
                             <p class="hint">详细步骤与首次上线说明见 backend/README「服务更新」。</p>
                         </div>
