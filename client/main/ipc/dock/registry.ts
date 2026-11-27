@@ -4,7 +4,7 @@ import path from 'node:path'
 import { shell } from 'electron'
 
 import { atomicWriteFile, safeReadJson } from '../../shared/utils'
-import { isMacosApplicationTarget, validateMacosApplicationTarget } from '../macos-application-target'
+import { isMacosApplicationTarget } from '../macos-application-target'
 import { isPackagedAppTarget, isShellNamespaceTarget } from '../windows-installed-apps'
 
 export interface SavedDockEntry {
@@ -110,20 +110,4 @@ export function loadSavedEntries(userData: string): SavedDockEntry[] {
 
 export async function saveEntries(userData: string, entries: SavedDockEntry[]): Promise<void> {
   await atomicWriteFile(path.join(userData, 'desktop-dock.json'), JSON.stringify({ entries }))
-}
-
-export async function validatedSelection(selection: DockSelection): Promise<DockSelection> {
-  if (process.platform === 'darwin') {
-    const application = await validateMacosApplicationTarget(selection.target)
-
-    return { target: application.path, name: application.name || selection.name }
-  }
-
-  if (isShellNamespaceTarget(selection.target)) {
-    return selection
-  }
-
-  await validateFileTarget(selection.target)
-
-  return selection
 }

@@ -24,7 +24,6 @@ import {
   type SavedDockEntry,
   saveEntries,
   targetIdentity,
-  validatedSelection,
   validateFileTarget
 } from './dock/registry'
 import { createRunningRegistry, type RunningDockApplication, windowsFor } from './dock/running'
@@ -32,6 +31,12 @@ import { isMacosApplicationTarget, validateMacosApplicationTarget } from './maco
 import { type InstalledApplication, isPackagedAppTarget, isShellNamespaceTarget } from './windows-installed-apps'
 
 type DockProjection = Pick<DockEntry, 'icon' | 'status' | 'error'>
+
+interface ValidatedDockTarget {
+  target: string
+  name?: string
+  iconPath?: string | null
+}
 
 export function registerDesktopDock(options: {
   ipcMain: IpcMain
@@ -144,49 +149,52 @@ export function registerDesktopDock(options: {
     return item
   }
 
-  async function validateTarget(target: string): Promise<InstalledApplication | null> {
+  async function validateTarget(target: string): Promise<ValidatedDockTarget> {
     if (process.platform === 'darwin') {
-      await validateMacosApplicationTarget(target)
+      const application = await validateMacosApplicationTarget(target)
 
-      return null
-    }
-
-    if (isShellNamespaceTarget(target)) {
-      return null
+      return { target: application.path, name: application.name }
     }
 
     if (isPackagedAppTarget(target)) {
       return requirePackagedApplication(target)
     }
 
-    await validateFileTarget(target)
+    if (!isShellNamespaceTarget(target)) {
+      await validateFileTarget(target)
+    }
 
-    return null
+    return { target }
+  }
+
+  async function validateSelection(selection: DockSelection): Promise<DockSelection> {
+    const application = await validateTarget(selection.target)
+
+    return { target: application.target, name: application.name || selection.name }
   }
 
   async function project(entry: SavedDockEntry): Promise<DockProjection> {
-    let status: DockEntry['status'] = 'ready'
-    let error: string | undefined
-    let application: InstalledApplication | null = null
+    let application: ValidatedDockTarget
 
     try {
       application = await validateTarget(entry.target)
     } catch (cause) {
-      status = (cause as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid'
-      error = cause instanceof Error ? cause.message : '程序不可用。'
+      return {
+        icon: null,
+        status: (cause as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid',
+        error: cause instanceof Error ? cause.message : '程序不可用。'
+      }
     }
 
     let icon: string | null = null
 
-    if (status === 'ready') {
-      try {
-        icon = await applicationIcon(entry.target, application?.iconPath)
-      } catch {
-        /* 图标失败保留程序启动能力。 */
-      }
+    try {
+      icon = await applicationIcon(entry.target, application.iconPath)
+    } catch {
+      /* 图标失败保留程序启动能力。 */
     }
 
-    return { icon, status, ...(error ? { error } : {}) }
+    return { icon, status: 'ready' }
   }
 
   function projection(entry: SavedDockEntry): DockProjection {
@@ -400,7 +408,7 @@ export function registerDesktopDock(options: {
     const registered = next.map(entry => targetIdentity(entry.target))
 
     for (const original of selections) {
-      const selection = await validatedSelection(original)
+      const selection = await validateSelection(original)
       const identity = targetIdentity(selection.target)
 
       if (!registered.some(target => sameApplicationTarget(target, identity))) {
@@ -505,7 +513,7 @@ export function registerDesktopDock(options: {
   }
 
   async function repairTo(entry: SavedDockEntry, original: DockSelection): Promise<DockState> {
-    const selection = await validatedSelection(original)
+    const selection = await validateSelection(original)
     const identity = targetIdentity(selection.target)
 
     if (entries.some(item => item.id !== entry.id && sameApplicationTarget(targetIdentity(item.target), identity))) {
@@ -832,7 +840,7 @@ export function registerDesktopDock(options: {
         ? { target: item.launchTarget, name: item.name }
         : { target: application.target, name: application.name }
 
-      const validated = await validatedSelection(selection)
+      const validated = await validateSelection(selection)
 
       if (
         !eligible.current() ||
