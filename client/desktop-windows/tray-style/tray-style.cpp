@@ -43,7 +43,8 @@ using Inspectable = wf::IInspectable;
 constexpr CLSID tap_class = {0x7be27828, 0x72b0, 0x4eed, {0xa5, 0xc7, 0x96, 0x31, 0x69, 0xb6, 0xcc, 0x15}};
 constexpr wchar_t mapping_prefix[] = L"Local\\SpiritAgentTrayStyle-";
 constexpr wchar_t attach_message[] = L"SpiritAgent.TrayStyle.Attach.v1";
-constexpr HRESULT wait_timeout = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+constexpr HRESULT wait_timeout = HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+constexpr HRESULT operation_timeout = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
 constexpr ULONGLONG subscription_retry_ms = 3000;
 HMODULE module_handle = nullptr;
 std::mutex session_mutex;
@@ -98,7 +99,6 @@ struct Session {
     DWORD explorer_pid = 0;
     std::uint64_t host_created = 0;
     HWND taskbar = nullptr;
-    bool native_appearance = false;
 
     explicit Session(std::wstring const& mapping_name, DWORD expected_pid) : name(mapping_name) {
         winrt::check_bool(valid_mapping_name(name));
@@ -108,7 +108,7 @@ struct Session {
         winrt::check_bool(state != nullptr);
         if (state->magic != spirit_tray::state_magic || state->version != spirit_tray::state_version ||
             state->explorer_pid != expected_pid || !state->host_pid || !state->host_created ||
-            state->native_appearance > 1 || (state->dark != 0 && state->dark != 1)) {
+            state->reserved != 0 || (state->dark != 0 && state->dark != 1)) {
             UnmapViewOfFile(state);
             state = nullptr;
             winrt::throw_hresult(E_INVALIDARG);
@@ -117,7 +117,6 @@ struct Session {
         explorer_pid = state->explorer_pid;
         host_created = state->host_created;
         taskbar = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(state->taskbar));
-        native_appearance = state->native_appearance == 1;
         try {
             winrt::check_bool(is_taskbar(taskbar, explorer_pid));
             host.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, host_pid);
@@ -141,7 +140,7 @@ struct Session {
         return state->magic == spirit_tray::state_magic && state->version == spirit_tray::state_version &&
             state->host_pid == host_pid && state->host_created == host_created &&
             state->explorer_pid == explorer_pid && state->taskbar == reinterpret_cast<std::uintptr_t>(taskbar) &&
-            state->native_appearance == static_cast<std::uint32_t>(native_appearance);
+            state->reserved == 0;
     }
 
     bool live() const noexcept {
@@ -360,7 +359,9 @@ std::shared_ptr<Session> session() {
 void set_session(std::shared_ptr<Session> const& next) {
     std::lock_guard lock(session_mutex);
     if (!next->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
-    if (!current_session || current_session->name != next->name) current_session = next;
+    if (current_session && current_session->name == next->name) return;
+    if (current_session && current_session->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_BUSY));
+    current_session = next;
 }
 
 Inspectable saved_value(xaml::DependencyObject const& element, xaml::DependencyProperty const& property) {
@@ -930,27 +931,23 @@ struct View : std::enable_shared_from_this<View> {
 };
 
 struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::non_agile> {
-    enum class Subscription { idle, pending, ready, stopping };
+    enum class Subscription { idle, observing, stopping, release_failed };
     winrt::com_ptr<IXamlDiagnostics> diagnostics;
     std::atomic<Subscription> subscription{Subscription::idle};
     std::atomic<std::uint64_t> mutations{0};
-    std::atomic<bool> retired{false};
     std::mutex views_mutex;
+    bool retired = false;
     std::unordered_map<DWORD, std::shared_ptr<View>> views;
 
     explicit Watcher(winrt::com_ptr<IXamlDiagnostics> const& site) : diagnostics(site) {}
 
-    bool ready() const noexcept { return subscription.load() == Subscription::ready; }
-
-    // 解除订阅失败后停在停止态，无法再登记新的会话。
-    bool stuck() const noexcept { return subscription.load() == Subscription::stopping; }
+    bool stuck() const noexcept { return subscription.load() == Subscription::release_failed; }
 
     void retire() noexcept {
-        retired.store(true);
         std::lock_guard lock(views_mutex);
+        retired = true;
         for (auto const& entry : views) entry.second->retire();
     }
-    bool is_retired() const noexcept { return retired.load(); }
 
     void advise(IVisualTreeService3* service, std::shared_ptr<Session> const& owner, std::uint64_t before) {
         auto deadline = GetTickCount64() + 1000;
@@ -985,22 +982,15 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
             winrt::check_hresult(apartment);
             // Diagnostics marshals callbacks onto each XAML UI thread.
             service = diagnostics.as<IVisualTreeService3>();
-            tree_revision.fetch_add(1);
             advise(service.get(), owner, before);
-            subscription.store(Subscription::ready);
         } catch (...) {
             failure = winrt::to_hresult();
             subscription.store(Subscription::stopping);
             if (owner->active()) owner->publish(-1, failure);
         }
 
-        auto observed = owner;
-        for (;;) {
-            if (SUCCEEDED(failure)) {
-                if (auto next = session()) observed = next;
-            }
-            if (!observed->active() &&
-                InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&observed->state->fill_count), 0, 0) == 0) break;
+        while (owner->active() ||
+            InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&owner->state->fill_count), 0, 0) != 0) {
             Sleep(50);
         }
         subscription.store(Subscription::stopping);
@@ -1010,7 +1000,7 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
             auto deadline = GetTickCount64() + subscription_retry_ms;
             do {
                 released = service->UnadviseVisualTreeChange(this);
-                if (released != wait_timeout || GetTickCount64() >= deadline) break;
+                if ((released != wait_timeout && released != operation_timeout) || GetTickCount64() >= deadline) break;
                 // Explorer can still be dispatching the last mutation when the
                 // owner has already released its lease. Give that callback a
                 // bounded chance to drain before declaring the connection stuck.
@@ -1019,28 +1009,25 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
         }
         bool foreign_callback = released == E_UNEXPECTED && FAILED(failure) && mutations.load() == before;
         bool release_failed = FAILED(released) && !foreign_callback;
-        if (release_failed) observed->publish(-1, released);
+        if (release_failed) owner->publish(-1, released);
         service = nullptr;
         if (SUCCEEDED(apartment)) CoUninitialize();
-        subscription.store(release_failed ? Subscription::stopping : Subscription::idle);
-        // 订阅已解除，诊断连接才可以关闭；宿主据此结束附着进程。
-        if (observed->owns_state() && InterlockedCompareExchange(&observed->state->status, 0, 0) >= 0) {
-            observed->publish(3);
-        }
-        if (!release_failed && !is_retired()) {
-            if (auto next = session(); next && next->active() && (SUCCEEDED(failure) || next != owner)) {
-                try { begin(next); }
-                catch (...) { if (next->active()) next->publish(-1, winrt::to_hresult()); }
-            }
+        subscription.store(release_failed ? Subscription::release_failed : Subscription::idle);
+        // 3 表示订阅已解除。恢复仍由各 XAML 线程单独确认。
+        if (owner->owns_state() && InterlockedCompareExchange(&owner->state->status, 0, 0) >= 0) {
+            owner->publish(3);
         }
     }
 
-    void begin(std::shared_ptr<Session> const& owner) {
+    bool begin(std::shared_ptr<Session> const& owner) {
         auto expected = Subscription::idle;
-        if (!subscription.compare_exchange_strong(expected, Subscription::pending)) return;
+        if (!subscription.compare_exchange_strong(expected, Subscription::observing)) return false;
         try {
+            tree_revision.fetch_add(1);
+            set_session(owner);
             auto strong = get_strong();
             std::thread([strong, owner] { strong->run(owner); }).detach();
+            return true;
         } catch (...) {
             subscription.store(Subscription::idle);
             throw;
@@ -1062,6 +1049,7 @@ struct Watcher : winrt::implements<Watcher, IVisualTreeServiceCallback2, winrt::
         try {
             {
                 std::lock_guard lock(views_mutex);
+                if (retired) { free_strings(); return S_OK; }
                 auto& existing = views[GetCurrentThreadId()];
                 if (!existing) { existing = std::make_shared<View>(); existing->start(); }
                 view = existing;
@@ -1107,7 +1095,6 @@ struct Site : winrt::implements<Site, IObjectWithSite, winrt::non_agile> {
             std::wstring mapping_name(data ? data : L"", data ? SysStringLen(data) : 0);
             SysFreeString(data);
             auto next = std::make_shared<Session>(mapping_name, GetCurrentProcessId());
-            set_session(next);
             winrt::com_ptr<Watcher> active_watcher;
             {
                 std::lock_guard lock(session_mutex);
@@ -1119,7 +1106,7 @@ struct Site : winrt::implements<Site, IObjectWithSite, winrt::non_agile> {
                 if (!watcher) watcher = winrt::make_self<Watcher>(diagnostics);
                 active_watcher = watcher;
             }
-            active_watcher->begin(next);
+            if (!active_watcher->begin(next)) return HRESULT_FROM_WIN32(ERROR_BUSY);
             return S_OK;
         } catch (...) { return winrt::to_hresult(); }
     }
@@ -1205,7 +1192,7 @@ HRESULT initialize(DWORD pid, std::wstring const& mapping_name, DWORD budget) no
             auto elapsed = GetTickCount64() - started;
             auto remaining = elapsed < budget ? budget - static_cast<DWORD>(elapsed) : 0;
             auto wait = WaitForSingleObject(response->completed.value, remaining);
-            if (wait == WAIT_TIMEOUT) return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+            if (wait == WAIT_TIMEOUT) return wait_timeout;
             if (wait != WAIT_OBJECT_0) return last_error();
             result = response->result;
             if (SUCCEEDED(result) || result != HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) break;
@@ -1229,21 +1216,26 @@ DWORD WINAPI bootstrap(void* value) noexcept {
             std::lock_guard lock(bootstrap_mutex);
             next = std::make_shared<Session>(request->mapping, GetCurrentProcessId());
             if (!next->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
-            bool ready;
             winrt::com_ptr<Watcher> current;
             {
                 std::lock_guard session_lock(session_mutex);
                 current = watcher;
-                ready = current && current->ready();
             }
-            if (current && !current->stuck()) {
-                // 既有诊断连接仍可登记：让新会话成为当前会话，运行中的订阅会跟随切换。
-                set_session(next);
-                if (!ready) current->begin(next);
-            } else {
+            bool started = false;
+            const auto deadline = GetTickCount64() + 1000;
+            while (current && !current->stuck()) {
+                if (!next->active()) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+                if (current->begin(next)) { started = true; break; }
+                // 旧会话释放前不能让新会话使用旧诊断树。
+                if (GetTickCount64() >= deadline) winrt::throw_hresult(wait_timeout);
+                Sleep(20);
+            }
+            if (!started) {
                 // 没有可用订阅时重新登记诊断连接，由 XAML 创建新的 TAP。
                 auto error = initialize(GetCurrentProcessId(), request->mapping, 1400);
-                if (FAILED(error) && next->active()) next->publish(-1, error);
+                if (FAILED(error) && error != wait_timeout && error != operation_timeout && next->active()) {
+                    next->publish(-1, error);
+                }
             }
         } catch (...) {
             if (next && next->active()) next->publish(-1, winrt::to_hresult());
@@ -1277,18 +1269,17 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SpiritAgentHook(int code, WPAR
                     owner = std::make_shared<Session>(name, GetCurrentProcessId());
                     if (message->hwnd != owner->taskbar) winrt::throw_hresult(E_ACCESSDENIED);
                     install_placement_guard(owner);
-                    if (owner->native_appearance) {
-                        owner->publish(1);
-                    } else {
-                        auto request = std::make_unique<BootstrapRequest>();
-                        request->mapping = name;
-                        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                                reinterpret_cast<LPCWSTR>(bootstrap), &request->self)) {
-                            auto worker = CreateThread(nullptr, 0, bootstrap, request.get(), 0, nullptr);
-                            if (worker) { request.release(); CloseHandle(worker); }
-                            else FreeLibrary(request->self);
-                        }
+                    auto request = std::make_unique<BootstrapRequest>();
+                    request->mapping = name;
+                    winrt::check_bool(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                        reinterpret_cast<LPCWSTR>(bootstrap), &request->self));
+                    Handle worker(CreateThread(nullptr, 0, bootstrap, request.get(), 0, nullptr));
+                    if (!worker.value) {
+                        auto error = last_error();
+                        FreeLibrary(request->self);
+                        winrt::throw_hresult(error);
                     }
+                    request.release();
                 } catch (...) {
                     if (owner) owner->publish(-1, winrt::to_hresult());
                 }
@@ -1303,21 +1294,7 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         if (!mapping_name) return E_POINTER;
         auto target = std::make_shared<Session>(mapping_name, explorer_pid);
         auto deadline = GetTickCount64() + 3500;
-        auto init_result = target->native_appearance ? S_OK : initialize(explorer_pid, mapping_name, 1000);
-        // A diagnostics endpoint can take longer than the first bounded probe
-        // while Explorer is constructing its XAML tree. Keep the hook-based
-        // attach path alive for that case instead of returning a timeout before
-        // the delayed watcher has a chance to publish readiness.
-        auto result = init_result == wait_timeout ? S_OK : init_result;
-        auto wait_started = GetTickCount64();
-        while (!target->native_appearance && SUCCEEDED(result) && GetTickCount64() - wait_started < 250) {
-            auto status = InterlockedCompareExchange(&target->state->status, 0, 0);
-            if (status == 1) break;
-            if (status == 2 && !target->active()) return S_OK;
-            if (status < 0) return target->state->error;
-            Sleep(25);
-        }
-        // Always install the UI-thread geometry guard, including an already-ready XAML TAP.
+        // The taskbar thread installs placement and schedules the sole diagnostics bootstrap in Explorer.
         DWORD actual_pid = 0;
         auto thread = GetWindowThreadProcessId(target->taskbar, &actual_pid);
         if (!thread || actual_pid != explorer_pid) return E_ACCESSDENIED;
@@ -1328,24 +1305,21 @@ extern "C" __declspec(dllexport) HRESULT WINAPI SpiritAgentAttach(DWORD explorer
         DWORD_PTR ignored = 0;
         auto delivered = SendMessageTimeoutW(target->taskbar, RegisterWindowMessageW(attach_message), atom, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, 250, &ignored);
-        auto delivery_error = delivered ? S_OK : last_error();
+        auto result = delivered ? S_OK : last_error();
         GlobalDeleteAtom(atom);
-        result = delivery_error;
+        UnhookWindowsHookEx(hook);
         bool ready = false;
         try {
             while (SUCCEEDED(result) && GetTickCount64() < deadline) {
                 auto status = InterlockedCompareExchange(&target->state->status, 0, 0);
-                if (status == 2 && !target->active()) { ready = true; break; }
                 if (status < 0) { result = target->state->error; break; }
+                if (!target->active()) { result = HRESULT_FROM_WIN32(ERROR_CANCELLED); break; }
                 if (status == 1 && placement_ready(target)) { ready = true; break; }
                 Sleep(25);
             }
         } catch (...) { result = winrt::to_hresult(); }
-        UnhookWindowsHookEx(hook);
         if (FAILED(result)) return result;
-        if (ready) return S_OK;
-        // 保留诊断初始化失败的原因，避免统一表现为超时。
-        return FAILED(init_result) ? init_result : HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+        return ready ? S_OK : wait_timeout;
     } catch (...) { return winrt::to_hresult(); }
 }
 

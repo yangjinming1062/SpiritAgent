@@ -20,13 +20,13 @@ struct SharedState {
     LONG status;
     LONG error;
     std::uint32_t fill_count;
-    std::uint32_t native_appearance;
+    std::uint32_t reserved;
 };
 
 static_assert(sizeof(SharedState) == 64);
 static_assert(offsetof(SharedState, active) == 40);
 static_assert(offsetof(SharedState, status) == 48);
-static_assert(offsetof(SharedState, native_appearance) == 60);
+static_assert(offsetof(SharedState, reserved) == 60);
 
 inline constexpr std::uint32_t placement_magic = 0x5354504c;
 inline constexpr std::uint32_t placement_version = 1;

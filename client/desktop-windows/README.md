@@ -47,7 +47,7 @@ Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢�
 
 ## 原生系统托盘
 
-[tray.rs](src/windows/tray.rs) 探测刷新，[tray_placement.rs](src/windows/tray_placement.rs) 恢复位置，[regions.rs](src/windows/regions.rs) 保存区域。接管平移交互屏原任务栏到 Dock 槽位，保留原尺寸、父子关系及托盘子树。UI Automation 提供重排后的实际按钮区域，并复核 Explorer、任务栏、屏幕与坐标。定位使用按钮的外接矩形，命中使用各按钮区域和滚动视口的交集，让两行之间的空白穿透。独立限时探测不可用时可退回已核验的 `TrayNotifyWnd` 区域。不能可靠定位或应用区域时结束接管。
+[tray.rs](src/windows/tray.rs) 探测刷新，[tray_placement.rs](src/windows/tray_placement.rs) 恢复位置，[regions.rs](src/windows/regions.rs) 保存区域。接管平移交互屏原任务栏到 Dock 槽位，保留原尺寸、父子关系及托盘子树。UI Automation 提供重排后的实际按钮区域，并复核 Explorer、任务栏、屏幕与坐标。定位使用按钮的外接矩形，裁剪使用各按钮与滚动视口的交集，让两行之间的空白穿透。独立限时探测不可用时可退回已核验的 `TrayNotifyWnd` 区域。不能可靠定位或应用区域时结束接管。
 
 固有尺寸与平移／滚动位置分开，WinEvent 和巡检刷新 DPI、显隐、图标及 Explorer 重建；不跨屏复制托盘，不纳入第三方任务栏面板，也不用固定宽度。槽位变化先发布会话物理目标，再改原生位置和裁剪。Explorer 继续处理图标、菜单及系统面板，弹窗不参加任务栏裁剪或工作区校正。
 
@@ -57,7 +57,7 @@ Rust helper 管理 Explorer 挂载、系统工作区、运行窗口和异常恢�
 
 XAML 修改只作用登记任务栏，清背景与边线，按应用主题调整系统前景，第三方位图保留原 `Image.Source` 并加独立浅色底片。首次写属性前登记待恢复状态，原值留在所属 XAML 线程。新树重新获取原值。确认样式与位置同步后才显示原生行。
 
-样式状态核验同一 Windows 会话、host、Explorer 和任务栏身份，正常停止、host 退出或失租都恢复原属性及观察。诊断订阅单飞并配对初始化／释放 COM。收到回调且目标样式验证成功时，可从 `E_UNEXPECTED` 继续使用透明托盘。初始接管遇到此错误、无样式待恢复且位置同步未报错时，先停用原托盘会话，再登记仅同步位置的新会话。本次桌面会话沿用 Windows 外观，下次进入时重新尝试透明样式。其他样式或位置同步失败回窗口模式。停用时先确认原值恢复，再解除自有订阅；两阶段分别上报，解除确认前保留诊断连接。迟到错误归原会话，解除失败允许换新诊断连接。
+样式状态核验同一 Windows 会话、host、Explorer 和任务栏身份，正常停止、host 退出或失租都恢复原属性及观察。任务栏线程安装位置约束后在 Explorer 内发起诊断订阅，附着进程只等待就绪。收到回调且目标样式验证成功时，可从 `E_UNEXPECTED` 继续使用透明托盘。停用时先确认原值恢复，再解除自有订阅。新会话等待同一观察者完成释放，再登记新一轮诊断。解除失败允许换新诊断连接。样式或位置同步失败时恢复窗口模式。
 
 DLL 以内容 hash 命名，启用前复制并逐字节核对到当前用户 `LocalAppData/SpiritAgent/native/tray-style/`，不让 Explorer 映射安装／开发目录阻塞更新。已缓存或已载入 DLL 不覆盖、不删除，下次按 manifest 选当前模块。
 

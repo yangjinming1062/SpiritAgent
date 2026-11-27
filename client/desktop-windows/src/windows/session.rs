@@ -2,7 +2,6 @@ use super::dock_preview::DockPreview;
 use super::geometry::{monitor_bounds, rectangle};
 use super::identity::{Identity, actual_parent};
 use super::journal::{Journal, JournalPhase, RestoringSignal, require_session};
-use super::tray_style::TrayAppearance;
 use super::*;
 
 pub(crate) struct Session {
@@ -26,7 +25,6 @@ pub(crate) struct Session {
     pub(crate) tray: Tray,
     pub(crate) last_tray: Option<tray::SystemTray>,
     pub(crate) tray_style: Option<TrayStyle>,
-    tray_appearance: TrayAppearance,
     pub(crate) palette: Palette,
     dock_preview: Option<DockPreview>,
     dock_selection: Option<DockSelection>,
@@ -179,8 +177,7 @@ impl Session {
             }
         }
         let mut tray = Tray::new(&journal)?;
-        let mut tray_appearance = TrayAppearance::Transparent;
-        let mut tray_style = TrayStyle::prepare(&journal, palette, tray_appearance)?;
+        let mut tray_style = TrayStyle::prepare(&journal, palette)?;
         journal.tray_style = tray_style.as_ref().map(TrayStyle::record);
         let restoring = RestoringSignal::new(&journal)?;
         workspace.bind_restoration(restoring.handle.0)?;
@@ -290,19 +287,7 @@ impl Session {
                     }
                 }
                 if let Some(style) = &mut tray_style {
-                    if let Err(error) = style.start() {
-                        if !style.can_use_native_appearance() {
-                            return Err(error);
-                        }
-                        style.record().restore()?;
-                        let replacement = TrayStyle::prepare(&journal, palette, TrayAppearance::Native)?
-                            .ok_or(error)?;
-                        journal.tray_style = Some(replacement.record());
-                        journal.save(path)?;
-                        *style = replacement;
-                        style.start()?;
-                        tray_appearance = TrayAppearance::Native;
-                    }
+                    style.start()?;
                 }
                 tray.apply(&journal, tray_style.as_ref())?;
                 workspace.activate()?;
@@ -327,12 +312,6 @@ impl Session {
                 return Err(finish_failed_start(error, restored, &mut guardian, false));
             }
         };
-        if matches!(tray_appearance, TrayAppearance::Native) {
-            emit(json!({
-                "event": "warning",
-                "reason": "系统托盘透明样式暂时不可用，已沿用 Windows 系统托盘外观（0x8000ffff）。"
-            }));
-        }
         emit(json!({ "event": "system_tray", "tray": tray.state }));
         let last_tray = tray.state;
         Ok(Self {
@@ -356,7 +335,6 @@ impl Session {
             tray,
             last_tray,
             tray_style,
-            tray_appearance,
             palette,
             dock_preview: None,
             dock_selection: None,
@@ -1019,7 +997,7 @@ impl Session {
                 record.restore()?;
             }
             self.tray_style = None;
-            self.tray_style = TrayStyle::prepare(&self.journal, self.palette, self.tray_appearance)?;
+            self.tray_style = TrayStyle::prepare(&self.journal, self.palette)?;
             self.journal.tray_style = self.tray_style.as_ref().map(TrayStyle::record);
             changed = true;
         }

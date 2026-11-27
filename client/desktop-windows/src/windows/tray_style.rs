@@ -21,13 +21,6 @@ const E_UNEXPECTED: u32 = 0x8000_ffff;
 const STYLE_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_COMPONENT_BYTES: u64 = 16 * 1024 * 1024;
 
-#[derive(Clone, Copy)]
-#[repr(u32)]
-pub(super) enum TrayAppearance {
-    Transparent = 0,
-    Native = 1,
-}
-
 #[repr(C)]
 struct State {
     magic: u32,
@@ -42,14 +35,14 @@ struct State {
     status: AtomicI32,
     error: AtomicI32,
     fill_count: AtomicU32,
-    appearance: u32,
+    reserved: u32,
 }
 
 const _: [(); 64] = [(); size_of::<State>()];
 const _: [(); 40] = [(); std::mem::offset_of!(State, active)];
 const _: [(); 48] = [(); std::mem::offset_of!(State, status)];
 const _: [(); 56] = [(); std::mem::offset_of!(State, fill_count)];
-const _: [(); 60] = [(); std::mem::offset_of!(State, appearance)];
+const _: [(); 60] = [(); std::mem::offset_of!(State, reserved)];
 
 #[repr(C)]
 struct PlacementState {
@@ -195,7 +188,8 @@ impl RestoreTrayStyle {
             && state.host_created == self.host_created
             && state.explorer_pid == self.target.pid
             && state.taskbar == self.target.handle
-            && state.appearance <= TrayAppearance::Native as u32
+            // 旧版只同步位置的会话仍须允许恢复。
+            && state.reserved <= 1
     }
 
     fn matches_placement(&self, state: &PlacementState) -> bool {
@@ -276,11 +270,7 @@ pub(super) struct TrayStyle {
 }
 
 impl TrayStyle {
-    pub(super) fn prepare(
-        journal: &Journal,
-        palette: Palette,
-        appearance: TrayAppearance,
-    ) -> Result<Option<Self>> {
+    pub(super) fn prepare(journal: &Journal, palette: Palette) -> Result<Option<Self>> {
         let Some(target) = journal.shell.first() else {
             return Ok(None);
         };
@@ -318,7 +308,7 @@ impl TrayStyle {
                 status: AtomicI32::new(0),
                 error: AtomicI32::new(0),
                 fill_count: AtomicU32::new(0),
-                appearance: appearance as u32,
+                reserved: 0,
             });
         }
         let placement = Mapping::create(&record.placement_channel(), size_of::<PlacementState>())?;
@@ -419,6 +409,7 @@ impl TrayStyle {
             && self.require_placement_environment().is_ok()
             && state.active.load(Ordering::Acquire) == 1
             && state.status.load(Ordering::Acquire) == 1
+            && state.fill_count.load(Ordering::Acquire) > 0
             && placement.status.load(Ordering::Acquire) == 1
     }
 
@@ -451,17 +442,6 @@ impl TrayStyle {
         Ok(())
     }
 
-    pub(super) fn can_use_native_appearance(&self) -> bool {
-        let state = self.mapping.state();
-        !self.ready
-            && self.record.matches(state)
-            && state.appearance == TrayAppearance::Transparent as u32
-            && state.status.load(Ordering::Acquire) < 0
-            && state.error.load(Ordering::Acquire) as u32 == E_UNEXPECTED
-            && state.fill_count.load(Ordering::Acquire) == 0
-            && self.placement.placement().status.load(Ordering::Acquire) >= 0
-    }
-
     fn poll_ready(&mut self) -> Result<bool> {
         let state = self.mapping.state();
         if !self.record.matches(state) {
@@ -476,15 +456,14 @@ impl TrayStyle {
             return Err("native tray placement owner changed".into());
         }
         let placement_status = placement.status.load(Ordering::Acquire);
-        if status == 1 && placement_status == 1 {
+        if status == 1 && placement_status == 1 && state.fill_count.load(Ordering::Acquire) > 0 {
             self.ready = true;
             return Ok(true);
         }
-        if placement_status < 0 || (status < 0 && state.appearance == TrayAppearance::Native as u32) {
-            let error = if placement_status < 0 { &placement.error } else { &state.error };
+        if placement_status < 0 {
             return Err(format!(
                 "系统托盘位置同步未能启用（0x{:08x}）。",
-                error.load(Ordering::Acquire) as u32,
+                placement.error.load(Ordering::Acquire) as u32,
             ));
         }
         if status < 0 {
@@ -492,8 +471,8 @@ impl TrayStyle {
             if error == E_UNEXPECTED {
                 return Err("系统托盘透明样式未能启用，请重启 Windows 资源管理器后重试（0x8000ffff）。".into());
             }
-            if error == 0x8007_0102 {
-                return Err("系统托盘透明样式初始化超时，Windows 资源管理器可能仍在处理上一次托盘样式订阅，请稍后重试；若持续失败请重启 Windows 资源管理器（0x80070102）。".into());
+            if matches!(error, 0x8007_0102 | 0x8007_05b4) {
+                return Err(format!("系统托盘透明样式初始化超时，请稍后重试。若持续失败，请重启 Windows 资源管理器（0x{error:08x}）。"));
             }
             return Err(format!(
                 "系统托盘透明样式未能启用（0x{:08x}）。",
@@ -539,17 +518,7 @@ impl Drop for TrayStyle {
         self.placement.placement().enabled.store(0, Ordering::Release);
         let state = self.mapping.state();
         state.active.store(0, Ordering::Release);
-        // 原值还原后仍需保留诊断连接，供 Explorer 解除订阅；解除确认后才结束附着进程。
-        if state.status.load(Ordering::Acquire) >= 3
-            || state.fill_count.load(Ordering::Acquire) == 0
-            || !self.record.explorer_alive()
-        {
-            if let Some(child) = &mut self.child {
-                let _ = child.kill();
-                let _ = child.try_wait();
-            }
-        }
-        // 仍有样式待恢复时保留连接；子进程观察 active 后有界退出。
+        // Explorer 持有诊断订阅和原值，附着进程只等待有界的就绪回执。
     }
 }
 
@@ -688,7 +657,7 @@ pub(super) fn attach(explorer_pid: u32, channel: &str) -> Result<()> {
     let state = mapping.state();
     if state.magic != MAGIC
         || state.version != VERSION
-        || state.appearance > TrayAppearance::Native as u32
+        || state.reserved != 0
         || state.explorer_pid != explorer_pid
         || state.host_pid != actual_parent()?
         || !is_explorer(explorer_pid)
@@ -715,30 +684,14 @@ pub(super) fn attach(explorer_pid: u32, channel: &str) -> Result<()> {
         unsafe { std::mem::transmute(address) };
     let result = unsafe { initialize(explorer_pid, wide(channel).as_ptr()) };
     if result < 0 {
-        state.error.store(result, Ordering::Release);
-        state.status.store(-1, Ordering::Release);
+        if state.active.load(Ordering::Acquire) == 1 {
+            state.error.store(result, Ordering::Release);
+            state.status.store(-1, Ordering::Release);
+        }
         return Err(format!(
             "native tray style initialization failed: 0x{:08x}",
             result as u32,
         ));
     }
-    // 保留诊断连接，直到 Explorer 确认还原或宿主退出。
-    let mut restoring_since = None;
-    loop {
-        // 3 表示订阅已解除，诊断连接才可以关闭；2 只表示原值已还原。
-        let status = state.status.load(Ordering::Acquire);
-        if status == 3 || status < 0 {
-            return Ok(());
-        }
-        let owner_alive = process(state.host_pid)
-            .and_then(|owner| created(owner.0))
-            .is_ok_and(|birth| birth == state.host_created);
-        if !owner_alive || state.active.load(Ordering::Acquire) == 0 {
-            if restoring_since.get_or_insert_with(Instant::now).elapsed() > Duration::from_secs(3)
-            {
-                return Ok(());
-            }
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
+    Ok(())
 }
