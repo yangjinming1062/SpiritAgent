@@ -287,6 +287,7 @@ def _publish(db: AsyncSession, row: CompanionRhythm, zone: str | None, now: date
         emit_ws_event(
             db, user_id=row.user_id, event_type="companion.rhythm.updated", payload={"revision": row.revision}
         )
+        emit_ws_event(db, user_id=row.user_id, event_type="companion.visual.preparation_requested", payload={})
 
 
 async def begin_contact(db: AsyncSession, user_id: int, contact_id: str, kind: ContactKind) -> None:

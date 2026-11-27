@@ -21,7 +21,7 @@ from .models import (
     VisualVersion,
     VisualVersionAsset,
 )
-from .schemas import StageComposition, VisualSnapshot
+from .schemas import PresentedVisual, StageComposition, VisualSnapshot
 
 
 async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
@@ -34,6 +34,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             VisualPresentation.pending_static_json,
             VisualPresentation.current_static_json,
             VisualPresentation.composition_json,
+            VisualPresentation.local_snapshot_json,
         ).where(VisualPresentation.user_id == user_id),
     )
     # 制作候选和长期导入资料由 JobAsset 持有；静态冻结素材没有版本关系，仍扫描呈现快照。
@@ -149,6 +150,10 @@ async def cleanup_obsolete_assets(db: AsyncSession, user_id: int) -> set[str]:
                 protected.add((ref.visual_id, ref.version))
         if composition.scene_visual_id is not None and composition.scene_version is not None:
             protected.add((composition.scene_visual_id, composition.scene_version))
+    local = await db.scalar(select(VisualPresentation.local_snapshot_json).where(VisualPresentation.user_id == user_id))
+    if local is not None and "scene" not in local:
+        shown = PresentedVisual.model_validate(local)
+        protected.add((shown.id, shown.version))
     unused = select(VisualVersion.id).where(
         VisualVersion.user_id == user_id,
         VisualVersion.created_at < cutoff,

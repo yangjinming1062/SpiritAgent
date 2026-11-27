@@ -23,6 +23,7 @@ import features.posts.publication_models
 import features.scenes.models
 import features.topics.models
 import features.visuals.models  # noqa: F401 -- 显式 ORM 登记。
+import features.visuals.stage_preparation  # noqa: F401 -- 完整影像准备决定。
 import runtime.events.models  # noqa: F401 -- 显式 ORM 登记。
 import workflows.nightly.models  # noqa: F401 -- 显式 ORM 登记。
 from features.conversation.statistics import register_conversation_statistics

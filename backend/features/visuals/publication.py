@@ -73,8 +73,10 @@ def _roles(asset: VisualAsset, snapshot: VisualSnapshot) -> dict[str, str]:
         }
     if source.kind in ("actor", "cinematic"):
         paths |= {"identity": source.identity_path, "portrait": source.portrait_path, "outfit": source.outfit.path}
-    if source.kind == "actor" and source.opening_frame is not None:
+    if source.kind in ("actor", "cinematic") and source.opening_frame is not None:
         paths["opening_reference"] = source.opening_frame.path
+    if asset.delivery_first_frame is not None:
+        paths["first_frame"] = asset.delivery_first_frame.path
     if source.kind in ("scene", "cinematic"):
         paths["scene"] = source.scene.path
     if source.kind == "analysis":

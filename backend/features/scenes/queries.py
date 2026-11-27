@@ -324,9 +324,20 @@ async def scene_snapshot(db: AsyncSession, user_id: int, scene_id: int) -> Scene
     return scene_view(row) if row is not None else None
 
 
-async def scene_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+@dataclass(frozen=True, slots=True)
+class ScenePlanningMaterial:
+    id: int
+    title: str
+    description: str
+    media_path: str
+
+    def prompt_data(self) -> dict[str, str]:
+        return {"id": str(self.id), "title": self.title, "description": self.description}
+
+
+async def ready_scene_planning_materials(db: AsyncSession, user_id: int) -> list[ScenePlanningMaterial]:
     rows = await db.execute(
-        select(CompanionScene.id, CompanionScene.title, CompanionScene.description)
+        select(CompanionScene.id, CompanionScene.title, CompanionScene.description, CompanionScene.media_path)
         .where(
             CompanionScene.user_id == user_id,
             CompanionScene.status == "ready",
@@ -337,6 +348,9 @@ async def scene_planning_materials(db: AsyncSession, user_id: int) -> list[dict[
         .order_by(CompanionScene.id.desc())
     )
     return [
-        {"id": str(identifier), "title": name, "description": description or ""}
-        for identifier, name, description in rows
+        ScenePlanningMaterial(identifier, title, description, path) for identifier, title, description, path in rows
     ]
+
+
+async def scene_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    return [row.prompt_data() for row in await ready_scene_planning_materials(db, user_id)]

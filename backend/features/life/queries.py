@@ -9,7 +9,7 @@ from infrastructure.text import utc_now
 from sqlalchemy import CompoundSelect, case, func, or_, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .actions import CREATION_CAPABILITIES, ReadingResult
+from .actions import CREATION_CAPABILITIES, ReadingResult, VisualAction
 from .models import RESULT_REFERENCE_FIELDS, LifeEvent, LifePursuit, LifeState, LifeStep, PursuitEvidence
 from .prompts import life_content_payload
 from .schemas import (
@@ -74,6 +74,40 @@ async def active_pursuit_title(db: AsyncSession, user_id: int, pursuit_id: int |
         )
         or ""
     )
+
+
+async def upcoming_shared_visual_context(db: AsyncSession, user_id: int, now: datetime) -> list[dict[str, str]]:
+    """供公开画面准备读取已经排定并可分享的生活步骤。"""
+    rows = await db.scalars(
+        select(LifeStep)
+        .join(LifePursuit, LifePursuit.id == LifeStep.pursuit_id)
+        .where(
+            LifeStep.user_id == user_id,
+            LifeStep.state == "planned",
+            LifeStep.disposition.in_(("ready", "waiting")),
+            LifeStep.not_before > now,
+            LifeStep.narrative.is_not(None),
+            LifePursuit.user_id == user_id,
+            LifePursuit.shared_with_user.is_(True),
+            LifePursuit.status == "active",
+            visible_library_work(LifeStep.library_work_id),
+        )
+        .order_by(LifeStep.not_before, LifeStep.id)
+        .limit(32)
+    )
+    result: list[dict[str, str]] = []
+    for row in rows:
+        entry = {
+            "step_id": str(row.id),
+            "not_before": row.not_before.isoformat(),
+            "kind": row.kind,
+            "plan": (row.narrative or "")[:300],
+        }
+        if row.kind == "visual.generate" and row.action_json is not None:
+            action = VisualAction.model_validate(row.action_json)
+            entry.update(scene_id=str(action.scene_id), action_id=str(action.action_id))
+        result.append(entry)
+    return result
 
 
 async def completed_personal_works(

@@ -1,214 +1,223 @@
-import {
+import { deriveStagePlan, staticPresentationKey } from '@/features/creation/visuals'
+import type {
   $ambientLoopChoice,
   $failedStageMedia,
   $wakePerformance,
-  deriveStagePlan,
-  staticPresentationKey
+  VisualPlayCommand,
+  VisualsPresentation
 } from '@/features/creation/visuals'
-import type { StagePlan, VisualPlayCommand, VisualsPresentation } from '@/features/creation/visuals'
-import { DEFAULT_STAGE_LAYOUT, type DesktopBackgroundRequest } from '@ipc/contracts'
+import { DEFAULT_STAGE_LAYOUT, DESKTOP_EMPTY_PLAY_PREFIX, type DesktopBackgroundRequest } from '@ipc/contracts'
 
-interface VisualPresentationInput {
-  authSessionId: string
+interface FullPresentationInput {
   projection: VisualsPresentation | null
   activeCommand: VisualPlayCommand | null
   staticTarget: VisualsPresentation['static_presentation'] | undefined
-  stagePlan: StagePlan
-  theme: DesktopBackgroundRequest['theme']
+  surface: 'desktop' | 'life'
   subtle: boolean
   motionEnabled: boolean
-  reduceMotion: boolean
   paused: boolean
+  failedMedia: ReturnType<typeof $failedStageMedia.get>
+  ambient: ReturnType<typeof $ambientLoopChoice.get>
+  wake: ReturnType<typeof $wakePerformance.get>
 }
 
-function firstNonBlank(...values: readonly (string | null | undefined)[]): string | null {
-  return values.find(value => typeof value === 'string' && value.trim().length > 0) ?? null
+interface DesktopPresentationInput extends Omit<FullPresentationInput, 'surface'> {
+  authSessionId: string
+  theme: DesktopBackgroundRequest['theme']
+  reduceMotion: boolean
 }
 
-function assetPath(url: string | null | undefined): string | null {
-  return url ? url.split('?')[0] : null
+/** 为同一连续目标复用播放身份；再次进入本地基础画面时另发起一次播放。 */
+export function createCompletePlaybackAttempt(): (targetId: string | null) => string | null {
+  let previousTarget: string | null = null
+  let playId: string | null = null
+
+  return targetId => {
+    if (targetId !== previousTarget) {
+      previousTarget = targetId
+
+      const prefix = targetId?.startsWith(DESKTOP_EMPTY_PLAY_PREFIX)
+        ? DESKTOP_EMPTY_PLAY_PREFIX
+        : targetId?.startsWith('render:complete:')
+          ? 'render:complete:'
+          : null
+
+      playId = prefix ? `${prefix}${crypto.randomUUID()}` : targetId
+    }
+
+    return playId
+  }
 }
 
-/**
- * 桌面先呈现已认领指令或待确认的冻结静态目标，再接续当前活动的基础画面。
- */
-export function deriveVisualPresentationTarget({
-  authSessionId,
+export function deriveFullPresentationTarget({
   projection,
   activeCommand,
   staticTarget,
-  stagePlan,
-  theme,
+  surface,
   subtle,
   motionEnabled,
-  reduceMotion,
-  paused
-}: VisualPresentationInput): DesktopBackgroundRequest {
-  const baseline = projection?.loop_visual ?? projection?.current_visual ?? null
-
+  paused,
+  failedMedia,
+  ambient,
+  wake
+}: FullPresentationInput) {
   const plan = deriveStagePlan(projection, activeCommand, {
-    desktop: true,
+    surface,
     subtle,
     motionEnabled,
-    ambient: $ambientLoopChoice.get(),
-    wake: paused ? null : $wakePerformance.get(),
-    failedMedia: $failedStageMedia.get()
+    ambient,
+    wake: paused ? null : wake,
+    failedMedia
   })
 
-  const common = {
-    authSessionId,
-    theme,
-    dayPhase: plan.dayPhase,
-    reduceMotion: reduceMotion || !motionEnabled,
-    paused: paused || !motionEnabled,
-    geometryMode: 'target' as const
-  }
-
   if (staticTarget && !activeCommand) {
-    const complete = Boolean(staticTarget.outfit && staticTarget.scene)
-    const scene = complete ? assetPath(staticTarget.scene?.path) : null
-    const outfit = complete ? assetPath(staticTarget.outfit?.path) : null
-
     return {
-      ...common,
-      poster: scene ? { url: scene } : null,
-      outfit: outfit ? { url: outfit } : null,
-      outfitPose: false,
       video: null,
-      actor: null,
-      actorBaseKey: null,
+      poster: staticTarget.scene?.path ?? null,
       playId: staticPresentationKey(staticTarget),
-      playTarget: 'background',
-      presentationEpoch: staticTarget.presentation_epoch,
       visualId: null,
       visualVersion: null,
-      actorVisualId: null,
-      actorVisualVersion: null,
-      kind: 'loop',
-      actorKind: 'loop',
-      continuity: 'independent',
-      transition: 'fade',
-      expiresAt: null,
-      inputImageHash: null,
-      backgroundKind: 'scene',
+      localSceneHash: null,
+      sceneHash: staticTarget.scene?.content_hash ?? null,
+      presentationEpoch: staticTarget.presentation_epoch,
+      backgroundKind: 'scene' as const,
       phaseMedia: false,
-      sceneKey: scene,
-      clear: !complete,
-      layout: DEFAULT_STAGE_LAYOUT
+      dayPhase: plan.dayPhase,
+      expiresAt: null,
+      kind: 'loop' as const,
+      pauseMotion: true,
+      transition: 'fade' as const,
+      layout: {
+        fit: DEFAULT_STAGE_LAYOUT.fit,
+        actor_position: DEFAULT_STAGE_LAYOUT.actorPosition,
+        safe_area: DEFAULT_STAGE_LAYOUT.safeArea
+      },
+      inputImageHash: null
     }
   }
 
-  const layerActor = plan.actor
-  const layerScene = plan.scene
-  const full = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null
-  const cinematic = plan.cinematic
-
-  const cinematicKey = full
-    ? `${full.visual_id}:${full.visual_version}`
-    : cinematic
-      ? `${cinematic.visual_id}:${cinematic.version}`
-      : null
-
-  const layered = !cinematicKey
+  const fullCommand = activeCommand?.asset_kind === 'cinematic' ? activeCommand : null
   const sceneCommand = activeCommand?.asset_kind === 'scene' ? activeCommand : null
+  const cinematic = sceneCommand ? null : plan.cinematic
+  const scene = plan.scene
+  const backgroundKind: DesktopBackgroundRequest['backgroundKind'] = fullCommand || cinematic ? 'cinematic' : 'scene'
+  const isCinematic = backgroundKind === 'cinematic'
+  const selected = fullCommand || sceneCommand ? null : cinematic
+  const displayVideo = motionEnabled && (activeCommand !== null || !cinematic || plan.cinematicMotion)
 
-  const videoUrl = !motionEnabled
+  const video = !displayVideo
     ? null
-    : !layered
-      ? assetPath(
-          full?.media_kind === 'video'
-            ? full.media_path
-            : cinematic?.media_kind === 'video'
-              ? cinematic.media_url
-              : null
-        )
-      : assetPath(
-          sceneCommand?.media_kind === 'video' ? sceneCommand.media_path : layerScene?.isVideo ? layerScene.url : null
-        )
+    : isCinematic
+      ? fullCommand
+        ? fullCommand.media_kind === 'video'
+          ? fullCommand.media_path
+          : null
+        : cinematic?.media_kind === 'video'
+          ? cinematic.media_url
+          : null
+      : scene?.isVideo
+        ? scene.url
+        : null
 
-  const posterUrl = !layered
-    ? firstNonBlank(
-        assetPath(full?.media_kind === 'image' ? full.media_path : full?.poster_path),
-        assetPath(cinematic?.media_kind === 'image' ? cinematic.media_url : cinematic?.poster_url)
-      )
-    : firstNonBlank(
-        assetPath(sceneCommand?.media_kind === 'image' ? sceneCommand.media_path : sceneCommand?.poster_path),
-        assetPath(layerScene?.isVideo ? layerScene.posterUrl : layerScene?.url),
-        assetPath(projection?.static_presentation?.scene?.path),
-        assetPath(projection?.composition?.scene_material?.path),
-        assetPath(projection?.actual.scene_path)
-      )
+  const fallbackScene = projection?.static_presentation?.scene ?? projection?.composition?.scene_material
+  const scenePoster = scene?.isVideo ? scene.posterUrl : scene?.url
 
-  const actorUrl = motionEnabled && layered ? assetPath(layerActor?.url) : null
+  const poster = isCinematic
+    ? fullCommand
+      ? fullCommand.media_kind === 'image'
+        ? fullCommand.media_path
+        : fullCommand.poster_path
+      : cinematic?.media_kind === 'image'
+        ? cinematic.media_url
+        : (cinematic?.poster_url ?? null)
+    : (scenePoster ?? fallbackScene?.path ?? null)
 
-  const useQuietScene =
-    projection?.autonomous_enabled &&
-    projection.rhythm?.state === 'asleep' &&
-    !activeCommand &&
-    !plan.actorStillUrl &&
-    posterUrl
+  const rawScene =
+    !activeCommand && !video && !isCinematic && poster ? (scenePoster ? scene?.fallbackScene : fallbackScene) : null
 
-  const outfitUrl =
-    layered && !useQuietScene
-      ? firstNonBlank(
-          assetPath(activeCommand?.outfit?.path),
-          assetPath(plan.actorStillUrl),
-          assetPath(projection?.static_presentation?.outfit?.path),
-          assetPath(projection?.composition?.outfit_material?.path),
-          assetPath(projection?.actual.outfit_path)
-        )
+  const visualId = rawScene ? null : (activeCommand?.visual_id ?? selected?.visual_id ?? scene?.visualId ?? null)
+  const visualVersion = rawScene ? null : (activeCommand?.visual_version ?? selected?.version ?? scene?.version ?? null)
+  const presentationEpoch = projection?.presentation_epoch ?? 0
+
+  const localPlayId = rawScene
+    ? `render:complete:scene:${presentationEpoch}:${rawScene.content_hash}:${rawScene.path.split('?')[0]}`
+    : visualId && visualVersion
+      ? `render:complete:${visualId}:${visualVersion}:${video ? 'video' : 'image'}:${presentationEpoch}`
       : null
-
-  const backgroundId = layered
-    ? (sceneCommand?.visual_id ?? layerScene?.visualId ?? null)
-    : (full?.visual_id ?? cinematic?.visual_id ?? null)
-
-  const backgroundVersion = layered
-    ? (sceneCommand?.visual_version ?? layerScene?.version ?? null)
-    : (full?.visual_version ?? cinematic?.version ?? null)
-
-  const phaseMedia = layered && (layerScene?.phaseMatched ?? false)
-
-  const actorBase =
-    activeCommand?.asset_kind === 'actor' || plan.localPlay?.id.startsWith('render:wake:')
-      ? deriveStagePlan(projection, null, { desktop: true, subtle, ambient: $ambientLoopChoice.get() }).actor
-      : stagePlan.actor
 
   return {
-    ...common,
-    video: videoUrl ? { url: videoUrl } : null,
-    poster: posterUrl ? { url: posterUrl } : null,
-    outfit: outfitUrl ? { url: outfitUrl } : null,
-    outfitPose: Boolean(outfitUrl && !activeCommand?.outfit && outfitUrl === assetPath(plan.actorStillUrl)),
-    actor: actorUrl ? { url: actorUrl } : null,
-    playId:
-      activeCommand?.play_id ??
-      plan.localPlay?.id ??
-      (!layered && cinematicKey ? `render:cinematic:${cinematicKey}` : null),
-    playTarget: activeCommand?.asset_kind === 'actor' || plan.localPlay?.target === 'actor' ? 'actor' : 'background',
-    actorBaseKey: actorBase ? `${actorBase.visualId}:${actorBase.version}` : null,
-    layout: {
-      layerOrder: plan.layout.layer_order,
-      fit: plan.layout.fit,
-      actorPosition: plan.layout.actor_position,
-      safeArea: plan.layout.safe_area
-    },
-    visualId: backgroundId,
-    visualVersion: backgroundVersion,
-    actorVisualId: layered ? (layerActor?.visualId ?? null) : null,
-    actorVisualVersion: layered ? (layerActor?.version ?? null) : null,
-    presentationEpoch: projection?.presentation_epoch ?? 0,
+    video,
+    poster,
+    playId: activeCommand?.play_id ?? plan.localPlay?.id ?? localPlayId,
+    visualId,
+    visualVersion,
+    localSceneHash: rawScene?.content_hash ?? null,
+    sceneHash: isCinematic
+      ? (fullCommand?.scene?.content_hash ?? cinematic?.scene_content_hash ?? null)
+      : (rawScene?.content_hash ?? scene?.sceneContentHash ?? null),
+    presentationEpoch,
+    backgroundKind,
+    phaseMedia: !isCinematic && !rawScene && (scene?.phaseMatched ?? false),
+    dayPhase: plan.dayPhase,
     expiresAt: activeCommand?.expires_at ?? plan.localPlay?.expiresAt ?? null,
-    kind: activeCommand && activeCommand.asset_kind !== 'actor' ? (activeCommand.loop ? 'loop' : 'once') : 'loop',
-    // 基础主体层只含循环成品（stage-plan 已滤除 once），仅指令主体可有一次动作。
-    actorKind: layerActor?.loop === false ? 'once' : 'loop',
-    // 短动作结束后返回保留的持续画面；独立播放不关联基准。
-    continuity: !layered && (activeCommand?.input_image_hash ?? baseline?.input_image_hash) ? 'base' : 'independent',
+    kind: (activeCommand?.loop === false || plan.localPlay?.id.startsWith('render:wake:') ? 'once' : 'loop') as
+      | 'loop'
+      | 'once',
+    pauseMotion: !displayVideo || paused,
     transition: activeCommand?.transition ?? 'natural',
-    inputImageHash: layered ? null : (activeCommand?.input_image_hash ?? baseline?.input_image_hash ?? null),
-    backgroundKind: layered ? 'scene' : 'cinematic',
-    phaseMedia,
-    sceneKey: videoUrl ?? posterUrl,
-    clear: !videoUrl && !posterUrl && !actorUrl && !outfitUrl
+    layout: plan.layout,
+    inputImageHash: activeCommand?.input_image_hash ?? null
+  }
+}
+
+export function deriveVisualPresentationTarget(
+  input: DesktopPresentationInput
+): DesktopBackgroundRequest & { localSceneHash: string | null; sceneHash: string | null } {
+  const target = deriveFullPresentationTarget({ ...input, surface: 'desktop' })
+  const video = target.video?.split('?')[0] ?? null
+  const poster = target.poster?.split('?')[0] ?? null
+  const clear = !video && !poster
+
+  const emptyPlay =
+    clear && !input.paused && input.projection ? `${DESKTOP_EMPTY_PLAY_PREFIX}${target.presentationEpoch}` : null
+
+  return {
+    authSessionId: input.authSessionId,
+    theme: input.theme,
+    video: video ? { url: video } : null,
+    poster: poster ? { url: poster } : null,
+    outfit: null,
+    outfitPose: false,
+    actor: null,
+    actorBaseKey: null,
+    playId: target.playId ?? emptyPlay,
+    playTarget: 'background',
+    layout: {
+      layerOrder: target.backgroundKind === 'cinematic' ? ['cinematic', 'effects'] : ['scene', 'effects'],
+      fit: target.layout.fit,
+      actorPosition: target.layout.actor_position,
+      safeArea: target.layout.safe_area
+    },
+    visualId: target.visualId,
+    visualVersion: target.visualVersion,
+    localSceneHash: target.localSceneHash,
+    sceneHash: target.sceneHash,
+    actorVisualId: null,
+    actorVisualVersion: null,
+    presentationEpoch: target.presentationEpoch,
+    expiresAt: target.expiresAt,
+    kind: target.kind,
+    actorKind: 'loop',
+    continuity: target.inputImageHash ? 'base' : 'independent',
+    transition: target.transition,
+    geometryMode: 'target',
+    inputImageHash: target.inputImageHash,
+    reduceMotion: input.reduceMotion || !input.motionEnabled,
+    paused: target.pauseMotion,
+    backgroundKind: target.backgroundKind,
+    phaseMedia: target.phaseMedia,
+    dayPhase: target.dayPhase,
+    sceneKey: video ?? poster,
+    clear
   }
 }

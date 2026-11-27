@@ -7,6 +7,7 @@ import type {
   DesktopMediaBytes,
   DesktopMediaReference
 } from '@ipc/contracts'
+import { DESKTOP_EMPTY_PLAY_PREFIX } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
 import { emptyDesktopBackground, parseDesktopBackgroundRequest } from './desktop-background'
@@ -84,6 +85,19 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
 
     if (request.clear) {
       requestedBackground = request
+
+      if (
+        request.playId?.startsWith(DESKTOP_EMPTY_PLAY_PREFIX) &&
+        currentBackground.clear &&
+        request.playId === currentBackground.playId &&
+        request.presentationEpoch === currentBackground.presentationEpoch
+      ) {
+        currentBackground = { ...currentBackground, theme: request.theme, reduceMotion: request.reduceMotion }
+        sendBackground()
+
+        return
+      }
+
       interruptBackground()
       loadedBackground = null
       currentBackground = {
@@ -194,6 +208,10 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
       actor: _actor,
       ...settings
     } = request
+
+    if (currentBackground.clear && currentBackground.playId?.startsWith(DESKTOP_EMPTY_PLAY_PREFIX)) {
+      dispatchedPlays.delete(currentBackground.playId)
+    }
 
     currentBackground = {
       ...settings,

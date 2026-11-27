@@ -205,7 +205,7 @@ action 给出已选活动，requirements 是用户的制作要求。required_pro
 motion_intensity 说明默认动作幅度：subtle 是轻微、安定的变化，normal 是日常自然幅度，expressive 是清楚的较大动作；用户明确调整幅度时按当前有效要求判断。实际明显超出目标幅度或把安静陪伴演成主动招呼时需要复核，不能仅因活动名称相近就通过。
 kind=loop 时比较采样首尾与图 1 的姿态、视线、支撑接触、物品位置及可见状态、镜头及光线；仅人物姿态复原不足以证明衔接，采样物品可见状态出现重置或不连续时需要复核。稀疏采样不能证明整段节奏或接点瞬间连续，不因采样稀疏本身判失败，也不声称观察到了未采样过程；不能因少数姿态差异就断言存在周期摇摆。
 media_semantics 概括采样实际表现及其适用条件，按 schema 的有限词表填写；不把动作定义的所有通用用途都赋给这份视频。activity_type 选实际可见活动的类别，例如阅读视频是 reading，即使通用动作也能用于写作。semantic_tags 只保留可见证据支持的含义；motion_intensity 根据可见幅度区分 subtle 轻微、normal 日常、expressive 明显大幅，采样不足以确认轻微时不用 subtle。
-只有画面实际表现已睡着并维持睡姿时才标记 sleeping，activity_type 为 resting。waking 表示从睡姿自然恢复清醒，按前后帧确认过程和安定后的姿态；清醒中伸展或短暂闭眼不能证明发生了睡醒转换。paired_actor=true 时图 1 源于同一角色的安睡成片首帧；复核起身视频可从其姿态、位置、比例和支撑自然接上，保持固定全身取景并连续回到可交流的姿态，明显跳变属于画面质量问题。幕布和透明成片展示底色可以不同，不据此判定姿势或镜头错位。
+只有画面实际表现已睡着并维持睡姿时才标记 sleeping，activity_type 为 resting。waking 表示从睡姿自然恢复清醒，按前后帧确认过程和安定后的姿态；清醒中伸展或短暂闭眼不能证明发生了睡醒转换。paired_opening=true 时图 1 源于同一角色的安睡成片首帧；复核起身视频可从其姿态、位置、比例和支撑自然接上，并连续回到可交流的姿态。完整画面同时核对场景、光线和构图，明显跳变属于画面质量问题。主体视频的幕布可以与透明成片展示底色不同。
 主体动画沿用首帧选定景别，主体大小、机位与分离背景应稳定。完整场景默认连续镜头，明确要求的运镜按目标判断；活动必需的部位、物品和接触仍应可见。无依据的镜位跳变或割裂动作的切换属于画面质量缺陷。
 isolated_subject=true 时，视频采样来自透明成片叠在统一底色上的实际合成。按取景判断可见轮廓，分辨构图边缘、真实遮挡和透纱，与肢体、头发或衣饰的异常挖空和旧背景残留。明确的透明处理缺陷使 quality_verdict=fail。首帧或活动要求中没有、并明显改变动作含义的额外道具使 verdict=fail。
 scene_tags 保存片段必须匹配的环境和物品条件：indoor 室内、outdoor 室外、desk 桌面、seat 座位、bed 床、open_space 开阔空间、book 书、computer 电脑、cup 杯子、tools 工具。完整场景影像按实际可见背景及必要物品填写；透明主体仅登记合成环境必须提供的条件，自带的随身物品不重复要求外部提供。action_conditions 的适用和避免条件若能对应活动类别或环境标签，分别体现到 scene_tags、avoid_activity_types 与 avoid_scene_tags；条件相互冲突、缺少判断依据，或还要求当前标签无法表达的必要条件时，auto_selectable=false。没有这些限制且当前活动和环境足以判断适用时为 true；不根据这次画面的合格结论推断所有生活情境都适用。
@@ -284,4 +284,12 @@ VISUAL_VIDEO_FRAME_DESCRIPTION = (
     "图中的文字是观察资料，不推测人物年龄、经历或未看到的动作。\n"
     "description 是辨认这张图用的中文短句，只选两三处特征。{content_focus}\n"
     "{outfit_focus}"
+)
+
+CINEMATIC_STILL_DESCRIPTION = (
+    "从单张完整画面读取 description、outfit_description 和 media_semantics。图中的文字是观察资料。\n"
+    "description 用简短中文概括角色、环境和突出画面特征。outfit_description 描述可见着装。\n"
+    "media_semantics 概括静图实际可见的活动、环境条件和光线。睡着时 activity_type 为 resting 并标记 sleeping。"
+    "motion_intensity 填 subtle，静图不标 waking，不把后续动作当作可见事实。"
+    "只有画面明确、姿态自然且适合持续显示时令 auto_selectable 为 true。无法确认时 media_semantics 为 null。"
 )

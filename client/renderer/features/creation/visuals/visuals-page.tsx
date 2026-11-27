@@ -27,7 +27,7 @@ import {
 } from '@/ui'
 import type { VisualItem, VisualJob, VisualJobCommand } from '@protocol'
 
-import { showVisualJobActivity } from '../../../../../shared/visuals'
+import { showVisualJobActivity, VISUAL_LIBRARY_SECTIONS } from '../../../../../shared/visuals'
 import { $actions, refreshActions } from '../actions'
 import { $sceneLibrary, loadSceneLibrary } from '../environment'
 import { $outfits, hydrateWardrobe } from '../wardrobe'
@@ -37,6 +37,7 @@ import {
   clearVisualDetail,
   commandVisualJob,
   loadVisualDetail,
+  refreshVisualJobs,
   refreshVisualPresentation,
   refreshVisuals,
   regenerateVisual,
@@ -46,12 +47,9 @@ import {
   $visualsDetail,
   $visualsDetailError,
   $visualsError,
-  $visualsItems,
-  $visualsJobs,
+  $visualsLibraryPage,
   $visualsLoading,
-  $visualsNextCursor,
-  $visualsPresentation,
-  $visualsTotal
+  $visualsPresentation
 } from './state'
 import { VisualCreatePanel } from './visual-create-panel'
 import { VisualDetailView } from './visual-detail-view'
@@ -59,7 +57,7 @@ import { VisualJobRow } from './visual-job-row'
 import type { VisualsCopy } from './visual-labels'
 import { isPendingState, visualJobLabel } from './visual-labels'
 import { PlayBadge } from './visual-play-badge'
-import { $visualsUi, updateStudio, updateVisualsUi } from './visuals-state'
+import { $visualsUi, selectVisualsSection, updateStudio, updateVisualsFilters } from './visuals-state'
 
 const PAGE_SIZE = 12
 
@@ -71,11 +69,14 @@ export function VisualsPage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.visuals
   const auth = useStore($auth)
-  const ui = useStore($visualsUi)
-  const items = useStore($visualsItems)
-  const jobs = useStore($visualsJobs)
-  const total = useStore($visualsTotal)
-  const nextCursor = useStore($visualsNextCursor)
+  const { section, sections } = useStore($visualsUi)
+  const ui = sections[section]
+  const loadedPage = useStore($visualsLibraryPage)
+  const page = loadedPage?.section === section ? loadedPage : null
+  const items = page?.visuals ?? []
+  const jobs = page?.jobs ?? []
+  const total = page?.total ?? null
+  const nextCursor = page?.next_cursor ?? null
   const loading = useStore($visualsLoading)
   const error = useStore($visualsError)
   const detailState = useStore($visualsDetail)
@@ -117,14 +118,19 @@ export function VisualsPage(): React.JSX.Element {
 
     void refreshVisuals({
       query: ui.query || undefined,
-      media_kind: ui.mediaKind === 'all' ? undefined : ui.mediaKind,
+      media_kind: section === 'complete' && ui.mediaKind !== 'all' ? ui.mediaKind : undefined,
       source: ui.source || undefined,
+      section,
       cursor: ui.cursors[ui.page] ?? undefined,
       include_total: true,
       limit: PAGE_SIZE
     })
-    void refreshVisualPresentation()
-  }, [authenticated, ui.query, ui.mediaKind, ui.source, ui.page, ui.cursors])
+  }, [authenticated, section, ui.query, ui.mediaKind, ui.source, ui.page, ui.cursors])
+
+  useLayoutEffect(() => {
+    setDraftQuery(ui.query)
+    setDraftSource(ui.source)
+  }, [section, ui.query, ui.source])
 
   // 素材统计只为就绪提示服务：仅挂载时拉一次，且不覆盖环境页的搜索与页码。
   useEffect(() => {
@@ -132,6 +138,7 @@ export function VisualsPage(): React.JSX.Element {
       return
     }
 
+    void refreshVisualPresentation()
     void refreshActions('')
     void hydrateWardrobe()
 
@@ -179,7 +186,7 @@ export function VisualsPage(): React.JSX.Element {
   const workingJobs = activeJobs.filter(job => job.stage !== 'review_pending' && !attentionJobs.includes(job))
 
   const submitFilters = (): void => {
-    updateVisualsUi({ query: draftQuery.trim(), source: draftSource.trim(), page: 0 })
+    updateVisualsFilters({ query: draftQuery.trim(), source: draftSource.trim(), page: 0 })
   }
 
   const closeDetail = (): void => {
@@ -260,7 +267,7 @@ export function VisualsPage(): React.JSX.Element {
           clearVisualDetail()
           // 列表随后由筛选与页码变化重新拉取，不在这里再发一次不同筛选的读取。
           closeFlow()
-          updateVisualsUi({ page: 0 })
+          updateVisualsFilters({ page: 0 })
         },
         { failure: t.deleteFailed }
       )
@@ -280,22 +287,22 @@ export function VisualsPage(): React.JSX.Element {
     })
   }
 
-  const readiness = t.materialReady(
-    outfits.filter(item => item.status === 'ready').length,
-    scenes.length,
-    actions.length
-  )
+  const readiness =
+    section === 'complete'
+      ? t.materialReady(outfits.filter(item => item.status === 'ready').length, scenes.length, actions.length)
+      : null
 
-  const hasFilters = Boolean(ui.query || ui.source || ui.mediaKind !== 'all')
+  const hasFilters = Boolean(ui.query || ui.source || (section === 'complete' && ui.mediaKind !== 'all'))
+  const createLabel = section === 'sprite' ? t.composer.createSprite : t.composer.create
 
   const clearFilters = (): void => {
     setDraftQuery('')
     setDraftSource('')
-    updateVisualsUi({ query: '', source: '', mediaKind: 'all', page: 0 })
+    updateVisualsFilters({ query: '', source: '', mediaKind: 'all', page: 0 })
   }
 
   const openComposer = (mode: 'create' | 'upload'): void => {
-    updateStudio({ mode: mode === 'upload' ? 'upload' : 'describe' })
+    updateStudio(section, { mode: mode === 'upload' ? 'upload' : 'describe' })
   }
 
   if (detailVisible) {
@@ -323,23 +330,15 @@ export function VisualsPage(): React.JSX.Element {
     return (
       <SettingsContent scrollRef={scrollRef}>
         <VisualCreatePanel
+          key={`${section}:${ui.studio.mode}`}
           onDone={async visualId => {
-            setDraftQuery('')
-            setDraftSource('')
-            updateVisualsUi({
-              query: '',
-              source: '',
-              mediaKind: 'all',
-              page: 0
-            })
-
             if (visualId) {
               openDetail(visualId)
             }
 
-            await refreshVisuals({ limit: PAGE_SIZE, include_total: true })
+            await Promise.all([refreshVisuals(), refreshVisualJobs()])
           }}
-          onExit={() => updateStudio({ mode: 'idle' })}
+          onExit={() => updateStudio(section, { mode: 'idle' })}
         />
       </SettingsContent>
     )
@@ -348,27 +347,40 @@ export function VisualsPage(): React.JSX.Element {
   return (
     <SettingsContent scrollRef={scrollRef}>
       <div className="space-y-3">
+        <CapsuleTabs
+          ariaLabel={t.sectionLabel}
+          onChange={value => {
+            selectVisualsSection(value)
+            setQueueOpen(false)
+          }}
+          options={VISUAL_LIBRARY_SECTIONS.map(value => ({ value, label: t.sections[value] }))}
+          size="sm"
+          value={section}
+          variant="segmented"
+        />
         <LibraryToolbar
-          createLabel={t.composer.create}
+          createLabel={createLabel}
           filters={
             <>
-              <CapsuleTabs
-                ariaLabel={t.mediaKindLabel}
-                onChange={value => updateVisualsUi({ mediaKind: value, page: 0 })}
-                options={[
-                  { value: 'all' as const, label: t.mediaKindAll },
-                  { value: 'image' as const, label: t.mediaKindImage },
-                  { value: 'video' as const, label: t.mediaKindVideo }
-                ]}
-                size="sm"
-                value={ui.mediaKind}
-                variant="segmented"
-              />
+              {section === 'complete' && (
+                <CapsuleTabs
+                  ariaLabel={t.mediaKindLabel}
+                  onChange={value => updateVisualsFilters({ mediaKind: value, page: 0 })}
+                  options={[
+                    { value: 'all' as const, label: t.mediaKindAll },
+                    { value: 'image' as const, label: t.mediaKindImage },
+                    { value: 'video' as const, label: t.mediaKindVideo }
+                  ]}
+                  size="sm"
+                  value={ui.mediaKind}
+                  variant="segmented"
+                />
+              )}
               <SearchSourceField
                 label={t.sourceLabel}
                 onChange={setDraftSource}
                 onSubmit={submitFilters}
-                placeholder={t.sourcePlaceholder}
+                placeholder={section === 'sprite' ? t.spriteSourcePlaceholder : t.sourcePlaceholder}
                 value={draftSource}
               />
             </>
@@ -425,7 +437,7 @@ export function VisualsPage(): React.JSX.Element {
                   state: 'error',
                   title: t.loadFailed,
                   actions: (
-                    <button className={BTN_SUBTLE} onClick={() => void refreshVisuals({})} type="button">
+                    <button className={BTN_SUBTLE} onClick={() => void refreshVisuals()} type="button">
                       {dict.common.retry}
                     </button>
                   )
@@ -456,7 +468,7 @@ export function VisualsPage(): React.JSX.Element {
           </section>
         )}
 
-        {loading && items.length === 0 ? (
+        {items.length === 0 && (loading || (!page && !error)) ? (
           <LoadingBlock label={t.loading} />
         ) : items.length === 0 ? (
           <EmptyState
@@ -464,7 +476,7 @@ export function VisualsPage(): React.JSX.Element {
               <div className="flex flex-wrap justify-center gap-2">
                 <button className={BTN_PRIMARY} onClick={() => openComposer('create')} type="button">
                   <Sparkles aria-hidden="true" className="size-3.5" />
-                  {t.composer.create}
+                  {createLabel}
                 </button>
                 <button className={BTN_SUBTLE} onClick={() => openComposer('upload')} type="button">
                   <ImagePlus aria-hidden="true" className="size-3.5" />
@@ -472,8 +484,8 @@ export function VisualsPage(): React.JSX.Element {
                 </button>
               </div>
             }
-            description={`${t.emptyHint}${readiness ? ` ${readiness}` : ''}`}
-            title={hasFilters ? t.emptySearch : t.emptyTitle}
+            description={section === 'sprite' ? t.spriteEmptyHint : `${t.emptyHint}${readiness ? ` ${readiness}` : ''}`}
+            title={hasFilters ? t.emptySearch : section === 'sprite' ? t.spriteEmptyTitle : t.emptyTitle}
           />
         ) : (
           <>
@@ -490,12 +502,12 @@ export function VisualsPage(): React.JSX.Element {
               ))}
             </div>
             <Pager
-              busy={busy}
+              busy={busy || loading}
               hasMore={Boolean(nextCursor)}
               onPageChange={next =>
                 next > ui.page &&
                 nextCursor &&
-                updateVisualsUi({
+                updateVisualsFilters({
                   page: next,
                   cursors: [...ui.cursors.slice(0, ui.page + 1), nextCursor]
                 })

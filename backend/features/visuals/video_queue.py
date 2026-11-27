@@ -9,7 +9,7 @@ from runtime.paid_work import GenerationWorkPaused
 from features.media.chain import MediaChainState
 from features.media.video_queue.contracts import VideoQueueOwner
 
-from .generation import _require_active_job, visual_progress
+from .generation import require_visual_generation_submission, visual_progress
 from .models import VisualJob
 
 
@@ -45,7 +45,7 @@ async def inspect_visual_video_owner(
         return "ready"
     try:
         with library_work(job.library_work_id):
-            await _require_active_job(owner.user_id, owner.job_id, chain.generation_id)
+            await require_visual_generation_submission(owner.user_id, owner.job_id, chain.generation_id)
     except GenerationWorkPaused:
         return "paused"
     return "ready"

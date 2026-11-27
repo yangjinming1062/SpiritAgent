@@ -1,22 +1,29 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { deriveVisualPresentationTarget } from '@/app/workflows/visual-presentation'
+import { createCompletePlaybackAttempt, deriveVisualPresentationTarget } from '@/app/workflows/visual-presentation'
 import { $motionLevel } from '@/features/character'
 import {
+  $ambientLoopChoice,
+  $failedStageMedia,
   $performance,
   $stagePlan,
   $visualsError,
   $visualsJobs,
   $visualsPresentation,
   $visualsPresentationError,
+  $wakePerformance,
   bindPresentationDirector,
   claimVisualPlay,
+  commandTargetsSurface,
   pendingStaticPresentation,
+  recordDisplayedCompleteVideo,
   recordLocalStagePlayback,
   recordStageMediaFailure,
+  refreshVisualJobs,
   refreshVisualPresentation,
   refreshVisuals,
+  reportLocalFrame,
   retryStageMedia,
   sendStaticReceipt,
   sendVisualReceipt,
@@ -29,9 +36,10 @@ import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
-import { $surfaceScreenLocked } from '@/shared/store/surfaces'
+import { $surfaceScreenLocked, visualSurface } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
+import { DESKTOP_EMPTY_PLAY_PREFIX } from '@ipc/contracts'
 import type { VisualMediaKind } from '@protocol'
 
 function hasTerminalReceipt(statuses: ReadonlySet<ReceiptStatus> | undefined): boolean {
@@ -50,7 +58,7 @@ export function useDesktopWallpaperStatus(): { error: boolean; status: string | 
   const error = presentationError ?? libraryError
   const busy = jobs.filter(job => job.state === 'running' || job.state === 'queued' || job.state === 'paused')
   const stage = useStore($stagePlan)
-  const idle = stage.actor || stage.actorStillUrl || stage.scene || stage.cinematic || presentation?.current_visual
+  const idle = stage.scene || stage.cinematic || presentation?.current_visual
 
   const status = error
     ? error
@@ -83,10 +91,14 @@ export function useDesktopVisualWallpaper(): void {
   const claimedKinds = useRef(new Map<string, VisualMediaKind>())
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const publishedKey = useRef('')
-  const paused = locked || presentation.fullscreen || reduceMotion
+  const displayedTarget = useRef<ReturnType<typeof deriveVisualPresentationTarget> | null>(null)
+  const [playbackAttempt] = useState(createCompletePlaybackAttempt)
+  const visible = active && presentation.stageAvailable && !locked && !presentation.fullscreen
+  const paused = !visible
+  const motionEnabled = motionLevel !== 'off' && !reduceMotion
 
   const pendingPlay = performance.command
-  const staticTarget = pendingPlay || locked ? null : pendingStaticPresentation(projection)
+  const staticTarget = pendingPlay || !visible ? null : pendingStaticPresentation(projection)
   const lastStaticReceipt = useRef<string | null>(null)
 
   const settleStatic = useCallback(
@@ -101,6 +113,7 @@ export function useDesktopVisualWallpaper(): void {
 
       if (
         !scope ||
+        visualSurface() !== 'desktop' ||
         current.effectiveMode !== 'desktop' ||
         current.status !== 'active' ||
         $surfaceScreenLocked.get() ||
@@ -192,12 +205,18 @@ export function useDesktopVisualWallpaper(): void {
 
   useEffect(() => {
     publishedKey.current = ''
+    displayedTarget.current = null
+    playbackAttempt(null)
     claimedPlays.current.clear()
     claimedKinds.current.clear()
     receiptQueues.current.clear()
     lastStaticReceipt.current = null
     setClaimed(null)
-  }, [authSessionId])
+
+    return () => {
+      displayedTarget.current = null
+    }
+  }, [authSessionId, playbackAttempt])
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -216,7 +235,7 @@ export function useDesktopVisualWallpaper(): void {
     void refreshVisualPresentation()
   }, [authSessionId])
 
-  // 桌面宿主装配导演：常驻轮换本地完成，互动/意图演出走指令管线（回执沿本文件既有通道）。
+  // 桌面宿主消费服务端的完整场景选择并认领正式演出。
   useEffect(() => {
     if (!active || !authSessionId) {
       return
@@ -224,16 +243,18 @@ export function useDesktopVisualWallpaper(): void {
 
     const stageEpoch = $presentation.get().stageEpoch
 
-    return bindPresentationDirector(visualPerformancePorts(), () => $visualsPresentation.get(), {
+    return bindPresentationDirector(visualPerformancePorts('desktop'), () => $visualsPresentation.get(), {
+      surface: 'desktop',
+      isMotionEnabled: () =>
+        $motionLevel.get() !== 'off' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       isEligible: () =>
         $auth.get().kind === 'authenticated' &&
-        $motionLevel.get() !== 'off' &&
+        visualSurface() === 'desktop' &&
         $presentation.get().effectiveMode === 'desktop' &&
         $presentation.get().status === 'active' &&
         $presentation.get().stageEpoch === stageEpoch &&
         !$presentation.get().fullscreen &&
-        !$surfaceScreenLocked.get() &&
-        !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        !$surfaceScreenLocked.get(),
       isSubtle: () => $motionLevel.get() === 'subtle',
       isMechanical: () => false,
       onChanged: notify => {
@@ -258,6 +279,7 @@ export function useDesktopVisualWallpaper(): void {
 
     const timer = window.setInterval(() => {
       void refreshVisuals()
+      void refreshVisualJobs()
       void refreshVisualPresentation()
     }, 5000)
 
@@ -266,7 +288,13 @@ export function useDesktopVisualWallpaper(): void {
 
   // 播放认领：仅桌面承载认领待播指令；`queued` 只表示受理，实际回执才更新呈现事实。
   useEffect(() => {
-    if (!active || !authSessionId || !pendingPlay || motionLevel === 'off') {
+    if (
+      !visible ||
+      !authSessionId ||
+      !pendingPlay ||
+      !commandTargetsSurface(pendingPlay, 'desktop') ||
+      (pendingPlay.media_kind === 'video' && !motionEnabled)
+    ) {
       return
     }
 
@@ -282,8 +310,8 @@ export function useDesktopVisualWallpaper(): void {
         return
       }
 
-      if (await claimVisualPlay(pendingPlay.play_id, clientId)) {
-        if (disposed || !scope?.()) {
+      if (await claimVisualPlay(pendingPlay.play_id, clientId, 'desktop')) {
+        if (disposed || !scope?.() || visualSurface() !== 'desktop') {
           if (scope?.()) {
             await sendVisualReceipt(pendingPlay.play_id, {
               status: 'interrupted',
@@ -313,7 +341,7 @@ export function useDesktopVisualWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, pendingPlay, clientId, motionLevel, recordReceipt])
+  }, [visible, authSessionId, pendingPlay, clientId, motionEnabled, recordReceipt])
 
   useEffect(() => {
     const scope = captureAuthScope()
@@ -323,20 +351,73 @@ export function useDesktopVisualWallpaper(): void {
         return
       }
 
-      if (receipt.playId.startsWith('render:ambient:') || receipt.playId.startsWith('render:wake:')) {
-        if (receipt.status !== 'first-frame') {
+      if (receipt.playId.startsWith('render:')) {
+        const target = displayedTarget.current
+
+        const sameTarget = (): boolean => displayedTarget.current?.playId === receipt.playId
+        const current = (): boolean => visualSurface() === 'desktop' && sameTarget()
+
+        if (receipt.playId.startsWith(DESKTOP_EMPTY_PLAY_PREFIX)) {
+          if (target?.clear && receipt.status === 'completed' && current()) {
+            recordDisplayedCompleteVideo(null)
+            void reportLocalFrame(
+              { presentation_epoch: target.presentationEpoch, receipt_kind: 'empty', target_surface: 'desktop' },
+              current
+            ).catch(error => log.warn('desktop-visual', 'Empty frame receipt failed', error))
+          }
+
+          return
+        }
+
+        const key = target?.visualId && target.visualVersion ? `${target.visualId}:${target.visualVersion}` : null
+
+        if (current() && receipt.status === 'failed' && key) {
+          recordStageMediaFailure(key)
+        }
+
+        if (receipt.playId.startsWith('render:wake:') && receipt.status !== 'first-frame') {
           recordLocalStagePlayback(receipt.playId, receipt.status === 'completed' ? 'finished' : receipt.status)
+        }
+
+        if (receipt.status === 'started' && target && sameTarget()) {
+          recordDisplayedCompleteVideo(
+            target.video && target.backgroundKind === 'cinematic' && key ? { key, sceneHash: target.sceneHash } : null
+          )
+
+          if (!current()) {
+            return
+          }
+
+          const frame = target.localSceneHash
+            ? { scene_hash: target.localSceneHash }
+            : target.visualId && target.visualVersion
+              ? { visual_id: target.visualId, visual_version: target.visualVersion }
+              : null
+
+          if (!frame) {
+            return
+          }
+
+          void reportLocalFrame(
+            {
+              ...frame,
+              presentation_epoch: target.presentationEpoch,
+              receipt_kind: target.video ? 'video' : 'image',
+              target_surface: 'desktop'
+            },
+            current
+          ).catch(error => log.warn('desktop-visual', 'Local frame receipt failed', error))
         }
 
         return
       }
 
-      if (receipt.playId.startsWith('render:cinematic:')) {
-        if (receipt.status === 'failed') {
-          recordStageMediaFailure(receipt.playId.slice('render:cinematic:'.length))
-        }
-
-        return
+      if (receipt.status === 'started' && claimed?.play_id === receipt.playId && visualSurface() === 'desktop') {
+        recordDisplayedCompleteVideo(
+          claimed.asset_kind === 'cinematic' && claimed.media_kind === 'video'
+            ? { key: `${claimed.visual_id}:${claimed.visual_version}`, sceneHash: claimed.scene?.content_hash ?? null }
+            : null
+        )
       }
 
       if (receipt.status === 'failed' && claimed?.play_id === receipt.playId && claimed.asset_kind === 'cinematic') {
@@ -344,6 +425,10 @@ export function useDesktopVisualWallpaper(): void {
       }
 
       if (staticTarget && receipt.playId === staticPresentationKey(staticTarget)) {
+        if (receipt.status === 'started' && visualSurface() === 'desktop') {
+          recordDisplayedCompleteVideo(null)
+        }
+
         if (receipt.status === 'started' || receipt.status === 'failed') {
           void settleStatic(staticTarget, receipt.status, receipt.error)
         }
@@ -370,8 +455,8 @@ export function useDesktopVisualWallpaper(): void {
 
   const activeCommand =
     claimed &&
-    motionLevel !== 'off' &&
-    !paused &&
+    (claimed.media_kind === 'image' || motionEnabled) &&
+    visible &&
     performance.command?.play_id === claimed.play_id &&
     (performance.state === 'playing' || Date.parse(claimed.expires_at) > Date.now()) &&
     claimed.presentation_epoch >= (projection?.presentation_epoch ?? 0) &&
@@ -395,7 +480,9 @@ export function useDesktopVisualWallpaper(): void {
     }
   }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
-  const stagePlan = useStore($stagePlan)
+  const failedMedia = useStore($failedStageMedia)
+  const ambient = useStore($ambientLoopChoice)
+  const wake = useStore($wakePerformance)
 
   const request = useMemo(
     () =>
@@ -405,36 +492,42 @@ export function useDesktopVisualWallpaper(): void {
             projection,
             activeCommand,
             staticTarget,
-            stagePlan,
             theme,
             subtle: motionLevel === 'subtle',
-            motionEnabled: motionLevel !== 'off',
+            motionEnabled,
             reduceMotion,
-            paused
+            paused,
+            failedMedia,
+            ambient,
+            wake
           })
         : null,
     [
       active,
       authSessionId,
-      activeCommand,
       projection,
+      activeCommand,
       staticTarget,
-      stagePlan,
       theme,
       motionLevel,
+      motionEnabled,
       reduceMotion,
-      paused
+      paused,
+      failedMedia,
+      ambient,
+      wake
     ]
   )
 
   // 发布只在目标真正变化时发生；失败保留当前画面并把回执记到认领指令上。
   useEffect(() => {
     if (!active || !authSessionId || !request) {
+      publishedKey.current = ''
+      displayedTarget.current = null
+      playbackAttempt(null)
+
       return
     }
-
-    const scope = captureAuthScope()
-    let disposed = false
 
     const key = JSON.stringify(request)
 
@@ -442,12 +535,21 @@ export function useDesktopVisualWallpaper(): void {
       return
     }
 
+    const scope = captureAuthScope()
     publishedKey.current = key
+    const attempt = { ...request, playId: playbackAttempt(request.playId) }
+    displayedTarget.current = attempt
 
+    // 暂停时播放器可保留同一槽位，恢复也不会重发它的首帧。
+    if (!visible && request.clear) {
+      recordDisplayedCompleteVideo(null)
+    }
+
+    const { localSceneHash: _localSceneHash, sceneHash: _sceneHash, ...background } = attempt
     void shellApi()
-      .presentation.setBackground(request)
+      .presentation.setBackground(background)
       .catch(error => {
-        if (disposed || !scope?.()) {
+        if (displayedTarget.current !== attempt || !scope?.()) {
           return
         }
 
@@ -456,21 +558,27 @@ export function useDesktopVisualWallpaper(): void {
 
         if (activeCommand) {
           recordReceipt(activeCommand.play_id, 'failed', String(error))
-        } else if (staticTarget && request.playId === staticPresentationKey(staticTarget)) {
+        } else if (staticTarget && attempt.playId === staticPresentationKey(staticTarget)) {
           void settleStatic(staticTarget, 'failed', String(error))
-        } else if (request.playId?.startsWith('render:')) {
-          if (request.playId.startsWith('render:cinematic:')) {
-            recordStageMediaFailure(request.playId.slice('render:cinematic:'.length))
-          } else {
-            recordLocalStagePlayback(request.playId, 'failed')
+        } else if (attempt.playId?.startsWith('render:')) {
+          if (attempt.visualId && attempt.visualVersion) {
+            recordStageMediaFailure(`${attempt.visualId}:${attempt.visualVersion}`)
           }
+
+          recordLocalStagePlayback(attempt.playId, 'failed')
         }
       })
-
-    return () => {
-      disposed = true
-    }
-  }, [active, authSessionId, request, staticTarget, activeCommand, recordReceipt, settleStatic])
+  }, [
+    active,
+    authSessionId,
+    request,
+    staticTarget,
+    activeCommand,
+    recordReceipt,
+    settleStatic,
+    visible,
+    playbackAttempt
+  ])
 
   useEffect(() => {
     const scope = captureAuthScope()

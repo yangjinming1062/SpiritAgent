@@ -1,6 +1,16 @@
 import type { ApiSchemas } from './api.generated'
 import type { VisualJobCommand, VisualJobState } from './protocol'
 
+export const VISUAL_LIBRARY_SECTIONS = ['complete', 'sprite'] as const
+export type VisualLibrarySection = (typeof VISUAL_LIBRARY_SECTIONS)[number]
+
+export const VISUAL_CREATION_INTENTS = {
+  complete: ['photo', 'video'],
+  sprite: ['motion']
+} as const satisfies Record<VisualLibrarySection, readonly string[]>
+
+export type VisualCreationIntent = (typeof VISUAL_CREATION_INTENTS)[VisualLibrarySection][number]
+
 export interface VisualMaterialOption {
   id: string
   name: string
@@ -58,17 +68,27 @@ export async function loadVisualMaterials(reader: {
     reader.outfits(),
     allPages(async cursor => {
       const page = await reader.scenes(cursor)
-      return { rows: page.scenes, next: page.has_more ? page.next_cursor : null }
+      return {
+        rows: page.scenes,
+        next: page.has_more ? page.next_cursor : null
+      }
     }),
     allPages(async cursor => {
       const page = await reader.actions(cursor)
-      return { rows: page.actions, next: page.has_more ? page.next_cursor : null }
+      return {
+        rows: page.actions,
+        next: page.has_more ? page.next_cursor : null
+      }
     })
   ])
   return {
     outfits: wardrobe.outfits
       .filter(row => row.status === 'ready')
-      .map(row => ({ id: row.id, name: row.name, preview: row.fullbody_url })),
+      .map(row => ({
+        id: row.id,
+        name: row.name,
+        preview: row.fullbody_url
+      })),
     scenes: scenes
       .filter(row => row.status === 'ready')
       .map(row => ({ id: row.id, name: row.title, preview: row.url })),
@@ -77,10 +97,12 @@ export async function loadVisualMaterials(reader: {
 }
 
 export function showVisualJobActivity(job: Pick<ApiSchemas['VisualJobView'], 'state' | 'request_source'>): boolean {
+  const recoverableSource = job.request_source === 'user_requested' || job.request_source === 'stage_preparation'
+
   return (
     job.state !== 'succeeded' &&
     job.state !== 'cancelled' &&
-    ((job.state !== 'failed' && job.state !== 'unknown') || job.request_source === 'user_requested')
+    ((job.state !== 'failed' && job.state !== 'unknown') || recoverableSource)
   )
 }
 

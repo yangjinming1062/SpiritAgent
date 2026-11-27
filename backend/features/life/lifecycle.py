@@ -1,6 +1,7 @@
 """持续事项的暂停、恢复和正常退出，保留已经提交的执行事实。"""
 
 from infrastructure.text import ensure_utc, utc_now
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,4 +119,6 @@ async def transition_pursuit(
         )
     )
     await record_events(db, user_id, events)
+    if pursuit.shared_with_user:
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return pursuit

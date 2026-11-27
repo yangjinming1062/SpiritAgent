@@ -6,8 +6,9 @@ from features.action_library.service import ensure_builtin_actions
 from infrastructure.database import SESSION_LOCAL
 from runtime.background import TaskScope
 
-from workflows.life_presentation import evaluate_life_presentation
+from workflows.life_presentation import evaluate_life_presentation, life_presentation_requested
 from workflows.visual_preparation import schedule_base_motion_preparation
+from workflows.visual_stage_preparation import schedule_stage_preparation
 
 _TASKS = TaskScope("visuals.events")
 
@@ -26,7 +27,17 @@ async def initialize_visuals(user_id: int, _payload: dict[str, Any]) -> None:
         await ensure_builtin_actions(db, user_id)
         await db.commit()
     schedule_base_motion_preparation(user_id)
+    schedule_stage_preparation(user_id)
     await evaluate_life_presentation(user_id, force=True)
+
+
+async def preparation_context_changed(user_id: int, _payload: dict[str, Any]) -> None:
+    schedule_stage_preparation(user_id)
+
+
+async def presentation_context_changed(user_id: int, payload: dict[str, Any]) -> None:
+    schedule_stage_preparation(user_id)
+    await life_presentation_requested(user_id, payload)
 
 
 async def drain_visual_events() -> None:

@@ -7,6 +7,7 @@ export {
   bindPresentationDirector,
   enqueueInteraction,
   enqueueInteractionForward,
+  recordDisplayedCompleteVideo,
   recordLocalStagePlayback,
   recordStageMediaFailure,
   retryStageMedia
@@ -25,6 +26,7 @@ export {
 } from './library'
 export {
   claimVisualPlay,
+  reportLocalFrame,
   sendStaticReceipt,
   sendVisualReceipt,
   staticPresentationKey,
@@ -44,13 +46,15 @@ export {
   $visualsDetail,
   $visualsDetailError,
   $visualsError,
-  $visualsItems,
   $visualsJobs,
   $visualsLoading,
-  $visualsNextCursor,
   $visualsPresentation,
-  $visualsPresentationError,
-  $visualsTotal
+  $visualsPresentationError
 } from './state'
-export type { VisualActualSnapshot, VisualPlayCommand, VisualsPresentation } from './types'
+export {
+  commandTargetsSurface,
+  type VisualActualSnapshot,
+  type VisualPlayCommand,
+  type VisualsPresentation
+} from './types'
 export { visualsUiHandoff } from './ui-handoff'

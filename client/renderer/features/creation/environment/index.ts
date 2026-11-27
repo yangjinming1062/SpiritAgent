@@ -38,6 +38,5 @@ export {
   updateSceneMutationIssue
 } from './scene'
 
-export { SceneBackdrop } from './scene-backdrop'
 export { SceneCreationCheckActions } from './scene-creation-check-actions'
 export { sceneUiHandoff } from './ui-handoff'

@@ -8,6 +8,8 @@ export interface StageVideoSource<T> {
   loop: boolean
   natural?: boolean
   holdLastFrame?: boolean
+  expiresAt?: number | null
+  canActivate?: () => boolean
   value: T
   load: () => Promise<StageVideoLease>
 }
@@ -118,7 +120,9 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       if (boundary && waiting && slot.source?.natural && waiting.source?.natural) {
         show(waiting)
 
-        return
+        if (active !== slot) {
+          return
+        }
       }
 
       events.frame?.(slot.element)
@@ -134,29 +138,58 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       return
     }
 
+    const source = slot.source
+
+    if (!source || (!slot.started && !canActivate(source))) {
+      fail(slot, 'Playback request expired before display', 'expired')
+
+      return
+    }
+
     const generation = slot.generation
     void slot.element
       .play()
       .then(() => {
-        if (disposed || slot.generation !== generation || active !== slot || paused || !slot.source) {
+        if (disposed || slot.generation !== generation || active !== slot || paused || slot.source !== source) {
           return
         }
 
         if (!slot.started) {
+          if (!canActivate(source)) {
+            fail(slot, 'Playback request expired before display', 'expired')
+
+            return
+          }
+
+          if (slot.timeout) {
+            clearTimeout(slot.timeout)
+            slot.timeout = null
+          }
+
           slot.started = true
-          events.started(slot.source)
+          events.started(source)
         }
 
         watchFrame(slot)
       })
       .catch(error => {
-        if (!disposed && !paused && slot.generation === generation) {
+        if (!disposed && !paused && slot.generation === generation && slot.source === source) {
           fail(slot, String(error))
         }
       })
   }
 
+  function canActivate(source: StageVideoSource<T>): boolean {
+    return (source.expiresAt == null || Date.now() < source.expiresAt) && (source.canActivate?.() ?? true)
+  }
+
   function show(slot: Slot<T>): void {
+    if (slot.source && !slot.started && !canActivate(slot.source)) {
+      fail(slot, 'Playback request expired before display', 'expired')
+
+      return
+    }
+
     const previous = active
     active = slot
     slot.element.style.opacity = '1'
@@ -207,17 +240,26 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
     reset(slot)
   }
 
-  function fail(slot: Slot<T>, error: string): void {
+  function fail(slot: Slot<T>, error: string, reason: 'media' | 'expired' = 'media'): void {
     if (!slot.source || slot.terminal) {
       return
     }
 
     const source = slot.source
     settle(source.key)
-    failedMedia.add(source.mediaKey ?? source.key)
+
+    if (reason === 'media') {
+      failedMedia.add(source.mediaKey ?? source.key)
+    }
+
     slot.terminal = true
     restore(slot)
-    events.failed(source, error)
+
+    if (reason === 'expired') {
+      events.interrupted?.(source)
+    } else {
+      events.failed(source, error)
+    }
   }
 
   function ready(slot: Slot<T>): void {
@@ -231,16 +273,31 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       clearTimeout(slot.timeout)
     }
 
-    slot.timeout = null
+    const expiresAt = slot.source.expiresAt
+    slot.timeout =
+      expiresAt == null
+        ? null
+        : setTimeout(
+            () => fail(slot, 'Playback request expired before display', 'expired'),
+            Math.max(0, expiresAt - Date.now())
+          )
 
     presentReady(slot)
   }
 
   function presentReady(slot: Slot<T>): void {
-    if (
-      slot.source?.key === selected &&
-      !(active?.source?.natural && slot.source?.natural && !paused && active !== slot)
-    ) {
+    const waitForLoop =
+      active !== slot &&
+      active?.source?.loop &&
+      active.source.natural &&
+      slot.source?.natural &&
+      active.started &&
+      !active.terminal &&
+      !paused &&
+      !active.element.paused &&
+      !active.element.ended
+
+    if (slot.source?.key === selected && !waitForLoop) {
       show(slot)
     }
   }
@@ -304,6 +361,22 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
 
   return {
     setPaused,
+    cancelPending(): void {
+      selected = active?.source?.key ?? null
+      fallbackKey = null
+
+      for (const slot of slots) {
+        if (slot === active) {
+          continue
+        }
+
+        if (slot.source && !slot.terminal) {
+          events.interrupted?.(slot.source)
+        }
+
+        reset(slot)
+      }
+    },
     set(source: StageVideoSource<T> | null, baseKey: string | null = null): void {
       if (disposed) {
         return
@@ -375,7 +448,18 @@ export function createStageVideoLayer<T>(elements: HTMLVideoElement[], events: L
       reset(slot)
       slot.source = source
       const generation = slot.generation
-      slot.timeout = setTimeout(() => fail(slot, 'Video first frame timed out'), RENDERER_TIMINGS.stageMediaTimeoutMs)
+      const expiresIn = source.expiresAt == null ? Infinity : source.expiresAt - Date.now()
+
+      if (expiresIn <= 0) {
+        fail(slot, 'Playback request expired before display', 'expired')
+
+        return
+      }
+
+      slot.timeout =
+        expiresIn <= RENDERER_TIMINGS.stageMediaTimeoutMs
+          ? setTimeout(() => fail(slot, 'Playback request expired before display', 'expired'), expiresIn)
+          : setTimeout(() => fail(slot, 'Video first frame timed out'), RENDERER_TIMINGS.stageMediaTimeoutMs)
       void source
         .load()
         .then(lease => {

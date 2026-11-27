@@ -28,6 +28,7 @@ from workflows.visual_preparation import (
     start_base_motion_preparation,
     stop_base_motion_preparation,
 )
+from workflows.visual_stage_preparation import queue_stage_preparation, start_stage_preparation, stop_stage_preparation
 
 
 def configure_runtime_lifecycle() -> None:
@@ -44,6 +45,12 @@ def configure_runtime_lifecycle() -> None:
                 prepare=start_base_motion_preparation,
                 resume_user=resume_base_motion_preparation,
                 stop_producer=stop_base_motion_preparation,
+            ),
+            RuntimeParticipant(
+                "visuals.stage_preparation",
+                prepare=start_stage_preparation,
+                resume_user=queue_stage_preparation,
+                stop_producer=stop_stage_preparation,
             ),
             *appearance_participants(),
             *scene_participants(),

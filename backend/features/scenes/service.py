@@ -107,6 +107,8 @@ async def _event(db: AsyncSession, user_id: int, event_type: str, scene_id: int 
     emit_ws_event(db, user_id=user_id, event_type=event_type, payload={"scene_id": scene_id})
     if scene_id is not None:
         scene = await get_scene(db, user_id, scene_id)
+        if scene is None or scene.status == "ready":
+            emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
         if scene is not None:
             await sync_scene_assets(db, scene)
             if scene.status == "ready":

@@ -5,7 +5,12 @@ import { currentDayPhase, type DayPhase } from '@/shared/lib/day-phase'
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 
 import { type CatalogEntry, motionAllowed } from './selection'
-import type { VisualPlayCommand, VisualsPresentation } from './types'
+import {
+  commandTargetsSurface,
+  type VisualPlayCommand,
+  type VisualsPresentation,
+  type VisualTargetSurface
+} from './types'
 
 type LayerMedia = ApiSchemas['StageLayerMedia']
 type StageLayout = ApiSchemas['StageCompositionLayout']
@@ -27,6 +32,8 @@ export interface StageScenePlan {
   version: number | null
   url: string
   posterUrl: string | null
+  fallbackScene: SceneReference | null
+  sceneContentHash: string | null
   isVideo: boolean
   phaseMatched: boolean
 }
@@ -44,6 +51,7 @@ export interface StagePlan {
   actorStillUrl: string | null
   scene: StageScenePlan | null
   cinematic: LayerMedia | null
+  cinematicMotion: boolean
   layout: StageLayout
   dayPhase: DayPhase
   localPlay: LocalStagePlay | null
@@ -58,12 +66,12 @@ export interface AmbientChoice {
 export interface WakePerformance {
   id: string
   expiresAt: string
-  actor: CatalogEntry
+  clip: CatalogEntry
   scene: StageScenePlan | null
 }
 
 interface StageOptions {
-  desktop?: boolean
+  surface?: VisualTargetSurface
   subtle?: boolean
   motionEnabled?: boolean
   ambient?: AmbientChoice | null
@@ -97,9 +105,9 @@ export function pendingStaticPresentation(presentation: VisualsPresentation | nu
 
 export function ambientCandidates(
   presentation: VisualsPresentation,
-  desktop: boolean,
   subtle: boolean,
-  failed?: ReadonlySet<string>
+  failed?: ReadonlySet<string>,
+  surface: VisualTargetSurface = 'sprite'
 ): CatalogEntry[] {
   const plan = presentation.stage_plan
 
@@ -108,40 +116,21 @@ export function ambientCandidates(
   }
 
   const usable = (entry: CatalogEntry): boolean => !failed?.has(mediaKey(entry)) && motionAllowed(entry, subtle)
+
+  if (surface !== 'sprite') {
+    return plan.cinematic_variants.filter(
+      entry =>
+        entry.asset_kind === 'cinematic' && entry.media_kind === 'video' && entry.clip_kind === 'loop' && usable(entry)
+    )
+  }
+
   const actors = plan.actor_variants.filter(usable)
-  const cinematic = desktop ? plan.cinematic_variants.filter(usable) : []
-  const wallpaper = presentation.default_wallpaper?.composition.media?.cinematic
 
-  const useFavorite =
-    desktop &&
-    wallpaper &&
-    !failed?.has(mediaKey(wallpaper)) &&
-    phaseAllowed(wallpaper, plan.day_phase) &&
-    !needsCharacter(presentation)
-
-  if (useFavorite && plan.activity_type === 'idle' && cinematic.length === 0) {
-    return []
-  }
-
-  const matched = [...actors, ...cinematic]
-
-  if (matched.length > 0) {
-    return matched
-  }
-
-  if (useFavorite) {
-    return []
-  }
-
-  return plan.fallback_actor_variants.filter(usable)
+  return actors.length > 0 ? actors : plan.fallback_actor_variants.filter(usable)
 }
 
 function phaseAllowed(media: LayerMedia, phase: DayPhase): boolean {
   return media.day_phase === null || media.day_phase === phase
-}
-
-function needsCharacter(presentation: VisualsPresentation | null): boolean {
-  return presentation?.rhythm?.state === 'asleep' || presentation?.rhythm?.interacting === true
 }
 
 export function sceneForStage(
@@ -155,13 +144,24 @@ export function sceneForStage(
       version: media.version,
       url: media.media_url,
       posterUrl: media.poster_url ?? material?.path ?? null,
+      fallbackScene: media.poster_url ? null : (material ?? null),
+      sceneContentHash: media.scene_content_hash,
       isVideo: media.media_kind === 'video',
       phaseMatched: media.day_phase === phase
     }
   }
 
   return material
-    ? { visualId: null, version: null, url: material.path, posterUrl: null, isVideo: false, phaseMatched: false }
+    ? {
+        visualId: null,
+        version: null,
+        url: material.path,
+        posterUrl: null,
+        fallbackScene: material,
+        sceneContentHash: material.content_hash,
+        isVideo: false,
+        phaseMatched: false
+      }
     : null
 }
 
@@ -186,7 +186,14 @@ function actorFromEntry(entry: LayerMedia | null | undefined): StageActorPlan | 
 export function deriveStagePlan(
   presentation: VisualsPresentation | null,
   command: VisualPlayCommand | null,
-  { desktop = false, subtle = false, motionEnabled = true, ambient = null, wake = null, failedMedia }: StageOptions = {}
+  {
+    surface = 'sprite',
+    subtle = false,
+    motionEnabled = true,
+    ambient = null,
+    wake = null,
+    failedMedia
+  }: StageOptions = {}
 ): StagePlan {
   const target = presentation?.stage_plan
   const dayPhase = target?.day_phase ?? currentDayPhase()
@@ -194,44 +201,60 @@ export function deriveStagePlan(
   const media = composition?.media
   const staticTarget = presentation?.static_presentation
   const fallbackMaterial = staticTarget?.scene ?? composition?.scene_material
-  const wallpaper = desktop ? presentation?.default_wallpaper?.composition : null
+  const full = surface !== 'sprite'
+  const wallpaper = surface === 'desktop' ? presentation?.default_wallpaper?.composition : null
   const favorite = wallpaper?.media
   const enabled = presentation?.autonomous_enabled === true
-  const showCharacter = enabled && needsCharacter(presentation)
-
-  const favoriteCinematic =
-    favorite?.cinematic && (!enabled || phaseAllowed(favorite.cinematic, dayPhase)) ? favorite.cinematic : null
-
-  const candidates = presentation ? ambientCandidates(presentation, desktop, subtle, failedMedia) : []
+  const candidates = presentation && !full ? ambientCandidates(presentation, subtle, failedMedia) : []
   const selected = candidates.find(entry => ambient && mediaKey(entry) === `${ambient.visualId}:${ambient.version}`)
   const choice = selected ?? candidates[0]
 
-  const regularActor = motionEnabled
-    ? actorFromEntry(choice?.asset_kind === 'actor' ? choice : enabled ? null : media?.actor)
+  const regularActor =
+    !full && motionEnabled
+      ? actorFromEntry(choice?.asset_kind === 'actor' ? choice : enabled ? null : media?.actor)
+      : null
+
+  const isUsable = (entry: LayerMedia | null | undefined): entry is LayerMedia =>
+    Boolean(entry && !failedMedia?.has(mediaKey(entry)))
+
+  const scene = sceneForStage(
+    isUsable(target?.scene_media) ? target.scene_media : null,
+    target?.scene ?? fallbackMaterial,
+    dayPhase
+  )
+
+  const sceneFallback = sceneForStage(
+    isUsable(favorite?.scene) ? favorite.scene : null,
+    wallpaper?.scene_material,
+    dayPhase
+  )
+
+  const committedScene = sceneForStage(isUsable(media?.scene) ? media.scene : null, fallbackMaterial, dayPhase)
+  const regularScene = enabled ? (sceneFallback ?? scene) : (committedScene ?? sceneFallback ?? scene)
+  const fullCandidates = full && enabled ? (target?.cinematic_variants.filter(isUsable) ?? []) : []
+  const fullStill = fullCandidates.find(entry => entry.media_kind === 'image')
+
+  const selectedLoop =
+    full && presentation && ambient
+      ? ambientCandidates(presentation, subtle, failedMedia, surface).find(
+          entry => entry.visual_id === ambient.visualId && entry.version === ambient.version
+        )
+      : null
+
+  const preferredFull = motionEnabled
+    ? (selectedLoop ??
+      fullCandidates.find(entry => entry.media_kind === 'image' || motionAllowed(entry, subtle)) ??
+      fullCandidates.find(entry => entry.poster_url))
+    : (fullStill ?? fullCandidates.find(entry => entry.poster_url))
+
+  const favoriteCinematic =
+    isUsable(favorite?.cinematic) && (!enabled || phaseAllowed(favorite.cinematic, dayPhase))
+      ? favorite.cinematic
+      : null
+
+  const cinematic = full
+    ? (preferredFull ?? (!enabled && isUsable(media?.cinematic) ? media.cinematic : favoriteCinematic) ?? null)
     : null
-
-  const scene = sceneForStage(target?.scene_media, target?.scene ?? fallbackMaterial, dayPhase)
-  const sceneFallback = sceneForStage(favorite?.scene, wallpaper?.scene_material, dayPhase)
-  const committedScene = sceneForStage(media?.scene, fallbackMaterial, dayPhase)
-  const matchesActivity = Boolean(choice && target?.actor_variants.includes(choice))
-
-  const regularScene =
-    enabled && (matchesActivity || showCharacter)
-      ? (scene ?? sceneFallback)
-      : (sceneFallback ?? (enabled ? scene : committedScene))
-
-  // 整片自带环境和角色，只有该版本实际可用时才接管背景。
-  const desiredCinematic = desktop
-    ? choice?.asset_kind === 'cinematic'
-      ? choice
-      : !(showCharacter || choice)
-        ? enabled
-          ? favoriteCinematic
-          : (media?.cinematic ?? favoriteCinematic)
-        : null
-    : null
-
-  const cinematic = desiredCinematic && !failedMedia?.has(mediaKey(desiredCinematic)) ? desiredCinematic : null
 
   const layout = cinematic
     ? ((cinematic === favorite?.cinematic
@@ -241,16 +264,22 @@ export function deriveStagePlan(
           : null) ?? DEFAULT_LAYOUT)
     : ((composition?.mode === 'layered' ? composition.layout : null) ?? DEFAULT_LAYOUT)
 
-  const actorStillUrl = enabled ? (actorFromEntry(choice)?.posterUrl ?? target?.actor_still_url ?? null) : null
+  const actorStillUrl = enabled && !full ? (actorFromEntry(choice)?.posterUrl ?? target?.actor_still_url ?? null) : null
 
   const base: StagePlan = {
     actor: regularActor,
     actorStillUrl,
     scene: regularScene,
     cinematic,
+    cinematicMotion:
+      motionEnabled && (cinematic !== preferredFull || !preferredFull || motionAllowed(preferredFull, subtle)),
     layout,
     dayPhase,
     localPlay: null
+  }
+
+  if (command && !commandTargetsSurface(command, surface)) {
+    command = null
   }
 
   if (command?.asset_kind === 'actor' && command.media_kind === 'video') {
@@ -280,6 +309,8 @@ export function deriveStagePlan(
         version: command.visual_version,
         url: command.media_path,
         posterUrl: command.poster_path ?? null,
+        fallbackScene: null,
+        sceneContentHash: command.scene?.content_hash ?? null,
         isVideo: command.media_kind === 'video',
         phaseMatched: command.day_phase === dayPhase
       }
@@ -290,29 +321,44 @@ export function deriveStagePlan(
     return { ...base, actor: null }
   }
 
-  if (wake && motionEnabled) {
+  if (wake && motionEnabled && wake.clip.asset_kind === (full ? 'cinematic' : 'actor')) {
+    if (full) {
+      return {
+        ...base,
+        cinematic: wake.clip,
+        cinematicMotion: true,
+        localPlay: {
+          id: wake.id,
+          visualId: wake.clip.visual_id,
+          version: wake.clip.version,
+          target: 'background',
+          expiresAt: wake.expiresAt
+        }
+      }
+    }
+
     return {
       ...base,
-      actor: actorFromEntry(wake.actor),
-      actorStillUrl: actorStillUrl ?? wake.actor.body?.last_frame_path ?? wake.actor.body?.first_frame_path ?? null,
+      actor: actorFromEntry(wake.clip),
+      actorStillUrl: actorStillUrl ?? wake.clip.body?.last_frame_path ?? wake.clip.body?.first_frame_path ?? null,
       scene: wake.scene ?? scene,
       cinematic: null,
       localPlay: {
         id: wake.id,
-        visualId: wake.actor.visual_id,
-        version: wake.actor.version,
+        visualId: wake.clip.visual_id,
+        version: wake.clip.version,
         target: 'actor',
         expiresAt: wake.expiresAt
       }
     }
   }
 
-  if (selected && choice && ambient && motionEnabled && (cinematic || regularActor)) {
+  if (selected && choice && ambient && motionEnabled && regularActor) {
     base.localPlay = {
       id: ambient.id,
       visualId: choice.visual_id,
       version: choice.version,
-      target: cinematic ? 'background' : 'actor',
+      target: 'actor',
       expiresAt: null
     }
   }

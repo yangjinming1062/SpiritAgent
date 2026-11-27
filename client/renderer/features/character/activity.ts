@@ -6,7 +6,14 @@ import { $auth } from '@/shared/store/auth'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
-import type { PresentationMode, StageActivity } from '@ipc/contracts'
+import {
+  $surfaceCompanion,
+  $surfaceOpen,
+  $surfaceScreenLocked,
+  $surfaceSpriteVisible,
+  visualSurface
+} from '@/shared/store/surfaces'
+import type { StageActivity } from '@ipc/contracts'
 
 import {
   $effectiveTier,
@@ -41,6 +48,7 @@ let polling = false
 let lastSignalContext: string | null = null
 let pendingSignalContextChange = false
 let signalRevision = 0
+let lastSignalSentAt = -Infinity
 let companionAvailable = false
 
 interface FocusedAppInfo {
@@ -206,11 +214,13 @@ async function reportCompanionSignal(available: boolean, context: string | null 
       return
     }
 
+    lastSignalSentAt = performance.now()
     await gatewayApi().gatewayPresence({
       authSessionId: auth.snapshot.sessionId,
       signal: {
         available,
         presentation_mode: presentation.effectiveMode,
+        visual_surface: visualSurface(),
         ...(event ? { event } : {})
       }
     })
@@ -329,20 +339,37 @@ export function startActivityMonitor(): () => void {
   monitorGeneration += 1
 
   const presentation = $presentation.get()
-  let presentationMode: PresentationMode | null = presentation.revision >= 0 ? presentation.effectiveMode : null
+  let lastSurface = presentation.revision >= 0 ? `${presentation.effectiveMode}:${visualSurface()}` : null
+  let surfaceSyncQueued = false
 
   const syncPresentation = (): void => {
-    const presentation = $presentation.get()
-
-    if (presentation.revision < 0 || presentation.effectiveMode === presentationMode) {
+    if (surfaceSyncQueued) {
       return
     }
 
-    presentationMode = presentation.effectiveMode
-    void reportCompanionSignal(companionAvailable)
+    surfaceSyncQueued = true
+    const generation = monitorGeneration
+    queueMicrotask(() => {
+      surfaceSyncQueued = false
+      const snapshot = $presentation.get()
+      const target = `${snapshot.effectiveMode}:${visualSurface()}`
+
+      if (generation !== monitorGeneration || snapshot.revision < 0 || target === lastSurface) {
+        return
+      }
+
+      lastSurface = target
+      void reportCompanionSignal(companionAvailable)
+    })
   }
 
-  unsubs.push($presentation.listen(syncPresentation))
+  unsubs.push(
+    $presentation.listen(syncPresentation),
+    $surfaceCompanion.listen(syncPresentation),
+    $surfaceOpen.listen(syncPresentation),
+    $surfaceScreenLocked.listen(syncPresentation),
+    $surfaceSpriteVisible.listen(syncPresentation)
+  )
   const initialAuth = $auth.get()
   let authSessionId = initialAuth.kind === 'authenticated' ? initialAuth.snapshot.sessionId : null
   unsubs.push(
@@ -351,6 +378,8 @@ export function startActivityMonitor(): () => void {
 
       if (nextSessionId !== authSessionId) {
         authSessionId = nextSessionId
+        companionAvailable = false
+        lastSignalSentAt = -Infinity
         lastSignalContext = null
         pendingSignalContextChange = false
         monitorGeneration += 1
@@ -455,7 +484,7 @@ export function startActivityMonitor(): () => void {
         runnerReady = true
         kickFirstPoll()
       } else if (phase === 'stopped' || phase === 'error') {
-        // bridge 恢复后会再发 running；在此之前 setInterval tick 空操作，避免 IPC 错误日志刷屏。
+        // bridge 恢复前停止探测，舞台仍通过网关续报。
         runnerReady = false
         monitorGeneration += 1
         polling = false
@@ -465,11 +494,13 @@ export function startActivityMonitor(): () => void {
   )
 
   timer = setInterval(() => {
-    if (!runnerReady) {
-      return
+    if (performance.now() - lastSignalSentAt >= POLL_INTERVAL_MS) {
+      void reportCompanionSignal(companionAvailable)
     }
 
-    void pollOnce()
+    if (runnerReady) {
+      void pollOnce()
+    }
   }, POLL_INTERVAL_MS)
 
   return stopActivityMonitor
@@ -479,6 +510,7 @@ function stopActivityMonitor(): void {
   monitorGeneration += 1
   void reportCompanionSignal(false)
   polling = false
+  lastSignalSentAt = -Infinity
   lastSignalContext = null
   pendingSignalContextChange = false
 

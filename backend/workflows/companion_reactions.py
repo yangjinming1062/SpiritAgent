@@ -16,9 +16,9 @@ from features.conversation.context_window import load_recent_companion_exchange
 from features.conversation.proactive_messages import append_companion_message
 from features.conversation.replies import CompanionReply, CompanionReplyInput, TextBubble
 from features.conversation.turn_access import turn_conversation
-from features.visuals.queries import presentation_state
+from features.visuals.queries import actual_presentation_snapshot, presentation_state
 from features.visuals.schemas import AmbientCatalogEntry
-from features.visuals.stage_selection import compatible_activity, stage_activity
+from features.visuals.stage_selection import compatible_activity, phase_compatible, stage_activity
 from infrastructure.ai.decision import DecisionOption, choose_decision, decision_enabled
 from infrastructure.ai.prompt_engineer import call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
@@ -119,17 +119,49 @@ async def _decide(
         motion = await get_motion_level(user_id)
         activity = stage_activity(presentation.intent, rhythm)
         scene_tags = set(presentation.intent.scene_tags if presentation.intent else ())
+        stage = presentation.stage_plan
+        sprite = presence is not None and presence.surface == "sprite"
+        actual_scene_hash = None
+        if (
+            presence is not None
+            and presence.surface in ("desktop", "life")
+            and presentation.presentation_epoch == presence.revision
+            and motion != "off"
+            and rhythm.state == "awake"
+            and stage is not None
+            and stage.scene is not None
+            and stage.wake_cinematic is None
+        ):
+            actual = await actual_presentation_snapshot(user_id)
+            if (
+                actual.ready
+                and actual.asset_kind == "cinematic"
+                and actual.media_kind == "video"
+                and not actual.rest_transition
+                and actual.scene_hash == stage.scene.content_hash
+            ):
+                actual_scene_hash = actual.scene_hash
         trigger = "user_return" if event["kind"] == "chat_opened" else "chat"
         catalog = {
             _visual_key(item): item
             for item in presentation.ambient_catalog
             if presence is not None
             and motion != "off"
-            and item.asset_kind == "actor"
+            and presence.surface != "none"
+            and item.asset_kind == ("actor" if sprite else "cinematic")
             and item.clip_kind == "once"
             and item.performance_role == "reaction"
             and trigger in item.allowed_triggers
-            and compatible_activity(item, activity, scene_tags)
+            and compatible_activity(item, activity, scene_tags, required=sprite)
+            and (
+                sprite
+                or (
+                    stage is not None
+                    and actual_scene_hash is not None
+                    and item.scene_content_hash == actual_scene_hash
+                    and phase_compatible(item.day_phase, stage.day_phase, asleep=rhythm.state == "asleep")
+                )
+            )
         }
         if not catalog and not allow_text:
             return GestureReactionResponse()

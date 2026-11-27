@@ -5,15 +5,16 @@ from uuid import uuid4
 
 from infrastructure.assets.asset_store import resolve_asset_reference
 from infrastructure.assets.references import asset_paths
-from infrastructure.text import utc_now
+from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
+from runtime.presentation import visual_surface_accepts
 from sqlalchemy import literal, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from features.assets.lifecycle import enqueue_asset_cleanup
-from features.companion.proactive_runtime import get_presentation_snapshot
+from features.companion.proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 
 from .asset_references import live_asset_paths
 from .client_assets import client_play_command
@@ -24,6 +25,7 @@ from .schemas import (
     ComboMaterialRef,
     PlaybackSource,
     PlaybackStatus,
+    PresentedScene,
     PresentedVisual,
     StageComposition,
     StagePresentation,
@@ -115,6 +117,45 @@ def presented_item(state: VisualPresentation, *, loop: bool = False) -> Presente
     if frozen.user_id != state.user_id:
         raise VisualStateError("呈现快照不属于当前账户")
     return frozen
+
+
+def local_presented_frame(
+    row: VisualPresentation | None, presence: PresentationSnapshot | None
+) -> PresentedScene | PresentedVisual | None:
+    if row is None or not row.local_snapshot_json:
+        return None
+    raw = row.local_snapshot_json
+    frame = PresentedScene.model_validate(raw) if "scene" in raw else PresentedVisual.model_validate(raw)
+    if presence and frame.presentation_epoch == presence.revision and frame.target_surface == presence.surface:
+        return frame
+    return None
+
+
+def presented_frame(
+    row: VisualPresentation | None, presence: PresentationSnapshot | None
+) -> PresentedScene | PresentedVisual | None:
+    if row is None or presence is None:
+        return None
+    local = local_presented_frame(row, presence)
+    if local is not None:
+        return local
+    formal = presented_item(row)
+    if (
+        formal is not None
+        and formal.presentation_epoch == presence.revision
+        and visual_surface_accepts(presence.surface, formal.asset_kind)
+        and formal.target_surface in (None, presence.surface)
+    ):
+        return formal
+    return None
+
+
+def displayed_rest_transition(item: PresentedVisual, snapshot: VisualSnapshot | None = None) -> bool:
+    if item.asset_kind != "cinematic" or item.receipt_kind != "video":
+        return False
+    source = (snapshot or visual_snapshot(item)).source
+    semantics = getattr(source, "media_semantics", None)
+    return bool(semantics and {"sleeping", "waking"}.intersection(semantics.semantic_tags))
 
 
 def stage_composition(state: VisualPresentation) -> StageComposition | None:
@@ -277,8 +318,8 @@ async def dispatch_play_command(
 
     snapshot = snapshot or visual_snapshot(item)
     presentation = get_presentation_snapshot(user_id)
-    if presentation is None:
-        raise VisualStateError("桌面客户端当前不可用，无法播放")
+    if presentation is None or not visual_surface_accepts(presentation.surface, item.asset_kind):
+        raise VisualStateError("请在对应的呈现界面播放此影像")
     state = await db.get(VisualPresentation, user_id)
     if state is None:
         state = await require_presentation_row(db, user_id)
@@ -288,7 +329,9 @@ async def dispatch_play_command(
     play_id = uuid4().hex
     expires_at = now + timedelta(seconds=DEFERRED_PLAY_INTENT_TTL_SECONDS)
     payload = item.model_dump(include=set(PresentedVisual.model_fields)) if isinstance(item, PresentedVisual) else item
-    frozen = PresentedVisual.model_validate(payload).model_copy(update={"play_id": play_id})
+    frozen = PresentedVisual.model_validate(payload).model_copy(
+        update={"play_id": play_id, "target_surface": presentation.surface}
+    )
     previous = presented_item(state, loop=True)
     natural = (
         previous is not None
@@ -301,6 +344,7 @@ async def dispatch_play_command(
     composition = stage_composition(state)
     command = VisualPlayCommand(
         play_id=play_id,
+        target_surface=presentation.surface,
         asset_kind=item.asset_kind,
         visual_id=item.id,
         visual_version=item.version,
@@ -407,6 +451,14 @@ def clear_pending_command(state: VisualPresentation, play_id: str) -> None:
     pending = VisualPlayCommand.model_validate(state.pending_command_json)
     if pending.play_id == play_id:
         state.pending_command_json = None
+
+
+def active_pending_command(state: VisualPresentation) -> VisualPlayCommand | None:
+    if state.pending_command_json:
+        pending = VisualPlayCommand.model_validate(state.pending_command_json)
+        if ensure_utc(pending.expires_at) > utc_now():
+            return pending
+    return None
 
 
 async def discard_job_draft(db: AsyncSession, user_id: int, job: VisualJob) -> None:

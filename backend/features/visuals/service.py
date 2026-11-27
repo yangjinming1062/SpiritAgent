@@ -1,6 +1,7 @@
 """影像库的公开操作：制作受理、播放协调与呈现偏好。"""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Literal
 from uuid import uuid4
 from weakref import WeakValueDictionary
@@ -9,12 +10,14 @@ from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.library_visibility import current_library_work
 from infrastructure.text import ensure_utc, utc_now
+from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
+from runtime.presentation import PlayableSurface, visual_surface_accepts
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import enqueue_asset_cleanup
-from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.companion.proactive_runtime import get_presentation_snapshot
 from features.jobs.service import bind_job_assets, bind_job_request, requested_job_id
 from features.life.schemas import LifeStepRequest
 from features.life.use_cases import presentation_revision_matches, require_step_submission
@@ -38,18 +41,21 @@ from .models import VisualImportJob, VisualItem, VisualJob, VisualPlayback, Visu
 from .policy import visual_autonomous_block_reason
 from .ports import request_base_motion_preparation, scene_reference_exists
 from .queries import frozen_stage_reference as _frozen_stage_reference
-from .queries import job_view, presentation_state
+from .queries import job_view, presentation_state, scene_reference_usable
 from .repository import (
     VisualStateError,
+    active_pending_command,
     clear_pending_command,
     clear_presented_pointers,
     discard_job_draft,
     dispatch_play_command,
     emit_playback_receipt,
+    local_presented_frame,
     notify_visuals_updated,
     playback_row,
     presentation_outfit,
     presentation_row,
+    presented_frame,
     presented_item,
     presented_version,
     require_presentation_row,
@@ -67,10 +73,13 @@ from .repository import (
 )
 from .schemas import (
     ActorClipRef,
+    LocalVisualReceipt,
     PlaybackReceiptKind,
     PlaybackSource,
     PlaybackStatus,
+    PresentedScene,
     PresentedVisual,
+    SceneMediaRef,
     StageComposition,
     StageCompositionLayout,
     StageIntent,
@@ -252,6 +261,7 @@ async def create_visual_job(
     video_feedback: str = "",
     request_id: str | None = None,
     life_step: LifeStepRequest | None = None,
+    verify_admission: Callable[[AsyncSession], Awaitable[None]] | None = None,
 ) -> VisualJobView:
     """受理一次新建制作；request_id 作为受理幂等键，重复提交返回同一工作项。"""
 
@@ -266,10 +276,12 @@ async def create_visual_job(
         raise VisualStateError("透明主体动画须制作视频")
     if life_step is not None and life_step.idempotency_key != request_id:
         raise VisualStateError("生活步骤与制作请求的身份必须一致")
+    if source == "stage_preparation" and verify_admission is None:
+        raise VisualStateError("整景准备工作项需要核对当前决定")
     combo_hash = visual_snapshot_hash(_with_feedback(snapshot, feedback, video_feedback))
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
-        if source == "autonomous" and not state.autonomous_enabled:
+        if source in ("autonomous", "stage_preparation") and not state.autonomous_enabled:
             raise VisualStateError("伙伴自主制作已关闭")
         if request_id:
             existing = await _requested_job(db, user_id, request_id, combo_hash)
@@ -278,8 +290,7 @@ async def create_visual_job(
                     raise VisualRequestConflictError("这个创建请求已经用于另一次制作")
                 await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
-                await db.commit()
-                return await job_view(db, existing)
+                return await _commit_visual_admission(db, existing, verify_admission)
         await require_step_submission(db, user_id, life_step)
         pending = await db.scalars(
             select(VisualJob).where(
@@ -295,8 +306,7 @@ async def create_visual_job(
                 if request_id:
                     await bind_job_request(db, user_id, existing.id, request_id, combo_hash)
                 await bind_creation_step(db, user_id, existing, life_step)
-                await db.commit()
-                return await job_view(db, existing)
+                return await _commit_visual_admission(db, existing, verify_admission)
         progress = VisualJobProgress(
             generation_id=uuid4().hex,
             target_width=snapshot.target_width,
@@ -329,9 +339,20 @@ async def create_visual_job(
             await bind_job_request(db, user_id, job.id, request_id, combo_hash)
         await bind_creation_step(db, user_id, job, life_step)
         await notify_visuals_updated(db, user_id)
-        view = await job_view(db, job)
-        await db.commit()
+        view = await _commit_visual_admission(db, job, verify_admission)
     schedule_visual_job(user_id, job.id)
+    return view
+
+
+async def _commit_visual_admission(
+    db: AsyncSession, job: VisualJob, verify_admission: Callable[[AsyncSession], Awaitable[None]] | None
+) -> VisualJobView:
+    view = await job_view(db, job)
+    if verify_admission is not None:
+        # 外键和素材引用先落入事务，核对执行资格之后只提交。
+        await db.flush()
+        await verify_admission(db)
+    await db.commit()
     return view
 
 
@@ -515,6 +536,8 @@ async def play_visual(
         if source in ("autonomous", "life"):
             media_source = snapshot.source
             semantics = getattr(media_source, "media_semantics", None)
+            if item.asset_kind == "cinematic" and semantics is not None and "waking" in semantics.semantic_tags:
+                raise VisualStateError("起身视频需要接续本次实际显示的安睡画面")
             action = getattr(media_source, "action", None)
             if not automatic_media_ready(
                 media_kind=item.media_kind,
@@ -599,18 +622,32 @@ async def _playback_is_current(
         and ensure_utc(play.expires_at) > utc_now()
         and item is not None
         and item.version == play.visual_version
+        and visual_surface_accepts(presentation.surface, item.asset_kind)
         and bool(play.snapshot_json)
+        and play.snapshot_json.get("target_surface") in (None, presentation.surface)
         and await _life_playback_is_current(db, state.user_id, state, play)
     )
 
 
-async def claim_playback(user_id: int, play_id: str, *, client_id: str) -> bool:
+async def claim_playback(
+    user_id: int, play_id: str, *, client_id: str, target_surface: PlayableSurface | None = None
+) -> bool:
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         play = await playback_row(db, user_id, play_id)
-        if play.status not in {"queued", "claimed"} or ensure_utc(play.expires_at) <= utc_now():
+        if play.status not in {"queued", "claimed"}:
+            return False
+        if ensure_utc(play.expires_at) <= utc_now():
+            play.status = "expired"
+            play.error = "播放指令已过期，请重新播放"
+            emit_playback_receipt(db, user_id, play_id, "expired", None)
+            clear_pending_command(state, play_id)
+            await db.commit()
             return False
         if play.client_id is not None and play.client_id != client_id:
+            return False
+        frozen_surface = (play.snapshot_json or {}).get("target_surface")
+        if frozen_surface is not None and frozen_surface != target_surface:
             return False
         item = await presented_version(db, user_id, play.version_id)
         stale = not await _playback_is_current(db, state, play, item)
@@ -634,21 +671,19 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
     """恢复持续呈现，不重播旧短动作，也不开始制作。"""
     async with _lock(user_id), SESSION_LOCAL() as db:
         presence = get_presentation_snapshot(user_id)
-        if presence is None or not get_user_proactive_record(user_id).available:
+        if presence is None or presence.surface == "none":
             raise VisualStateError("桌面呈现上下文尚未就绪")
         state = await presentation_row(db, user_id, lock=True)
         if state is None:
             return None
         if state.pending_command_json:
-            pending = VisualPlayCommand.model_validate(state.pending_command_json)
-            if presence.mode == "window" and pending.asset_kind == "cinematic":
-                await cancel_pending_command(db, state)
-                pending = None
+            pending = active_pending_command(state)
             if (
                 pending is not None
+                and visual_surface_accepts(presence.surface, pending.asset_kind)
+                and pending.target_surface in (None, presence.surface)
                 and pending.presentation_epoch == presence.revision
                 and pending.state_revision == state.state_revision
-                and ensure_utc(pending.expires_at) > utc_now()
             ):
                 pending_is_life = pending.source == "life" or (
                     pending.composition is not None and pending.composition.selection_source == "life"
@@ -664,7 +699,7 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                     and await _life_playback_is_current(db, user_id, state, pending_play)
                 ):
                     return pending
-                await cancel_pending_command(db, state)
+            await cancel_pending_command(db, state)
         if await restore_static_presentation(db, user_id, state, presentation_epoch=presence.revision):
             await db.commit()
             return None
@@ -683,16 +718,12 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
             await touch_presentation(db, user_id)
             await db.commit()
             return None
-        # 完整场景只能由桌面宿主呈现。窗口模式沿用当前身份/造型可用的主体
-        # 循环（由客户端目录解析），不能把 cinematic 指令误交给静态投影。
-        if presence.mode == "window" and composition is not None and composition.mode == "cinematic":
-            await cancel_pending_command(db, state)
-            await db.commit()
-            return None
         version_id = (
-            state.current_version_id if presence.mode == "window" else state.loop_version_id or state.current_version_id
+            state.current_version_id
+            if presence.surface == "sprite"
+            else state.loop_version_id or state.current_version_id
         )
-        if presence.mode == "window" and composition is not None and composition.actor is not None:
+        if presence.surface == "sprite" and composition is not None and composition.actor is not None:
             version_id = await db.scalar(
                 select(VisualVersion.id).where(
                     VisualVersion.user_id == user_id,
@@ -701,16 +732,22 @@ async def restore_presentation(user_id: int) -> VisualPlayCommand | None:
                 )
             )
         if version_id is None:
+            await db.commit()
             return None
         item = await presented_version(db, user_id, version_id)
-        if item is None:
+        if item is None or not visual_surface_accepts(presence.surface, item.asset_kind):
+            await db.commit()
             return None
         if visual_is_short_action(item):
             version_id = state.loop_version_id or item.input_image_version_id
             if version_id is None:
                 return None
             item = await presented_version(db, user_id, version_id)
-            if item is None or visual_is_short_action(item):
+            if (
+                item is None
+                or visual_is_short_action(item)
+                or not visual_surface_accepts(presence.surface, item.asset_kind)
+            ):
                 return None
         if not visual_playable(item):
             raise VisualStateError("恢复的影像文件缺失")
@@ -768,17 +805,10 @@ async def record_playback(
         if status == "started":
             if play.status == "started":
                 return
-            presentation = get_presentation_snapshot(user_id)
             item = await presented_version(db, user_id, play.version_id)
-            if play.status != "claimed" or not await _playback_is_current(db, state, play, item):
+            if item is None or play.status != "claimed" or not await _playback_is_current(db, state, play, item):
                 raise VisualStateError("播放指令已失效，不能记录为已呈现")
-            # 窗口模式有两种合格回执：透明主体视频按真实媒体种类记账，静态投影按 window_static。
-            expected_kinds = (
-                ({"window_static", "video"} if item.asset_kind == "actor" else {"window_static"})
-                if presentation.mode == "window"
-                else {item.media_kind}
-            )
-            if receipt_kind not in expected_kinds:
+            if receipt_kind != item.media_kind:
                 raise VisualStateError("播放回执与当前呈现方式不一致")
             frozen = PresentedVisual.model_validate(play.snapshot_json).model_copy(
                 update={"receipt_kind": receipt_kind, "presentation_epoch": play.presentation_epoch}
@@ -799,6 +829,7 @@ async def record_playback(
                     life_activity_type=play.life_activity_type,
                 )
             state.current_visual_id = item.id
+            state.local_snapshot_json = None
             if visual_plays_as_loop(item):
                 state.current_static_json = None
             state.pending_static_json = None
@@ -823,6 +854,8 @@ async def record_playback(
             play.receipt_kind = receipt_kind or play.receipt_kind
             emit_playback_receipt(db, user_id, play_id, "started", receipt_kind)
             await touch_presentation(db, user_id)
+            if outfit_changed:
+                emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
             await db.commit()
             if outfit_changed:
                 request_base_motion_preparation(user_id)
@@ -839,6 +872,126 @@ async def record_playback(
             await touch_presentation(db, user_id)
         emit_playback_receipt(db, user_id, play_id, terminal, receipt_kind)
         await db.commit()
+
+
+async def record_local_playback(user_id: int, body: LocalVisualReceipt) -> None:
+    view = await presentation_state(user_id)
+    plan = view.stage_plan
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        state = await require_presentation_row(db, user_id, lock=True)
+        presence = get_presentation_snapshot(user_id)
+        if (
+            presence is None
+            or presence.surface != body.target_surface
+            or presence.revision != body.presentation_epoch
+            or view.presentation_epoch != body.presentation_epoch
+            or state.state_revision != body.state_revision
+            or view.state_revision != body.state_revision
+            or (body.receipt_kind != "empty" and active_pending_command(state) is not None)
+            or (plan is not None and not await presentation_revision_matches(db, user_id, plan.life_revision))
+        ):
+            raise VisualPresentationConflictError("活动或呈现已变化，请重新读取画面")
+        previous = local_presented_frame(state, presence)
+        if body.receipt_kind == "empty" or body.scene_hash is not None:
+            scene = None if body.receipt_kind == "empty" else await _local_scene(db, user_id, view, body)
+            frame = PresentedScene(
+                scene=scene, target_surface=body.target_surface, presentation_epoch=presence.revision
+            )
+        else:
+            if isinstance(previous, PresentedVisual) and (previous.id, previous.version, previous.receipt_kind) == (
+                body.visual_id,
+                body.visual_version,
+                body.receipt_kind,
+            ):
+                return
+            frame = await _local_visual(db, user_id, state, view, body)
+        if frame == previous:
+            return
+        if state.pending_command_json is not None and active_pending_command(state) is None:
+            await cancel_pending_command(db, state)
+        state.local_snapshot_json = frame.model_dump(mode="json")
+        await db.commit()
+
+
+async def _local_scene(
+    db: AsyncSession, user_id: int, view: VisualPresentationView, body: LocalVisualReceipt
+) -> SceneMediaRef:
+    wallpaper = view.default_wallpaper if body.target_surface == "desktop" else None
+    for scene in (
+        view.stage_plan.scene if view.stage_plan else None,
+        view.static_presentation.scene if view.static_presentation else None,
+        view.composition.scene_material if view.composition else None,
+        wallpaper.composition.scene_material if wallpaper else None,
+    ):
+        if (
+            scene is not None
+            and scene.content_hash == body.scene_hash
+            and await scene_reference_usable(db, user_id, scene)
+        ):
+            return scene
+    raise VisualStateError("环境图已不在当前舞台候选中")
+
+
+async def _local_visual(
+    db: AsyncSession, user_id: int, state: VisualPresentation, view: VisualPresentationView, body: LocalVisualReceipt
+) -> PresentedVisual:
+    plan = view.stage_plan
+    allowed = (
+        {
+            (entry.visual_id, entry.version)
+            for entry in (*plan.cinematic_variants, plan.wake_cinematic, plan.scene_media)
+            if entry is not None
+        }
+        if plan is not None
+        else set()
+    )
+    if not view.autonomous_enabled and view.composition is not None and view.composition.media is not None:
+        for entry in (view.composition.media.cinematic, view.composition.media.scene):
+            if entry is not None:
+                allowed.add((entry.visual_id, entry.version))
+    if body.target_surface == "desktop" and view.default_wallpaper is not None:
+        visual = view.default_wallpaper.visual
+        allowed.add((visual.id, visual.version))
+    if body.visual_id is None or (body.visual_id, body.visual_version) not in allowed:
+        raise VisualStateError("影像已不在当前舞台候选中")
+    item = await visual_item(db, user_id, body.visual_id)
+    version = await db.scalar(
+        select(VisualVersion).where(
+            VisualVersion.user_id == user_id,
+            VisualVersion.visual_id == item.id,
+            VisualVersion.number == body.visual_version,
+        )
+    )
+    if version is None:
+        raise VisualStateError("影像版本已不可用")
+    shown = version_view(item, version)
+    source = visual_snapshot(shown).source
+    if carries_scene(source) and not await scene_reference_usable(db, user_id, source.scene):
+        raise VisualStateError("影像引用的环境已不可用")
+    if source.kind == "cinematic" and source.media_semantics and "waking" in source.media_semantics.semantic_tags:
+        previous = presented_frame(state, get_presentation_snapshot(user_id))
+        required = plan.wake_cinematic_from if plan is not None else None
+        if (
+            not isinstance(previous, PresentedVisual)
+            or required is None
+            or previous.receipt_kind != "video"
+            or (previous.id, previous.version) != (required.visual_id, required.version)
+        ):
+            raise VisualStateError("起身视频缺少本次实际显示的安睡画面")
+    if (
+        shown.asset_kind not in {"cinematic", "scene"}
+        or not visual_playable(shown)
+        or (body.receipt_kind == "video" and shown.media_kind != "video")
+        or (body.receipt_kind == "image" and shown.media_kind == "video" and not existing_asset(shown.poster_path))
+    ):
+        raise VisualStateError("本地呈现与影像版本不符")
+    return shown.model_copy(
+        update={
+            "presentation_epoch": body.presentation_epoch,
+            "target_surface": body.target_surface,
+            "receipt_kind": body.receipt_kind,
+        }
+    )
 
 
 async def _settle_short_play(db: AsyncSession, state: VisualPresentation, play: VisualPlayback) -> bool:
@@ -881,7 +1034,7 @@ async def pause_job(user_id: int, job_id: int) -> VisualJobView:
         return view
 
 
-async def resume_job(user_id: int, job_id: int) -> VisualJobView:
+async def resume_job(user_id: int, job_id: int, *, user_requested: bool = False) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
@@ -915,6 +1068,7 @@ async def resume_job(user_id: int, job_id: int) -> VisualJobView:
                 raise
         progress.review_only = False
         progress.paused_by_user = False
+        progress.continued_by_user = progress.source == "stage_preparation" and user_requested
         receiving = progress.failure_reason == "result_download_failed"
         if receiving:
             resume_known_result(progress)
@@ -963,6 +1117,9 @@ async def delete_visual(user_id: int, visual_id: int) -> None:
         if not snapshot.source.original_path:
             raise VisualStateError("只能删除用户上传的影像")
         if state.current_visual_id == visual_id or state.loop_visual_id == visual_id:
+            raise VisualStateError("当前呈现正在使用这份影像，请先切换画面")
+        local = local_presented_frame(state, get_presentation_snapshot(user_id))
+        if isinstance(local, PresentedVisual) and local.id == visual_id:
             raise VisualStateError("当前呈现正在使用这份影像，请先切换画面")
         if state.default_visual_id == visual_id:
             raise VisualStateError("这份影像是默认壁纸，请先取消默认壁纸")
@@ -1028,7 +1185,7 @@ async def delete_visual(user_id: int, visual_id: int) -> None:
         await db.commit()
 
 
-async def retry_job(user_id: int, job_id: int) -> VisualJobView:
+async def retry_job(user_id: int, job_id: int, *, user_requested: bool = False) -> VisualJobView:
     async with _lock(user_id), SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
         progress = visual_progress(job)
@@ -1084,6 +1241,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
         else:
             stage = None
         if stage is not None:
+            progress.continued_by_user = progress.source == "stage_preparation" and user_requested
             job.checkpoint = progress.model_dump(mode="json")
             if await restart_visual_steps(db, user_id, job):
                 job.state, job.stage, job.error = "running", stage, None
@@ -1097,7 +1255,7 @@ async def retry_job(user_id: int, job_id: int) -> VisualJobView:
         else:
             view = None
     if view is None:
-        return await resume_job(user_id, job_id)
+        return await resume_job(user_id, job_id, user_requested=user_requested)
     schedule_visual_job(user_id, job_id)
     return view
 
@@ -1114,9 +1272,10 @@ async def update_presentation_preferences(
     async with _lock(user_id), SESSION_LOCAL() as db:
         state = await require_presentation_row(db, user_id, lock=True)
         changed = False
+        creation_changed = False
         if autonomous_enabled is not None and state.autonomous_enabled != autonomous_enabled:
             state.autonomous_enabled = autonomous_enabled
-            changed = True
+            changed = creation_changed = True
         if set_default_visual:
             if default_visual_id is not None:
                 item = await visual_item(db, user_id, default_visual_id)
@@ -1133,8 +1292,10 @@ async def update_presentation_preferences(
         ):
             state.target_width = target_width
             state.target_height = target_height
-            changed = True
+            changed = creation_changed = True
         if changed:
             await touch_presentation(db, user_id)
+        if creation_changed:
+            emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
         await db.commit()
     return await presentation_state(user_id)

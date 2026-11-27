@@ -4,11 +4,27 @@ from infrastructure.text import utc_now
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.companion.proactive_runtime import (
+    PresentationSnapshot,
+    get_presentation_snapshot,
+    get_user_proactive_record,
+)
+from features.companion.rhythm import read_rhythm
 
 from .models import VisualItem, VisualPlayback, VisualPresentation
-from .repository import visual_is_short_action
+from .repository import displayed_rest_transition, presented_frame, visual_is_short_action
 from .schemas import PresentedVisual, VisualSnapshot
+
+
+async def full_stage_rest_in_progress(
+    db: AsyncSession, presentation: VisualPresentation, presence: PresentationSnapshot
+) -> bool:
+    if presence.surface not in ("desktop", "life"):
+        return False
+    frame = presented_frame(presentation, presence)
+    if isinstance(frame, PresentedVisual) and displayed_rest_transition(frame):
+        return True
+    return (await read_rhythm(db, presentation.user_id)).state == "asleep"
 
 
 async def visual_autonomous_block_reason(
@@ -24,6 +40,8 @@ async def visual_autonomous_block_reason(
     record = get_user_proactive_record(presentation.user_id)
     if presence is None or not record.available:
         return "unavailable"
+    if item.asset_kind in ("cinematic", "scene") and await full_stage_rest_in_progress(db, presentation, presence):
+        return "rest_transition_in_progress"
     if presentation.current_visual_id == item.id and presentation.current_snapshot_json:
         current = PresentedVisual.model_validate(presentation.current_snapshot_json)
         if current.version == item.version:

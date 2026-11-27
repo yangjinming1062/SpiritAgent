@@ -11,6 +11,7 @@ from features.visuals.schemas import (
     ActionMediaListResponse,
     ImportAnalysisRequest,
     ImportAnalysisView,
+    LocalVisualReceipt,
     StageReceipt,
     VisualClaimRequest,
     VisualClaimResponse,
@@ -52,6 +53,7 @@ async def list_visuals(
     query: Annotated[str | None, Query(max_length=200)] = None,
     media_kind: Annotated[Literal["image", "video"] | None, Query()] = None,
     source: Annotated[str | None, Query(max_length=200)] = None,
+    section: Annotated[Literal["complete", "sprite"] | None, Query()] = None,
     cursor: Annotated[ResourceId | None, Query()] = None,
     include_total: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -61,6 +63,7 @@ async def list_visuals(
         query=query,
         media_kind=media_kind,
         source=source,
+        section=section,
         cursor=cursor,
         include_total=include_total,
         limit=limit,
@@ -70,10 +73,11 @@ async def list_visuals(
 @router.get("/jobs", response_model=VisualJobListResponse)
 async def list_visual_jobs(
     user: CurrentUser,
+    section: Annotated[Literal["complete", "sprite"] | None, Query()] = None,
     cursor: Annotated[ResourceId | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> VisualJobListResponse:
-    return await _visual_queries.list_jobs(user_id=user.id, cursor=cursor, limit=limit)
+    return await _visual_queries.list_jobs(user_id=user.id, section=section, cursor=cursor, limit=limit)
 
 
 @router.get("/by-action/{action_id}", response_model=ActionMediaListResponse)
@@ -93,6 +97,15 @@ async def list_action_media(
 @router.get("/presentation", response_model=VisualPresentationResponse)
 async def get_presentation(user: CurrentUser) -> VisualPresentationResponse:
     return await _visuals.presentation_state(user_id=user.id)
+
+
+@router.post(
+    "/presentation/local-receipt",
+    response_model=VisualReceiptResponse,
+    openapi_extra=operation_policy(identities=("desktop",)),
+)
+async def local_receipt(user: CurrentUser, body: LocalVisualReceipt) -> VisualReceiptResponse:
+    return await _visuals.local_receipt(user.id, body)
 
 
 @router.post(

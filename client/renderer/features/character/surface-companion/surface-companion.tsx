@@ -2,14 +2,13 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { SceneBackdrop } from '@/features/creation/environment'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $mainStageVisible, reportCompanionVisibility } from '@/shared/store/surfaces'
 
 import { $companionLifecycle, ensureCompanionHydrated } from '../companion-store'
-import { CharacterStage } from '../rendering/character-stage'
 
+import { FullSceneStage } from './full-scene-stage'
 import styles from './surface-companion.module.css'
 
 export function SurfaceCompanion({ visible }: { visible: boolean }): React.JSX.Element | null {
@@ -70,12 +69,9 @@ export function SurfaceCompanion({ visible }: { visible: boolean }): React.JSX.E
     }
   }, [auth, lifecycle])
 
-  return ready ? (
+  return ready && sessionId ? (
     <div className={styles.stage} ref={root}>
-      <SceneBackdrop />
-      <div className={styles.figure}>
-        <CharacterStage contentAlign="center" eggSize="min(150px, 60%)" windowId={1} />
-      </div>
+      <FullSceneStage key={sessionId} owner={sessionId} />
     </div>
   ) : null
 }

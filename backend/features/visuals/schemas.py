@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 from infrastructure.api_ids import ResourceId
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from runtime.presentation import PlayableSurface
 
 from features.action_library.schemas import ActionAssetDesign
 from features.companion.rhythm import RhythmView
@@ -44,7 +45,7 @@ VisualCatalogDescription = Annotated[
         "句中不得夹带背景颜色、幕布、透明效果等衬底信息。真实场所可保留标志性环境细节。",
     ),
 ]
-VisualCreationSource = Literal["user_requested", "autonomous", "base_preparation"]
+VisualCreationSource = Literal["user_requested", "autonomous", "base_preparation", "stage_preparation"]
 ActionClipKind = Literal["once", "loop"]
 VisualJobState = Literal["queued", "running", "paused", "succeeded", "failed", "cancelled", "unknown"]
 ImportAnalysisState = VisualJobState | Literal["awaiting_input"]
@@ -172,8 +173,17 @@ class VisualSourceMetadata(BaseModel):
     identity_reason: str = ""
 
 
+class VisualFrameRef(BaseModel):
+    """已解码画格的文件和摘要。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ActorOpeningFrame(BaseModel):
-    """从已检查主体循环取得的实际首帧，作为接续动作的冻结参考。"""
+    """从已检查循环取得的实际首帧，作为接续动作的冻结参考。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -242,6 +252,8 @@ class CinematicSource(VisualSourceMetadata):
     outfit: ComboMaterialRef
     scene: SceneMediaRef
     action: ActionMaterialRef
+    opening_frame: ActorOpeningFrame | None = Field(default=None, exclude_if=lambda value: value is None)
+    delivery_first_frame: VisualFrameRef | None = Field(default=None, exclude_if=lambda value: value is None)
     media_semantics: MediaSemantics | None = None
     plan: VisualCreationPlan | None = None
     requirements: str = ""
@@ -538,6 +550,7 @@ class OpeningReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     image_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_semantics: MediaSemantics | None = None
     requirements_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     reference_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     status: Literal["complete", "unavailable", "invalid", "blocked"] = "complete"
@@ -587,6 +600,7 @@ class VisualAsset(BaseModel):
     creation_plan: VisualCreationPlan | None = None
     media_semantics: MediaSemantics | None = None
     body: ActorClipBody | None = None
+    delivery_first_frame: VisualFrameRef | None = None
     feedback: str = ""
     video_feedback: str = ""
 
@@ -611,6 +625,7 @@ class VisualJobProgress(BaseModel):
     customization_priority: Literal["general", "video"] = "general"
     image_only: bool = False
     paused_by_user: bool = False
+    continued_by_user: bool = False
     image_confirmed: bool = False
     aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
     duration_seconds: int = Field(gt=0)
@@ -895,6 +910,32 @@ class StageReceipt(BaseModel):
     error: str | None = Field(default=None, max_length=2000)
 
 
+class LocalVisualReceipt(BaseModel):
+    """本地导演实际显示的整帧，独立于正式点播账本。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visual_id: ResourceId | None = None
+    visual_version: int | None = Field(default=None, ge=1)
+    scene_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    presentation_epoch: int
+    state_revision: int
+    target_surface: Literal["desktop", "life"]
+    receipt_kind: Literal["image", "video", "empty"]
+
+    @model_validator(mode="after")
+    def identifies_one_frame(self) -> "LocalVisualReceipt":
+        if self.receipt_kind == "empty":
+            if self.visual_id is not None or self.visual_version is not None or self.scene_hash is not None:
+                raise ValueError("空画面回执不能引用素材")
+        elif self.scene_hash is not None:
+            if self.visual_id is not None or self.visual_version is not None or self.receipt_kind != "image":
+                raise ValueError("环境图回执不能同时引用影像版本")
+        elif self.visual_id is None or self.visual_version is None:
+            raise ValueError("回执缺少影像版本或环境图")
+        return self
+
+
 class AmbientCatalogEntry(StageLayerMedia):
     """导演可选的常驻/反应媒体目录项；动作语义来自冻结输入，供本地选择。"""
 
@@ -930,6 +971,8 @@ class StagePlaybackPlan(BaseModel):
     cinematic_variants: list[AmbientCatalogEntry] = Field(default_factory=list)
     actor_still_url: str | None = None
     wake_actor: AmbientCatalogEntry | None = None
+    wake_cinematic: AmbientCatalogEntry | None = None
+    wake_cinematic_from: ActorClipRef | None = None
     wake_scene: SceneMediaRef | None = None
     wake_scene_media: StageLayerMedia | None = None
 
@@ -968,6 +1011,7 @@ class VisualPlayCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     play_id: str
+    target_surface: PlayableSurface | None = None
     status: Literal["queued"] = "queued"
     asset_kind: VisualAssetKind
     visual_id: ResourceId
@@ -1027,8 +1071,19 @@ class PresentedVisual(BaseModel):
     # actor 版本冻结的主体元数据；随版本保存，播放指令据此携带锚点。
     body_json: dict | None = None
     play_id: str | None = None
+    target_surface: PlayableSurface | None = None
     receipt_kind: PlaybackReceiptKind | None = None
     presentation_epoch: int | None = None
+
+
+class PresentedScene(BaseModel):
+    """本地宿主显示的原环境图，或当前没有可见画面。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scene: SceneMediaRef | None
+    target_surface: Literal["desktop", "life"]
+    presentation_epoch: int
 
 
 class VisualRegenerateRequest(BaseModel):
@@ -1055,6 +1110,7 @@ class ActualPresentationSnapshot(BaseModel):
     visual_version: int | None = None
     visual_description: str = ""
     visual_path: str | None = None
+    rest_transition: bool = Field(default=False, exclude=True)
     outfit_path: str | None = None
     outfit_hash: str | None = None
     outfit_description: str = ""
@@ -1128,6 +1184,7 @@ class VisualClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: str = Field(min_length=1, max_length=80)
+    target_surface: PlayableSurface | None = None
 
 
 class VisualReceiptRequest(BaseModel):

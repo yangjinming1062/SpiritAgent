@@ -20,6 +20,7 @@ import type { VisualPlayCommand, VisualsPresentation } from './types'
 const submitCreation = creationSubmitter('da.visuals.creationRequests')
 
 export type VisualsListQuery = ApiOperation<'companion_visuals.list_visuals'>['query']
+type VisualJobsListQuery = ApiOperation<'companion_visuals.list_visual_jobs'>['query']
 
 /** 播放回执：status 为实际回执状态，receipt_kind 区分完整图片、视频与窗口静态投影。 */
 export interface VisualReceiptBody {
@@ -56,7 +57,8 @@ export const visualsApi = {
 
   regenerate: (visualId: string, body: VisualRegenerateRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.regenerate_visual', { path: { visual_id: visualId }, body }),
-  jobs: (): Promise<VisualJobListResponse> => requestResource('companion_visuals.list_visual_jobs'),
+  jobs: (query?: VisualJobsListQuery): Promise<VisualJobListResponse> =>
+    requestResource('companion_visuals.list_visual_jobs', { query }),
   jobCommand: (jobId: string, body: VisualJobCommandRequest): Promise<VisualJob> =>
     requestResource('companion_visuals.command_visual_job', { path: { job_id: jobId }, body }),
   presentation: (): Promise<VisualsPresentation> => requestResource('companion_visuals.get_presentation'),
@@ -65,7 +67,7 @@ export const visualsApi = {
   updatePresentation: (body: VisualPresentationUpdate): Promise<VisualsPresentation> =>
     requestResource('companion_visuals.put_presentation', { body }),
   /** 播放认领与回执仅当前舞台宿主使用；同一 play_id 只由一个可见舞台认领。 */
-  claimPlay: (playId: string, body: { client_id: string }): Promise<{ claimed: boolean }> =>
+  claimPlay: (playId: string, body: ApiSchemas['VisualClaimRequest']): Promise<{ claimed: boolean }> =>
     requestResource('companion_visuals.claim_play', { path: { play_id: playId }, body }),
   receiptPlay: (playId: string, body: VisualReceiptBody): Promise<{ ok: boolean }> =>
     requestResource('companion_visuals.receipt_play', { path: { play_id: playId }, body }),

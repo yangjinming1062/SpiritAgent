@@ -70,6 +70,7 @@ async def accept_imported_scene(
     await db.flush()
     await sync_scene_assets(db, row)
     emit_ws_event(db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": row.id})
+    emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return scene_view(row)
 
 
@@ -94,4 +95,5 @@ async def undo_imported_scene(
     await db.delete(row)
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.scene.updated", payload={"scene_id": material_id})
+    emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return False

@@ -377,6 +377,8 @@ async def share_life_event_in_session(
             emit_ws_event(
                 db, user_id=user_id, event_type="companion.life.presentation_requested", payload={"force": True}
             )
+        if "scene_id" in result or "action_id" in result:
+            emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     public = share.channel == "life"
     return await accept_event_in_session(
         db,

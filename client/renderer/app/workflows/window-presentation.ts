@@ -37,12 +37,10 @@ import { RENDERER_TIMINGS } from '@/shared/constants'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
-import { $surfaceRole } from '@/shared/store/surfaces'
-import { $windowScenePath, $windowScenePresented, $windowStaticProjection } from '@/shared/store/window-stage'
+import { visualSurface } from '@/shared/store/surfaces'
 
 const clientId = crypto.randomUUID()
 const settledPlays = new Set<string>()
@@ -51,9 +49,9 @@ let stopProjection: (() => void) | null = null
 let stopDirector: (() => void) | null = null
 let projectingPlay: string | null = null
 let projectionConsumers = 0
+let staticProjection = false
 
 function applySources(actual: VisualActualSnapshot | null): void {
-  $windowScenePath.set(actual?.scene_path ?? null)
   setStageOutfitSource(actual?.outfit_path ? { path: actual.outfit_path, name: actual.outfit_description } : null)
 }
 
@@ -71,13 +69,12 @@ function releaseVisualProjection(): void {
   stopDirector = null
   projectingPlay = null
   windowCommand = null
-  $windowStaticProjection.set(false)
+  staticProjection = false
   $windowActorMedia.set(null)
-  $windowScenePresented.set(null)
   applySources(null)
 }
 
-function waitForStage(path: string, scenePath: string, current: () => boolean): Promise<void> {
+function waitForStage(path: string, current: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
     let stop = (): void => undefined
     let subscribed = false
@@ -92,9 +89,7 @@ function waitForStage(path: string, scenePath: string, current: () => boolean): 
         return
       }
 
-      const sourcesReady =
-        $stageOutfitPresented.get() === path &&
-        ($surfaceRole.get() !== 'main' || $windowScenePresented.get() === scenePath)
+      const sourcesReady = $stageOutfitPresented.get() === path
 
       if (!current() || sourcesReady) {
         stop()
@@ -110,7 +105,6 @@ function waitForStage(path: string, scenePath: string, current: () => boolean): 
 
     const stops = [
       $stageOutfitPresented.listen(check),
-      $windowScenePresented.listen(check),
       observeCharacterStageVisibility(check),
       $auth.listen(check),
       $presentation.listen(check),
@@ -184,7 +178,7 @@ function waitForActorVideo(
   })
 }
 
-async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
+async function settlePendingPlay(): Promise<void> {
   const pending = $performance.get().command
   const scope = captureAuthScope()
 
@@ -192,14 +186,16 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
     !scope ||
     !pending ||
     !$gateway.get()?.isPresentationHost ||
+    pending.asset_kind !== 'actor' ||
+    pending.media_kind !== 'video' ||
+    visualSurface() !== 'sprite' ||
     $presentation.get().effectiveMode !== 'window' ||
     !isCharacterMediaVisible() ||
     settledPlays.has(pending.play_id) ||
     projectingPlay ||
     Date.parse(pending.expires_at) <= Date.now() ||
     $motionLevel.get() === 'off' ||
-    (pending.asset_kind === 'actor' &&
-      (window.matchMedia('(prefers-reduced-motion: reduce)').matches || $presentation.get().fullscreen))
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
   ) {
     return
   }
@@ -212,6 +208,8 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   const current = (): boolean => {
     return (
       scope() &&
+      visualSurface() === 'sprite' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
       $performance.get().command?.play_id === pending.play_id &&
       $motionLevel.get() !== 'off' &&
       $presentation.get().effectiveMode === 'window' &&
@@ -224,7 +222,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
   let claimed = false
 
   try {
-    claimed = await claimVisualPlay(pending.play_id, clientId)
+    claimed = await claimVisualPlay(pending.play_id, clientId, 'sprite')
 
     if (!claimed) {
       return
@@ -234,75 +232,17 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
       throw new Error('Presentation changed after claim')
     }
 
-    // 透明主体视频指令：等待舞台实际呈现后按视频回执；一次性动作在 ended 后完成。
-    if (pending.asset_kind === 'actor' && pending.media_kind === 'video') {
-      if (!current()) {
-        throw new Error('Presentation changed before display')
-      }
-
-      windowCommand = pending
-      assembleWindowMedia()
-      await waitForActorVideo(pending, current, 'started')
-      started = true
-      await sendVisualReceipt(pending.play_id, { status: 'started', receipt_kind: 'video' })
-      await refreshVisualPresentation()
-
-      if (!pending.loop) {
-        await waitForActorVideo(pending, current, 'finished')
-        await sendVisualReceipt(pending.play_id, { status: 'finished', receipt_kind: 'video' })
-      }
-
-      return
-    }
-
-    // 窗口静态投影需要冻结的造型与环境素材；缺少时说明该指令不适合窗口投影。
-    const outfit = pending.outfit ?? response.composition?.outfit_material ?? response.static_presentation?.outfit
-    const scene = pending.scene ?? response.composition?.scene_material ?? response.static_presentation?.scene
-
-    if (!outfit || !scene) {
-      throw new Error('Pending play lacks frozen static sources')
-    }
-
-    for (const path of [outfit.path, scene.path]) {
-      const url = await backendApi().apiAsset({ url: path, preferCache: true })
-
-      if (!url) {
-        throw new Error('Frozen static source is unavailable')
-      }
-
-      const image = new Image()
-      image.src = url
-      await image.decode()
-    }
-
-    if (!current()) {
-      throw new Error('Presentation changed before display')
-    }
-
-    $windowStaticProjection.set(true)
+    windowCommand = pending
     assembleWindowMedia()
-    applySources({
-      ...response.actual,
-      visual_id: pending.visual_id,
-      visual_version: pending.visual_version,
-      visual_description: '',
-      outfit_path: outfit.path,
-      outfit_hash: outfit.content_hash,
-      outfit_description: outfit.description,
-      scene_path: scene.path,
-      scene_hash: scene.content_hash,
-      scene_description: scene.description,
-      ready: true
-    })
-    await waitForStage(outfit.path, scene.path, current)
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    await waitForActorVideo(pending, current, 'started')
+    started = true
+    await sendVisualReceipt(pending.play_id, { status: 'started', receipt_kind: 'video' })
+    await refreshVisualPresentation()
 
-    if (!current()) {
-      throw new Error('Presentation changed before acknowledgment')
+    if (!pending.loop) {
+      await waitForActorVideo(pending, current, 'finished')
+      await sendVisualReceipt(pending.play_id, { status: 'finished', receipt_kind: 'video' })
     }
-
-    await sendVisualReceipt(pending.play_id, { status: 'started', receipt_kind: 'window_static' })
-    await sendVisualReceipt(pending.play_id, { status: 'finished', receipt_kind: 'window_static' })
   } catch (error) {
     if (scope() && claimed) {
       await sendVisualReceipt(pending.play_id, {
@@ -312,7 +252,7 @@ async function settlePendingPlay(response: VisualsPresentation): Promise<void> {
             $windowActorPlayback.get()?.status === 'interrupted')
             ? 'interrupted'
             : 'failed',
-        receipt_kind: pending.asset_kind === 'actor' ? 'video' : 'window_static',
+        receipt_kind: 'video',
         error: String(error)
       }).catch(failure => log.warn('visual-presentation', 'Receipt failed', failure))
     }
@@ -356,7 +296,7 @@ function ensureVisualProjection(): void {
     }
 
     if (synced && !projectingPlay) {
-      $windowStaticProjection.set(false)
+      staticProjection = false
     }
 
     assembleWindowMedia()
@@ -369,15 +309,19 @@ function ensureVisualProjection(): void {
       if (pendingStaticPresentation(response) && !$performance.get().command) {
         void settleStaticProjection(response)
       } else {
-        void settlePendingPlay(response)
+        void settlePendingPlay()
       }
     }
   }
 
   if ($gateway.get()?.isPresentationHost) {
     const stageEpoch = $presentation.get().stageEpoch
-    stopDirector = bindPresentationDirector(visualPerformancePorts(), () => $visualsPresentation.get(), {
+    stopDirector = bindPresentationDirector(visualPerformancePorts('sprite'), () => $visualsPresentation.get(), {
+      surface: 'sprite',
+      isMotionEnabled: () =>
+        $motionLevel.get() !== 'off' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       isEligible: () =>
+        visualSurface() === 'sprite' &&
         $auth.get().kind === 'authenticated' &&
         $motionLevel.get() !== 'off' &&
         $presentation.get().effectiveMode === 'window' &&
@@ -468,7 +412,7 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
     projectingPlay ||
     settledPlays.has(key) ||
     !isCharacterMediaVisible() ||
-    $presentation.get().effectiveMode !== 'window'
+    visualSurface() !== 'sprite'
   ) {
     return
   }
@@ -481,7 +425,7 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
     return (
       scope() &&
       isCharacterMediaVisible() &&
-      $presentation.get().effectiveMode === 'window' &&
+      visualSurface() === 'sprite' &&
       !$performance.get().command &&
       Boolean(latest && staticPresentationKey(latest) === key)
     )
@@ -493,10 +437,10 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
     let renderError: string | null = null
 
     try {
-      $windowStaticProjection.set(true)
+      staticProjection = true
       assembleWindowMedia()
 
-      if (target.outfit && target.scene) {
+      if (target.outfit) {
         applySources({
           ...response.actual,
           visual_id: null,
@@ -507,16 +451,16 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
           outfit_path: target.outfit.path,
           outfit_hash: target.outfit.content_hash,
           outfit_description: target.outfit.description,
-          scene_path: target.scene.path,
-          scene_hash: target.scene.content_hash,
-          scene_description: target.scene.description,
+          scene_path: null,
+          scene_hash: null,
+          scene_description: '',
           identity_path: target.identity_path,
           identity_hash: target.identity_hash,
           ready: true
         })
-        await waitForStage(target.outfit.path, target.scene.path, current)
+        await waitForStage(target.outfit.path, current)
       } else {
-        applySources(null)
+        throw new Error('Frozen sprite outfit is unavailable')
       }
 
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
@@ -549,7 +493,7 @@ async function settleStaticProjection(response: VisualsPresentation): Promise<vo
   } finally {
     if (projectingPlay === key) {
       projectingPlay = null
-      $windowStaticProjection.set(false)
+      staticProjection = false
       applyBaseSources($visualsPresentation.get())
       assembleWindowMedia()
     }
@@ -597,7 +541,7 @@ function assembleWindowMedia(): void {
     wake: $wakePerformance.get(),
     failedMedia: $failedStageMedia.get(),
     subtle: motion === 'subtle',
-    motionEnabled: motion !== 'off'
+    motionEnabled: motion !== 'off' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
   })
 
   const actor = $spatialLocomotion.get() !== 'still' || $spritePointerHeld.get() ? null : plan.actor
@@ -607,12 +551,7 @@ function assembleWindowMedia(): void {
     subtle: motion === 'subtle'
   }).actor
 
-  if (
-    $windowStaticProjection.get() ||
-    auth.kind !== 'authenticated' ||
-    $presentation.get().effectiveMode !== 'window' ||
-    !actor
-  ) {
+  if (staticProjection || auth.kind !== 'authenticated' || $presentation.get().effectiveMode !== 'window' || !actor) {
     $windowActorMedia.set(null)
 
     return

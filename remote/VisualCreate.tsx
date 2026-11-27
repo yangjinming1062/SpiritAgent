@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 
 import type { VisualDetail, VisualInterpretation } from '@protocol'
@@ -6,24 +6,26 @@ import type { VisualDetail, VisualInterpretation } from '@protocol'
 import { composeDescribedInput } from '../shared/described-input'
 import { InterpretationGuard } from '../shared/interpretation-guard'
 import { newRequestId } from '../shared/request-id'
-import { isStaleDraftError } from '../shared/visuals'
+import {
+  isStaleDraftError,
+  VISUAL_CREATION_INTENTS,
+  type VisualCreationIntent,
+  type VisualLibrarySection
+} from '../shared/visuals'
 
 import { ApiError, type RemoteApi } from './api'
 import { usePageState } from './page-state'
 import { useAlive, useTask } from './tasks'
 import { AssetSteps, Notice } from './ui'
 
-type Intent = 'photo' | 'video' | 'motion'
-
-const INTENTS = [
-  { id: 'photo' as const, title: '一张照片', hint: '记录此刻的画面' },
-  { id: 'video' as const, title: '一段视频', hint: '让画面动起来' },
-  { id: 'motion' as const, title: '让它动起来', hint: '用当前造型演一段动作' }
-]
+const INTENTS: Record<(typeof VISUAL_CREATION_INTENTS.complete)[number], { title: string; hint: string }> = {
+  photo: { title: '一张照片', hint: '记录此刻的画面' },
+  video: { title: '一段视频', hint: '让完整画面动起来' }
+}
 
 interface Studio {
   description: string
-  intent: Intent
+  intent: VisualCreationIntent
   preview: VisualInterpretation | null
   refinement: string
   requestId: string | null
@@ -31,14 +33,16 @@ interface Studio {
   uploadDescription: string
 }
 
-const EMPTY_STUDIO: Studio = {
-  description: '',
-  intent: 'photo',
-  preview: null,
-  refinement: '',
-  requestId: null,
-  title: '',
-  uploadDescription: ''
+function initialStudio(section: VisualLibrarySection): Studio {
+  return {
+    description: '',
+    intent: VISUAL_CREATION_INTENTS[section][0],
+    preview: null,
+    refinement: '',
+    requestId: null,
+    title: '',
+    uploadDescription: ''
+  }
 }
 
 const interpretation = new InterpretationGuard()
@@ -58,18 +62,31 @@ const NEXT_STEP: Record<
 export function VisualCreate({
   api,
   onDone,
-  onOpenSection
+  onOpenSection,
+  section
 }: {
   api: RemoteApi
   onDone: (created?: VisualDetail) => Promise<void>
   onOpenSection: (section: 'action' | 'outfit' | 'scene') => void
+  section: VisualLibrarySection
 }): ReactElement {
   const alive = useAlive()
-  const [mode, setMode] = usePageState<'idle' | 'describe' | 'upload'>('visuals.creationMode', 'idle')
-  const [studio, setStudio] = usePageState<Studio>('visuals.studio', EMPTY_STUDIO)
-  const [file, setFile] = usePageState<File | null>('visuals.uploadFile', null, false)
+  const [mode, setMode] = usePageState<'idle' | 'describe' | 'upload'>(`visuals.${section}.creationMode`, 'idle')
+  const [studio, setStudio] = usePageState<Studio>(`visuals.${section}.studio`, initialStudio(section))
+  const [file, setFile] = usePageState<File | null>(`visuals.${section}.uploadFile`, null, false)
   const [previewUrl, setPreviewUrl] = useState('')
   const { run, busy, error } = useTask()
+  const createLabel = section === 'sprite' ? '创建精灵视频' : '创建影像'
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl('')
+      return
+    }
+    const url = URL.createObjectURL(file)
+    setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
   const patch = (value: Partial<Studio>): void => {
     // 草稿任何变化都推进整理修订，在途整理的响应不落地。
     interpretation.revise()
@@ -77,7 +94,7 @@ export function VisualCreate({
   }
   const reset = (): void => {
     interpretation.revise()
-    setStudio(EMPTY_STUDIO)
+    setStudio(initialStudio(section))
   }
 
   const describe = async (): Promise<void> => {
@@ -151,13 +168,6 @@ export function VisualCreate({
 
     if (alive()) {
       setFile(null)
-      setPreviewUrl(previous => {
-        if (previous) {
-          URL.revokeObjectURL(previous)
-        }
-
-        return ''
-      })
       patch({ title: '', uploadDescription: '' })
       setMode('idle')
       await onDone(result)
@@ -171,7 +181,7 @@ export function VisualCreate({
     <>
       <div className="button-row">
         <button disabled={busy} onClick={() => setMode('describe')} type="button">
-          创建影像
+          {createLabel}
         </button>
         <button disabled={busy} onClick={() => setMode('upload')} type="button">
           上传影像
@@ -192,23 +202,15 @@ export function VisualCreate({
             </button>
           </div>
           <AssetSteps step={file ? 2 : 1} upload />
-          <p className="muted">保留原始文件，自动分析内容并优先关联已有素材。存在歧义时再由你确认。</p>
+          <p className="muted">
+            保留原始文件，按分析结果归入完整影像或精灵视频，并优先关联已有素材。存在歧义时再由你确认。
+          </p>
           <label>
             选择图片或视频
             <input
               accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.mov"
               disabled={busy}
-              onChange={event => {
-                const next = event.target.files?.[0] ?? null
-                setFile(next)
-                setPreviewUrl(previous => {
-                  if (previous) {
-                    URL.revokeObjectURL(previous)
-                  }
-
-                  return next ? URL.createObjectURL(next) : ''
-                })
-              }}
+              onChange={event => setFile(event.target.files?.[0] ?? null)}
               type="file"
             />
           </label>
@@ -259,7 +261,7 @@ export function VisualCreate({
           }}
         >
           <div className="card-title">
-            <h2>创建影像</h2>
+            <h2>{createLabel}</h2>
             <button
               disabled={busy}
               onClick={() => {
@@ -275,28 +277,34 @@ export function VisualCreate({
           <p className="muted">描述你想要的画面，确认后再开始制作。</p>
           {!plan && (
             <>
-              <fieldset className="intent-row">
-                <legend>想做什么</legend>
-                {INTENTS.map(item => (
-                  <label key={item.id}>
-                    <input
-                      checked={studio.intent === item.id}
-                      disabled={busy}
-                      name="visual-intent"
-                      onChange={() => patch({ intent: item.id })}
-                      type="radio"
-                    />
-                    {item.title}
-                    <span className="muted">（{item.hint}）</span>
-                  </label>
-                ))}
-              </fieldset>
+              {section === 'complete' ? (
+                <fieldset className="intent-row">
+                  <legend>想做什么</legend>
+                  {VISUAL_CREATION_INTENTS.complete.map(intent => (
+                    <label key={intent}>
+                      <input
+                        checked={studio.intent === intent}
+                        disabled={busy}
+                        name="visual-intent"
+                        onChange={() => patch({ intent })}
+                        type="radio"
+                      />
+                      {INTENTS[intent].title}
+                      <span className="muted">（{INTENTS[intent].hint}）</span>
+                    </label>
+                  ))}
+                </fieldset>
+              ) : (
+                <p className="muted">为浮动精灵制作一段透明动作。</p>
+              )}
               <label>
                 描述你想要的画面
                 <textarea
                   disabled={busy}
                   onChange={event => patch({ description: event.target.value })}
-                  placeholder="例如：穿着舒适的家居服，在窗边安静地读书"
+                  placeholder={
+                    section === 'sprite' ? '例如：轻轻抬头，朝你挥挥手' : '例如：穿着舒适的家居服，在窗边安静地读书'
+                  }
                   rows={3}
                   value={studio.description}
                 />

@@ -55,6 +55,8 @@ export interface DesktopMediaReference {
 
 export type DesktopStageLayer = 'scene' | 'actor' | 'cinematic' | 'effects'
 
+export const DESKTOP_EMPTY_PLAY_PREFIX = 'render:empty:'
+
 export interface DesktopStageLayout {
   fit: 'contain' | 'cover'
   actorPosition: [number, number]

@@ -44,6 +44,7 @@ async def notify_shared_step(db: AsyncSession, user_id: int, step: LifeStep) -> 
         and await shared_pursuit_ids(db, user_id, {step.pursuit_id})
     ):
         emit_ws_event(db, user_id=user_id, event_type="companion.life.updated", payload={"step_id": step.id})
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
 
 
 async def enqueue_action(
@@ -109,6 +110,8 @@ async def enqueue_action(
                 row.not_before = retry_at
                 row.disposition, row.wait_reason, row.failure_code = "waiting", "上次执行失败，稍后再试", "retry_wait"
         await db.flush()
+        if row.not_before > utc_now():
+            await notify_shared_step(db, user_id, row)
     return step_view(row)
 
 
@@ -237,6 +240,7 @@ async def claim_step(user_id: int, step_id: int) -> LifeStepView | None:
             row.state, row.disposition, row.wait_reason = "unknown", "unknown", "这个请求已经提交过，须核对原结果"
             row.failure_code = "unknown_submission"
             row.started_at = admission.admitted_at
+            await notify_shared_step(db, user_id, row)
             await db.commit()
             return None
         if admission is None:

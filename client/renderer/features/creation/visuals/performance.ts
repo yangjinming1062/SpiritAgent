@@ -1,6 +1,8 @@
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
+import { visualSurface } from '@/shared/store/surfaces'
 
 import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { ApiError } from '../../../../../shared/errors'
@@ -17,11 +19,13 @@ import {
   performanceStarted
 } from './performance-scheduler'
 import { $visualPlayback, $visualsPresentation, playClients, receiptKinds, receiptQueues } from './state'
+import { commandTargetsSurface, type VisualTargetSurface } from './types'
 
-export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
+export function visualPerformancePorts(surface: VisualTargetSurface): Omit<PerformancePorts, 'valid'> {
   const scope = captureAuthScope()
 
   return {
+    accepts: command => commandTargetsSurface(command, surface),
     dispatch: async request => {
       if (!scope?.()) {
         throw new Error('Performance account changed')
@@ -41,14 +45,18 @@ export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
       return command
     },
     cancel: async (command, reason) => {
-      if (!scope?.()) {
+      if (!scope?.() || !commandTargetsSurface(command, surface)) {
         return
       }
 
       const clientId = playClients.get(command.play_id) ?? crypto.randomUUID()
 
       if (!playClients.has(command.play_id)) {
-        const result = await visualsApi.claimPlay(command.play_id, { client_id: clientId })
+        if (visualSurface() !== surface) {
+          return
+        }
+
+        const result = await visualsApi.claimPlay(command.play_id, { client_id: clientId, target_surface: surface })
 
         if (!scope() || !result.claimed) {
           return
@@ -75,11 +83,15 @@ export function visualPerformancePorts(): Omit<PerformancePorts, 'valid'> {
  * 成品库与制作区一起刷新。并发调用合并为排队中的一次读取（后到的筛选生效），
  * 无参刷新沿用上次筛选；执行中的旧筛选结果不回写。
  */
-export async function claimVisualPlay(playId: string, clientId: string): Promise<boolean> {
+export async function claimVisualPlay(
+  playId: string,
+  clientId: string,
+  surface: VisualTargetSurface
+): Promise<boolean> {
   const scope = captureAuthScope()
 
   try {
-    const result = await visualsApi.claimPlay(playId, { client_id: clientId })
+    const result = await visualsApi.claimPlay(playId, { client_id: clientId, target_surface: surface })
 
     if (!scope?.()) {
       return false
@@ -164,6 +176,53 @@ export function staticPresentationKey(
   target: Pick<ApiSchemas['StageReceipt'], 'request_id' | 'presentation_epoch' | 'state_revision'>
 ): string {
   return `static:${target.request_id}:${target.presentation_epoch}:${target.state_revision}`
+}
+
+let localFrameQueue = Promise.resolve()
+
+export function reportLocalFrame(
+  frame: Omit<ApiSchemas['LocalVisualReceipt'], 'state_revision'>,
+  isCurrent: () => boolean
+): Promise<void> {
+  const scope = captureAuthScope()
+
+  const report = async (): Promise<void> => {
+    for (let retry = 0; retry < 2; retry += 1) {
+      const projection = $visualsPresentation.get()
+
+      if (
+        !scope?.() ||
+        !isCurrent() ||
+        visualSurface() !== frame.target_surface ||
+        projection?.presentation_epoch !== frame.presentation_epoch
+      ) {
+        return
+      }
+
+      try {
+        await requestResource('companion_visuals.local_receipt', {
+          body: { ...frame, state_revision: projection.state_revision }
+        })
+
+        if (scope() && isCurrent()) {
+          await refreshVisualPresentation()
+        }
+
+        return
+      } catch (error) {
+        if (retry > 0 || ipcErrorStatus(error) !== 409) {
+          throw error
+        }
+
+        await refreshVisualPresentation()
+      }
+    }
+  }
+
+  const current = localFrameQueue.then(report)
+  localFrameQueue = current.catch(() => undefined)
+
+  return current
 }
 
 /** 旧回执被拒绝后由调用方回源；传输失败保留错误，不转报成图片加载失败。 */

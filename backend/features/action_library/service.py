@@ -187,6 +187,7 @@ async def ensure_builtin_actions(db: AsyncSession, user_id: int) -> None:
     await db.flush()
     if changed:
         emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
 
 
 async def _locked_action(db: AsyncSession, user_id: int, action_id: int) -> ActionDefinition | None:
@@ -271,6 +272,8 @@ async def update_action(
     _reset_review(row, review_source_json)
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+    if current.status == "approved":
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return definition_view(row)
 
 
@@ -286,6 +289,8 @@ async def delete_action(db: AsyncSession, user_id: int, action_id: int) -> bool:
     await db.delete(row)
     await db.flush()
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+    if row.status == "approved":
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return True
 
 
@@ -337,6 +342,8 @@ async def record_review(
     await db.flush()
     await settle_action_steps(db, row)
     emit_ws_event(db, user_id=user_id, event_type="companion.action.updated", payload={})
+    if status == "approved":
+        emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
     return status
 
 

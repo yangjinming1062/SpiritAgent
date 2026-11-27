@@ -111,8 +111,8 @@ async def _terminate_user_gateway_locked(user_id: ResourceId, login_record_id: R
         MANAGER.disconnect(websocket, user_id)
         with contextlib.suppress(Exception):
             await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
-    observe_companion_presence(user_id, False, presentation_mode=None)
     await cancel_and_wait([session.grace_timer_task, *session.background_tasks])
+    await observe_companion_presence(user_id, False, presentation_mode=None)
     await interrupt_unavailable_companion_turns(user_id)
     await MANAGER.aunregister_dispatcher(user_id)
     REGISTRY.clear_runner_tools(user_id)
@@ -241,6 +241,8 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
             session = None
         elif session is not None and session.websocket is not None:
             await cancel_and_wait(list(session.background_tasks))
+            # 新连接接管时，旧连接的 finally 可能不再负责清理。
+            await observe_companion_presence(user_id, False, presentation_mode=None)
         try:
             await MANAGER.connect(websocket, user_id)
             await ensure_main_conversation(user_id)
@@ -279,17 +281,18 @@ async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        if MANAGER.active_connections.get(user_id) is websocket:
-            MANAGER.disconnect(websocket, user_id)
-            observe_companion_presence(user_id, False, presentation_mode=None)
-            session.dispatcher.set_sender(None)
-            session.websocket = None
-            task = asyncio.create_task(_expire_disconnected_gateway(user_id))
-            _GRACE_TIMER_TASKS.add(task)
-            TASK_SUPERVISOR.register(task, owner="channels.desktop.grace", user_id=user_id)
-            task.add_done_callback(_GRACE_TIMER_TASKS.discard)
-            session.grace_timer_task = task
-            await interrupt_unavailable_companion_turns(user_id)
+        async with _user_lock(user_id):
+            if MANAGER.active_connections.get(user_id) is websocket:
+                MANAGER.disconnect(websocket, user_id)
+                await observe_companion_presence(user_id, False, presentation_mode=None)
+                session.dispatcher.set_sender(None)
+                session.websocket = None
+                task = asyncio.create_task(_expire_disconnected_gateway(user_id))
+                _GRACE_TIMER_TASKS.add(task)
+                TASK_SUPERVISOR.register(task, owner="channels.desktop.grace", user_id=user_id)
+                task.add_done_callback(_GRACE_TIMER_TASKS.discard)
+                session.grace_timer_task = task
+                await interrupt_unavailable_companion_turns(user_id)
 
 
 async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentity) -> None:

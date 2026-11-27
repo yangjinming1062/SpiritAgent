@@ -56,6 +56,8 @@ def video_generation_prompt(
             framing = ACTOR_VIDEO_LOOP_FRAMING if clip_kind == "loop" else ACTOR_VIDEO_REACTION_FRAMING
     else:
         framing = CINEMATIC_VIDEO_FRAMING
+        if source.opening_frame is not None:
+            framing += " 从已安睡的实拍首帧自然起身，保持视角、构图、场景、光线和身体支撑连续。"
     constraints = []
     if required_props:
         constraints.append("动作所需物品：" + "、".join(required_props))

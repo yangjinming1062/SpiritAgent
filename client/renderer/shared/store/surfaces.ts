@@ -44,6 +44,25 @@ export function isSpriteStageShown(): boolean {
   )
 }
 
+/** 主进程同步的实际可见舞台，供现有桌面连接上报。 */
+export function visualSurface(): 'desktop' | 'life' | 'sprite' | 'none' {
+  const presentation = $presentation.get()
+
+  if ($surfaceScreenLocked.get() || presentation.fullscreen) {
+    return 'none'
+  }
+
+  if (presentation.effectiveMode === 'desktop') {
+    return presentation.status === 'active' && presentation.stageAvailable ? 'desktop' : 'none'
+  }
+
+  if ($surfaceOpen.get() && $surfaceCompanion.get().visible) {
+    return 'life'
+  }
+
+  return isSpriteStageShown() ? 'sprite' : 'none'
+}
+
 export function isCompanionStageVisible(): boolean {
   if ($surfaceScreenLocked.get() || document.visibilityState === 'hidden') {
     return false

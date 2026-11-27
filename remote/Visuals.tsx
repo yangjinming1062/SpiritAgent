@@ -1,11 +1,16 @@
 import { IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { VisualDetail, VisualItem, VisualJob, VisualJobCommand, VisualJobState, VisualMediaKind } from '@protocol'
 
 import { visualAnalysisControls, visualMaterialCopy } from '../shared/visual-materials'
-import { showVisualJobActivity, visualJobCommands } from '../shared/visuals'
+import {
+  showVisualJobActivity,
+  VISUAL_LIBRARY_SECTIONS,
+  visualJobCommands,
+  type VisualLibrarySection
+} from '../shared/visuals'
 
 import type { RemoteApi } from './api'
 import { ApiError } from './api'
@@ -38,6 +43,16 @@ const JOB_COMMAND_TEXT: Record<VisualJobCommand, string> = {
   cancel: '取消',
   retry: '重试'
 }
+
+const SECTION_LABELS: Record<VisualLibrarySection, string> = { complete: '完整影像', sprite: '精灵视频' }
+
+interface VisualFilters {
+  query: string
+  source: string
+  mediaKind: 'all' | VisualMediaKind
+}
+
+const EMPTY_FILTERS: VisualFilters = { query: '', source: '', mediaKind: 'all' }
 
 function analysisPending(state: VisualItem['analysis_state'] | null | undefined): boolean {
   return state === 'queued' || state === 'running' || state === 'paused' || state === 'awaiting_input'
@@ -126,12 +141,14 @@ function VisualDetailPanel({
   currentVisualId,
   onChanged,
   onClose,
+  onRefresh,
   visual
 }: {
   api: RemoteApi
   currentVisualId: string | null
   onChanged: () => Promise<void>
   onClose: () => void
+  onRefresh: () => Promise<void>
   visual: VisualDetail
 }): ReactElement {
   const { run, busy, error } = useTask()
@@ -147,6 +164,8 @@ function VisualDetailPanel({
   const shownWidth = original?.original_width ?? visual.width
   const shownHeight = original?.original_height ?? visual.height
   const shownDurationMs = original?.original_duration_ms ?? visual.duration_ms
+  const mediaLabel =
+    visual.asset_kind === 'actor' ? SECTION_LABELS.sprite : visual.media_kind === 'video' ? '视频' : '图片'
 
   return (
     <section className="asset-detail">
@@ -164,7 +183,7 @@ function VisualDetailPanel({
         url={showOriginal && visual.original_url ? visual.original_url : visual.media_url}
       />
       <p className="muted">
-        {visual.media_kind === 'video' ? '视频' : '图片'} · {shownWidth} × {shownHeight}
+        {mediaLabel} · {shownWidth} × {shownHeight}
         {durationText(shownDurationMs) ? ` · ${durationText(shownDurationMs)}` : ''} · 第 {visual.version} 版
         {currentVisualId === visual.id ? ' · 当前呈现' : ''}
       </p>
@@ -299,7 +318,7 @@ function VisualDetailPanel({
           <summary>制作记录</summary>
           <ul className="visual-list">
             {jobs.map(job => (
-              <VisualJobRow api={api} job={job} key={job.id} onChanged={onChanged} />
+              <VisualJobRow api={api} job={job} key={job.id} onChanged={onRefresh} />
             ))}
           </ul>
         </details>
@@ -313,8 +332,8 @@ function VisualDetailPanel({
             }
             void run(async () => {
               await api.invoke('companion_visuals.delete_visual', { path: { visual_id: visual.id } })
-              await onChanged()
               onClose()
+              await onRefresh()
             })
           }}
           type="button"
@@ -341,38 +360,70 @@ export function Visuals({
 }): ReactElement {
   const alive = useAlive()
   const { run, runLatest, busy, error } = useTask()
-  const [jobs, setJobs] = useState<VisualJob[]>([])
+  const [jobPage, setJobPage] = useState<{ section: VisualLibrarySection; jobs: VisualJob[] } | null>(null)
   const [currentVisualId, setCurrentVisualId] = useState<string | null>(null)
   // 详情随组件生命周期，切 tab 即回列表；筛选与会话级草稿保留在 usePageState。
   const [selected, setSelected] = useState<VisualDetail | null>(null)
-  const [query, setQuery] = usePageState('visuals.query', '')
-  const [mediaKind, setMediaKind] = usePageState<'all' | VisualMediaKind>('visuals.mediaKind', 'all')
-  const [source, setSource] = usePageState('visuals.source', '')
-  const { rows, hasMore, loaded, read, save } = useLibraryPages<VisualItem>(
-    JSON.stringify([query, mediaKind, source]),
-    30
-  )
+  const [section, setSection] = usePageState<VisualLibrarySection>('visuals.section', 'complete')
+  const [filters, setFilters] = usePageState<Record<VisualLibrarySection, VisualFilters>>('visuals.filters', {
+    complete: EMPTY_FILTERS,
+    sprite: EMPTY_FILTERS
+  })
+  const { query, mediaKind, source } = filters[section]
+  const filterKey = JSON.stringify([query, mediaKind, source])
+  const { rows, hasMore, loaded, read, save } = useLibraryPages<VisualItem>(filterKey, 30, section)
+  const jobs = jobPage?.section === section ? jobPage.jobs : []
   const revision = useRef(0)
+  const activeRead = useRef<{
+    api: RemoteApi
+    section: VisualLibrarySection
+    selectedId: string | undefined
+    load: (append?: boolean) => Promise<void>
+  } | null>(null)
   const selectedId = selected?.id
-  usePageScroll(`visuals.${selectedId ?? `list.${query}`}`, loaded)
+  usePageScroll(`visuals.${selectedId ?? `list.${section}.${filterKey}`}`, loaded)
+
+  const invalidateRead = (): void => {
+    activeRead.current = null
+    revision.current++
+  }
+
+  const selectDetail = (detail: VisualDetail | null): void => {
+    invalidateRead()
+    setSelected(detail)
+  }
+
+  const patchFilters = (patch: Partial<VisualFilters>): void => {
+    const before = filters[section]
+    const next = { ...before, ...patch }
+    if (next.query === before.query && next.mediaKind === before.mediaKind && next.source === before.source) {
+      return
+    }
+    invalidateRead()
+    setFilters(previous => ({ ...previous, [section]: { ...previous[section], ...patch } }))
+  }
 
   const load = useCallback(
-    async (append = false) => {
+    async function loadVisuals(append = false) {
+      if (activeRead.current?.load !== loadVisuals) {
+        return
+      }
       const version = ++revision.current
-      const [list, jobList, presentation, detail] = await Promise.all([
+      const result = await Promise.all([
         read(append, async (cursor, limit) => {
           const { visuals: rows, next_cursor } = await api.invoke('companion_visuals.list_visuals', {
             query: {
               limit,
               cursor,
-              media_kind: mediaKind === 'all' ? undefined : mediaKind,
+              media_kind: section === 'complete' && mediaKind !== 'all' ? mediaKind : undefined,
               query: query.trim() || undefined,
+              section,
               source: source.trim() || undefined
             }
           })
           return { rows, next_cursor }
         }),
-        api.invoke('companion_visuals.list_visual_jobs', {}),
+        api.invoke('companion_visuals.list_visual_jobs', { query: { section } }),
         api.invoke('companion_visuals.get_presentation', {}),
         selectedId
           ? api.invoke('companion_visuals.get_visual', { path: { visual_id: selectedId } }).catch(failure => {
@@ -382,55 +433,98 @@ export function Visuals({
               throw failure
             })
           : null
-      ])
-
-      if (alive()) {
+      ]).catch(failure => {
+        if (!alive() || activeRead.current?.load !== loadVisuals) {
+          return null
+        }
         requireCurrentRead(version, revision.current)
+        throw failure
+      })
+
+      if (result && alive() && activeRead.current?.load === loadVisuals) {
+        requireCurrentRead(version, revision.current)
+        const [list, jobList, presentation, detail] = result
         save(list)
-        setJobs(jobList.jobs.filter(showVisualJobActivity))
+        setJobPage({ section, jobs: jobList.jobs.filter(showVisualJobActivity) })
         setCurrentVisualId(presentation.current_visual?.id ?? null)
         setSelected(previous => (previous?.id === selectedId ? detail : previous))
       }
     },
-    [alive, api, mediaKind, query, read, save, selectedId, source]
+    [alive, api, mediaKind, query, read, save, section, selectedId, source]
   )
 
+  useLayoutEffect(() => {
+    activeRead.current = { api, load, section, selectedId }
+    return () => {
+      activeRead.current = null
+    }
+  }, [api, load, section, selectedId])
+
+  const readCurrent = useCallback(async () => {
+    const current = activeRead.current
+    if (current?.api === api) {
+      await current.load()
+    }
+  }, [api])
+
+  // 写入完成后重新读取当前视图，并让在途读取先结束。
+  const refreshCurrent = useCallback(async () => {
+    if (activeRead.current?.api === api) {
+      await runLatest(readCurrent)
+    }
+  }, [api, readCurrent, runLatest])
+
   useEffect(() => {
-    void runLatest(load)
-  }, [load, refresh, runLatest])
+    void refreshCurrent()
+  }, [load, refresh, refreshCurrent])
 
   const producing =
     jobs.some(job => job.state === 'queued' || job.state === 'running') ||
     rows.some(row => row.analysis_state === 'queued' || row.analysis_state === 'running') ||
     selected?.analysis?.state === 'queued' ||
     selected?.analysis?.state === 'running'
-  useVisiblePolling(producing, load, runLatest)
+  useVisiblePolling(producing, readCurrent, runLatest)
 
   return (
     <>
       {!selected ? (
         <>
           <PageHeader subtitle="创建、上传与收藏你和伙伴的影像" title="影像" />
+          <nav aria-label="影像分区" className="section-tabs">
+            {VISUAL_LIBRARY_SECTIONS.map(item => (
+              <button
+                aria-current={section === item ? 'page' : undefined}
+                className={section === item ? 'selected' : ''}
+                key={item}
+                onClick={() => {
+                  if (item !== section) {
+                    invalidateRead()
+                    setSection(item)
+                  }
+                }}
+                type="button"
+              >
+                {SECTION_LABELS[item]}
+              </button>
+            ))}
+          </nav>
           <VisualCreate
             api={api}
+            key={section}
             onDone={async created => {
-              setQuery('')
-              setSource('')
-              setMediaKind('all')
-              if (created) {
-                setSelected(created)
+              const current = activeRead.current
+              if (created && current?.api === api && current.section === section && !current.selectedId) {
+                selectDetail(created)
               }
-              await load()
+              await refreshCurrent()
             }}
             onOpenSection={onOpenSection}
+            section={section}
           />
           <div className="library-toolbar">
             <input
               aria-label="按名称筛选影像"
-              onChange={event => {
-                revision.current++
-                setQuery(event.target.value)
-              }}
+              onChange={event => patchFilters({ query: event.target.value })}
               placeholder="按名称筛选"
               type="search"
               value={query}
@@ -448,28 +542,24 @@ export function Visuals({
           <details className="filter-details">
             <summary>更多筛选</summary>
             <div className="date-filter">
-              <label>
-                媒体类型
-                <select
-                  onChange={event => {
-                    revision.current++
-                    setMediaKind(event.target.value === 'all' ? 'all' : (event.target.value as VisualMediaKind))
-                  }}
-                  value={mediaKind}
-                >
-                  <option value="all">全部</option>
-                  <option value="image">图片</option>
-                  <option value="video">视频</option>
-                </select>
-              </label>
+              {section === 'complete' && (
+                <label>
+                  媒体类型
+                  <select
+                    onChange={event => patchFilters({ mediaKind: event.target.value as VisualFilters['mediaKind'] })}
+                    value={mediaKind}
+                  >
+                    <option value="all">全部</option>
+                    <option value="image">图片</option>
+                    <option value="video">视频</option>
+                  </select>
+                </label>
+              )}
               <label>
                 来源素材
                 <input
-                  onChange={event => {
-                    revision.current++
-                    setSource(event.target.value)
-                  }}
-                  placeholder="衣柜、环境或动作名称"
+                  onChange={event => patchFilters({ source: event.target.value })}
+                  placeholder={section === 'sprite' ? '衣柜或动作名称' : '衣柜、环境或动作名称'}
                   type="search"
                   value={source}
                 />
@@ -485,7 +575,7 @@ export function Visuals({
                     api={api}
                     job={job}
                     key={job.id}
-                    onChanged={load}
+                    onChanged={refreshCurrent}
                     visualTitle={rows.find(row => row.id === (job.target_visual_id ?? job.result_visual_id))?.title}
                   />
                 ))}
@@ -503,12 +593,13 @@ export function Visuals({
                 key={row.id}
                 meta={cardMarks(row, currentVisualId).join(' · ') || undefined}
                 onSelect={() => {
+                  const version = revision.current
                   void run(async () => {
                     const detail = await api.invoke('companion_visuals.get_visual', {
                       path: { visual_id: row.id }
                     })
-                    if (alive()) {
-                      setSelected(detail)
+                    if (alive() && revision.current === version) {
+                      selectDetail(detail)
                     }
                   })
                 }}
@@ -517,7 +608,13 @@ export function Visuals({
             ))}
           </div>
           {loaded && rows.length === 0 && !busy ? (
-            <Empty title="还没有影像">选择已有素材创建影像，或上传喜欢的图片与视频，成品会保存在这里。</Empty>
+            query || source || mediaKind !== 'all' ? (
+              <Empty title="没有找到匹配的影像" />
+            ) : section === 'sprite' ? (
+              <Empty title="还没有精灵视频">使用已有造型和动作制作，或上传透明视频供浮动精灵使用。</Empty>
+            ) : (
+              <Empty title="还没有完整影像">选择已有素材创建影像，或上传喜欢的图片与视频。</Empty>
+            )
           ) : null}
           {hasMore ? (
             <button className="load-more" disabled={busy} onClick={() => void run(() => load(true))} type="button">
@@ -531,9 +628,12 @@ export function Visuals({
           currentVisualId={currentVisualId}
           onChanged={load}
           onClose={() => {
-            setSelected(null)
-            focusAfterRender(`[data-card-key="visual-${selected.id}"]`)
+            if (activeRead.current?.load === load) {
+              selectDetail(null)
+              focusAfterRender(`[data-card-key="visual-${selected.id}"]`)
+            }
           }}
+          onRefresh={refreshCurrent}
           visual={selected}
         />
       )}

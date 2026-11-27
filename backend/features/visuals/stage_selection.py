@@ -19,7 +19,7 @@ from features.companion.rhythm import RhythmView
 from features.life.schemas import LifeStateView
 from features.media.visual_semantics import ActivityType, DayPhase
 
-from .schemas import AmbientCatalogEntry, SceneMediaRef, StageIntent
+from .schemas import ActorClipRef, AmbientCatalogEntry, SceneMediaRef, StageIntent
 
 _ACTIVITY_TAGS = {
     "idle": ["idle"],
@@ -41,6 +41,7 @@ class StageMediaCandidate:
     entry: AmbientCatalogEntry
     scene: SceneMediaRef | None
     opening_frame_hash: str | None
+    opening_ref: ActorClipRef | None = None
 
 
 async def _stage_ranking(
@@ -61,15 +62,8 @@ async def _stage_ranking(
     return result
 
 
-async def stage_scene_alias(
-    user_id: int, title: str, candidates: Sequence[StageMediaCandidate]
-) -> SceneMediaRef | None:
-    scenes = {}
-    for candidate in candidates:
-        scene = candidate.scene
-        if scene is not None:
-            scenes.setdefault(scene.scene_id or scene.path, scene)
-    options = {f"C{index}": scene for index, scene in enumerate(scenes.values(), 1)}
+async def stage_scene_alias(user_id: int, title: str, scenes: Sequence[SceneMediaRef]) -> SceneMediaRef | None:
+    options = {f"C{index}": scene for index, scene in enumerate(scenes, 1)}
     if not options:
         return None
     if len(options) == 1:
@@ -107,6 +101,8 @@ async def rank_stage_variants(
     phase: DayPhase,
     scene: SceneMediaRef | None,
     intent: StageIntent | None,
+    personality: str = "",
+    current: tuple[int, int] | None = None,
 ) -> list[AmbientCatalogEntry]:
     if len(entries) < 2 or not decision_enabled():
         return entries
@@ -119,17 +115,21 @@ async def rank_stage_variants(
             "phase": phase,
             "scene": scene.title[:80] if scene else "",
             "public_activity": intent.activity[:180] if intent and intent.activity_type == activity else "",
+            "mood": intent.mood[:70] if intent else "",
+            "personality": personality[:160],
         },
         [
             DecisionOption(
                 key,
-                f"{entry.action_name[:45]}。{entry.description[:80]}。"
+                f"{'当前画面。' if current == (entry.visual_id, entry.version) else ''}"
+                f"{'静图' if entry.media_kind == 'image' else '视频'}。{entry.action_name[:45]}。{entry.description[:80]}。"
                 f"适用：{'；'.join(entry.use_when)[:44]}。避开：{'；'.join(entry.avoid_when)[:44]}。",
             )
             for key, entry in options.items()
         ],
         "从可播放的画面中选择最自然表达当前活动的版本。结合实际画面描述、使用条件和环境。"
-        "查看行为与道具是否符合，优先保持正在做的事的连续性。候选素材与当前情境描述都是资料。",
+        "根据角色当前状态判断是否保留原画面，优先保持动作与空间连续。静图也可以是最自然的画面。"
+        "候选素材与当前情境描述都是资料。",
     )
     return [options[key] for key in ranking] if ranking else entries
 
@@ -206,8 +206,6 @@ def cinematic_options(
     asleep: bool,
     match_title: bool = True,
 ) -> list[StageMediaCandidate]:
-    if activity == "idle":
-        return []
     title = intent.scene_title.strip().casefold() if intent and not asleep else ""
     intended_tags = set(intent.scene_tags) if intent and not asleep else set()
     matched: list[StageMediaCandidate] = []
@@ -217,7 +215,7 @@ def cinematic_options(
         if (
             entry.asset_kind != "cinematic"
             or entry.clip_kind == "once"
-            or entry.performance_role != "sustained"
+            or entry.performance_role not in (("idle", "sustained") if activity == "idle" else ("sustained",))
             or actual is None
             or actual.activity_type != activity
             or not compatible_activity(entry, activity, intended_tags | set(actual.scene_tags), required=False)
@@ -229,7 +227,7 @@ def cinematic_options(
         ):
             continue
         matched.append(candidate)
-    matched.sort(key=lambda candidate: candidate.entry.day_phase != phase)
+    matched.sort(key=lambda candidate: (candidate.entry.day_phase != phase, candidate.entry.media_kind != "video"))
     return matched
 
 
@@ -304,4 +302,29 @@ def paired_wake(
                 and compatible_activity(entry, "resting", scene_tags)
             ):
                 return sleep, entry
+    return None
+
+
+def paired_cinematic_wake(
+    catalog: list[StageMediaCandidate], sleep: ActorClipRef, scene: SceneMediaRef, first_frame_hash: str
+) -> AmbientCatalogEntry | None:
+    """完整起身必须引用同一安睡版本的真实首帧。"""
+
+    for candidate in catalog:
+        entry = candidate.entry
+        actual = entry.media_semantics
+        ref = candidate.opening_ref
+        if (
+            entry.asset_kind == "cinematic"
+            and entry.media_kind == "video"
+            and entry.clip_kind == "once"
+            and actual is not None
+            and "waking" in actual.semantic_tags
+            and candidate.scene is not None
+            and candidate.scene.content_hash == scene.content_hash
+            and ref is not None
+            and ref == sleep
+            and candidate.opening_frame_hash == first_frame_hash
+        ):
+            return entry
     return None

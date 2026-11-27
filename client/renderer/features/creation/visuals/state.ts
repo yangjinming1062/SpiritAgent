@@ -1,14 +1,16 @@
 import { atom } from 'nanostores'
 
-import type { VisualDetail, VisualItem, VisualJob } from '@protocol'
+import type { VisualDetail, VisualJob, VisualListResponse } from '@protocol'
+
+import type { VisualLibrarySection } from '../../../../../shared/visuals'
 
 import type { VisualReceiptBody, VisualsListQuery } from './api'
 import type { VisualPlayCommand, VisualsPresentation } from './types'
 
-export const $visualsItems = atom<VisualItem[]>([])
+export const $visualsLibraryPage = atom<
+  (VisualListResponse & { section: VisualLibrarySection; jobs: VisualJob[] }) | null
+>(null)
 export const $visualsJobs = atom<VisualJob[]>([])
-export const $visualsTotal = atom<number | null>(null)
-export const $visualsNextCursor = atom<string | null>(null)
 export const $visualsLoading = atom(false)
 export const $visualsError = atom<string | null>(null)
 export const $visualsDetail = atom<{ id: string; detail: VisualDetail } | null>(null)
@@ -22,6 +24,7 @@ export const $visualPlayback = atom<VisualPlayCommand | null>(null)
 export const visualsState = {
   detailRequest: null as { id: string; request: Promise<VisualDetail> } | null,
   epoch: 0,
+  jobSummaryRequest: 0,
   presentationRequest: 0,
   refreshQuery: {} as VisualsListQuery,
   refreshQueued: false,

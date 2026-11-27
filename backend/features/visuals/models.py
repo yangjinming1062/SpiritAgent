@@ -326,6 +326,7 @@ class VisualPresentation(ModelBase, TimestampMixin):
     id = None
     pending_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     current_static_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    local_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     # 当前有效的基础画面组合（layered/cinematic），是呈现配置不是生活事实。
     composition_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))

@@ -35,6 +35,7 @@ export interface PerformancePorts {
   cancel: (command: VisualPlayCommand, reason: string) => Promise<void>
   restore: () => Promise<void>
   valid: (request: PerformanceRequest) => boolean
+  accepts: (command: VisualPlayCommand) => boolean
 }
 
 const IDLE: PerformanceSnapshot = { state: 'idle', current: null, command: null }
@@ -198,7 +199,7 @@ function createPerformanceScheduler(ports: PerformancePorts, changed: (state: Pe
           return
         }
 
-        if (!valid(running.task) || command.visual_version !== running.task.visualVersion) {
+        if (!valid(running.task) || !ports.accepts(command) || command.visual_version !== running.task.visualVersion) {
           running.command = command
           void close(running, 'Performance changed before acceptance')
 
@@ -260,7 +261,7 @@ function createPerformanceScheduler(ports: PerformancePorts, changed: (state: Pe
   }
 
   function receive(command: VisualPlayCommand, restoring = false): void {
-    if (disposed || seen.has(command.play_id)) {
+    if (disposed || seen.has(command.play_id) || !ports.accepts(command)) {
       return
     }
 

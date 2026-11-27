@@ -6,16 +6,18 @@ from uuid import uuid4
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.companion.proactive_runtime import get_presentation_snapshot
 from features.life.use_cases import current_presentation_revision, presentation_revision_matches
 
 from .eligibility import existing_asset
 from .models import VisualItem, VisualPlayback, VisualPresentation
 from .ports import request_base_motion_preparation
 from .repository import (
+    active_pending_command,
     clear_presented_pointers,
     emit_playback_receipt,
     notify_visuals_updated,
@@ -27,7 +29,15 @@ from .repository import (
     touch_presentation,
     visual_snapshot,
 )
-from .schemas import SceneMediaRef, StageIntent, StagePresentation, StageReceipt, VisualPlayCommand
+from .schemas import (
+    PresentedScene,
+    PresentedVisual,
+    SceneMediaRef,
+    StageIntent,
+    StagePresentation,
+    StageReceipt,
+    VisualPlayCommand,
+)
 
 
 async def record_stage_intent(db: AsyncSession, user_id: int, intent: StageIntent) -> None:
@@ -74,7 +84,7 @@ async def present_static(user_id: int, snapshot: StagePresentation, *, expected_
         if (
             presence is None
             or state.state_revision != expected_state_revision
-            or not get_user_proactive_record(user_id).available
+            or presence.surface == "none"
             or presence.revision != snapshot.presentation_epoch
             or not await presentation_revision_matches(db, user_id, snapshot.life_revision)
         ):
@@ -195,6 +205,15 @@ async def invalidate_scene_presentation(db: AsyncSession, user_id: int, scene_id
                 changed = True
 
     affected_visual_ids: set[int] = set()
+    local = state.local_snapshot_json
+    if local and "scene" in local and ref_matches(PresentedScene.model_validate(local).scene):
+        state.local_snapshot_json = None
+        changed = True
+    elif local and "scene" not in local:
+        source = visual_snapshot(PresentedVisual.model_validate(local)).source
+        if source.kind in ("scene", "cinematic") and ref_matches(source.scene):
+            state.local_snapshot_json = None
+            changed = True
     for loop in (False, True):
         item = presented_item(state, loop=loop)
         if item is None:
@@ -268,13 +287,13 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
         if presence is None:
             raise _stale_receipt("presence_expired")
         expected_kind = "window_static" if presence.mode == "window" else "desktop_static"
-        if state.pending_command_json or snapshot.request_id != body.request_id:
+        if active_pending_command(state) is not None or snapshot.request_id != body.request_id:
             raise _stale_receipt("target_replaced")
         if body.presentation_epoch != presence.revision or body.presentation_epoch != snapshot.presentation_epoch:
             raise _stale_receipt("presentation_changed")
         if body.receipt_kind != expected_kind:
             raise _stale_receipt("mode_changed")
-        if not get_user_proactive_record(user_id).available:
+        if presence.surface == "none":
             raise _stale_receipt("stage_unavailable")
         if not await presentation_revision_matches(db, user_id, snapshot.life_revision):
             raise _stale_receipt("life_changed")
@@ -288,6 +307,8 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
             return
         if body.state_revision != snapshot.state_revision:
             raise _stale_receipt("state_changed")
+        if state.pending_command_json:
+            await cancel_pending_command(db, state)
         await touch_presentation(db, user_id)
         if body.status == "failed":
             state.pending_static_json = snapshot.model_copy(
@@ -308,12 +329,15 @@ async def record_static_receipt(user_id: int, body: StageReceipt) -> None:
                 }
             ).model_dump(mode="json")
             state.pending_static_json = None
+            state.local_snapshot_json = None
             clear_presented_pointers(state)
             await db.execute(
                 update(VisualPlayback)
                 .where(VisualPlayback.user_id == user_id, VisualPlayback.status == "started")
                 .values(status="failed", error="已由静态素材呈现接替", updated_at=utc_now())
             )
+            if outfit_changed:
+                emit_ws_event(db, user_id=user_id, event_type="companion.visual.preparation_requested", payload={})
         await db.commit()
     if outfit_changed:
         request_base_motion_preparation(user_id)

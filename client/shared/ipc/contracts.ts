@@ -33,6 +33,7 @@ export {
   DEFAULT_NAVIGATION,
   DEFAULT_SECTION,
   DEFAULT_STAGE_LAYOUT,
+  DESKTOP_EMPTY_PLAY_PREFIX,
   LIFE_SECTIONS,
   navigationHash,
   normalizeAppLocation,

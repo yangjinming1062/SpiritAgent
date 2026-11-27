@@ -1,5 +1,8 @@
 """动作素材的公开只读查询。"""
 
+from dataclasses import dataclass
+from datetime import datetime
+
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -127,13 +130,33 @@ async def list_actions(
     )
 
 
-async def action_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+@dataclass(frozen=True, slots=True)
+class ActionPlanningMaterial:
+    id: int
+    name: str
+    description: str
+    updated_at: datetime
+
+    def prompt_data(self) -> dict[str, str]:
+        return {"id": str(self.id), "name": self.name, "description": self.description}
+
+
+async def approved_action_planning_materials(db: AsyncSession, user_id: int) -> list[ActionPlanningMaterial]:
     rows = await db.execute(
-        select(ActionDefinition.id, ActionDefinition.name, ActionDefinition.motion_description)
+        select(
+            ActionDefinition.id,
+            ActionDefinition.name,
+            ActionDefinition.motion_description,
+            ActionDefinition.updated_at,
+        )
         .where(ActionDefinition.user_id == user_id, ActionDefinition.status == "approved")
         .order_by(ActionDefinition.id.desc())
     )
     return [
-        {"id": str(identifier), "name": name, "description": description or ""}
-        for identifier, name, description in rows
+        ActionPlanningMaterial(identifier, name, description or "", updated_at)
+        for identifier, name, description, updated_at in rows
     ]
+
+
+async def action_planning_materials(db: AsyncSession, user_id: int) -> list[dict[str, str]]:
+    return [row.prompt_data() for row in await approved_action_planning_materials(db, user_id)]

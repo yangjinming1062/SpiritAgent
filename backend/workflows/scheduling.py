@@ -42,6 +42,7 @@ from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import review_memories
 from features.posts.autonomous import autonomous_post_users, request_autonomous_post, resume_autonomous_submissions
 from features.topics.store import collecting_batches, has_unshared_topics
+from features.visuals.stage_preparation import due_preparation_users
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.config import SETTINGS
@@ -67,6 +68,7 @@ from workflows.nightly.nightly_activity import run_nightly_pipeline
 from workflows.nightly.scheduling import NIGHTLY_UNFINISHED_STATUSES, close_expired_logs, nightly_logs
 from workflows.nightly.topic_discovery import collect_topics
 from workflows.nightly.window import in_nightly_window
+from workflows.visual_stage_preparation import queue_stage_preparation
 
 logger = get_logger(__name__)
 
@@ -377,6 +379,7 @@ async def _discover_life_work() -> list[ScheduledWork]:
         users = await due_review_user_ids(db, onboarded, now)
         executors = await execution_user_ids(db, now)
         presentation_users = await pending_presentation_users(db)
+        preparation_users = await due_preparation_users(db, onboarded, now)
     work = [
         ScheduledWork("review", partial(consider_life, user_id), user_id)
         for user_id in sorted(users)
@@ -391,6 +394,11 @@ async def _discover_life_work() -> list[ScheduledWork]:
     work.extend(
         ScheduledWork("present", partial(evaluate_life_presentation, user_id), user_id)
         for user_id in sorted((presentation_users | set(MANAGER.local_user_ids())) & set(completed))
+        if not is_user_in_maintenance(user_id)
+    )
+    work.extend(
+        ScheduledWork("stage_preparation", partial(queue_stage_preparation, user_id), user_id)
+        for user_id in sorted(preparation_users)
         if not is_user_in_maintenance(user_id)
     )
     work.extend(

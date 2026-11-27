@@ -15,6 +15,7 @@ from .client_assets import (
 )
 from .repository import VisualError, VisualNotFoundError, VisualStateError
 from .schemas import (
+    LocalVisualReceipt,
     PlaybackSource,
     VisualClaimRequest,
     VisualClaimResponse,
@@ -85,10 +86,10 @@ async def job_command(user_id: int, job_id: int, body: VisualJobCommandRequest) 
         if body.command == "pause":
             return await service.pause_job(user_id, job_id)
         if body.command == "resume":
-            return await service.resume_job(user_id, job_id)
+            return await service.resume_job(user_id, job_id, user_requested=True)
         if body.command == "cancel":
             return await service.cancel_job(user_id, job_id)
-        return await service.retry_job(user_id, job_id)
+        return await service.retry_job(user_id, job_id, user_requested=True)
     except VisualError as exc:
         raise _http_error(exc) from exc
 
@@ -108,7 +109,9 @@ async def regenerate(user_id: int, visual_id: int, body: VisualRegenerateRequest
 
 async def claim_play(user_id: int, play_id: str, body: VisualClaimRequest) -> VisualClaimResponse:
     try:
-        claimed = await service.claim_playback(user_id, play_id, client_id=body.client_id)
+        claimed = await service.claim_playback(
+            user_id, play_id, client_id=body.client_id, target_surface=body.target_surface
+        )
     except VisualError as exc:
         raise _http_error(exc) from exc
     return VisualClaimResponse(claimed=claimed)
@@ -124,6 +127,14 @@ async def receipt_play(user_id: int, play_id: str, body: VisualReceiptRequest) -
             client_id=body.client_id,
             error=body.error,
         )
+    except VisualError as exc:
+        raise _http_error(exc) from exc
+    return VisualReceiptResponse(ok=True)
+
+
+async def local_receipt(user_id: int, body: LocalVisualReceipt) -> VisualReceiptResponse:
+    try:
+        await service.record_local_playback(user_id, body)
     except VisualError as exc:
         raise _http_error(exc) from exc
     return VisualReceiptResponse(ok=True)

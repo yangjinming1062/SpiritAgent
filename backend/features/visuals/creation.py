@@ -72,7 +72,7 @@ async def _planning_references(
     snapshot: ActorClipSource | CinematicSource, opening: str | None
 ) -> tuple[tuple[str, ...], str]:
     if opening:
-        if snapshot.kind == "actor" and snapshot.opening_frame is not None and opening == snapshot.opening_frame.path:
+        if snapshot.opening_frame is not None and opening == snapshot.opening_frame.path:
             image = await asyncio.to_thread(read_visual_reference, opening, snapshot.opening_frame.content_hash)
         else:
             image = await asyncio.to_thread(read_valid_image_data_uri, opening)
@@ -102,7 +102,7 @@ async def ensure_creation_plan(
 ) -> None:
     if progress.creation_plan is not None:
         return
-    paired = snapshot.opening_frame if snapshot.kind == "actor" else None
+    paired = snapshot.opening_frame
     opening = paired.path if paired else progress.pose_path or progress.previous_pose_path
     images, reference_roles = await _planning_references(snapshot, opening)
     decision = await vision_chat_json(
@@ -117,7 +117,7 @@ async def ensure_creation_plan(
             "personality": snapshot.persona.get("personality", ""),
             "current_mood": snapshot.persona.get("current_mood", ""),
             "character_context": {}
-            if progress.source == "base_preparation"
+            if progress.source in {"base_preparation", "stage_preparation"}
             else (await read_planning_context(user_id, snapshot)).model_dump(),
             "action": progress.action_description,
             "requirements": snapshot.requirements,
@@ -253,7 +253,7 @@ def opening_reference_hash(snapshot: ActorClipSource | CinematicSource) -> str:
         "outfit": snapshot.outfit.content_hash,
         "scene": snapshot.scene.content_hash if snapshot.kind == "cinematic" else None,
     }
-    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+    if snapshot.opening_frame is not None:
         references["opening_frame"] = snapshot.opening_frame.content_hash
     return hashlib.sha256(json.dumps(references, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 

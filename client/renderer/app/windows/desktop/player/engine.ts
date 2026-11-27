@@ -2,7 +2,7 @@ import { createMediaObjectUrl } from '@/features/media'
 import { RENDERER_TIMINGS } from '@/shared/constants'
 import { $dayPhase, ambientPhaseFilter } from '@/shared/lib/day-phase'
 import { backgroundMedia } from '@/shared/platform/desktop'
-import { DEFAULT_STAGE_LAYOUT } from '@ipc/contracts'
+import { DEFAULT_STAGE_LAYOUT, DESKTOP_EMPTY_PLAY_PREFIX } from '@ipc/contracts'
 import type {
   DesktopBackground,
   DesktopBackgroundPlayback,
@@ -84,6 +84,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
   let fillPosterUrl: string | null = null
   let disposed = false
   let imageGeneration = 0
+  let emptyTarget: DesktopBackground | null = null
   let staticMedia: DesktopBackground | null = null
   let waitingImage: DesktopBackground | null = null
   let actorLayout: DesktopStageLayout = DEFAULT_STAGE_LAYOUT
@@ -195,7 +196,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
     acknowledgeImage(media, 'started')
   }
 
-  async function confirmStaticFrame(media: DesktopBackground): Promise<void> {
+  async function confirmImageFrame(media: DesktopBackground): Promise<void> {
     const isCurrent = (): boolean => !disposed && active === null && staticMedia?.playId === media.playId
 
     try {
@@ -478,9 +479,14 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
     acknowledgeSlot(slot, 'first-frame', undefined, receipts)
 
     const previous = active === null ? null : slots[active].media
-    const rotate = previous?.playId?.startsWith('render:ambient:') && slot.media.playId?.startsWith('render:ambient:')
+    const rotate = previous?.playId?.startsWith('render:complete:') && slot.media.playId?.startsWith('render:complete:')
 
-    if (active !== null && ((slot.media.kind === 'once' && sharesBase(previous, slot.media)) || rotate)) {
+    const pairedWake =
+      previous?.playId?.startsWith('render:complete:') &&
+      slot.media.playId?.startsWith('render:wake:') &&
+      previous.presentationEpoch === slot.media.presentationEpoch
+
+    if (active !== null && ((slot.media.kind === 'once' && sharesBase(previous, slot.media)) || rotate || pairedWake)) {
       pending = index
       // 保底循环继续到自然结束，已解码的短动作从共同基础画面开始。
       slots[active].element.loop = false
@@ -545,6 +551,7 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
 
   function clear(): void {
     imageGeneration += 1
+    emptyTarget = null
 
     if (staticMedia) {
       acknowledgeImage(staticMedia, 'interrupted')
@@ -588,7 +595,13 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
       return
     }
 
-    if (media.accountEpoch !== accountEpoch || media.clear) {
+    const sameEmpty =
+      media.clear &&
+      emptyTarget?.playId === media.playId &&
+      emptyTarget.accountEpoch === media.accountEpoch &&
+      emptyTarget.revision === media.revision
+
+    if (media.accountEpoch !== accountEpoch || (media.clear && !sameEmpty)) {
       clear()
       accountEpoch = media.accountEpoch
     }
@@ -602,14 +615,29 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
     document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
 
     if (media.clear) {
-      requestAnimationFrame(() => {
-        if (!disposed && nextImageGeneration === imageGeneration) {
-          acknowledgeImage(media, 'started')
+      if (media.playId?.startsWith(DESKTOP_EMPTY_PLAY_PREFIX)) {
+        if (!sameEmpty) {
+          emptyTarget = media
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              if (!disposed && emptyTarget === media) {
+                receipts.send(media, 'completed')
+              }
+            })
+          )
         }
-      })
+      } else if (media.playId) {
+        requestAnimationFrame(() => {
+          if (!disposed && nextImageGeneration === imageGeneration) {
+            acknowledgeImage(media, 'failed', 'Stage media is unavailable')
+          }
+        })
+      }
 
       return
     }
+
+    emptyTarget = null
 
     // 环境层换图不打断主体；整片等首帧显示时再释放分层主体。
     // 正式静态回执只在冻结的背景和造型一起解码、合成并显示后发出。
@@ -789,19 +817,13 @@ export function createDesktopPlayer(elements: DesktopPlayerElements): () => void
           showPoster(nextPoster)
           transition.fade()
 
-          if (isStaticTarget(media)) {
-            void confirmStaticFrame(media)
+          if (media.playId) {
+            void confirmImageFrame(media)
           }
 
-          requestAnimationFrame(() => {
-            if (!isStaticTarget(media) && !disposed && nextImageGeneration === imageGeneration) {
-              acknowledgeImage(media, 'started')
-            }
-
-            if (previousPoster) {
-              URL.revokeObjectURL(previousPoster)
-            }
-          })
+          if (previousPoster) {
+            requestAnimationFrame(() => URL.revokeObjectURL(previousPoster))
+          }
         })
         .catch(error => {
           if (preparedPoster) {

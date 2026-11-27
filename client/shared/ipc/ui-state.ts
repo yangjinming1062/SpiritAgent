@@ -2,7 +2,8 @@ import { type ArchiveSearchState, isArchiveSearchState } from '../../../shared/a
 import { isRecord } from '../../../shared/is-record'
 import type { ChatAttachment, MemoryListRequest, PersonaEditableField } from '../../../shared/protocol'
 import { isResourceId } from '../../../shared/resource-id'
-import type { MotionPlanInputs } from '../../../shared/visuals'
+import { VISUAL_CREATION_INTENTS, VISUAL_LIBRARY_SECTIONS } from '../../../shared/visuals'
+import type { MotionPlanInputs, VisualCreationIntent, VisualLibrarySection } from '../../../shared/visuals'
 
 export interface DiaryUiSnapshot {
   search: ArchiveSearchState
@@ -111,21 +112,26 @@ export function isCompanionEditorUiSnapshot(value: unknown): value is CompanionE
 /** 创作草稿：描述、整理结果与待确认计划；只在本机内存与模式交接中保留。 */
 export interface StudioUiSnapshot {
   mode: 'idle' | 'describe' | 'upload'
-  intent: 'photo' | 'video' | 'motion'
+  intent: VisualCreationIntent
   description: string
   preview: Record<string, unknown> | null
   refinement: string
 }
 
-export interface VisualsUiSnapshot {
+interface VisualLibraryUiSnapshot {
   studio: StudioUiSnapshot
-  analysisNotes?: Record<string, string>
-  analysisSelections?: Record<string, string>
   query: string
   mediaKind: 'all' | 'image' | 'video'
   source: string
   page: number
   cursors: (string | null)[]
+}
+
+export interface VisualsUiSnapshot {
+  section: VisualLibrarySection
+  sections: Record<VisualLibrarySection, VisualLibraryUiSnapshot>
+  analysisNotes?: Record<string, string>
+  analysisSelections?: Record<string, string>
 }
 
 export function isStudioUiSnapshot(value: unknown): value is StudioUiSnapshot {
@@ -139,9 +145,14 @@ export function isStudioUiSnapshot(value: unknown): value is StudioUiSnapshot {
   )
 }
 
-export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot {
+function isVisualLibraryUiSnapshot(value: unknown, section: VisualLibrarySection): value is VisualLibraryUiSnapshot {
+  if (!isRecord(value) || !isStudioUiSnapshot(value.studio)) {
+    return false
+  }
+
+  const { studio } = value
+
   return (
-    isRecord(value) &&
     typeof value.query === 'string' &&
     (value.mediaKind === 'all' || value.mediaKind === 'image' || value.mediaKind === 'video') &&
     typeof value.source === 'string' &&
@@ -151,13 +162,25 @@ export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot 
     Array.isArray(value.cursors) &&
     value.cursors.every(cursor => cursor === null || isResourceId(cursor)) &&
     value.page < value.cursors.length &&
-    isStudioUiSnapshot(value.studio) &&
+    VISUAL_CREATION_INTENTS[section].some(intent => intent === studio.intent)
+  )
+}
+
+export function isVisualsUiSnapshot(value: unknown): value is VisualsUiSnapshot {
+  return (
+    isRecord(value) &&
+    VISUAL_LIBRARY_SECTIONS.some(section => section === value.section) &&
+    isVisualLibrarySections(value.sections) &&
     (value.analysisNotes === undefined ||
       (isRecord(value.analysisNotes) && Object.values(value.analysisNotes).every(note => typeof note === 'string'))) &&
     (value.analysisSelections === undefined ||
       (isRecord(value.analysisSelections) &&
         Object.values(value.analysisSelections).every(selection => typeof selection === 'string')))
   )
+}
+
+function isVisualLibrarySections(value: unknown): value is VisualsUiSnapshot['sections'] {
+  return isRecord(value) && VISUAL_LIBRARY_SECTIONS.every(section => isVisualLibraryUiSnapshot(value[section], section))
 }
 
 /** 动作整理预览：客户端不解析草稿结构，只展示服务端给出的摘要与细节。 */

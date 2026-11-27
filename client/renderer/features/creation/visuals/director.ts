@@ -21,7 +21,7 @@ import {
 } from './performance-scheduler'
 import { contextAllowed, leastRecentlyUsed } from './selection'
 import { ambientCandidates, type AmbientChoice, mediaKey, sceneForStage, type WakePerformance } from './stage-plan'
-import type { VisualsPresentation } from './types'
+import type { VisualsPresentation, VisualTargetSurface } from './types'
 
 type CatalogEntry = VisualsPresentation['ambient_catalog'][number]
 
@@ -51,6 +51,29 @@ let mechanicallyBlocked: () => boolean = () => false
 let stopBinding: (() => void) | null = null
 let stageEligible: () => boolean = () => false
 let motionSubtle: () => boolean = () => false
+let motionEnabled: () => boolean = () => true
+let surface: VisualTargetSurface = 'sprite'
+interface DisplayedCompleteVideo {
+  key: string
+  sceneHash: string | null
+}
+
+let displayedCompleteVideo: (DisplayedCompleteVideo & { startedAt: number }) | null = null
+
+export function recordDisplayedCompleteVideo(video: DisplayedCompleteVideo | null): void {
+  if (displayedCompleteVideo?.key === video?.key && displayedCompleteVideo?.sceneHash === video?.sceneHash) {
+    return
+  }
+
+  displayedCompleteVideo = video ? { ...video, startedAt: Date.now() } : null
+  const entry = video ? candidates().find(candidate => mediaKey(candidate) === video.key) : null
+
+  if (entry && displayedCompleteVideo) {
+    rememberLoop(entry, displayedCompleteVideo.startedAt)
+  }
+
+  scheduleAmbient()
+}
 
 let refreshAtBoundary: () => Promise<void> = async () => {}
 export const $failedStageMedia = atom<ReadonlySet<string>>(new Set())
@@ -136,13 +159,8 @@ function consumeSignal(value: unknown): void {
 }
 
 function candidates(): CatalogEntry[] {
-  return presentation
-    ? ambientCandidates(
-        presentation,
-        $presentation.get().effectiveMode === 'desktop',
-        motionSubtle(),
-        $failedStageMedia.get()
-      )
+  return presentation && motionEnabled()
+    ? ambientCandidates(presentation, motionSubtle(), $failedStageMedia.get(), surface)
     : []
 }
 
@@ -161,6 +179,14 @@ function syncAmbientChoice(): void {
   const pool = candidates()
   const choice = $ambientLoopChoice.get()
 
+  if (surface !== 'sprite') {
+    if (choice && !pool.some(entry => entry.visual_id === choice.visualId && entry.version === choice.version)) {
+      selectAmbient(null)
+    }
+
+    return
+  }
+
   if (!resolveAmbientLoop(presentation)) {
     if (pool.length > 0 || choice) {
       selectAmbient(leastRecentlyUsed(pool, recentLoops))
@@ -171,6 +197,7 @@ function syncAmbientChoice(): void {
 function performInteraction(visual: ReactionVisual, eventId: string, at: number): void {
   if (
     !stageEligible() ||
+    !motionEnabled() ||
     mechanicallyBlocked() ||
     !presentation ||
     presentation.rhythm?.state === 'asleep' ||
@@ -183,10 +210,10 @@ function performInteraction(visual: ReactionVisual, eventId: string, at: number)
     candidate =>
       candidate.visual_id === visual.visual_id &&
       candidate.version === visual.version &&
-      candidate.asset_kind === 'actor' &&
+      candidate.asset_kind === (surface === 'sprite' ? 'actor' : 'cinematic') &&
       candidate.clip_kind === 'once' &&
       candidate.performance_role === 'reaction' &&
-      contextAllowed(candidate, presentation?.intent ?? null) &&
+      reactionAllowed(candidate) &&
       !$failedStageMedia.get().has(mediaKey(candidate))
   )
 
@@ -207,6 +234,26 @@ function performInteraction(visual: ReactionVisual, eventId: string, at: number)
   })
 }
 
+function reactionAllowed(entry: CatalogEntry): boolean {
+  if (!presentation) {
+    return false
+  }
+
+  if (surface === 'sprite') {
+    return contextAllowed(entry, presentation.intent)
+  }
+
+  const plan = presentation.stage_plan
+  const sceneHash = displayedCompleteVideo?.sceneHash
+
+  return Boolean(
+    sceneHash &&
+    sceneHash === plan?.scene?.content_hash &&
+    entry.scene_content_hash === sceneHash &&
+    (entry.day_phase === null || entry.day_phase === plan?.day_phase)
+  )
+}
+
 function clearWake(): void {
   if (wakeTimer !== null) {
     clearTimeout(wakeTimer)
@@ -219,12 +266,15 @@ function clearWake(): void {
 function considerWake(previous: VisualsPresentation | null, next: VisualsPresentation | null): void {
   const wake = next?.rhythm?.wake
   const plan = next?.stage_plan
-  const clip = plan?.wake_actor
+  const clip = surface === 'sprite' ? plan?.wake_actor : plan?.wake_cinematic
+  const pairedSource = plan?.wake_cinematic_from
 
   if (
     !wake ||
     !plan ||
     !clip ||
+    !motionEnabled() ||
+    (surface !== 'sprite' && (!pairedSource || displayedCompleteVideo?.key !== mediaKey(pairedSource))) ||
     previous?.rhythm?.state !== 'asleep' ||
     next.rhythm?.state !== 'awake' ||
     stageVisibleSince === null ||
@@ -243,7 +293,7 @@ function considerWake(previous: VisualsPresentation | null, next: VisualsPresent
   $wakePerformance.set({
     id: `render:wake:${wake.id}`,
     expiresAt: wake.expires_at,
-    actor: clip,
+    clip,
     scene: sceneForStage(plan.wake_scene_media, plan.wake_scene, plan.day_phase)
   })
   wakeTimer = setTimeout(clearWake, Math.max(0, Date.parse(wake.expires_at) - Date.now()))
@@ -258,7 +308,7 @@ export function recordLocalStagePlayback(id: string, status: 'started' | 'finish
         clearTimeout(wakeTimer)
       }
 
-      wakeTimer = setTimeout(clearWake, (wake.actor.duration_ms ?? 15_000) + 5_000)
+      wakeTimer = setTimeout(clearWake, (wake.clip.duration_ms ?? 15_000) + 5_000)
     } else {
       clearWake()
       scheduleAmbient()
@@ -290,7 +340,13 @@ export function recordLocalStagePlayback(id: string, status: 'started' | 'finish
 function scheduleAmbient(): void {
   const available = candidates()
   const current = resolveAmbientLoop(presentation)
-  const started = ambientStartedAt
+
+  const started =
+    surface === 'sprite'
+      ? ambientStartedAt
+      : current && displayedCompleteVideo?.key === mediaKey(current)
+        ? displayedCompleteVideo.startedAt
+        : null
 
   const due =
     directorBound &&
@@ -432,15 +488,19 @@ export function bindPresentationDirector(
   presentationFeed: () => VisualsPresentation | null,
   eligibility: {
     isEligible: () => boolean
+    isMotionEnabled: () => boolean
     isSubtle: () => boolean
     isMechanical: () => boolean
     onChanged: (notify: () => void) => () => void
+    surface: VisualTargetSurface
   }
 ): () => void {
   stopBinding?.()
   presentation = presentationFeed()
   stageEligible = eligibility.isEligible
+  motionEnabled = eligibility.isMotionEnabled
   motionSubtle = eligibility.isSubtle
+  surface = eligibility.surface
   mechanicallyBlocked = eligibility.isMechanical
   refreshAtBoundary = ports.restore
   directorBound = true
@@ -448,14 +508,14 @@ export function bindPresentationDirector(
   const stopScheduler = bindPerformanceScheduler({
     ...ports,
     valid: request =>
-      request.source === 'manual' ||
+      request.source !== 'interaction' ||
       Boolean(
         presentation?.ambient_catalog.some(
           entry =>
             entry.visual_id === request.visualId &&
             entry.version === request.visualVersion &&
             presentation?.rhythm?.state !== 'asleep' &&
-            contextAllowed(entry, presentation?.intent ?? null)
+            reactionAllowed(entry)
         )
       )
   })
@@ -466,7 +526,7 @@ export function bindPresentationDirector(
     const eligible = stageEligible() && !mechanicallyBlocked()
     stageVisibleSince = eligible ? (stageVisibleSince ?? Date.now()) : null
 
-    if (!eligible) {
+    if (!eligible || !motionEnabled()) {
       clearWake()
     }
 
@@ -550,6 +610,7 @@ export function bindPresentationDirector(
     presentation = null
     seenSignals.clear()
     recentLoops.clear()
+    displayedCompleteVideo = null
     $failedStageMedia.set(new Set())
     $ambientLoopChoice.set(null)
 
@@ -597,9 +658,13 @@ export function feedDirectorPresentation(next: VisualsPresentation | null): void
 function resolveAmbientLoop(next: VisualsPresentation | null): CatalogEntry | null {
   const choice = $ambientLoopChoice.get()
 
-  return choice && next
-    ? (candidates().find(entry => entry.visual_id === choice.visualId && entry.version === choice.version) ?? null)
-    : null
+  const key = choice
+    ? `${choice.visualId}:${choice.version}`
+    : surface !== 'sprite'
+      ? displayedCompleteVideo?.key
+      : null
+
+  return key && next ? (candidates().find(entry => mediaKey(entry) === key) ?? null) : null
 }
 
 registerStorageClearHandler(() => {

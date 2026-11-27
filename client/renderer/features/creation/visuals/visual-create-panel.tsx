@@ -4,7 +4,8 @@ import { useRef, useState } from 'react'
 
 import { openCreation } from '@/app/navigation/app-navigation'
 import { MediaPreview } from '@/features/media'
-import { ArrowLeft, ImagePlus, Sparkles, Video } from '@/shared/lib/icons'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { ArrowLeft, ImagePlus, Video } from '@/shared/lib/icons'
 import { failureText, ipcErrorCode } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
@@ -21,14 +22,12 @@ import {
 import type { VisualInterpretation } from '@protocol'
 
 import { composeDescribedInput } from '../../../../../shared/described-input'
-import { isStaleDraftError } from '../../../../../shared/visuals'
+import { isStaleDraftError, VISUAL_CREATION_INTENTS } from '../../../../../shared/visuals'
 
 import { visualsApi } from './api'
-import { $visualsUi, beginStudioInterpretation, updateStudio } from './visuals-state'
+import { $visualsUi, beginStudioInterpretation, captureStudioDraft, updateStudio } from './visuals-state'
 
-type Intent = 'photo' | 'video' | 'motion'
-
-const INTENT_ICONS: Record<Intent, typeof ImagePlus> = { photo: ImagePlus, video: Video, motion: Sparkles }
+const INTENT_ICONS = { photo: ImagePlus, video: Video }
 
 const VISUAL_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.mov'
 
@@ -61,9 +60,9 @@ export function VisualCreatePanel({
   const strings = useStrings()
   const t = strings.studio
   const v = strings.visuals
-  const ui = useStore($visualsUi)
-
-  const studio = ui.studio
+  const { section, sections } = useStore($visualsUi)
+  const studio = sections[section].studio
+  const createLabel = section === 'sprite' ? v.composer.createSprite : v.composer.create
   const uploadMode = studio.mode === 'upload'
 
   const preview = studio.preview as VisualInterpretation | null
@@ -71,17 +70,43 @@ export function VisualCreatePanel({
   const [error, setError] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const pickedFile = useRef<File | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const begin = useAsyncGuard()
 
   const patch = (next: Partial<typeof studio>): void => {
-    updateStudio(next)
+    updateStudio(section, next)
     setError('')
+  }
+
+  const beginRequest = () => {
+    const draft = captureStudioDraft(section, studio)
+
+    if (!draft) {
+      return null
+    }
+
+    const live = begin()
+
+    const currentView = (): boolean => {
+      const state = $visualsUi.get()
+
+      return live() && draft.scope() && state.section === section && state.sections[section].studio.mode === studio.mode
+    }
+
+    return { currentDraft: draft.currentDraft, currentView, live }
   }
 
   const interpret = async (): Promise<void> => {
     const description = composeDescribedInput(studio.description, studio.refinement)
 
     if (!description || busy) {
+      return
+    }
+
+    const request = beginRequest()
+
+    if (!request) {
       return
     }
 
@@ -93,18 +118,20 @@ export function VisualCreatePanel({
     try {
       const result = await visualsApi.interpret({ description, intent: studio.intent })
 
-      if (!accept()) {
+      if (!request.currentView() || !accept()) {
         return
       }
 
       patch({ preview: result, description, refinement: '' })
     } catch (failure) {
       // 过期失败不替换当前提示，也不清草稿。
-      if (accept()) {
+      if (request.currentView() && accept()) {
         setError(failureText(failure, t.interpretFailed))
       }
     } finally {
-      setBusy(null)
+      if (request.live()) {
+        setBusy(null)
+      }
     }
   }
 
@@ -113,22 +140,54 @@ export function VisualCreatePanel({
       return
     }
 
+    const request = beginRequest()
+
+    if (!request) {
+      return
+    }
+
     setBusy('create')
     setError('')
 
     try {
       await visualsApi.create(preview.draft as Record<string, unknown>)
-      patch({ preview: null, description: '', refinement: '', mode: 'idle', intent: 'photo' })
-      await onDone()
+
+      if (!request.currentDraft()) {
+        return
+      }
+
+      const visible = request.currentView()
+      updateStudio(section, {
+        preview: null,
+        description: '',
+        refinement: '',
+        intent: VISUAL_CREATION_INTENTS[section][0],
+        ...(visible ? { mode: 'idle' } : {})
+      })
+
+      if (visible) {
+        await onDone()
+      }
     } catch (failure) {
+      if (!request.currentDraft()) {
+        return
+      }
+
+      const visible = request.currentView()
+
       if (isStaleDraftError(ipcErrorCode(failure))) {
-        patch({ preview: null })
-        setError(t.invalidated)
-      } else {
+        updateStudio(section, { preview: null })
+
+        if (visible) {
+          setError(t.invalidated)
+        }
+      } else if (visible) {
         setError(failureText(failure, t.createFailed))
       }
     } finally {
-      setBusy(null)
+      if (request.live()) {
+        setBusy(null)
+      }
     }
   }
 
@@ -137,13 +196,30 @@ export function VisualCreatePanel({
       return
     }
 
+    const request = beginRequest()
+
+    if (!request) {
+      return
+    }
+
+    const current = (): boolean => request.currentView() && pickedFile.current === file
     setBusy('upload')
     setError('')
 
     try {
       const data = new Uint8Array(await file.arrayBuffer())
+
+      if (!current()) {
+        return
+      }
+
       const result = await visualsApi.upload(data, { filename: file.name })
-      setFile(null)
+
+      if (!current()) {
+        return
+      }
+
+      chooseFile(null)
 
       if (fileInput.current) {
         fileInput.current.value = ''
@@ -152,10 +228,19 @@ export function VisualCreatePanel({
       patch({ mode: 'idle' })
       await onDone(result.id)
     } catch (failure) {
-      setError(failureText(failure, t.createFailed))
+      if (current()) {
+        setError(failureText(failure, t.createFailed))
+      }
     } finally {
-      setBusy(null)
+      if (request.live()) {
+        setBusy(null)
+      }
     }
+  }
+
+  const chooseFile = (next: File | null): void => {
+    pickedFile.current = next
+    setFile(next)
   }
 
   const acceptFiles = (list: FileList | File[]): void => {
@@ -177,7 +262,7 @@ export function VisualCreatePanel({
       return
     }
 
-    setFile(files[0])
+    chooseFile(files[0])
     setError('')
   }
 
@@ -207,7 +292,7 @@ export function VisualCreatePanel({
           <ArrowLeft aria-hidden="true" className="size-3.5" />
           <span>{v.backToList}</span>
         </button>
-        <h2 className="text-[15px] font-semibold text-strong">{uploadMode ? v.composer.upload : v.composer.create}</h2>
+        <h2 className="text-[15px] font-semibold text-strong">{uploadMode ? v.composer.upload : createLabel}</h2>
       </div>
 
       <CreationSteps
@@ -223,25 +308,27 @@ export function VisualCreatePanel({
         <>
           {!preview && (
             <>
-              <CapsuleTabs
-                ariaLabel={t.descriptionLabel}
-                onChange={value => patch({ intent: value })}
-                options={(['photo', 'video', 'motion'] as const).map(value => ({
-                  value,
-                  label: t.intents[value],
-                  icon: INTENT_ICONS[value]
-                }))}
-                size="sm"
-                value={studio.intent}
-                variant="segmented"
-              />
+              {section === 'complete' && (
+                <CapsuleTabs
+                  ariaLabel={t.descriptionLabel}
+                  onChange={value => patch({ intent: value })}
+                  options={VISUAL_CREATION_INTENTS.complete.map(value => ({
+                    value,
+                    label: t.intents[value],
+                    icon: INTENT_ICONS[value]
+                  }))}
+                  size="sm"
+                  value={studio.intent === 'motion' ? 'photo' : studio.intent}
+                  variant="segmented"
+                />
+              )}
               <p className="text-[11px] leading-relaxed text-muted">{t.intents[`${studio.intent}Hint`]}</p>
               <label className="block">
                 <span className={FIELD_LABEL}>{t.descriptionLabel}</span>
                 <textarea
                   className={cn(INPUT_CLASS, 'min-h-24')}
                   onChange={event => patch({ description: event.currentTarget.value })}
-                  placeholder={t.descriptionPlaceholder}
+                  placeholder={section === 'sprite' ? v.composer.spritePlaceholder : t.descriptionPlaceholder}
                   value={studio.description}
                 />
               </label>
@@ -390,7 +477,7 @@ export function VisualCreatePanel({
                 <button
                   className={BTN_GHOST}
                   onClick={() => {
-                    setFile(null)
+                    chooseFile(null)
 
                     if (fileInput.current) {
                       fileInput.current.value = ''

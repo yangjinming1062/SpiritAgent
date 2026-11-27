@@ -13,7 +13,7 @@ from weakref import WeakValueDictionary
 from features.appearance.identity import VisualIdentityNotReadyError, require_visual_identity
 from features.appearance.queries import avatar_snapshot, initial_outfit_snapshot
 from features.companion.motion import get_motion_level
-from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
+from features.companion.proactive_runtime import get_presentation_snapshot
 from features.life.queries import active_pursuit_title
 from features.life.schemas import LifeStateView
 from features.life.use_cases import mark_presentation_evaluated, pending_presentation_users, read_state
@@ -167,8 +167,7 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             return
         async with _LOCKS.setdefault(user_id, asyncio.Lock()):
             presence = get_presentation_snapshot(user_id)
-            record = get_user_proactive_record(user_id)
-            if presence is None or not record.available:
+            if presence is None or presence.surface == "none":
                 return
             async with SESSION_LOCAL() as db:
                 projection = await stage_recovery_view(db, user_id)
@@ -194,12 +193,12 @@ async def _evaluate_life_presentation(user_id: int, *, force: bool = False) -> N
             # 动态关闭、媒体缺失或环境被删除时，重新冻结静态目标；角色视频不能替代环境恢复。
             # 已有冻结素材直接沿用到新代次（换新请求身份），仅缺失时才重新冻结。
             composition_media = projection.composition.media if projection.composition is not None else None
-            has_media = projection.has_idle_actor or bool(
-                composition_media
-                and (
-                    composition_media.actor is not None
-                    or composition_media.scene is not None
-                    or composition_media.cinematic is not None
+            has_media = (
+                projection.has_idle_actor
+                if presence.surface == "sprite"
+                else bool(
+                    composition_media
+                    and (composition_media.scene is not None or composition_media.cinematic is not None)
                 )
             )
             has_scene = (

@@ -14,12 +14,7 @@ import {
 import { onOutfitEvent } from '@/features/creation'
 import { onActionEvent } from '@/features/creation/actions'
 import { onSceneEvent } from '@/features/creation/environment'
-import {
-  enqueueInteraction,
-  enqueueInteractionForward,
-  handleVisualEvent,
-  refreshVisualPresentation
-} from '@/features/creation/visuals'
+import { enqueueInteraction, handleVisualEvent, refreshVisualPresentation } from '@/features/creation/visuals'
 import { handleLifeUpdated } from '@/features/life'
 import { onJournalEvent } from '@/features/life/diary'
 import { onPostEvent } from '@/features/life/posts'
@@ -27,8 +22,7 @@ import { invalidateVoiceCatalog } from '@/features/speech'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { $gateway } from '@/shared/store/gateway'
-import { $surfaceRole } from '@/shared/store/surfaces'
+import { $surfaceRole, visualSurface } from '@/shared/store/surfaces'
 
 import { $devMode, pushDevLog } from './dev-log'
 import { handleDeliveryEvent } from './handlers/delivery-events'
@@ -105,8 +99,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       return
     }
   }
-
-  const isPresentationHost = $gateway.get()?.isPresentationHost ?? false
 
   switch (event.type) {
     case 'companion.action.updated':
@@ -302,10 +294,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       const visual = { visual_id, version }
       const occurredAt = Date.parse(occurred_at)
 
-      if (isPresentationHost || $surfaceRole.get() === 'desktop') {
+      const surface = visualSurface()
+      const role = $surfaceRole.get()
+
+      if (surface !== 'none' && role === (surface === 'life' ? 'main' : surface)) {
         enqueueInteraction(visual, eventId, occurredAt)
-      } else {
-        enqueueInteractionForward(visual, eventId, occurredAt)
       }
 
       break

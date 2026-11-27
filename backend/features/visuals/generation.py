@@ -52,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.background import TaskScope
 from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
+from runtime.presentation import visual_surface_accepts
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.attributes import set_committed_value
@@ -149,12 +150,13 @@ from .geometry import (
     visual_aspect_ratio,
 )
 from .life import RECOVERY_WAITING, RESUME_WAITING, restart_visual_steps, settle_visual_steps
-from .models import VisualJob
+from .models import VisualJob, VisualPresentation
 from .naming import schedule_visual_title
 from .ports import notify_visual_ready, request_base_motion_preparation
 from .prompt_assembly import video_generation_prompt
 from .prompts import (
     ACTOR_POSE_IMAGE_TEMPLATE,
+    CINEMATIC_STILL_DESCRIPTION,
     SCENE_MOTION_DESIGN,
     SCENE_PHASE_IMAGE_TEMPLATE,
     SCENE_VIDEO_REVIEW,
@@ -191,6 +193,7 @@ from .schemas import (
     VisualAsset,
     VisualAssetKind,
     VisualCatalogDescription,
+    VisualFrameRef,
     VisualJobProgress,
     VisualJobState,
     VisualMediaKind,
@@ -241,6 +244,10 @@ class VisualVideoFrameDescription(BaseModel):
 
     description: VisualCatalogDescription
     outfit_description: str = Field(max_length=1200)
+
+
+class CinematicStillDescription(VisualVideoFrameDescription):
+    media_semantics: MediaSemantics | None
 
 
 class VisualHeadAnchor(BaseModel):
@@ -506,6 +513,16 @@ async def _require_active_job(user_id: int, job_id: int, generation_id: str) -> 
     await _job_inputs(user_id, job_id, generation_id)
 
 
+async def require_visual_generation_submission(user_id: int, job_id: int, generation_id: str) -> None:
+    require_new_generation_call(user_id)
+    inputs = await _job_inputs(user_id, job_id, generation_id)
+    if inputs.progress.source == "stage_preparation" and not inputs.progress.continued_by_user:
+        async with SESSION_LOCAL() as db:
+            state = await db.get(VisualPresentation, user_id)
+            if state is None or not state.autonomous_enabled:
+                raise GenerationWorkPaused
+
+
 async def _save_progress(
     user_id: int, job_id: int, progress: VisualJobProgress, *, stage: str, repair_count: int | None = None
 ) -> None:
@@ -515,6 +532,7 @@ async def _save_progress(
         if saved is None or saved.generation_id != progress.generation_id or job.state not in {"queued", "running"}:
             raise LlmCallBlockedError("影像制作任务已经失效")
         progress.source = saved.source
+        progress.continued_by_user = saved.continued_by_user
         checkpoint = progress.model_dump(mode="json")
         paths = asset_paths([job.snapshot_json, checkpoint], user_id)
         present = {
@@ -594,7 +612,7 @@ async def _aligned_outfit_reference(
         await _save_progress(user_id, job_id, progress, stage="image")
 
     async def before_submit() -> None:
-        await _require_active_job(user_id, job_id, progress.generation_id)
+        await require_visual_generation_submission(user_id, job_id, progress.generation_id)
 
     await save_alignment(state)
     try:
@@ -767,7 +785,7 @@ async def _prepare_pose(
     if progress.pose_path:
         return
 
-    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+    if snapshot.opening_frame is not None:
         opening = snapshot.opening_frame
         resolved = resolve_asset_reference(opening.path)
         if resolved is None:
@@ -775,21 +793,25 @@ async def _prepare_pose(
         data = await asyncio.to_thread(resolved[0].read_bytes)
         if hashlib.sha256(data).hexdigest() != opening.content_hash:
             raise VisualCreationError("安睡首帧与所选版本不符，候选已保留", "evidence_invalid")
-        frame = await asyncio.to_thread(actor_continuation_frame, data)
-        progress.pose_path = await save_image_chain_input_asset_async(
-            frame,
-            user_id=user_id,
-            generation_id=progress.generation_id,
-            label="wake_opening",
-            ext="png",
-            directory=directory,
+        frame = await asyncio.to_thread(actor_continuation_frame, data) if snapshot.kind == "actor" else data
+        progress.pose_path = (
+            await save_image_chain_input_asset_async(
+                frame,
+                user_id=user_id,
+                generation_id=progress.generation_id,
+                label="wake_opening",
+                ext="png",
+                directory=directory,
+            )
+            if snapshot.kind == "actor"
+            else opening.path
         )
         await _prepare_geometry(progress, frame)
         await _save_progress(user_id, job.id, progress, stage="image")
         return
 
     async def before_submit() -> None:
-        await _require_active_job(user_id, job.id, progress.generation_id)
+        await require_visual_generation_submission(user_id, job.id, progress.generation_id)
 
     previous = progress.previous_pose_path
     await _references(snapshot)
@@ -1055,7 +1077,7 @@ async def _prepare_opening(
             "画面检查暂未完成，可以稍后继续" if review.status == "unavailable" else "画面检查未完成，可以重新准备画面",
             "review_pending",
         )
-    if snapshot.kind == "actor" and snapshot.opening_frame is not None:
+    if snapshot.opening_frame is not None:
         raise VisualCreationError(review.reason or "安睡首帧无法与起身动作接续", "activity_unsupported")
     failed = opening_visual_review(review)
     begin_opening_repair(
@@ -1132,6 +1154,7 @@ def _opening_asset(job: VisualJob, progress: VisualJobProgress) -> VisualAsset:
         visual_description=progress.visual_description,
         outfit_description=progress.outfit_description or "",
         creation_plan=progress.creation_plan,
+        media_semantics=progress.opening_review.media_semantics if progress.opening_review else None,
         feedback=job.feedback,
         video_feedback=job.video_feedback,
     )
@@ -1157,12 +1180,19 @@ async def _process_candidate(user_id: int, job: VisualJob, progress: VisualJobPr
         poster = await save_companion_asset_async(
             result.cover, user_id=user_id, label="visual_cover", ext="webp", directory=directory
         )
+        first_frame = None
+        if job.asset_kind == "cinematic":
+            path = await save_companion_asset_async(
+                result.first_frame, user_id=user_id, label="visual_first_frame", ext="png", directory=directory
+            )
+            first_frame = VisualFrameRef(path=path, content_hash=hashlib.sha256(result.first_frame).hexdigest())
         progress.frame_width, progress.frame_height = result.width, result.height
         return VisualAsset(
             media_kind="video",
             media_path=video or "",
             poster_path=poster,
             input_image_path=progress.pose_path,
+            delivery_first_frame=first_frame,
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
@@ -1359,7 +1389,7 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
                 "feedback": job.feedback,
                 "customization_priority": progress.customization_priority,
                 "action_conditions": {"use_when": source.action.use_when, "avoid_when": source.action.avoid_when},
-                "paired_actor": source.kind == "actor" and source.opening_frame is not None,
+                "paired_opening": source.opening_frame is not None,
             }
             original_evidence = progress.video_evidence
             if progress.video_evidence is None:
@@ -1515,7 +1545,10 @@ async def _evaluate_candidate(user_id: int, job: VisualJob, progress: VisualJobP
 async def _describe_frame(
     user_id: int, job_id: int, progress: VisualJobProgress, *, asset_kind: VisualAssetKind
 ) -> None:
-    if progress.visual_description and progress.outfit_description is not None:
+    opening = progress.opening_review if asset_kind == "cinematic" else None
+    if opening and opening.media_semantics is not None:
+        return
+    if opening is None and progress.visual_description and progress.outfit_description is not None:
         return
     async with SESSION_LOCAL() as db:
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.visuals):
@@ -1525,7 +1558,11 @@ async def _describe_frame(
         if progress.candidate is not None and progress.candidate.input_image_path
         else progress.pose_path
     )
-    reference = await asyncio.to_thread(read_valid_image_data_uri, image_path)
+    reference = (
+        await asyncio.to_thread(read_visual_reference, image_path, opening.image_hash)
+        if opening
+        else await asyncio.to_thread(read_valid_image_data_uri, image_path)
+    )
     if not reference:
         return
 
@@ -1533,11 +1570,16 @@ async def _describe_frame(
         await _require_active_job(user_id, job_id, progress.generation_id)
 
     try:
+        prompt = (
+            CINEMATIC_STILL_DESCRIPTION
+            if opening
+            else visual_content_prompt(VISUAL_VIDEO_FRAME_DESCRIPTION, asset_kind)
+        )
         description = await vision_chat_json(
             user_id,
-            visual_content_prompt(VISUAL_VIDEO_FRAME_DESCRIPTION, asset_kind),
+            prompt,
             {},
-            response_model=VisualVideoFrameDescription,
+            response_model=CinematicStillDescription if opening else VisualVideoFrameDescription,
             schema_name="visual_video_frame_description",
             reference_images=(reference,),
             before_submit=before_submit,
@@ -1545,9 +1587,13 @@ async def _describe_frame(
         )
         progress.visual_description = description.description
         progress.outfit_description = description.outfit_description
+        if opening and isinstance(description, CinematicStillDescription):
+            opening.media_semantics = description.media_semantics
         if progress.candidate is not None:
             progress.candidate.visual_description = description.description
             progress.candidate.outfit_description = description.outfit_description
+            if opening and progress.candidate.media_kind == "image":
+                progress.candidate.media_semantics = opening.media_semantics
     except LlmCallBlockedError:
         return
     except Exception:
@@ -1576,6 +1622,8 @@ def _publication_snapshot(snapshot: VisualSnapshot, progress: VisualJobProgress)
             "media_semantics": progress.candidate.media_semantics if progress.candidate else None,
         }
     )
+    if isinstance(source, CinematicSource) and progress.candidate:
+        source.delivery_first_frame = progress.candidate.delivery_first_frame
     source.presentation_approved = progress.review_result is not None and progress.review_result.verdict == "pass"
     return snapshot.model_copy(
         update={
@@ -1607,6 +1655,7 @@ async def _finish_job(
         if saved is None or saved.generation_id != progress.generation_id or job.state not in {"queued", "running"}:
             return
         progress.source = saved.source
+        progress.continued_by_user = saved.continued_by_user
         if progress.candidate is None:
             raise VisualStateError("当前制作还没有可用成品")
         failure = quality_failure_message(progress.review_result)
@@ -1670,7 +1719,7 @@ async def _finish_job(
                 "version": published.version,
             },
             additional_events=[]
-            if progress.source == "base_preparation"
+            if progress.source in {"base_preparation", "stage_preparation"}
             else [
                 LifeEventInput(
                     event_key=f"visual:{job.id}:{published.id}:{published.version}",
@@ -1688,11 +1737,13 @@ async def _finish_job(
         )
         if job.purpose == "regenerate":
             state = presentation
+            presence = get_presentation_snapshot(user_id)
             if (
                 state is not None
                 and state.current_visual_id == published.id
                 and not state.pending_command_json
-                and get_presentation_snapshot(user_id) is not None
+                and presence is not None
+                and visual_surface_accepts(presence.surface, published.asset_kind)
             ):
                 await dispatch_play_command(db, user_id, published, source="restore")
         await notify_visuals_updated(db, user_id)
@@ -1715,12 +1766,12 @@ async def _pause_visual_job(
 ) -> None:
     async with SESSION_LOCAL() as db:
         job = await visual_job_row(db, user_id, job_id, lock=True)
-        progress = visual_progress(job)
-        if progress is None or progress.generation_id != generation_id or job.state not in {"queued", "running"}:
+        saved = visual_progress(job)
+        if saved is None or saved.generation_id != generation_id or job.state not in {"queued", "running"}:
             return
-        source = progress.source
-        progress = latest_progress or progress
-        progress.source = source
+        progress = latest_progress or saved
+        progress.source = saved.source
+        progress.continued_by_user = saved.continued_by_user
         progress.paused_by_user = by_user
         progress.submission_unknown = visual_progress_has_unknown_submission(progress)
         progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
@@ -1785,7 +1836,7 @@ async def _prepare_scene_opening(
             await _save_progress(user_id, job.id, progress, stage="image")
 
         async def before_submit() -> None:
-            await _require_active_job(user_id, job.id, progress.generation_id)
+            await require_visual_generation_submission(user_id, job.id, progress.generation_id)
 
         paths = await generate_scene_images(
             SCENE_PHASE_IMAGE_TEMPLATE.format(
@@ -2338,13 +2389,13 @@ async def _advance_video_chain(
     if not chain.queue_request_id:
         if not allow_model_steps:
             raise GenerationWorkPaused
-        await _require_active_job(user_id, job.id, generation_id)
+        await require_visual_generation_submission(user_id, job.id, generation_id)
         if not progress.image_confirmed:
             raise VisualStateError("起始画面尚未通过检查，请继续制作")
         request = await _build_video_request(user_id, job, snapshot, progress, chain, index, clip_kind, directory)
         if request is None:
             return
-        await _require_active_job(user_id, job.id, generation_id)
+        await require_visual_generation_submission(user_id, job.id, generation_id)
         chain.begin(index)
         chain.phase = "ready"
         progress.video_chain_json = chain.model_dump_json()
@@ -2381,6 +2432,8 @@ async def _prepare_visual_inputs(
 ) -> bool:
     job_id = job.id
     if job.target_kind == "image" and progress.candidate is not None:
+        if allow_model_steps:
+            await _describe_frame(user_id, job_id, progress, asset_kind=snapshot.kind)
         await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
         return True
     if not visual_progress_has_video_work(progress):
@@ -2398,6 +2451,8 @@ async def _prepare_visual_inputs(
             await _save_progress(user_id, job_id, progress, stage="review")
             await _finish_job(user_id, job_id, progress, allow_followup_work=allow_model_steps)
             return True
+        if allow_model_steps and snapshot.kind == "cinematic" and job.result_image_id is None:
+            await _describe_frame(user_id, job_id, progress, asset_kind=snapshot.kind)
         progress.image_confirmed = True
         await _save_progress(user_id, job_id, progress, stage="video")
         if snapshot.kind != "actor":
@@ -2410,12 +2465,18 @@ async def _prepare_visual_inputs(
                     or saved.generation_id != progress.generation_id
                 ):
                     return True
+                opening_asset = _opening_asset(job, progress)
+                opening_progress = progress
+                if isinstance(snapshot.source, CinematicSource) and progress.opening_review is not None:
+                    review = opening_visual_review(progress.opening_review)
+                    review.reference_basis = visual_reference_basis(snapshot.source.model_dump(mode="json"))
+                    opening_progress = progress.model_copy(update={"candidate": opening_asset, "review_result": review})
                 opening = await publish_opening_result(
                     db,
                     user_id,
                     current_job,
-                    _opening_asset(job, progress).model_copy(update={"input_image_path": progress.pose_path}),
-                    snapshot=_publication_snapshot(snapshot, progress),
+                    opening_asset,
+                    snapshot=_publication_snapshot(snapshot, opening_progress),
                 )
                 set_committed_value(current_job, "result_image_id", opening.id)
                 set_committed_value(current_job, "result_image_version_id", opening.current_version_id)
@@ -2476,7 +2537,7 @@ async def _prepare_video_motion(
             if (
                 exc.script.failure_kind == "unsupported"
                 or snapshot.source.kind == "scene"
-                or (snapshot.source.kind == "actor" and snapshot.source.opening_frame is not None)
+                or (snapshot.source.kind in {"actor", "cinematic"} and snapshot.source.opening_frame is not None)
             ):
                 raise
             begin_opening_repair(job, progress, reason=str(exc), reference_path=progress.pose_path)

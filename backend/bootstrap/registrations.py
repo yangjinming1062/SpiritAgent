@@ -98,8 +98,13 @@ from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.life_events import record_post_published
-from workflows.life_presentation import life_presentation_requested, read_ready_stage_scene
-from workflows.visual_events import initialize_visuals, schedule_presentation_refresh
+from workflows.life_presentation import read_ready_stage_scene
+from workflows.visual_events import (
+    initialize_visuals,
+    preparation_context_changed,
+    presentation_context_changed,
+    schedule_presentation_refresh,
+)
 from workflows.visual_imports import run_manual_import_job
 from workflows.visual_planning import visual_planning_context
 from workflows.visual_preparation import (
@@ -168,7 +173,8 @@ def register_internal_event_handlers() -> None:
     for event_type in COMPANION_TURN_EVENTS:
         register_internal_event_handler(event_type, execute_companion_turn)
     register_internal_event_handler("companion.visual.initial_requested", initialize_visuals)
-    register_internal_event_handler("companion.life.presentation_requested", life_presentation_requested)
+    register_internal_event_handler("companion.life.presentation_requested", presentation_context_changed)
+    register_internal_event_handler("companion.visual.preparation_requested", preparation_context_changed)
 
 
 def register_all() -> None:

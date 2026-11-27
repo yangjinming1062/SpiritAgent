@@ -56,6 +56,7 @@ def client_stage_plan(plan: StagePlaybackPlan | None) -> StagePlaybackPlan | Non
             "cinematic_variants": [client_layer_media(entry) for entry in plan.cinematic_variants],
             "actor_still_url": client_asset_url(plan.actor_still_url) if plan.actor_still_url else None,
             "wake_actor": client_layer_media(plan.wake_actor),
+            "wake_cinematic": client_layer_media(plan.wake_cinematic),
             "wake_scene": client_material(plan.wake_scene),
             "wake_scene_media": client_layer_media(plan.wake_scene_media),
         }

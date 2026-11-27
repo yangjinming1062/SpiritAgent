@@ -19,13 +19,11 @@ import {
   $visualsDetail,
   $visualsDetailError,
   $visualsError,
-  $visualsItems,
   $visualsJobs,
+  $visualsLibraryPage,
   $visualsLoading,
-  $visualsNextCursor,
   $visualsPresentation,
   $visualsPresentationError,
-  $visualsTotal,
   playClients,
   receiptKinds,
   receiptQueues,
@@ -41,6 +39,10 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
   }
 
   if (query) {
+    if (query.section !== visualsState.refreshQuery.section) {
+      $visualsError.set(null)
+    }
+
     visualsState.refreshQuery = query
   }
 
@@ -60,17 +62,16 @@ export async function refreshVisuals(query?: VisualsListQuery): Promise<void> {
       visualsState.refreshQueued = false
 
       try {
-        const [list, jobs] = await Promise.all([visualsApi.list(pending), visualsApi.jobs()])
+        const section = pending.section ?? 'complete'
+
+        const [list, jobs] = await Promise.all([visualsApi.list({ ...pending, section }), visualsApi.jobs({ section })])
 
         if (!current()) {
           return
         }
 
         if (pending === visualsState.refreshQuery) {
-          $visualsItems.set(list.visuals)
-          $visualsTotal.set(list.total)
-          $visualsNextCursor.set(list.next_cursor)
-          $visualsJobs.set(jobs.jobs)
+          $visualsLibraryPage.set({ ...list, section, jobs: jobs.jobs })
           $visualsError.set(null)
         }
       } catch (error) {
@@ -223,7 +224,7 @@ function updateStagePlan(): void {
   const presentation = $visualsPresentation.get()
   $stagePlan.set(
     deriveStagePlan(presentation, null, {
-      desktop: $presentation.get().effectiveMode === 'desktop',
+      surface: $presentation.get().effectiveMode === 'desktop' ? 'desktop' : 'sprite',
       ambient: $ambientLoopChoice.get(),
       wake: $wakePerformance.get(),
       failedMedia: $failedStageMedia.get()
@@ -243,7 +244,7 @@ export async function regenerateVisual(
   body: Parameters<typeof visualsApi.regenerate>[1]
 ): Promise<VisualJob> {
   const job = await visualsApi.regenerate(visualId, body)
-  await Promise.all([refreshVisuals(), refreshVisualPresentation()])
+  await Promise.all([refreshVisuals(), refreshVisualJobs(), refreshVisualPresentation()])
 
   return job
 }
@@ -257,15 +258,19 @@ export async function refreshVisualJobs(): Promise<void> {
   }
 
   const currentEpoch = visualsState.epoch
+  const request = ++visualsState.jobSummaryRequest
+
+  const current = (): boolean =>
+    scope() && visualsState.epoch === currentEpoch && request === visualsState.jobSummaryRequest
 
   try {
     const jobs = await visualsApi.jobs()
 
-    if (scope() && visualsState.epoch === currentEpoch) {
+    if (current()) {
       $visualsJobs.set(jobs.jobs)
     }
   } catch (error) {
-    if (scope() && visualsState.epoch === currentEpoch) {
+    if (current()) {
       log.warn('visuals', 'Job summary refresh failed', error)
     }
   }
@@ -273,7 +278,7 @@ export async function refreshVisualJobs(): Promise<void> {
 
 export async function commandVisualJob(jobId: string, command: VisualJobCommand): Promise<void> {
   await visualsApi.jobCommand(jobId, { command })
-  await refreshVisuals()
+  await Promise.all([refreshVisuals(), refreshVisualJobs()])
 }
 
 /** 播放认领：同一 play_id 只由一个可见舞台认领，认领后才允许上报回执。 */
@@ -321,6 +326,7 @@ export function handleVisualEvent(
     case 'companion.visual.updated':
     case 'companion.visual.initial_requested': {
       void refreshVisuals()
+      void refreshVisualJobs()
       void refreshVisualPresentation()
       const selected = $visualsDetail.get()
 
@@ -382,10 +388,8 @@ function resetVisualsForAccount(): void {
   playClients.clear()
   receiptQueues.clear()
   receiptKinds.clear()
-  $visualsItems.set([])
+  $visualsLibraryPage.set(null)
   $visualsJobs.set([])
-  $visualsTotal.set(null)
-  $visualsNextCursor.set(null)
   $visualsLoading.set(false)
   $visualsError.set(null)
   $visualsDetail.set(null)

@@ -4,7 +4,7 @@ from typing import Literal, Self
 from infrastructure.api_ids import ResourceId
 from infrastructure.text import utc_now
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
-from runtime.presentation import PresentationMode
+from runtime.presentation import PresentationMode, VisualSurface
 
 CompanionWakeEvent = Literal["desktop_available", "context_changed"]
 CompanionIntentStatus = Literal["waiting", "queued", "running", "completed", "cancelled", "expired", "failed"]
@@ -78,7 +78,16 @@ class CompanionSignal(BaseModel):
 
     available: StrictBool
     presentation_mode: PresentationMode
+    visual_surface: VisualSurface | None = None
     event: CompanionWakeEvent | None = None
+
+    @model_validator(mode="after")
+    def valid_visual_surface(self) -> Self:
+        if (self.visual_surface == "desktop" and self.presentation_mode != "desktop") or (
+            self.visual_surface in ("life", "sprite") and self.presentation_mode != "window"
+        ):
+            raise ValueError("Visual surface does not belong to the presentation mode")
+        return self
 
 
 class CompanionTurnRequest(BaseModel):
