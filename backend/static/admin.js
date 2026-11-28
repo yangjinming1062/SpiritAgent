@@ -261,9 +261,6 @@ function renderUsers(data) {
     $('#userCount').textContent = items.length ? (items.length === all.length ? `${items.length} 个用户` : `${items.length} / ${all.length} 个用户`) : '';
     $('#userList').innerHTML = items.length ? items.map(u => {
         const initial = esc((u.username || '?').slice(0, 1).toUpperCase());
-        const night = u.nightly_activity_enabled
-            ? `<span class="status-line on"><span class="dot"></span>夜间已开启</span>`
-            : `<span class="status-line muted"><span class="dot"></span>夜间已关闭</span>`;
         const active = u.is_active
             ? `<span class="status-line on"><span class="dot"></span>账户正常</span>`
             : `<span class="status-line off"><span class="dot"></span>账户已停用</span>`;
@@ -281,12 +278,7 @@ function renderUsers(data) {
                     </div>
                 </div>
             </td>
-            <td data-label="状态">
-                <div class="cell-stack">
-                    ${active}
-                    ${night}
-                </div>
-            </td>
+            <td data-label="状态">${active}</td>
             <td data-label="配置覆盖">${overrideCell}</td>
             <td data-label="创建时间"><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
             <td class="td-actions" data-label="操作">
@@ -356,7 +348,6 @@ function openUserForm(user = null) {
         $('#username').value = user?.username ?? '';
         $('#username').disabled = Boolean(user);
         $('#baseUrl').value = baseUrl;
-        $('#nightlyEnabled').checked = user?.nightly_activity_enabled ?? true;
         $('#regenField').style.display = user ? '' : 'none';
         openModal('userModal');
         if (!user) $('#username').focus();
@@ -379,13 +370,12 @@ async function saveUser() {
     const id = $('#editUserId').value;
     const baseUrl = requireBaseUrl($('#baseUrl'));
     if (!baseUrl) return;
-    const payload = { nightly_activity_enabled: $('#nightlyEnabled').checked };
+    const payload = { base_url: baseUrl };
     if (!id) {
         const username = $('#username').value.trim();
         if (!username) { toast('请填写用户名', 'err'); $('#username').focus(); return; }
         payload.username = username;
     }
-    payload.base_url = baseUrl;
     // 编辑时激活码只随后端地址变化；未变化时不弹出激活码。
     const previousCode = id ? findCachedUser(id)?.activation_code : null;
     try {

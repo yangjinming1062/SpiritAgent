@@ -37,7 +37,6 @@ async def create_user(payload: UserCreate, db: AsyncSession) -> UserResponse:
             username=payload.username,
             activation_code=encode_activation_code(payload.base_url, raw_token),
             activation_token_hash=hash_activation_token(raw_token),
-            nightly_activity_enabled=payload.nightly_activity_enabled,
         )
         .on_conflict_do_nothing(index_elements=[User.username])
         .returning(User)

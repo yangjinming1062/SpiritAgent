@@ -499,12 +499,10 @@ tbody tr:hover { background: var(--surface-2); }
 .cell-user-text .cell-strong { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .avatar { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--primary-ink); font-weight: 650; }
 .avatar.off { opacity: .45; }
-.cell-stack { display: flex; flex-direction: column; gap: 4px; }
 .status-line { display: flex; align-items: center; gap: 5px; font-size: var(--fs-meta); }
 .status-line .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .status-line.on { color: var(--green); }
 .status-line.off { color: var(--red); }
-.status-line.muted { color: var(--text-3); }
 .td-services { display: flex; flex-wrap: wrap; gap: 4px; }
 .td-id { color: var(--text-3); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .td-actions { text-align: right; white-space: nowrap; }

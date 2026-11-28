@@ -56,7 +56,6 @@ def upgrade() -> None:
         sa.Column("activation_code", sa.Text(), nullable=False),
         sa.Column("activation_token_hash", sa.String(length=128), nullable=False),
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
-        sa.Column("nightly_activity_enabled", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

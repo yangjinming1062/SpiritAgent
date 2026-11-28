@@ -5,7 +5,7 @@ from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from features.accounts.queries import nightly_account
+from features.accounts.queries import user_is_active
 from features.companion.narrative_quality import NarrativeQualityError
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.configuration.settings.timezone import resolve_user_timezone
@@ -349,13 +349,13 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
 async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log_id: int) -> bool:
     user_id = scope.user_id
     async with SESSION_LOCAL() as db:
-        user = await nightly_account(db, user_id)
+        is_active = await user_is_active(db, user_id)
         tz_str = await resolve_user_timezone(db, user_id)
         log = await db.get(NightlyActivityLog, log_id)
         payload = (log.payload or {}) if log is not None else {}
         has_plan = "nightly_plan" in payload
         stages = list(payload.get("stages", []))
-    if user is None or not user.is_active:
+    if not is_active:
         logger.info("nightly_activity: skipped, inactive account", extra={"user_id": user_id})
         await _update_log(log_id, status="skipped", summary="账户不可用")
         return False
@@ -456,9 +456,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         if r.usage == "background"
     }
 
-    if user.nightly_activity_enabled and (
-        not has_plan or any(stage["stage"] == "topic discovery" and stage["status"] == "waiting" for stage in stages)
-    ):
+    if not has_plan or any(stage["stage"] == "topic discovery" and stage["status"] == "waiting" for stage in stages):
         await _run_stage(
             stages,
             "topic discovery",
@@ -485,51 +483,46 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             skipped=(NightlyWindowClosedError, DiscoveryDisabledError),
             error_note=lambda exc: {"error": type(exc).__name__},
         )
-    elif not user.nightly_activity_enabled:
-        _record_stage(stages, {"stage": "topic discovery", "status": "skipped", "reason": "夜间自主规划已关闭"})
 
     action_results: dict[str, ActionExecutionResult] = {}
-    if user.nightly_activity_enabled or has_plan:
-        planning_result = await _run_stage(
-            stages,
-            "planning",
-            partial(
-                run_nightly_planning,
-                user_id,
-                contextual_memories,
-                background_memories,
-                user_profile,
-                recall_rows[:_PLANNING_RECALL_HIGHLIGHTS],
-                date_context,
-                anomaly_stats,
-                clean_messages,
-                log_id=log_id,
-                persona=persona_snapshot,
-                life_context=life_context,
-                language=user_language,
-                diagnostics=stage_diagnostics.setdefault("planning", []),
-            ),
-            lambda result: ("waiting" if result.pending else "ok", {}),
-            user_id=user_id,
-        )
-        if planning_result is not None:
-            action_results = planning_result.actions
-            if planning_result.pending:
-                await _update_log(
-                    log_id,
-                    status="running",
-                    summary="等待已受理的生活步骤",
-                    payload={"stages": _stage_results(stages, stage_diagnostics)},
-                )
-                return False
-        else:
-            # 窗口已结束或规划失败时，账本里已落终态的动作仍是真实发生的事。
-            try:
-                action_results = await load_action_results(log_id)
-            except Exception:
-                logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
+    planning_result = await _run_stage(
+        stages,
+        "planning",
+        partial(
+            run_nightly_planning,
+            user_id,
+            contextual_memories,
+            background_memories,
+            user_profile,
+            recall_rows[:_PLANNING_RECALL_HIGHLIGHTS],
+            date_context,
+            anomaly_stats,
+            clean_messages,
+            log_id=log_id,
+            persona=persona_snapshot,
+            life_context=life_context,
+            language=user_language,
+            diagnostics=stage_diagnostics.setdefault("planning", []),
+        ),
+        lambda result: ("waiting" if result.pending else "ok", {}),
+        user_id=user_id,
+    )
+    if planning_result is not None:
+        action_results = planning_result.actions
+        if planning_result.pending:
+            await _update_log(
+                log_id,
+                status="running",
+                summary="等待已受理的生活步骤",
+                payload={"stages": _stage_results(stages, stage_diagnostics)},
+            )
+            return False
     else:
-        _record_stage(stages, {"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
+        # 窗口已结束或规划失败时，保留账本中已确认的动作结果。
+        try:
+            action_results = await load_action_results(log_id)
+        except Exception:
+            logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
 
     action_facts = _successful_action_facts(action_results)
     has_readable_messages = any(message["role"] == "user" for message in clean_messages)

@@ -22,7 +22,6 @@ class User(ModelBase, TimestampMixin):
     activation_code: Mapped[str] = mapped_column(Text)
     activation_token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
-    nightly_activity_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
 
     login_records: Mapped[list["LoginRecord"]] = relationship(back_populates="user", passive_deletes=True)
     model_config: Mapped["UserModelConfig | None"] = relationship(

@@ -67,13 +67,11 @@ class AdminTokenResponse(BaseModel):
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64, pattern=r"^[^\x00]*$")
     base_url: str = Field(min_length=1, max_length=255)
-    nightly_activity_enabled: bool = True
 
 
 class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    nightly_activity_enabled: bool | None = None
     is_active: bool | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=255)
 
@@ -89,7 +87,6 @@ class UserResponse(BaseModel):
 
     id: ResourceId
     username: str
-    nightly_activity_enabled: bool
     is_active: bool
     created_at: datetime
     activation_code: str

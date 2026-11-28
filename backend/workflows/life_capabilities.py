@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from itertools import zip_longest
 from typing import Any, Literal
 
-from features.accounts.queries import nightly_account, user_is_active
+from features.accounts.queries import user_is_active
 from features.action_library.queries import action_planning_materials, count_library_actions
 from features.appearance.identity import IDENTITY_NOT_CONFIRMED, load_visual_identity
 from features.appearance.queries import count_ready_outfits, outfit_planning_materials
@@ -120,10 +120,6 @@ async def capability_blocks(
         identity_ready = await load_visual_identity(db, user_id) is not None
         persona = await persona_snapshot(db, user_id)
         disabled = disabled_backend_tool_names(await load_user_settings(db, user_id))
-        if source == "nightly":
-            account = await nightly_account(db, user_id)
-            if account is None or not account.nightly_activity_enabled:
-                return dict.fromkeys(targets, CapabilityBlock("permission_required", "夜间自主活动已关闭"))
     if persona is None:
         return dict.fromkeys(targets, CapabilityBlock("unavailable", "伙伴资料尚未就绪"))
     planning_task = AiTaskKey.nightly if source == "nightly" else AiTaskKey.proactive

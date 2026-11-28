@@ -28,7 +28,6 @@ from runtime.user_maintenance import is_user_in_maintenance
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.accounts.queries import nightly_account
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
 from features.companion.queries import complete_user_ids
@@ -131,16 +130,9 @@ async def _scene_updated(db: AsyncSession, user_id: int, scene_id: int) -> None:
         emit_ws_event(db, user_id=user_id, event_type="companion.visual.initial_requested", payload={})
 
 
-async def _check_policy(db: AsyncSession, persona: PersonaSnapshot, origin: str) -> None:
-    if origin not in _AUTONOMOUS_ORIGINS:
-        return
-    if persona.scene_policy == ScenePolicy.LOCKED.value:
+def _check_policy(persona: PersonaSnapshot, origin: str) -> None:
+    if origin in _AUTONOMOUS_ORIGINS and persona.scene_policy == ScenePolicy.LOCKED.value:
         raise SceneLockedError("场景已锁定，自主新增已暂停")
-    # 打扰档位只限制打扰用户的主动行为；场景素材新增不直接打扰用户，对话中的自主新增只受锁定限制，夜间另按总控。
-    if origin == SceneOrigin.NIGHTLY.value:
-        user = await nightly_account(db, persona.user_id)
-        if user is None or not user.nightly_activity_enabled:
-            raise SceneLockedError("夜间自主活动已关闭")
 
 
 async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> ScenePolicy:
@@ -180,7 +172,7 @@ async def _new_scene(
                 return existing
         await require_step_submission(db, user_id, life_step)
         persona = await _persona(db, user_id)
-        await _check_policy(db, persona, origin)
+        _check_policy(persona, origin)
         if await account_has_pending_scene_task(db, user_id):
             raise SceneBusyError("已有场景正在准备，请等待完成或取消该任务")
         if origin == SceneOrigin.ONBOARDING.value and await db.scalar(
@@ -820,7 +812,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                 or previous.image_chain.phase != "submitting"
                 or previous.image_chain.active_index != progress.active_index
             ):
-                await _check_policy(db, await _persona(db, user_id), fresh.origin)
+                _check_policy(await _persona(db, user_id), fresh.origin)
                 fresh.initial_job.attempt_count += 1
             frozen.image_chain = progress
             fresh.initial_job.checkpoint = frozen.model_dump(mode="json")

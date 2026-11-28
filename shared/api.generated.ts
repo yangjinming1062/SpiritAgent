@@ -353,14 +353,14 @@ export interface ApiSchemas {
   "TurnCancelResult": { "request_id": string; "cancelled": boolean }
   "UndoAnchor": { "text": string; "attachments": Array<ApiSchemas["UndoAttachment"]> }
   "UndoAttachment": { "type": "image"; "url": string }
-  "UserCreate": { "username": string; "base_url": string; "nightly_activity_enabled"?: boolean }
+  "UserCreate": { "username": string; "base_url": string }
   "UserInfo": { "id": string; "username": string }
   "UserListResponse": { "items": Array<ApiSchemas["UserResponse"]> }
   "UserModelConfigListItem": { "user_id": string; "ai_config": ApiSchemas["AIConfigPublic"] }
   "UserModelConfigListResponse": { "items": Array<ApiSchemas["UserModelConfigListItem"]>; "ai_provider_support": { [key: string]: Array<string> }; "ai_provider_defaults": { [key: string]: { [key: string]: ApiSchemas["ProviderDefaults"] } }; "system_ai_config": ApiSchemas["AIConfigPublic"]; "ai_tasks": Array<ApiSchemas["AiTaskDefinition"]> }
   "UserModelConfigRequest": { "ai_config": ApiSchemas["AIConfigUpdate"] }
-  "UserResponse": { "id": string; "username": string; "nightly_activity_enabled": boolean; "is_active": boolean; "created_at": string; "activation_code": string }
-  "UserUpdate": { "nightly_activity_enabled"?: (boolean | null); "is_active"?: (boolean | null); "base_url"?: (string | null) }
+  "UserResponse": { "id": string; "username": string; "is_active": boolean; "created_at": string; "activation_code": string }
+  "UserUpdate": { "is_active"?: (boolean | null); "base_url"?: (string | null) }
   "VideoQueueAttachTask": { "expected_revision": number; "note": string; "action": "attach_task"; "task_id": string }
   "VideoQueueConfirmFinished": { "expected_revision": number; "note": string; "action": "confirm_finished"; "task_id"?: null }
   "VideoQueueInfo": { "state": "waiting" | "rate_limited" | "blocked"; "next_retry_at": (string | null) }

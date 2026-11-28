@@ -5,7 +5,7 @@ from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from features.accounts.queries import nightly_account
+from features.accounts.queries import user_is_active
 from features.action_library.prompts import ACTION_DESIGN_GUIDANCE
 from features.appearance.observations import load_visual_observation
 from features.companion.planning_queries import PersonaPlanningSnapshot
@@ -498,9 +498,8 @@ async def _blocked_plan_outcome(
     if not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
         return "blocked", "nightly window ended"
     async with SESSION_LOCAL() as db:
-        account = await nightly_account(db, user_id)
-    if account is None or not account.is_active or not account.nightly_activity_enabled:
-        return "blocked", "夜间自主活动已关闭或账户不可用"
+        if not await user_is_active(db, user_id):
+            return "blocked", "账户不可用"
     if arguments.get("illegal_outfit_deps"):
         return "failed", "环境与造型相互独立，环境动作不能依赖造型动作"
     if any(result is None or result.status not in {"succeeded", "pending", "running"} for result in dependencies):

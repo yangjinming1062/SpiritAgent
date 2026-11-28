@@ -9,7 +9,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from features.accounts.locking import lock_account
-from features.accounts.queries import nightly_account
+from features.accounts.queries import user_is_active
 from features.configuration.social_accounts import credential_is_current, load_social_credentials, mark_login_required
 from features.configuration.social_schemas import SocialCredentialSnapshot
 from features.topics.schemas import TopicBatchSnapshot, TopicCandidateChoice
@@ -114,13 +114,7 @@ def _inside_window(candidate: SocialContent, start: datetime, end: datetime) -> 
 
 
 async def _configured(db: AsyncSession, scope: MemoryScope) -> None:
-    account = await nightly_account(db, scope.user_id)
-    if (
-        account is None
-        or not account.is_active
-        or not account.nightly_activity_enabled
-        or SETTINGS.topic_discovery_mode == "off"
-    ):
+    if SETTINGS.topic_discovery_mode == "off" or not await user_is_active(db, scope.user_id):
         raise DiscoveryDisabledError("夜间检索已关闭或账户不可用")
 
 

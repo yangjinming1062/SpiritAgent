@@ -1,7 +1,6 @@
 """账户只读查询与事务锁。"""
 
 from collections.abc import Collection
-from dataclasses import dataclass
 
 from infrastructure.request_errors import RequestError
 from sqlalchemy import Select, select
@@ -50,14 +49,3 @@ async def lock_active_user_ids(db: AsyncSession, user_ids: Collection[int]) -> s
             .with_for_update()
         )
     )
-
-
-@dataclass(frozen=True)
-class NightlyAccountSnapshot:
-    is_active: bool
-    nightly_activity_enabled: bool
-
-
-async def nightly_account(db: AsyncSession, user_id: int) -> NightlyAccountSnapshot | None:
-    row = await db.get(User, user_id)
-    return NightlyAccountSnapshot(row.is_active, row.nightly_activity_enabled) if row is not None else None
